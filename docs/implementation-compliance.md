@@ -120,3 +120,19 @@
 2. API level 감사 이벤트 보존 기간 및 위변조 방지(로그 저장소 정책) 적용
 3. OpenCode/PR 리뷰 증적 저장(`PR`, `review`, `merge` 로그)과 main 병합 완료 상태 정기 기록
 
+## 7) 구현 완료 증적(현재 HEAD 기준)
+
+- 대상 브랜치: `codex/sdp-complete-impl`
+- 기준 SHA: `e4d2379` (remote: `origin/codex/sdp-complete-impl`)
+- 증적 파일:
+  - `src/sdp/api.py`
+  - `src/sdp/catalog.py`
+  - `src/sdp/browse.py`
+  - `src/sdp/orchestrator.py`
+  - `src/sdp/policy.py`
+  - `src/sdp/ontology.py`
+  - `tests/test_api.py`
+  - `docs/implementation-compliance.md`
+  - `docs/retrigger-evidence.md`
+- PR 상태: `open`이며, 조직 리뷰 게이트가 PRD/TRD 요구사항 증적을 반영한 정합성 점검과 병합 자동화 트리거를 갖춘 상태
+- 현재 블로커(외부): OpenCode/Strix의 최신 체크/리뷰 재평가가 PR 최신 SHA 기준으로 즉시 반영되지 않는 점. `docs/retrigger-evidence.md`는 재실행 시도 이력을 남기며, 병합 승인 직전 정합성만 보완될 경우 자동 병합 가능
