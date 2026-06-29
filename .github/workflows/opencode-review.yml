@@ -34,7 +34,7 @@ on:
 
 concurrency:
   group: opencode-review-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.inputs.pr_number || github.run_id }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -2136,6 +2136,33 @@ jobs:
 
           ensure_review_body_has_change_graph() {
             local body="$1"
+            local body_normalized
+            body_normalized="$(
+              printf '%s\n' "$body" | python3 - <<'PY'
+import sys
+
+text = sys.stdin.read()
+text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\\n", "\n")
+
+lines = text.split("\n")
+normalized = []
+in_code_block = False
+for line in lines:
+  if line.startswith("```"):
+    in_code_block = not in_code_block
+    normalized.append(line)
+    continue
+  if in_code_block or not line:
+    normalized.append(line)
+    continue
+  if line.endswith("  "):
+    normalized.append(line)
+  else:
+    normalized.append(f"{line}  ")
+print("\n".join(normalized), end="")
+PY
+            )"
+            body="$body_normalized"
             printf '%s\n' "$body"
             if grep -Fq "## Change Flow DAG" <<<"$body"; then
               return 0
@@ -2409,6 +2436,29 @@ jobs:
 
           ensure_review_body_has_change_graph() {
             local body="$1"
+            body="$(python3 - "$body" <<'PY'
+import sys
+
+text = sys.argv[1]
+text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\\n", "\n")
+
+lines = text.split("\n")
+normalized = []
+in_code_block = False
+for line in lines:
+  if line.startswith("```"):
+    in_code_block = not in_code_block
+    normalized.append(line)
+    continue
+  if in_code_block or not line:
+    normalized.append(line)
+    continue
+  if line.endswith("  "):
+    normalized.append(line)
+  else:
+    normalized.append(f"{line}  ")
+print("\n".join(normalized), end="")
+PY)"
             printf '%s\n' "$body"
             if grep -Fq "## Change Flow DAG" <<<"$body"; then
               return 0
