@@ -123,7 +123,7 @@
 ## 7) 구현 완료 증적(현재 HEAD 기준)
 
 - 대상 브랜치: `codex/sdp-complete-impl`
-- 기준 SHA: `e981dca` (remote: `origin/codex/sdp-complete-impl`)
+- 기준 SHA: `b621ef6` (remote: `origin/codex/sdp-complete-impl`)
 - 증적 파일:
   - `src/sdp/api.py`
   - `src/sdp/catalog.py`
