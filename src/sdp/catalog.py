@@ -299,6 +299,7 @@ def _build_dataset_payload(
     *,
     actor: str,
     action: str,
+    decision_id: str | None = None,
     details: dict[str, object] | None = None,
 ) -> AuditEvent:
     return AuditEvent(
@@ -306,6 +307,7 @@ def _build_dataset_payload(
         actor=actor,
         action=action,
         resource=dataset.id,
+        decision_id=decision_id,
         result="success",
         reason="ok",
         details=details or {},
@@ -324,7 +326,12 @@ def validate_metadata(dataset: Dataset) -> Dict[str, object]:
     }
 
 
-def register_dataset(payload: DatasetCreateRequest, *, actor: str = "system") -> Dataset:
+def register_dataset(
+    payload: DatasetCreateRequest,
+    *,
+    actor: str = "system",
+    decision_id: str | None = None,
+) -> Dataset:
     if not payload.id:
         dataset_id = f"dataset-{len(_DATA) + 1:03d}"
     else:
@@ -359,11 +366,17 @@ def register_dataset(payload: DatasetCreateRequest, *, actor: str = "system") ->
     )
     dataset.recompute_scores()
     _DATA[dataset.id] = dataset
-    _AUDIT_LOG.append(_build_dataset_payload(dataset, actor=actor, action="dataset.register"))
+    _AUDIT_LOG.append(_build_dataset_payload(dataset, actor=actor, action="dataset.register", decision_id=decision_id))
     return dataset
 
 
-def patch_dataset(dataset_id: str, patch: DatasetPatchRequest, *, actor: str = "system") -> Dataset:
+def patch_dataset(
+    dataset_id: str,
+    patch: DatasetPatchRequest,
+    *,
+    actor: str = "system",
+    decision_id: str | None = None,
+) -> Dataset:
     dataset = get_dataset_or_404(dataset_id)
     before = dataset.model_dump()
     data = dataset.model_dump()
@@ -387,6 +400,7 @@ def patch_dataset(dataset_id: str, patch: DatasetPatchRequest, *, actor: str = "
         _build_dataset_payload(
             updated,
             actor=actor,
+            decision_id=decision_id,
             action="dataset.patch",
             details={"changes": updates, "before": {k: before[k] for k in updates}, "after": {k: data[k] for k in updates},},
         )
@@ -394,7 +408,12 @@ def patch_dataset(dataset_id: str, patch: DatasetPatchRequest, *, actor: str = "
     return updated
 
 
-def publish_dataset(dataset_id: str, *, actor: str = "system") -> Dataset:
+def publish_dataset(
+    dataset_id: str,
+    *,
+    actor: str = "system",
+    decision_id: str | None = None,
+) -> Dataset:
     dataset = get_dataset_or_404(dataset_id)
     validation = validate_metadata(dataset)
     if not validation["is_valid"]:
@@ -405,6 +424,7 @@ def publish_dataset(dataset_id: str, *, actor: str = "system") -> Dataset:
             _build_dataset_payload(
                 dataset,
                 actor=actor,
+                decision_id=decision_id,
                 action="dataset.publish",
                 details={"status": dataset.status, "noop": True},
             )
@@ -422,6 +442,7 @@ def publish_dataset(dataset_id: str, *, actor: str = "system") -> Dataset:
         _build_dataset_payload(
             published,
             actor=actor,
+            decision_id=decision_id,
             action="dataset.publish",
             details={"previous_status": dataset.status},
         )
@@ -429,7 +450,13 @@ def publish_dataset(dataset_id: str, *, actor: str = "system") -> Dataset:
     return published
 
 
-def deprecate_dataset(dataset_id: str, *, actor: str = "system", reason: str = "deprecated") -> Dataset:
+def deprecate_dataset(
+    dataset_id: str,
+    *,
+    actor: str = "system",
+    reason: str = "deprecated",
+    decision_id: str | None = None,
+) -> Dataset:
     dataset = get_dataset_or_404(dataset_id)
     dataset_data = dataset.model_dump()
     dataset_data["status"] = "deprecated"
@@ -438,7 +465,15 @@ def deprecate_dataset(dataset_id: str, *, actor: str = "system", reason: str = "
     deprecated = Dataset.model_validate(dataset_data)
     deprecated.recompute_scores()
     _DATA[dataset_id] = deprecated
-    _AUDIT_LOG.append(_build_dataset_payload(deprecated, actor=actor, action="dataset.deprecate", details={"reason": reason}))
+    _AUDIT_LOG.append(
+        _build_dataset_payload(
+            deprecated,
+            actor=actor,
+            action="dataset.deprecate",
+            decision_id=decision_id,
+            details={"reason": reason},
+        )
+    )
     return deprecated
 
 
@@ -470,6 +505,7 @@ def ingest_event(
     actor: str,
     dataset_id: str,
     decision: str,
+    decision_id: str | None = None,
     reason: str = "",
     details: dict[str, object] | None = None,
 ) -> AuditEvent:
@@ -479,6 +515,7 @@ def ingest_event(
         action=event_type,
         resource=dataset_id,
         result=decision,
+        decision_id=decision_id,
         reason=reason,
         details=details or {},
         created_at=datetime.now(timezone.utc),

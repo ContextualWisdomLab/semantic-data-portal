@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from .catalog import get_dataset
 from .domain import QueryDraftRequest
@@ -29,6 +29,15 @@ def draft_sql(req: QueryDraftRequest) -> dict:
         return {"error": "policy_denied", "reason": "허용되지 않은 키워드가 질의에 포함되었습니다."}
 
     allowed_columns = {column.name for column in dataset.schema if column.datatype}
+    if req.columns:
+        unknown = sorted(set(req.columns) - allowed_columns)
+        if unknown:
+            return {
+                "error": "invalid_columns",
+                "reason": f"요청한 컬럼이 데이터셋에 없습니다: {', '.join(unknown)}",
+            }
+
+    requested_columns = req.columns or ["*"]
     if req.group_by and req.group_by not in allowed_columns:
         return {"error": "invalid_group_by", "reason": "요청한 그룹화 컬럼이 데이터셋에 없습니다."}
 
@@ -40,9 +49,14 @@ def draft_sql(req: QueryDraftRequest) -> dict:
         select_fields = f"{_safe_identifier(req.group_by)}, count(*) AS active_customer_count"
     else:
         group_clause = ""
-        select_fields = "count(*) AS active_customer_count"
+        if "*" in requested_columns:
+            select_fields = "count(*) AS active_customer_count"
+        else:
+            select_fields = ", ".join(_safe_identifier(column) for column in requested_columns)
+            select_fields = f"{select_fields}, count(*) AS active_customer_count"
 
-    sql = f"SELECT {select_fields} FROM {table_name} {where_clause} {group_clause} LIMIT 1000"
+    max_rows = min(req.row_limit, 2000)
+    sql = f"SELECT {select_fields} FROM {table_name} {where_clause} {group_clause} LIMIT {max_rows}"
 
     assumptions = [
         "카탈로그에서 검증된 테이블/컬럼만 사용",
@@ -56,14 +70,21 @@ def draft_sql(req: QueryDraftRequest) -> dict:
     if masked_pii and req.purpose == "analysis":
         assumptions.append(f"PII 컬럼({', '.join(masked_pii)})은 별도 집계/마스킹 필요")
 
+    row_filter = decision.obligations.get("row_filter")
+    if row_filter:
+        assumptions.append(f"행 레벨 필터 적용: {', '.join(row_filter)}")
+
     if not req.group_by:
         assumptions.append("기본 집계는 건수 카운트 기반으로 반환")
 
     return {
         "dataset_id": req.dataset_id,
         "query": sql,
+        "policy_decision_id": decision.decision_id,
         "assumptions": assumptions,
         "policy_decision": decision.dict(),
         "preview_required": req.purpose == "analysis",
         "dialect": "postgresql",
+        "row_limit": max_rows,
+        "requested_columns": requested_columns,
     }

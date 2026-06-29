@@ -109,6 +109,7 @@ class PolicyDecision(BaseModel):
     resource: str
     action: str
     effect: str
+    decision_id: str = Field(default_factory=lambda: str(uuid4()))
     obligations: Dict[str, Any] = Field(default_factory=dict)
     reason: str = ""
 
@@ -120,6 +121,8 @@ class QueryDraftRequest(BaseModel):
     dataset_id: str
     group_by: Optional[str] = None
     date_window_days: int = 90
+    columns: Optional[list[str]] = None
+    row_limit: int = Field(default=1000, ge=1, le=5000)
 
 
 class AuditEvent(BaseModel):
@@ -128,6 +131,7 @@ class AuditEvent(BaseModel):
     action: str
     resource: str
     result: str
+    decision_id: str | None = None
     reason: str = ""
     details: Dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

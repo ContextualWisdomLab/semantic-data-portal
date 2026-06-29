@@ -55,6 +55,43 @@ def test_preview_policy_denies_missing_dataset():
     assert response.status_code == 404
 
 
+def test_preview_pagination_and_decision_traceability():
+    response = client.post(
+        "/browse/crm-customer-master/preview",
+        json={"user": "analyst", "purpose": "analysis", "offset": 1, "limit": 1},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["offset"] == 1
+    assert body["row_count"] == 1
+    assert body["policy_decision_id"] == body["policy_decision"]["decision_id"]
+    assert body["rows"]
+    assert body["sampling_note"]
+
+
+def test_preview_denies_low_privilege_actor():
+    response = client.post(
+        "/browse/crm-customer-master/preview",
+        json={"user": "guest", "purpose": "analysis"},
+    )
+    assert response.status_code == 403
+
+
+def test_audit_event_includes_policy_decision_id_for_preview():
+    response = client.post(
+        "/browse/crm-event/preview",
+        json={"user": "analyst", "purpose": "analysis", "limit": 1},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    decision_id = body["policy_decision_id"]
+
+    events = client.get("/audit/events", params={"resource": "crm-event"})
+    assert events.status_code == 200
+    matching = [event for event in events.json() if event["action"] == "browse.preview" and event["details"].get("policy_decision_id") == decision_id]
+    assert matching, "preview audit event should record policy decision id"
+
+
 def test_draft_query():
     payload = {
         "question": "최근 90일 활성 고객 수 주별 집계",
@@ -62,13 +99,17 @@ def test_draft_query():
         "purpose": "analysis",
         "dataset_id": "crm-event",
         "group_by": "customer_id",
+        "columns": ["customer_id", "event_timestamp"],
         "date_window_days": 30,
+        "row_limit": 50,
     }
     response = client.post("/llm/draft-query", json=payload)
     assert response.status_code == 200
     body = response.json()
     assert "query" in body
-    assert "LIMIT 1000" in body["query"]
+    assert "policy_decision_id" in body
+    assert body["policy_decision_id"] == body["policy_decision"]["decision_id"]
+    assert "LIMIT 50" in body["query"]
 
 
 def test_dataset_mutation_policy_and_lifecycle():

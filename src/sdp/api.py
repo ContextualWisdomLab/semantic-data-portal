@@ -199,7 +199,7 @@ def create_dataset(payload: dict[str, Any]) -> dict[str, Any]:
     if decision.effect != "allow":
         raise HTTPException(status_code=403, detail=decision.reason)
 
-    dataset = register_dataset(request, actor=actor_id)
+    dataset = register_dataset(request, actor=actor_id, decision_id=decision.decision_id)
     return {"status": "created", "dataset": dataset.model_dump()}
 
 
@@ -211,7 +211,7 @@ def publish_catalog_dataset(dataset_id: str, payload: dict[str, Any] | None = No
         raise HTTPException(status_code=403, detail=decision.reason)
 
     try:
-        dataset = publish_dataset(dataset_id, actor=actor_id)
+        dataset = publish_dataset(dataset_id, actor=actor_id, decision_id=decision.decision_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except ValueError as exc:
@@ -228,7 +228,7 @@ def patch_catalog_dataset(dataset_id: str, payload: dict[str, Any]) -> dict[str,
 
     try:
         request = DatasetPatchRequest(**payload)
-        dataset = patch_dataset(dataset_id, request, actor=actor_id)
+        dataset = patch_dataset(dataset_id, request, actor=actor_id, decision_id=decision.decision_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception as exc:
@@ -245,7 +245,12 @@ def deprecate_catalog_dataset(dataset_id: str, payload: dict[str, str] | None = 
 
     payload = payload or {}
     try:
-        dataset = deprecate_dataset(dataset_id, actor=actor_id, reason=payload.get("reason", "deprecated"))
+        dataset = deprecate_dataset(
+            dataset_id,
+            actor=actor_id,
+            reason=payload.get("reason", "deprecated"),
+            decision_id=decision.decision_id,
+        )
         return {"status": "deprecated", "dataset": dataset.model_dump()}
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
@@ -301,20 +306,14 @@ def browse_schema(dataset_id: str) -> dict[str, Any]:
 @app.post("/browse/{dataset_id}/preview")
 def browse_preview(dataset_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     try:
-        decision = evaluate(
-            subject=payload.get("user", "anonymous"),
-            resource=dataset_id,
-            action="preview",
-            purpose=payload.get("purpose", "analysis"),
-        )
-        if decision.effect != "allow":
-            raise HTTPException(status_code=403, detail=decision.reason)
-
+        if "user" not in payload:
+            raise HTTPException(status_code=400, detail="user is required")
         return browse.preview(
             dataset_id=dataset_id,
             user=payload.get("user", "anonymous"),
             purpose=payload.get("purpose", "analysis"),
             limit=min(int(payload.get("limit", 100)), 100),
+            offset=max(int(payload.get("offset", 0)), 0),
         )
     except KeyError:
         raise HTTPException(status_code=404, detail="dataset not found")
