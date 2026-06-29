@@ -73,7 +73,7 @@ jobs:
           set -euo pipefail
           {
             echo "repository=${{ github.repository }}"
-            echo "ref=${{ github.sha }}"
+            echo "ref=${{ github.event.pull_request.head.sha || github.sha }}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Checkout trusted Strix source
