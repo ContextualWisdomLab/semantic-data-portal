@@ -22,6 +22,7 @@ def preview(dataset_id: str, user: str, purpose: str, limit: int = 100, offset: 
             dataset_id=dataset_id,
             decision="denied",
             reason="dataset_not_found",
+            details={"policy_decision_id": None},
         )
         raise KeyError("dataset not found")
 
@@ -34,7 +35,7 @@ def preview(dataset_id: str, user: str, purpose: str, limit: int = 100, offset: 
             decision="denied",
             reason=decision.reason,
             decision_id=decision.decision_id,
-            details={"purpose": purpose},
+            details={"purpose": purpose, "policy_decision_id": decision.decision_id},
         )
         raise PermissionError(decision.reason)
 
@@ -70,6 +71,7 @@ def preview(dataset_id: str, user: str, purpose: str, limit: int = 100, offset: 
             "requested_limit": limit,
             "returned_rows": len(masked),
             "row_filter": decision.obligations.get("row_filter"),
+            "policy_decision_id": decision.decision_id,
         },
     )
     return {
@@ -110,7 +112,7 @@ def schema(dataset_id: str, user: str, purpose: str = "analysis") -> Dict[str, A
             decision="denied",
             reason=decision.reason,
             decision_id=decision.decision_id,
-            details={"purpose": purpose},
+            details={"purpose": purpose, "policy_decision_id": decision.decision_id},
         )
         raise PermissionError(decision.reason)
 
@@ -121,7 +123,7 @@ def schema(dataset_id: str, user: str, purpose: str = "analysis") -> Dict[str, A
         decision="allowed",
         reason=decision.reason,
         decision_id=decision.decision_id,
-        details={"purpose": purpose},
+        details={"purpose": purpose, "policy_decision_id": decision.decision_id},
     )
     return {
         "dataset_id": dataset.id,
