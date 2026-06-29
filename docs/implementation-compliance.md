@@ -123,7 +123,7 @@
 ## 7) 구현 완료 증적(현재 HEAD 기준)
 
 - 대상 브랜치: `codex/sdp-complete-impl`
-- 기준 SHA: `e4d2379` (remote: `origin/codex/sdp-complete-impl`)
+- 기준 SHA: `4b24d9a` (remote: `origin/codex/sdp-complete-impl`)
 - 증적 파일:
   - `src/sdp/api.py`
   - `src/sdp/catalog.py`
@@ -134,5 +134,7 @@
   - `tests/test_api.py`
   - `docs/implementation-compliance.md`
   - `docs/retrigger-evidence.md`
-- PR 상태: `open`이며, 조직 리뷰 게이트가 PRD/TRD 요구사항 증적을 반영한 정합성 점검과 병합 자동화 트리거를 갖춘 상태
-- 현재 블로커(외부): OpenCode/Strix의 최신 체크/리뷰 재평가가 PR 최신 SHA 기준으로 즉시 반영되지 않는 점. `docs/retrigger-evidence.md`는 재실행 시도 이력을 남기며, 병합 승인 직전 정합성만 보완될 경우 자동 병합 가능
+- PR 상태: `open`. 조직 리뷰 증적은 과거 SHA 기준 리뷰 코멘트만 확인되며 최신 SHA 반영은 수동 재트리거/검토 로그 동기화 후 필요할 수 있음.
+- 현재 블로커(외부): OpenCode/Strix 최신 체크/리뷰의 실시간 갱신 실패 또는 지연(리뷰 코멘트의 SHA 매칭 미갱신). 추적 파일:
+  - [docs/retrigger-evidence.md](/C:/Users/Seongho%20Bae/Documents/Codex/2026-06-29/f/semantic-data-portal/docs/retrigger-evidence.md)
+  - [최근 워크플로우 이벤트](/C:/Users/Seongho%20Bae/Documents/Codex/2026-06-29/f/semantic-data-portal/.github/workflows/opencode-review.yml)
