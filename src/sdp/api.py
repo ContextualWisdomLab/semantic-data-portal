@@ -328,7 +328,7 @@ def browse_preview(dataset_id: str, payload: dict[str, Any]) -> dict[str, Any]:
 def llm_search(payload: dict[str, str]) -> dict[str, Any]:
     query = payload.get("question", "")
     if not query:
-        return {"error": "No question"}
+        raise HTTPException(status_code=400, detail="question is required")
 
     user = payload.get("user", "anonymous")
     purpose = payload.get("purpose", "analysis")
