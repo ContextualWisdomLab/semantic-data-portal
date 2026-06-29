@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
@@ -7,15 +7,29 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import browse, catalog, ontology, orchestrator
-from .catalog import validate_metadata
-from .domain import QueryDraftRequest
+from .catalog import (
+    deprecate_dataset,
+    get_dataset,
+    get_dataset_audit_events,
+    get_dataset_lineage,
+    get_related_datasets,
+    list_audit_events,
+    list_datasets,
+    list_facet_counts,
+    patch_dataset,
+    publish_dataset,
+    register_dataset,
+    search_catalog,
+    validate_metadata,
+)
+from .domain import DatasetCreateRequest, DatasetPatchRequest, QueryDraftRequest
 from .policy import evaluate
 
 
 app = FastAPI(
     title="Semantic Data Portal",
     description="온톨로지 기반 데이터 카탈로그 및 브라우징 MVP",
-    version="0.1.0",
+    version="0.2.1",
 )
 
 app.add_middleware(
@@ -24,6 +38,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def _actor(payload: dict[str, Any] | None) -> str:
+    if not payload:
+        return "anonymous"
+    return str(payload.get("actor", "anonymous"))
+
+
+def _require_actor(payload: dict[str, Any]) -> str:
+    return _actor(payload)
 
 
 @app.get("/health")
@@ -35,37 +59,77 @@ def health() -> dict[str, str]:
 def catalog_search(
     q: str = Query(..., min_length=1),
     tags: list[str] | None = Query(default=None),
-    limit: int = Query(default=20, ge=1, le=50),
+    domain: list[str] | None = Query(default=None),
+    owner: list[str] | None = Query(default=None),
+    sensitivity: list[str] | None = Query(default=None),
+    status: list[str] | None = Query(default=None),
+    license: list[str] | None = Query(default=None),
+    min_quality: float | None = Query(default=None, ge=0, le=1),
+    min_freshness: float | None = Query(default=None, ge=0, le=1),
+    limit: int = Query(default=20, ge=1, le=100),
+    include_inactive: bool = Query(default=False),
 ) -> dict[str, Any]:
-    results = catalog.search_catalog(q, tags=tags, limit=limit)
+    results = catalog.search_catalog(
+        q,
+        tags=tags,
+        domain=domain,
+        owner=owner,
+        sensitivity=sensitivity,
+        status=status,
+        license=license,
+        min_quality=min_quality,
+        min_freshness=min_freshness,
+        include_inactive=include_inactive,
+        limit=limit,
+    )
+
+    filtered = [
+        {
+            "id": row.dataset.id,
+            "title": row.dataset.title,
+            "tags": row.dataset.tags,
+            "owner": row.dataset.owner,
+            "steward": row.dataset.steward,
+            "domain": row.dataset.domain,
+            "quality": row.dataset.quality_score,
+            "freshness": row.dataset.freshness_score,
+            "search_score": row.score,
+            "metadata_completeness": row.dataset.metadata_completeness,
+            "completeness_score": row.dataset.completeness_score,
+            "status": row.dataset.status,
+            "version": row.dataset.version,
+            "schema_version": row.dataset.schema_version,
+        }
+        for row in results
+    ]
+
     return {
         "query": q,
-        "count": len(results),
-        "items": [
-            {
-                "id": row.dataset.id,
-                "title": row.dataset.title,
-                "tags": row.dataset.tags,
-                "owner": row.dataset.owner,
-                "steward": row.dataset.steward,
-                "domain": row.dataset.domain,
-                "quality": row.dataset.quality_score,
-                "search_score": row.score,
-                "metadata_completeness": row.dataset.metadata_completeness,
-            }
-            for row in results
-        ],
+        "count": len(filtered),
+        "items": filtered,
     }
 
 
+@app.get("/catalog/facets")
+def catalog_facets(
+    q: str | None = Query(default=None),
+    field: str = Query(default="domain"),
+) -> dict[str, Any]:
+    try:
+        counts = list_facet_counts(field, query=q)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="unsupported facet field")
+    return {"field": field, "counts": counts}
+
+
 @app.get("/catalog/datasets")
-def list_datasets() -> list[dict[str, Any]]:
-    return [dataset.model_dump() for dataset in catalog.list_datasets()]
+def list_datasets_endpoint() -> list[dict[str, Any]]:
+    return [dataset.model_dump() for dataset in list_datasets()]
 
 
 @app.get("/catalog/datasets/{dataset_id}")
 def dataset_detail(dataset_id: str) -> dict[str, Any]:
-    dataset = catalog.get_dataset(dataset_id)
+    dataset = get_dataset(dataset_id)
     if not dataset:
         raise HTTPException(status_code=404, detail="dataset not found")
     return dataset.model_dump()
@@ -73,7 +137,7 @@ def dataset_detail(dataset_id: str) -> dict[str, Any]:
 
 @app.get("/catalog/datasets/{dataset_id}/jsonld")
 def dataset_jsonld(dataset_id: str) -> dict[str, Any]:
-    dataset = catalog.get_dataset(dataset_id)
+    dataset = get_dataset(dataset_id)
     if not dataset:
         raise HTTPException(status_code=404, detail="dataset not found")
     return {
@@ -82,16 +146,117 @@ def dataset_jsonld(dataset_id: str) -> dict[str, Any]:
         "id": f"https://semantic-data-portal.local/datasets/{dataset.id}",
         "title": dataset.title,
         "description": dataset.description,
+        "license": dataset.license,
+        "status": dataset.status,
+        "completeness_score": dataset.completeness_score,
+        "metadata_completeness": dataset.metadata_completeness,
+        "domain": dataset.domain,
+        "owner": dataset.owner,
+        "steward": dataset.steward,
         "distribution": [d.model_dump() for d in dataset.distributions],
+        "mappings": [m.model_dump() for m in dataset.mappings],
     }
 
 
 @app.get("/catalog/datasets/{dataset_id}/validate")
 def validate(dataset_id: str) -> dict[str, Any]:
-    dataset = catalog.get_dataset(dataset_id)
+    dataset = get_dataset(dataset_id)
     if not dataset:
         raise HTTPException(status_code=404, detail="dataset not found")
     return validate_metadata(dataset)
+
+
+@app.get("/catalog/datasets/{dataset_id}/lineage")
+def dataset_lineage(dataset_id: str) -> dict[str, Any]:
+    try:
+        return get_dataset_lineage(dataset_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.get("/catalog/datasets/{dataset_id}/related")
+def dataset_related(dataset_id: str) -> dict[str, Any]:
+    try:
+        return {"dataset_id": dataset_id, "related_datasets": get_related_datasets(dataset_id)}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.get("/catalog/datasets/{dataset_id}/audit")
+def dataset_audit_events(dataset_id: str, limit: int = Query(default=50, ge=1, le=200)) -> list[dict[str, Any]]:
+    return [event.model_dump() for event in get_dataset_audit_events(dataset_id, limit=limit)]
+
+
+@app.post("/catalog/datasets")
+def create_dataset(payload: dict[str, Any]) -> dict[str, Any]:
+    actor_id = _actor(payload)
+    try:
+        request = DatasetCreateRequest(**payload)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"invalid payload: {exc}")
+
+    decision = evaluate(subject=actor_id, resource=request.id or "new", action="create", purpose="catalog")
+    if decision.effect != "allow":
+        raise HTTPException(status_code=403, detail=decision.reason)
+
+    dataset = register_dataset(request, actor=actor_id)
+    return {"status": "created", "dataset": dataset.model_dump()}
+
+
+@app.post("/catalog/datasets/{dataset_id}/publish")
+def publish_catalog_dataset(dataset_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    actor_id = _actor(payload)
+    decision = evaluate(subject=actor_id, resource=dataset_id, action="publish", purpose="catalog")
+    if decision.effect != "allow":
+        raise HTTPException(status_code=403, detail=decision.reason)
+
+    try:
+        dataset = publish_dataset(dataset_id, actor=actor_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"status": "published", "dataset": dataset.model_dump()}
+
+
+@app.patch("/catalog/datasets/{dataset_id}")
+def patch_catalog_dataset(dataset_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    actor_id = _actor(payload)
+    decision = evaluate(subject=actor_id, resource=dataset_id, action="patch", purpose="catalog")
+    if decision.effect != "allow":
+        raise HTTPException(status_code=403, detail=decision.reason)
+
+    try:
+        request = DatasetPatchRequest(**payload)
+        dataset = patch_dataset(dataset_id, request, actor=actor_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"status": "updated", "dataset": dataset.model_dump()}
+
+
+@app.post("/catalog/datasets/{dataset_id}/deprecate")
+def deprecate_catalog_dataset(dataset_id: str, payload: dict[str, str] | None = None) -> dict[str, Any]:
+    actor_id = _actor(payload)
+    decision = evaluate(subject=actor_id, resource=dataset_id, action="deprecate", purpose="catalog")
+    if decision.effect != "allow":
+        raise HTTPException(status_code=403, detail=decision.reason)
+
+    payload = payload or {}
+    try:
+        dataset = deprecate_dataset(dataset_id, actor=actor_id, reason=payload.get("reason", "deprecated"))
+        return {"status": "deprecated", "dataset": dataset.model_dump()}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.get("/audit/events")
+def list_events(
+    limit: int = Query(default=100, ge=1, le=500),
+    resource: str | None = Query(default=None),
+) -> list[dict[str, Any]]:
+    return [event.model_dump() for event in list_audit_events(limit=limit, resource=resource)]
 
 
 @app.post("/policy/decision")
@@ -108,6 +273,8 @@ def policy_decision(payload: dict[str, str]) -> dict[str, Any]:
 @app.post("/ontology/resolve")
 def resolve_terms(payload: dict[str, str]) -> dict[str, Any]:
     text = payload.get("text", "")
+    if not text:
+        raise HTTPException(status_code=400, detail="question text required")
     resolutions = ontology.resolve_terms(text)
     return {
         "query": text,
@@ -132,8 +299,17 @@ def browse_schema(dataset_id: str) -> dict[str, Any]:
 
 
 @app.post("/browse/{dataset_id}/preview")
-def browse_preview(dataset_id: str, payload: dict[str, str]) -> dict[str, Any]:
+def browse_preview(dataset_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     try:
+        decision = evaluate(
+            subject=payload.get("user", "anonymous"),
+            resource=dataset_id,
+            action="preview",
+            purpose=payload.get("purpose", "analysis"),
+        )
+        if decision.effect != "allow":
+            raise HTTPException(status_code=403, detail=decision.reason)
+
         return browse.preview(
             dataset_id=dataset_id,
             user=payload.get("user", "anonymous"),
@@ -142,6 +318,8 @@ def browse_preview(dataset_id: str, payload: dict[str, str]) -> dict[str, Any]:
         )
     except KeyError:
         raise HTTPException(status_code=404, detail="dataset not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
 
@@ -149,6 +327,9 @@ def browse_preview(dataset_id: str, payload: dict[str, str]) -> dict[str, Any]:
 @app.post("/llm/search")
 def llm_search(payload: dict[str, str]) -> dict[str, Any]:
     query = payload.get("question", "")
+    if not query:
+        return {"error": "No question"}
+
     user = payload.get("user", "anonymous")
     purpose = payload.get("purpose", "analysis")
     resolved = ontology.resolve_terms(query)
@@ -159,8 +340,16 @@ def llm_search(payload: dict[str, str]) -> dict[str, Any]:
             "user": user,
             "purpose": purpose,
         }
-    top = resolved[0].term
-    return {"question": query, "mapped_term": top, "user": user, "purpose": purpose, "recommendations": ontology.concept_assets(top)}
+    top = resolved[0]
+    decision = evaluate(subject=user, resource=top.term, action="query", purpose=purpose)
+    return {
+        "question": query,
+        "mapped_term": top.term,
+        "user": user,
+        "purpose": purpose,
+        "policy": decision.dict(),
+        "recommendations": ontology.concept_assets(top.term),
+    }
 
 
 @app.post("/llm/draft-query")
@@ -170,4 +359,3 @@ def draft_query(payload: dict[str, Any]) -> dict[str, Any]:
         return orchestrator.draft_sql(request)
     except Exception as exc:  # pragma: no cover
         raise HTTPException(status_code=400, detail=str(exc))
-

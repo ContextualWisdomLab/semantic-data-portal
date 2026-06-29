@@ -2,16 +2,37 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from .catalog import get_dataset
+from .catalog import get_dataset, ingest_event
 from .policy import evaluate
 
 
 def preview(dataset_id: str, user: str, purpose: str, limit: int = 100) -> Dict[str, Any]:
+    if limit < 1:
+        raise ValueError("limit must be at least 1")
+    if limit > 100:
+        raise ValueError("preview limit cannot exceed 100")
+
     dataset = get_dataset(dataset_id)
     if not dataset:
+        ingest_event(
+            event_type="browse.preview",
+            actor=user,
+            dataset_id=dataset_id,
+            decision="denied",
+            reason="dataset_not_found",
+        )
         raise KeyError("dataset not found")
+
     decision = evaluate(subject=user, resource=dataset_id, action="preview", purpose=purpose)
     if decision.effect != "allow":
+        ingest_event(
+            event_type="browse.preview",
+            actor=user,
+            dataset_id=dataset_id,
+            decision="denied",
+            reason=decision.reason,
+            details={"purpose": purpose},
+        )
         raise PermissionError(decision.reason)
 
     rows = [
@@ -31,7 +52,15 @@ def preview(dataset_id: str, user: str, purpose: str, limit: int = 100) -> Dict[
         },
     ]
 
-    masked = [apply_mask(row.copy(), decision.obligations.get("masking", []), purpose) for row in rows[:limit]]
+    masked = [apply_mask(row.copy(), decision.obligations.get("masking", [])) for row in rows[:limit]]
+    ingest_event(
+        event_type="browse.preview",
+        actor=user,
+        dataset_id=dataset_id,
+        decision="allowed",
+        reason="ok",
+        details={"purpose": purpose, "returned_rows": len(masked)},
+    )
     return {
         "dataset_id": dataset.id,
         "policy_decision": decision.dict(),
@@ -42,8 +71,8 @@ def preview(dataset_id: str, user: str, purpose: str, limit: int = 100) -> Dict[
     }
 
 
-def apply_mask(row: Dict[str, Any], masked_columns: List[str], purpose: str) -> Dict[str, Any]:
-    if "admin" in purpose.lower():
+def apply_mask(row: Dict[str, Any], masked_columns: List[str]) -> Dict[str, Any]:
+    if not masked_columns:
         return row
     for col in masked_columns:
         if col in row:
