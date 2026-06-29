@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from datetime import datetime
 from .catalog import get_dataset
 from .domain import QueryDraftRequest
 from .policy import evaluate
+from .domain import QueryExecutionRequest
+from .domain import QueryExecutionResponse
 
 
 _FORBIDDEN_KEYWORDS = {"drop", "delete", "truncate", "alter", "insert", "update", "merge", "exec", "union"}
@@ -10,6 +13,10 @@ _FORBIDDEN_KEYWORDS = {"drop", "delete", "truncate", "alter", "insert", "update"
 
 def _safe_identifier(value: str) -> str:
     return "".join(ch if ch.isalnum() or ch == "_" else "_" for ch in value)
+
+
+def _safe_request_id() -> str:
+    return "req-" + str(datetime.utcnow().timestamp()).replace(".", "")
 
 
 def draft_sql(req: QueryDraftRequest) -> dict:
@@ -106,3 +113,102 @@ def draft_sql(req: QueryDraftRequest) -> dict:
         "timeout_ms": timeout_ms,
         "estimated_cost": estimated_cost,
     }
+
+
+def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
+    if req.language.strip().upper() != "SQL":
+        return QueryExecutionResponse(
+            request_id=_safe_request_id(),
+            dataset_id=req.dataset_ids[0],
+            query_id="",
+            policy_decision_id="",
+            status="REJECTED",
+            row_count=0,
+            columns=[],
+            rows=[],
+            execution={"elapsedMs": 0, "source": "validation", "bytesScanned": 0},
+            warnings=["unsupported_language"],
+        )
+
+    lowered = req.query.lower()
+    if any(token in lowered for token in _FORBIDDEN_KEYWORDS):
+        return QueryExecutionResponse(
+            request_id=_safe_request_id(),
+            dataset_id=req.dataset_ids[0],
+            query_id="",
+            policy_decision_id="",
+            status="REJECTED",
+            row_count=0,
+            columns=[],
+            rows=[],
+            execution={"elapsedMs": 0, "source": "validation", "bytesScanned": 0},
+            warnings=["forbidden_keyword_detected"],
+        )
+
+    if len(req.dataset_ids) > 1:
+        return QueryExecutionResponse(
+            request_id=_safe_request_id(),
+            dataset_id=req.dataset_ids[0],
+            query_id="",
+            policy_decision_id="",
+            status="REJECTED",
+            row_count=0,
+            columns=[],
+            rows=[],
+            execution={"elapsedMs": 0, "source": "validation", "bytesScanned": 0},
+            warnings=["cross_source_join_not_supported"],
+        )
+
+    dataset_id = req.dataset_ids[0]
+    dataset = get_dataset(dataset_id)
+    if not dataset:
+        return QueryExecutionResponse(
+            request_id=_safe_request_id(),
+            dataset_id=dataset_id,
+            query_id="",
+            policy_decision_id="",
+            status="REJECTED",
+            row_count=0,
+            columns=[],
+            rows=[],
+            execution={"elapsedMs": 0, "source": "validation", "bytesScanned": 0},
+            warnings=["dataset_not_found"],
+        )
+
+    decision = evaluate(subject=req.user, resource=dataset_id, action="query", purpose=req.purpose)
+    if decision.effect != "allow":
+        return QueryExecutionResponse(
+            request_id=_safe_request_id(),
+            dataset_id=dataset.id,
+            query_id="",
+            policy_decision_id=decision.decision_id,
+            status="DENIED",
+            row_count=0,
+            columns=[],
+            rows=[],
+            execution={"elapsedMs": 0, "source": "policy", "bytesScanned": 0},
+            warnings=[decision.reason],
+        )
+
+    if req.dry_run:
+        row_count = 0
+    else:
+        row_count = min(2000, dataset.profile.get("row_count", 1000))
+
+    now = datetime.utcnow().isoformat() + "Z"
+    return QueryExecutionResponse(
+        request_id=_safe_request_id(),
+        dataset_id=dataset.id,
+        query_id=f"qry-{now.replace(':', '')}",
+        policy_decision_id=decision.decision_id,
+        status="SUCCEEDED",
+        row_count=row_count,
+        columns=["week", "active_count"] if "group by" in lowered else ["result"],
+        rows=[
+            {"week": now[:10], "active_count": 1}
+        ] if "group by" in lowered else [
+            {"result": row_count}
+        ],
+        execution={"elapsedMs": 100, "source": "mock-trino", "bytesScanned": 1024},
+        warnings=["mock_execution_no_real_data"],
+    )

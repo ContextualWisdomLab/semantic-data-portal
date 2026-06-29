@@ -27,7 +27,12 @@ from .catalog import (
     search_catalog,
     validate_metadata,
 )
-from .domain import DatasetCreateRequest, DatasetPatchRequest, QueryDraftRequest
+from .domain import (
+    DatasetCreateRequest,
+    DatasetPatchRequest,
+    QueryDraftRequest,
+    QueryExecutionRequest,
+)
 from .policy import evaluate
 
 
@@ -473,3 +478,24 @@ def draft_query(payload: dict[str, Any]) -> dict[str, Any]:
         return orchestrator.draft_sql(request)
     except Exception as exc:  # pragma: no cover
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/browse/query")
+def browse_query(payload: dict[str, Any]) -> dict[str, Any]:
+    try:
+        request = QueryExecutionRequest(**payload)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    result = orchestrator.execute_query(request)
+    if result.status == "REJECTED":
+        raise HTTPException(status_code=400, detail={"status": result.status, "warnings": result.warnings})
+    if result.status == "DENIED":
+        raise HTTPException(status_code=403, detail={"status": result.status, "warnings": result.warnings})
+
+    return result.model_dump()
+
+
+@app.post("/api/v1/browse/query")
+def browse_query_v1(payload: dict[str, Any]) -> dict[str, Any]:
+    return browse_query(payload)

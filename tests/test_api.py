@@ -283,3 +283,37 @@ def test_ontology_patch_workflow():
     )
     assert review.status_code == 200
     assert review.json()["status"] == "approved"
+
+
+def test_browse_query_success():
+    response = client.post(
+        "/browse/query",
+        json={
+            "user": "analyst",
+            "purpose": "analysis",
+            "dataset_ids": ["crm-event"],
+            "language": "SQL",
+            "query": "SELECT count(*) AS active_count FROM event",
+            "dry_run": False,
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "SUCCEEDED"
+    assert body["dataset_id"] == "crm-event"
+    assert body["policy_decision_id"] is not None
+    assert "request_id" in body
+
+
+def test_browse_query_denied_without_user():
+    response = client.post(
+        "/browse/query",
+        json={
+            "user": "guest",
+            "purpose": "analysis",
+            "dataset_ids": ["crm-event"],
+            "language": "SQL",
+            "query": "SELECT count(*) AS active_count FROM event",
+        },
+    )
+    assert response.status_code == 403

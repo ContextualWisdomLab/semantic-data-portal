@@ -176,6 +176,28 @@ class QueryDraftRequest(BaseModel):
     timeout_ms: int = Field(default=30000, ge=500, le=120000)
 
 
+class QueryExecutionRequest(BaseModel):
+    language: str = Field(default="SQL", min_length=1)
+    user: str = Field(default="anonymous")
+    purpose: str = Field(default="analysis")
+    dataset_ids: list[str] = Field(default_factory=list, min_length=1)
+    query: str = Field(min_length=1)
+    dry_run: bool = False
+
+
+class QueryExecutionResponse(BaseModel):
+    request_id: str
+    dataset_id: str
+    query_id: str
+    policy_decision_id: str
+    status: str
+    row_count: int
+    columns: list[str]
+    rows: list[dict[str, str | int | float | bool | None]]
+    execution: dict[str, Any]
+    warnings: list[str] = Field(default_factory=list)
+
+
 class AuditEvent(BaseModel):
     id: str
     actor: str
