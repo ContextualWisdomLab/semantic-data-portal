@@ -19,6 +19,10 @@ def draft_sql(req: QueryDraftRequest) -> dict:
     dataset = get_dataset(req.dataset_id)
     if not dataset:
         return {"error": "dataset_not_found"}
+    if dataset.status != "published":
+        return {"error": "policy_denied", "reason": "dataset is not published"}
+    if not dataset.schema:
+        return {"error": "missing_schema", "reason": "dataset schema must be present to draft query"}
 
     decision = evaluate(subject=req.user, resource=req.dataset_id, action="query", purpose=req.purpose)
     if decision.effect != "allow":
@@ -44,6 +48,14 @@ def draft_sql(req: QueryDraftRequest) -> dict:
     where_clause = f"WHERE created_at >= current_date - interval '{req.date_window_days} day'"
     table_name = _safe_identifier(dataset.source_system.rsplit("/", 1)[-1])
 
+    row_limit = min(req.row_limit, 2000)
+    if row_limit <= 0:
+        return {"error": "invalid_row_limit", "reason": "row_limit must be a positive integer"}
+
+    timeout_ms = req.timeout_ms
+    if timeout_ms < 500 or timeout_ms > 120000:
+        return {"error": "invalid_timeout", "reason": "timeout_ms must be between 500 and 120000"}
+
     if req.group_by:
         group_clause = f"GROUP BY {req.group_by}"
         select_fields = f"{_safe_identifier(req.group_by)}, count(*) AS active_customer_count"
@@ -55,7 +67,11 @@ def draft_sql(req: QueryDraftRequest) -> dict:
             select_fields = ", ".join(_safe_identifier(column) for column in requested_columns)
             select_fields = f"{select_fields}, count(*) AS active_customer_count"
 
-    max_rows = min(req.row_limit, 2000)
+    max_rows = min(row_limit, 2000)
+    if "*" in requested_columns and len(requested_columns) > 1:
+        requested_columns = ["*"]
+
+    estimated_cost = max(1, len(requested_columns) * row_limit // 200 + 1)
     sql = f"SELECT {select_fields} FROM {table_name} {where_clause} {group_clause} LIMIT {max_rows}"
 
     assumptions = [
@@ -87,4 +103,6 @@ def draft_sql(req: QueryDraftRequest) -> dict:
         "dialect": "postgresql",
         "row_limit": max_rows,
         "requested_columns": requested_columns,
+        "timeout_ms": timeout_ms,
+        "estimated_cost": estimated_cost,
     }

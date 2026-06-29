@@ -32,6 +32,14 @@ def test_catalog_search_filter_by_quality():
     assert all(item["quality"] >= 0.9 for item in response.json()["items"])
 
 
+def test_catalog_dataset_detail_exposes_recommendation_score():
+    response = client.get("/catalog/datasets/crm-customer-master")
+    assert response.status_code == 200
+    body = response.json()
+    assert "metadata_recommendation_score" in body
+    assert body["metadata_recommendation_score"] >= 0
+
+
 def test_catalog_facets_and_audit_events():
     response = client.get("/catalog/facets", params={"field": "sensitivity"})
     assert response.status_code == 200
@@ -48,6 +56,40 @@ def test_ontology_resolve():
     body = response.json()
     assert body["resolved"]
     assert body["resolved"][0]["term"] in {"활성 고객", "고객"}
+
+
+def test_ontology_concept_graph():
+    response = client.get("/ontology/term/활성 고객/graph")
+    assert response.status_code == 200
+    body = response.json()
+    assert "broader" in body
+    assert body["canonical"] in {"활성 고객", "고객", "이탈"}
+
+
+def test_ontology_search():
+    response = client.get("/ontology/search", params={"q": "churn"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["count"] >= 1
+    assert any(item["concept"] in {"이탈", "이탈 고객"} for item in body["matches"])
+
+
+def test_join_candidate_endpoint():
+    response = client.get("/catalog/datasets/crm-customer-master/join-candidates")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["dataset_id"] == "crm-customer-master"
+    assert "join_candidates" in body
+    assert any(item["dataset_id"] == "crm-event" for item in body["join_candidates"])
+
+
+def test_dataset_profile_endpoint():
+    response = client.get("/catalog/datasets/crm-customer-master/profile")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["dataset_id"] == "crm-customer-master"
+    assert "schema_profile" in body
+    assert body["schema_profile"]
 
 
 def test_preview_policy_denies_missing_dataset():
@@ -102,6 +144,7 @@ def test_draft_query():
         "columns": ["customer_id", "event_timestamp"],
         "date_window_days": 30,
         "row_limit": 50,
+        "timeout_ms": 8000,
     }
     response = client.post("/llm/draft-query", json=payload)
     assert response.status_code == 200
@@ -109,7 +152,35 @@ def test_draft_query():
     assert "query" in body
     assert "policy_decision_id" in body
     assert body["policy_decision_id"] == body["policy_decision"]["decision_id"]
+    assert body["timeout_ms"] == 8000
+    assert body["estimated_cost"] > 0
     assert "LIMIT 50" in body["query"]
+
+
+def test_catalog_schema_history_and_diff():
+    patch = client.patch("/catalog/datasets/crm-event", json={"actor": "admin", "schema": []})
+    assert patch.status_code == 200
+    versions = client.get("/catalog/datasets/crm-event/schema-versions")
+    assert versions.status_code == 200
+    payload = versions.json()
+    assert "versions" in payload
+    assert payload["versions"]
+
+    history = client.get("/catalog/datasets/crm-event/schema-history")
+    assert history.status_code == 200
+    history_payload = history.json()
+    assert history_payload["history"]
+    first_version = history_payload["history"][0]["schema_version"]
+    last_version = history_payload["history"][-1]["schema_version"]
+
+    diff = client.get(
+        "/catalog/datasets/crm-event/schema-diff",
+        params={"from_version": first_version, "to_version": last_version},
+    )
+    assert diff.status_code == 200
+    diff_payload = diff.json()
+    assert diff_payload["diff"]["from_version"] == first_version
+    assert diff_payload["diff"]["to_version"] == last_version
 
 
 def test_dataset_mutation_policy_and_lifecycle():
@@ -156,6 +227,13 @@ def test_dataset_mutation_policy_and_lifecycle():
     assert deprecated.json()["dataset"]["status"] == "deprecated"
 
 
+def test_browse_schema_requires_purpose():
+    response = client.get("/browse/crm-customer-master/schema", params={"user": "analyst"})
+    assert response.status_code == 200
+    body = response.json()
+    assert "policy_decision_id" in body
+
+
 def test_create_requires_admin():
     create_payload = {
         "actor": "analyst",
@@ -179,3 +257,29 @@ def test_create_requires_admin():
     }
     response = client.post("/catalog/datasets", json=create_payload)
     assert response.status_code == 403
+
+
+def test_ontology_patch_workflow():
+    propose = client.post(
+        "/ontology/patches",
+        json={
+            "concept": "이탈",
+            "suggestion": "탈퇴한 고객은 최근 30일 주문 비율이 감소하는 segment로 분류 제안",
+            "requestor": "analyst",
+        },
+    )
+    assert propose.status_code == 200
+    patch = propose.json()
+    assert patch["status"] == "proposed"
+
+    patches = client.get("/ontology/patches")
+    assert patches.status_code == 200
+    patch_list = patches.json()["patches"]
+    assert any(item["id"] == patch["id"] for item in patch_list)
+
+    review = client.post(
+        f"/ontology/patches/{patch['id']}/review",
+        json={"decision": "approve", "reviewer": "admin", "comment": "적절한 제안"},
+    )
+    assert review.status_code == 200
+    assert review.json()["status"] == "approved"

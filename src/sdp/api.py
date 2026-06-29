@@ -11,7 +11,12 @@ from .catalog import (
     deprecate_dataset,
     get_dataset,
     get_dataset_audit_events,
+    get_dataset_profile,
     get_dataset_lineage,
+    get_join_candidates,
+    get_dataset_schema_diff,
+    get_dataset_schema_history,
+    list_dataset_schema_versions,
     get_related_datasets,
     list_audit_events,
     list_datasets,
@@ -99,6 +104,8 @@ def catalog_search(
             "status": row.dataset.status,
             "version": row.dataset.version,
             "schema_version": row.dataset.schema_version,
+            "metadata_recommendation_score": row.dataset.metadata_recommendation_score,
+            "completeness_badge": "good" if row.dataset.metadata_recommendation_score >= 0.8 else "partial"
         }
         for row in results
     ]
@@ -124,7 +131,14 @@ def catalog_facets(
 
 @app.get("/catalog/datasets")
 def list_datasets_endpoint() -> list[dict[str, Any]]:
-    return [dataset.model_dump() for dataset in list_datasets()]
+    return [
+        {
+            **dataset.model_dump(),
+            "metadata_recommendation_score": dataset.metadata_recommendation_score,
+            "completeness_badge": "good" if dataset.metadata_recommendation_score >= 0.8 else "partial",
+        }
+        for dataset in list_datasets()
+    ]
 
 
 @app.get("/catalog/datasets/{dataset_id}")
@@ -132,7 +146,11 @@ def dataset_detail(dataset_id: str) -> dict[str, Any]:
     dataset = get_dataset(dataset_id)
     if not dataset:
         raise HTTPException(status_code=404, detail="dataset not found")
-    return dataset.model_dump()
+    return {
+        **dataset.model_dump(),
+        "metadata_recommendation_score": dataset.metadata_recommendation_score,
+        "completeness_badge": "good" if dataset.metadata_recommendation_score >= 0.8 else "partial",
+    }
 
 
 @app.get("/catalog/datasets/{dataset_id}/jsonld")
@@ -150,12 +168,51 @@ def dataset_jsonld(dataset_id: str) -> dict[str, Any]:
         "status": dataset.status,
         "completeness_score": dataset.completeness_score,
         "metadata_completeness": dataset.metadata_completeness,
+        "metadata_recommendation_score": dataset.metadata_recommendation_score,
         "domain": dataset.domain,
         "owner": dataset.owner,
         "steward": dataset.steward,
         "distribution": [d.model_dump() for d in dataset.distributions],
         "mappings": [m.model_dump() for m in dataset.mappings],
     }
+
+
+@app.get("/catalog/datasets/{dataset_id}/schema-history")
+def catalog_dataset_schema_history(dataset_id: str) -> dict[str, Any]:
+    return get_dataset_schema_history(dataset_id)
+
+
+@app.get("/catalog/datasets/{dataset_id}/schema-versions")
+def catalog_dataset_schema_versions(dataset_id: str) -> dict[str, Any]:
+    return {"dataset_id": dataset_id, "versions": list_dataset_schema_versions(dataset_id)}
+
+
+@app.get("/catalog/datasets/{dataset_id}/join-candidates")
+def catalog_dataset_join_candidates(dataset_id: str, limit: int = Query(default=10, ge=1, le=100)) -> dict[str, Any]:
+    return {
+        "dataset_id": dataset_id,
+        "join_candidates": get_join_candidates(dataset_id, limit=limit),
+    }
+
+
+@app.get("/catalog/datasets/{dataset_id}/profile")
+def catalog_dataset_profile(dataset_id: str) -> dict[str, Any]:
+    try:
+        return get_dataset_profile(dataset_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.get("/catalog/datasets/{dataset_id}/schema-diff")
+def catalog_dataset_schema_diff(
+    dataset_id: str,
+    from_version: str = Query(...),
+    to_version: str = Query(...),
+) -> dict[str, Any]:
+    try:
+        return {"dataset_id": dataset_id, "diff": get_dataset_schema_diff(dataset_id, from_version, to_version)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @app.get("/catalog/datasets/{dataset_id}/validate")
@@ -295,12 +352,68 @@ def concept_detail(concept: str) -> dict[str, Any]:
     return ontology.concept_assets(concept)
 
 
-@app.get("/browse/{dataset_id}/schema")
-def browse_schema(dataset_id: str) -> dict[str, Any]:
+@app.get("/ontology/concepts")
+def ontology_concepts() -> dict[str, Any]:
+    return {"count": len(ontology.list_concepts()), "concepts": ontology.list_concepts()}
+
+
+@app.get("/ontology/search")
+def ontology_search(q: str = Query(..., min_length=1)) -> dict[str, Any]:
+    matches = ontology.search_concepts(q)
+    return {
+        "query": q,
+        "count": len(matches),
+        "matches": [item.__dict__ for item in matches],
+    }
+
+
+@app.get("/ontology/patches")
+def ontology_patches(status: str | None = Query(default=None)) -> dict[str, Any]:
+    patches = ontology.list_patches(status=status)
+    return {"count": len(patches), "patches": patches}
+
+
+@app.post("/ontology/patches")
+def ontology_patch_create(payload: dict[str, str]) -> dict[str, Any]:
+    concept = payload.get("concept", "").strip()
+    suggestion = payload.get("suggestion", "").strip()
+    if not concept or not suggestion:
+        raise HTTPException(status_code=400, detail="concept and suggestion are required")
+    return ontology.propose_patch(
+        concept=concept,
+        suggestion=suggestion,
+        requestor=payload.get("requestor", "anonymous"),
+    )
+
+
+@app.post("/ontology/patches/{patch_id}/review")
+def ontology_patch_review(patch_id: str, payload: dict[str, str]) -> dict[str, Any]:
     try:
-        return browse.schema(dataset_id)
+        return ontology.review_patch(
+            patch_id=patch_id,
+            decision=payload.get("decision", ""),
+            reviewer=payload.get("reviewer", "anonymous"),
+            comment=payload.get("comment", ""),
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/ontology/term/{term}/graph")
+def ontology_term_graph(term: str) -> dict[str, Any]:
+    return ontology.concept_graph(term)
+
+
+@app.get("/browse/{dataset_id}/schema")
+def browse_schema(dataset_id: str, user: str = Query(default="anonymous"), purpose: str = Query(default="analysis")) -> dict[str, Any]:
+    try:
+        return browse.schema(dataset_id, user=user, purpose=purpose)
     except KeyError:
         raise HTTPException(status_code=404, detail="dataset not found")
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
 
 
 @app.post("/browse/{dataset_id}/preview")

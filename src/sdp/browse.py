@@ -79,6 +79,7 @@ def preview(dataset_id: str, user: str, purpose: str, limit: int = 100, offset: 
         "rows": masked,
         "row_count": min(limit, len(masked)),
         "offset": offset,
+        "masking_summary": {"masked_columns": decision.obligations.get("masking", [])},
         "has_more": offset + len(masked) < len(rows),
         "sampling_note": "샘플 결과이며 전체 데이터 대표성을 보장하지 않습니다.",
         "policy_decision_id": decision.decision_id,
@@ -95,13 +96,39 @@ def apply_mask(row: Dict[str, Any], masked_columns: List[str]) -> Dict[str, Any]
     return row
 
 
-def schema(dataset_id: str) -> Dict[str, Any]:
+def schema(dataset_id: str, user: str, purpose: str = "analysis") -> Dict[str, Any]:
     dataset = get_dataset(dataset_id)
     if not dataset:
         raise KeyError("dataset not found")
+
+    decision = evaluate(subject=user, resource=dataset_id, action="schema", purpose=purpose)
+    if decision.effect != "allow":
+        ingest_event(
+            event_type="browse.schema",
+            actor=user,
+            dataset_id=dataset_id,
+            decision="denied",
+            reason=decision.reason,
+            decision_id=decision.decision_id,
+            details={"purpose": purpose},
+        )
+        raise PermissionError(decision.reason)
+
+    ingest_event(
+        event_type="browse.schema",
+        actor=user,
+        dataset_id=dataset_id,
+        decision="allowed",
+        reason=decision.reason,
+        decision_id=decision.decision_id,
+        details={"purpose": purpose},
+    )
     return {
         "dataset_id": dataset.id,
+        "policy_decision_id": decision.decision_id,
         "schema": [column.model_dump() for column in dataset.schema],
+        "mappings": [mapping.model_dump() for mapping in dataset.mappings],
+        "masked_columns": decision.obligations.get("masking", []),
         "quality": {"quality_score": dataset.quality_score, "freshness_score": dataset.freshness_score},
     }
 

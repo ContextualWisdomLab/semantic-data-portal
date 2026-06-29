@@ -15,6 +15,7 @@ from .domain import (
     DatasetDistribution,
     DatasetPatchRequest,
     MappingStatus,
+    OntologyPatch,
 )
 
 
@@ -65,9 +66,9 @@ def _seed_datasets() -> List[Dataset]:
                     endpoint="https://example.internal/api/table/crm_customer_master",
                 )
             ],
-            mappings=[
-                BusinessMapping(concept="고객", status=MappingStatus.APPROVED),
-                BusinessMapping(concept="활성 고객", status=MappingStatus.PROPOSED),
+        mappings=[
+                BusinessMapping(concept="고객", status=MappingStatus.APPROVED, source="steward:biz-admin", steward="biz-admin", approved_at=datetime.now(timezone.utc)),
+                BusinessMapping(concept="활성 고객", status=MappingStatus.PROPOSED, source="llm:suggestion"),
             ],
             profile={"row_count": 1200000, "updated_at": "2026-06-29T00:00:00Z"},
             lineage_inputs=["crm-event"],
@@ -125,9 +126,9 @@ def _seed_datasets() -> List[Dataset]:
                     endpoint="https://example.internal/api/file/crm_event",
                 )
             ],
-            mappings=[
-                BusinessMapping(concept="활성 고객", status=MappingStatus.APPROVED),
-                BusinessMapping(concept="고객 이탈", status=MappingStatus.PROPOSED),
+        mappings=[
+                BusinessMapping(concept="활성 고객", status=MappingStatus.APPROVED, source="steward:biz-admin", steward="data-engineering", approved_at=datetime.now(timezone.utc)),
+                BusinessMapping(concept="고객 이탈", status=MappingStatus.PROPOSED, source="llm:suggestion"),
             ],
             profile={"row_count": 54000000, "updated_at": "2026-06-29T00:00:00Z"},
             lineage_inputs=["app-event-raw", "auth-service"],
@@ -140,6 +141,99 @@ _DATA = {dataset.id: dataset for dataset in _seed_datasets()}
 for _dataset in _DATA.values():
     _dataset.recompute_scores()
 _AUDIT_LOG: list[AuditEvent] = []
+_SCHEMA_HISTORY: dict[str, list[dict[str, Any]]] = {}
+
+
+def _column_signature(columns: list[ColumnMetadata]) -> list[dict[str, Any]]:
+    return [column.model_dump(exclude_unset=True) for column in columns]
+
+
+def _make_schema_snapshot(dataset: Dataset) -> dict[str, Any]:
+    return {
+        "version": dataset.version,
+        "schema_version": dataset.schema_version,
+        "snapshot_at": datetime.now(timezone.utc).isoformat(),
+        "schema": _column_signature(dataset.schema),
+        "lineage_inputs": list(dataset.lineage_inputs),
+        "lineage_outputs": list(dataset.lineage_outputs),
+        "mappings": [mapping.model_dump() for mapping in dataset.mappings],
+        "tags": list(dataset.tags),
+        "terms": list(dataset.terms),
+        "status": dataset.status,
+        "quality_score": dataset.quality_score,
+        "freshness_score": dataset.freshness_score,
+    }
+
+
+def _record_schema_snapshot(dataset: Dataset) -> None:
+    history = _SCHEMA_HISTORY.setdefault(dataset.id, [])
+    history.append(_make_schema_snapshot(dataset))
+
+
+def _coerce_version_index(history: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {entry["schema_version"]: entry for entry in history}
+
+
+def get_dataset_profile(dataset_id: str) -> dict[str, Any]:
+    dataset = get_dataset_or_404(dataset_id)
+    schema_profile: list[dict[str, Any]] = []
+    for column in dataset.schema:
+        schema_profile.append(
+            {
+                "name": column.name,
+                "datatype": column.datatype,
+                "null_ratio": column.nullable_ratio,
+                "distinct_ratio": column.distinct_ratio,
+                "quality_issues": list(column.quality_issues),
+            }
+        )
+    return {
+        "dataset_id": dataset.id,
+        "row_count": dataset.profile.get("row_count"),
+        "profile_updated_at": dataset.profile.get("updated_at"),
+        "quality_issues": dataset.profile.get("quality_issues", []),
+        "schema_profile": schema_profile,
+    }
+
+
+def get_join_candidates(dataset_id: str, *, limit: int = 10) -> list[dict[str, Any]]:
+    dataset = get_dataset_or_404(dataset_id)
+    candidates = []
+
+    dataset_columns = {column.name for column in dataset.schema}
+    dataset_terms = {term for term in dataset.terms}
+    for other in _DATA.values():
+        if other.id == dataset.id:
+            continue
+        if other.status not in {"published", "registered"}:
+            continue
+        overlap_terms = sorted(dataset_terms.intersection({term for term in other.terms}))
+        overlap_columns = sorted(dataset_columns.intersection({column.name for column in other.schema}))
+        score = len(overlap_terms) * 2 + len(overlap_columns)
+        if score == 0:
+            continue
+        candidates.append(
+            {
+                "dataset_id": other.id,
+                "title": other.title,
+                "status": other.status,
+                "score": score,
+                "overlap_terms": overlap_terms,
+                "overlap_columns": overlap_columns,
+                "recommended_because": "business term / schema overlap",
+            }
+        )
+
+    candidates.sort(key=lambda row: row["score"], reverse=True)
+    return candidates[:limit]
+
+
+def _initialize_schema_history() -> None:
+    for _dataset in _DATA.values():
+        _record_schema_snapshot(_dataset)
+
+
+_initialize_schema_history()
 
 
 @dataclass(frozen=True)
@@ -294,6 +388,62 @@ def list_datasets() -> list[Dataset]:
     return list(_DATA.values())
 
 
+def get_dataset_schema_history(dataset_id: str) -> dict[str, Any]:
+    get_dataset_or_404(dataset_id)
+    history = _SCHEMA_HISTORY.get(dataset_id, [])
+    if not history:
+        raise KeyError("no schema history found")
+    return {
+        "dataset_id": dataset_id,
+        "history": history,
+    }
+
+
+def list_dataset_schema_versions(dataset_id: str) -> list[str]:
+    get_dataset_or_404(dataset_id)
+    history = _SCHEMA_HISTORY.get(dataset_id, [])
+    return [entry["schema_version"] for entry in history]
+
+
+def get_dataset_schema_diff(dataset_id: str, from_version: str, to_version: str) -> dict[str, Any]:
+    get_dataset_or_404(dataset_id)
+    history = _coerce_version_index(_SCHEMA_HISTORY.get(dataset_id, []))
+    from_snapshot = history.get(from_version)
+    to_snapshot = history.get(to_version)
+    if not from_snapshot or not to_snapshot:
+        available = sorted(history.keys())
+        raise ValueError(
+            f"schema_version not found: requested ({from_version}, {to_version}), available={available}"
+        )
+
+    before_names = {column["name"]: column for column in from_snapshot.get("schema", [])}
+    after_names = {column["name"]: column for column in to_snapshot.get("schema", [])}
+    added = [column["name"] for name, column in after_names.items() if name not in before_names]
+    removed = [column["name"] for name, column in before_names.items() if name not in after_names]
+    unchanged = [
+        name
+        for name in before_names.keys() & after_names.keys()
+        if before_names[name] == after_names[name]
+    ]
+    changed = [
+        {
+            "name": name,
+            "before": before_names[name],
+            "after": after_names[name],
+        }
+        for name in before_names.keys() & after_names.keys()
+        if before_names[name] != after_names[name]
+    ]
+    return {
+        "from_version": from_version,
+        "to_version": to_version,
+        "added_columns": sorted(added),
+        "removed_columns": sorted(removed),
+        "changed_columns": changed,
+        "unchanged_columns": sorted(unchanged),
+    }
+
+
 def _build_dataset_payload(
     dataset: Dataset,
     *,
@@ -366,6 +516,7 @@ def register_dataset(
     )
     dataset.recompute_scores()
     _DATA[dataset.id] = dataset
+    _record_schema_snapshot(dataset)
     _AUDIT_LOG.append(_build_dataset_payload(dataset, actor=actor, action="dataset.register", decision_id=decision_id))
     return dataset
 
@@ -396,6 +547,7 @@ def patch_dataset(
     updated = Dataset.model_validate(data)
     updated.recompute_scores()
     _DATA[dataset_id] = updated
+    _record_schema_snapshot(updated)
     _AUDIT_LOG.append(
         _build_dataset_payload(
             updated,
@@ -438,6 +590,7 @@ def publish_dataset(
     published = Dataset.model_validate(data)
     published.recompute_scores()
     _DATA[dataset_id] = published
+    _record_schema_snapshot(published)
     _AUDIT_LOG.append(
         _build_dataset_payload(
             published,
@@ -465,6 +618,7 @@ def deprecate_dataset(
     deprecated = Dataset.model_validate(dataset_data)
     deprecated.recompute_scores()
     _DATA[dataset_id] = deprecated
+    _record_schema_snapshot(deprecated)
     _AUDIT_LOG.append(
         _build_dataset_payload(
             deprecated,

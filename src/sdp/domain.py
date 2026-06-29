@@ -31,6 +31,16 @@ class MappingStatus:
 class BusinessMapping(BaseModel):
     concept: str
     status: str = MappingStatus.PROPOSED
+    source: str | None = None
+    steward: str | None = None
+    approved_at: datetime | None = None
+
+
+class DatasetProfile(BaseModel):
+    row_count: int | None = None
+    freshness_ts: str | None = None
+    minmax: Dict[str, Dict[str, float | int | str]] = Field(default_factory=dict)
+    quality_issues: list[str] = Field(default_factory=list)
 
 
 class Dataset(BaseModel):
@@ -55,6 +65,7 @@ class Dataset(BaseModel):
     lineage_inputs: list[str] = Field(default_factory=list)
     lineage_outputs: list[str] = Field(default_factory=list)
     completeness_score: float = 0.0
+    recommended_score: float = 0.0
     version: str = "1.0.0"
     schema_version: str = "1.0.0"
     status: str = "published"
@@ -75,6 +86,30 @@ class Dataset(BaseModel):
         ]
         covered = sum(1 for value in required_fields if value)
         return covered / len(required_fields)
+
+    @property
+    def metadata_recommendation_score(self) -> float:
+        recommended_fields = [
+            self.owner,
+            self.steward,
+            self.title,
+            self.description,
+            self.sensitivity,
+            self.update_frequency,
+            self.source_system,
+            self.domain,
+            self.license,
+            self.tags,
+            self.terms,
+            bool(self.schema),
+            bool(self.distributions),
+            bool(self.lineage_inputs),
+            bool(self.profile),
+            self.quality_score is not None,
+            self.freshness_score is not None,
+        ]
+        covered = sum(1 for value in recommended_fields if bool(value))
+        return covered / len(recommended_fields)
 
     def recompute_scores(self) -> None:
         required_total = 11
@@ -102,6 +137,7 @@ class Dataset(BaseModel):
         if self.distributions:
             scored += 1
         self.completeness_score = round(scored / required_total, 3)
+        self.recommended_score = round(self.metadata_recommendation_score, 3)
 
 
 class PolicyDecision(BaseModel):
@@ -114,6 +150,20 @@ class PolicyDecision(BaseModel):
     reason: str = ""
 
 
+class OntologyPatch(BaseModel):
+    id: str
+    concept: str
+    requestor: str = "anonymous"
+    suggestion: str
+    confidence: float = Field(default=0.0, ge=0, le=1)
+    status: str = "proposed"
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    reviewed_by: str | None = None
+    reviewed_at: datetime | None = None
+    review_comment: str | None = None
+
+
+
 class QueryDraftRequest(BaseModel):
     question: str
     user: str
@@ -123,6 +173,7 @@ class QueryDraftRequest(BaseModel):
     date_window_days: int = 90
     columns: Optional[list[str]] = None
     row_limit: int = Field(default=1000, ge=1, le=5000)
+    timeout_ms: int = Field(default=30000, ge=500, le=120000)
 
 
 class AuditEvent(BaseModel):
