@@ -55,3 +55,8 @@ pytest
 | LLM Orchestrator | `src/sdp/orchestrator.py`, `/llm/*` |
 | JSON-LD Export | `/catalog/datasets/{id}/jsonld` |
 
+## 요구사항 대응 증적
+
+- PRD/TRD: `docs/prd-trd.md`
+- 요구사항 대응 매트릭스: `docs/implementation-compliance.md`
+
