@@ -418,6 +418,8 @@ def browse_schema(dataset_id: str, user: str = Query(default="anonymous"), purpo
 
 @app.post("/browse/{dataset_id}/preview")
 def browse_preview(dataset_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    if not get_dataset(dataset_id):
+        raise HTTPException(status_code=404, detail="dataset not found")
     try:
         if "user" not in payload:
             raise HTTPException(status_code=400, detail="user is required")
