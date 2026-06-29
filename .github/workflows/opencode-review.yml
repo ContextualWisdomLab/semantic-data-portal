@@ -34,7 +34,7 @@ on:
 
 concurrency:
   group: opencode-review-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.inputs.pr_number || github.run_id }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read
