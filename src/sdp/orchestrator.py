@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from .catalog import get_dataset, ingest_event
 from .domain import QueryDraftRequest
@@ -17,6 +18,43 @@ def _safe_identifier(value: str) -> str:
 
 def _safe_request_id() -> str:
     return "req-" + str(datetime.utcnow().timestamp()).replace(".", "")
+
+
+def _source_table_name(source_system: str) -> str:
+    return _safe_identifier(source_system.rstrip("/").rsplit("/", 1)[-1])
+
+
+def validate_sql_query(sql: str, *, source_system: str) -> list[str]:
+    stripped = sql.strip()
+    lowered = stripped.lower()
+    warnings: list[str] = []
+
+    if not lowered.startswith("select "):
+        warnings.append("only_select_allowed")
+    if ";" in stripped:
+        warnings.append("single_statement_required")
+    if "--" in stripped or "/*" in stripped or "*/" in stripped:
+        warnings.append("sql_comments_not_allowed")
+
+    for token in _FORBIDDEN_KEYWORDS:
+        if re.search(rf"\b{re.escape(token)}\b", lowered):
+            warnings.append("forbidden_keyword_detected")
+            break
+
+    referenced = [
+        next(value for value in match if value)
+        for match in re.findall(r"\bfrom\s+([A-Za-z_][\w.]*)|\bjoin\s+([A-Za-z_][\w.]*)", stripped, re.IGNORECASE)
+    ]
+    if not referenced:
+        warnings.append("missing_source_table")
+        return warnings
+
+    expected = _source_table_name(source_system).lower()
+    referenced_tables = {_safe_identifier(table.rsplit(".", 1)[-1]).lower() for table in referenced}
+    if referenced_tables != {expected}:
+        warnings.append("unauthorized_table_reference")
+
+    return warnings
 
 
 def draft_sql(req: QueryDraftRequest) -> dict:
@@ -53,7 +91,7 @@ def draft_sql(req: QueryDraftRequest) -> dict:
         return {"error": "invalid_group_by", "reason": "요청한 그룹화 컬럼이 데이터셋에 없습니다."}
 
     where_clause = f"WHERE created_at >= current_date - interval '{req.date_window_days} day'"
-    table_name = _safe_identifier(dataset.source_system.rsplit("/", 1)[-1])
+    table_name = _source_table_name(dataset.source_system)
 
     row_limit = min(req.row_limit, 2000)
     if row_limit <= 0:
@@ -215,6 +253,26 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
             status="DENIED",
             execution={"elapsedMs": 0, "source": "policy", "bytesScanned": 0},
             warnings=[decision.reason],
+        )
+
+    validation_warnings = validate_sql_query(req.query, source_system=dataset.source_system)
+    if validation_warnings:
+        audit(
+            dataset_id=dataset.id,
+            result="rejected",
+            reason="query_safety_validation_failed",
+            decision_id=decision.decision_id,
+            details={
+                "policy_decision_id": decision.decision_id,
+                "warnings": validation_warnings,
+            },
+        )
+        return response(
+            dataset_id=dataset.id,
+            policy_decision_id=decision.decision_id,
+            status="REJECTED",
+            execution={"elapsedMs": 0, "source": "query_safety", "bytesScanned": 0},
+            warnings=validation_warnings,
         )
 
     if req.dry_run:

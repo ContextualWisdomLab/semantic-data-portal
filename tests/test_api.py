@@ -556,7 +556,7 @@ def test_browse_query_success():
             "purpose": "analysis",
             "dataset_ids": ["crm-event"],
             "language": "SQL",
-            "query": "SELECT count(*) AS active_count FROM event",
+            "query": "SELECT count(*) AS active_count FROM crm",
             "dry_run": False,
         },
     )
@@ -578,6 +578,30 @@ def test_browse_query_success():
     )
 
 
+def test_browse_query_rejects_table_outside_dataset_binding():
+    response = client.post(
+        "/browse/query",
+        json={
+            "user": "analyst",
+            "purpose": "analysis",
+            "dataset_ids": ["crm-event"],
+            "language": "SQL",
+            "query": "SELECT count(*) AS active_count FROM customer",
+        },
+    )
+    assert response.status_code == 400
+    assert "unauthorized_table_reference" in response.json()["detail"]["warnings"]
+
+    events = client.get("/audit/events", params={"resource": "crm-event"})
+    assert events.status_code == 200
+    assert any(
+        event["action"] == "browse.query"
+        and event["result"] == "rejected"
+        and event["reason"] == "query_safety_validation_failed"
+        for event in events.json()
+    )
+
+
 def test_browse_query_denied_without_user():
     response = client.post(
         "/browse/query",
@@ -586,7 +610,7 @@ def test_browse_query_denied_without_user():
             "purpose": "analysis",
             "dataset_ids": ["crm-event"],
             "language": "SQL",
-            "query": "SELECT count(*) AS active_count FROM event",
+            "query": "SELECT count(*) AS active_count FROM crm",
         },
     )
     assert response.status_code == 403
