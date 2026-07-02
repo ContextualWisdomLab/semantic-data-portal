@@ -60,6 +60,7 @@ def build_enterprise_evidence_pack() -> dict[str, Any]:
             "/enterprise/demo-plan",
             "/enterprise/kpis",
             "/enterprise/controls",
+            "/enterprise/rbac-matrix",
             "/enterprise/connectors/sql_connector/probe?dataset_id=crm-customer-master",
             "/policy/decisions",
             "/audit/events",

@@ -115,15 +115,33 @@ def test_enterprise_controls_expose_feature_gate_manifest():
 
     assert body["feature_gate"] == "sdp_enterprise"
     assert body["implemented_controls"] >= 2
-    assert body["planned_controls"] >= 2
+    assert body["planned_controls"] >= 1
     assert controls["tenant_authorization"]["status"] == "implemented"
     assert controls["local_evidence_retention"]["status"] == "implemented"
     assert controls["sso_oidc_adapter"]["status"] == "planned"
     assert controls["rbac_matrix"]["feature_gate"] == "sdp_enterprise"
+    assert controls["rbac_matrix"]["status"] == "implemented"
+    assert "GET /enterprise/rbac-matrix" in controls["rbac_matrix"]["evidence"]
     assert "GET /enterprise/controls" in controls["rbac_matrix"]["evidence"]
     assert controls["deployment_template"]["status"] == "implemented"
     assert "Dockerfile" in controls["deployment_template"]["evidence"]
     assert controls["central_workflow_due_diligence"]["status"] == "external"
+
+
+def test_enterprise_rbac_matrix_exposes_roles_actions_and_tenant_scope():
+    response = client.get("/enterprise/rbac-matrix")
+    assert response.status_code == 200
+
+    body = response.json()
+    roles = {role["role"]: role for role in body["roles"]}
+
+    assert body["feature_gate"] == "sdp_enterprise"
+    assert body["policy_source"] == "sdp.policy.evaluate"
+    assert "run_governed_query" in body["action_catalog"]
+    assert "publish_dataset" in roles["admin"]["allowed_actions"]
+    assert "publish_dataset" in roles["data-analyst"]["denied_actions"]
+    assert roles["data-analyst"]["tenant_scope"] == "own_tenant_only"
+    assert roles["platform-admin"]["tenant_scope"] == "all_tenants"
 
 
 def test_oidc_preview_maps_claims_to_actor_context():

@@ -74,9 +74,10 @@ def enterprise_control_registry() -> list[EnterpriseControl]:
         EnterpriseControl(
             id="rbac_matrix",
             label="RBAC matrix",
-            status="planned",
+            status="implemented",
             risk_reduced="Buyer security review can inspect who may discover, preview, query, mutate, and administer datasets.",
             evidence=[
+                "GET /enterprise/rbac-matrix",
                 "sdp.policy.evaluate",
                 "GET /enterprise/controls",
                 "docs/enterprise-readiness.md",

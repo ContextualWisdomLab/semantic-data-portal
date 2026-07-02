@@ -28,6 +28,7 @@ from .demo_seed import (
 )
 from .enterprise import EnterpriseControl, EnterpriseControlsManifest, enterprise_controls_manifest
 from .kpis import KPIFramework, SaleabilityKPI, enterprise_kpi_framework
+from .rbac import RBACMatrix, RolePermission, enterprise_rbac_matrix
 from .readiness import (
     BuyerDemoActivationPlan,
     EnterpriseReadinessManifest,
@@ -62,6 +63,8 @@ __all__ = [
     "QueryDraftRequest",
     "QueryExecutionRequest",
     "QueryExecutionResponse",
+    "RBACMatrix",
+    "RolePermission",
     "SaleabilityKPI",
     "SourceConnector",
     "SQLiteEvidenceStore",
@@ -74,6 +77,7 @@ __all__ = [
     "connector_registry_manifest",
     "enterprise_controls_manifest",
     "enterprise_kpi_framework",
+    "enterprise_rbac_matrix",
     "enterprise_readiness_manifest",
     "get_buyer_demo_domain",
 ]

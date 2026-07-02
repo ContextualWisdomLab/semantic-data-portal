@@ -9,6 +9,7 @@ from sdp_core import (
     buyer_demo_activation_plan,
     enterprise_controls_manifest,
     enterprise_kpi_framework,
+    enterprise_rbac_matrix,
     enterprise_readiness_manifest,
 )
 
@@ -97,6 +98,11 @@ def enterprise_kpis() -> dict[str, Any]:
 @app.get("/enterprise/controls")
 def enterprise_controls() -> dict[str, Any]:
     return enterprise_controls_manifest().model_dump()
+
+
+@app.get("/enterprise/rbac-matrix")
+def enterprise_rbac() -> dict[str, Any]:
+    return enterprise_rbac_matrix().model_dump()
 
 
 @app.get("/enterprise/evidence-pack")
