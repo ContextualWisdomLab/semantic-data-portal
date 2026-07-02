@@ -1,12 +1,25 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 
-from sdp_core import AuditEvent, PolicyDecision, SQLiteEvidenceStore
+from sdp_core import AuditEvent, PolicyDecision, PostgresEvidenceStore, SQLiteEvidenceStore
 
-EvidenceStore = SQLiteEvidenceStore | None
+EvidenceStore = SQLiteEvidenceStore | PostgresEvidenceStore | None
 
-_STORE: EvidenceStore = SQLiteEvidenceStore(os.environ["SDP_SQLITE_PATH"]) if os.environ.get("SDP_SQLITE_PATH") else None
+
+def _build_configured_evidence_store(environ: Mapping[str, str]) -> EvidenceStore:
+    if environ.get("SDP_DATABASE_URL"):
+        return PostgresEvidenceStore(
+            environ["SDP_DATABASE_URL"],
+            sslmode=environ.get("SDP_DATABASE_SSLMODE"),
+        )
+    if environ.get("SDP_SQLITE_PATH"):
+        return SQLiteEvidenceStore(environ["SDP_SQLITE_PATH"])
+    return None
+
+
+_STORE: EvidenceStore = _build_configured_evidence_store(os.environ)
 _POLICY_DECISION_LOG: list[PolicyDecision] = []
 
 

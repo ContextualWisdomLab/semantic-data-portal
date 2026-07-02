@@ -29,13 +29,18 @@ def production_integration_registry() -> list[ProductionIntegration]:
         ProductionIntegration(
             id="postgres_evidence_store",
             label="Postgres evidence store",
-            status="planned",
-            buyer_risk="SQLite is acceptable for demo fallback, but paid pilots need managed, backed-up, multi-tenant evidence retention.",
+            status="implemented",
+            buyer_risk="SQLite remains available for local demo fallback; paid pilots can use managed, backed-up, tenant-indexed Postgres evidence retention.",
             current_evidence=[
+                "SDP_DATABASE_URL",
+                "SDP_DATABASE_SSLMODE",
                 "SDP_SQLITE_PATH",
                 "sdp_core.SQLiteEvidenceStore",
+                "sdp_core.PostgresEvidenceStore",
                 "GET /audit/events",
                 "GET /policy/decisions",
+                "tests/test_api.py::test_postgres_evidence_store_uses_tenant_columns_and_store_protocol",
+                "tests/test_api.py::test_configured_evidence_store_prefers_postgres_over_sqlite",
                 "tests/test_api.py::test_audit_events_endpoint_reads_configured_evidence_store_after_memory_clear",
             ],
             required_environment=[

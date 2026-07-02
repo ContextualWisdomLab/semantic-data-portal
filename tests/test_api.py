@@ -322,12 +322,12 @@ def test_enterprise_production_readiness_tracks_paid_pilot_integrations():
     assert body["valuation_target_krw"] == 2_000_000_000
     assert body["current_stage"] == "pilot_candidate"
     assert body["demo_release_ready"] is True
-    assert body["paid_pilot_ready"] is False
+    assert body["paid_pilot_ready"] is True
 
     integrations = {item["id"]: item for item in body["integrations"]}
-    assert integrations["postgres_evidence_store"]["status"] == "planned"
+    assert integrations["postgres_evidence_store"]["status"] == "implemented"
     assert "SDP_DATABASE_URL" in integrations["postgres_evidence_store"]["required_environment"]
-    assert "SDP_SQLITE_PATH" in integrations["postgres_evidence_store"]["current_evidence"]
+    assert "sdp_core.PostgresEvidenceStore" in integrations["postgres_evidence_store"]["current_evidence"]
     assert any("policy decisions and audit events" in item for item in integrations["postgres_evidence_store"]["acceptance_criteria"])
 
     assert integrations["oidc_jwks_verification"]["status"] == "implemented"
@@ -341,9 +341,7 @@ def test_enterprise_production_readiness_tracks_paid_pilot_integrations():
     assert integrations["request_observability_export"]["status"] == "implemented"
     assert "/enterprise/observability" in integrations["request_observability_export"]["current_evidence"]
 
-    assert set(body["paid_pilot_blockers"]) >= {
-        "postgres_evidence_store",
-    }
+    assert body["paid_pilot_blockers"] == []
     assert "oidc_jwks_verification" not in body["paid_pilot_blockers"]
     assert "connector_credential_vault" not in body["paid_pilot_blockers"]
     assert "request_observability_export" not in body["paid_pilot_blockers"]
@@ -519,14 +517,14 @@ def test_enterprise_evidence_pack_summarizes_buyer_diligence():
     assert body["policy_decision_count"] >= 1
     assert body["audit_event_count"] >= 1
     assert body["production_demo_release_ready"] is True
-    assert body["production_paid_pilot_ready"] is False
-    assert body["production_paid_pilot_blockers"] == 1
+    assert body["production_paid_pilot_ready"] is True
+    assert body["production_paid_pilot_blockers"] == 0
     assert body["saleability_gates"]["metadata_validation_pass_rate"] == "pass"
     assert body["saleability_gates"]["shacl_validation_pass_rate"] == "pass"
     assert body["saleability_gates"]["steward_review_queue"] == "pass"
     assert body["saleability_gates"]["ontology_mapping_coverage"] == "pass"
     assert body["saleability_gates"]["production_demo_release"] == "pass"
-    assert body["saleability_gates"]["production_paid_pilot"] == "needs_integration"
+    assert body["saleability_gates"]["production_paid_pilot"] == "pass"
     assert "/enterprise/production-readiness" in body["proof_endpoints"]
     assert "/enterprise/shacl-validation" in body["proof_endpoints"]
     assert "/enterprise/steward-review" in body["proof_endpoints"]
@@ -560,6 +558,151 @@ def test_sqlite_evidence_store_persists_policy_and_audit_events(tmp_path):
     assert any(row.decision_id == decision.decision_id for row in persisted_decisions)
     persisted_events = reopened.list_events(resource="crm-customer-master", limit=10)
     assert any(event.action == "browse.preview" and event.decision_id for event in persisted_events)
+
+
+def test_configured_evidence_store_prefers_postgres_over_sqlite(monkeypatch, tmp_path):
+    built = {}
+
+    class FakePostgresEvidenceStore:
+        def __init__(self, dsn: str, *, sslmode: str | None = None):
+            built["dsn"] = dsn
+            built["sslmode"] = sslmode
+
+    monkeypatch.setattr(app_evidence, "PostgresEvidenceStore", FakePostgresEvidenceStore)
+
+    store = app_evidence._build_configured_evidence_store(
+        {
+            "SDP_DATABASE_URL": "postgresql://buyer:secret@db.example.com:5432/sdp",
+            "SDP_DATABASE_SSLMODE": "require",
+            "SDP_SQLITE_PATH": str(tmp_path / "fallback.sqlite3"),
+        }
+    )
+
+    assert isinstance(store, FakePostgresEvidenceStore)
+    assert built == {
+        "dsn": "postgresql://buyer:secret@db.example.com:5432/sdp",
+        "sslmode": "require",
+    }
+
+
+def test_postgres_evidence_store_uses_tenant_columns_and_store_protocol():
+    connections = []
+
+    class FakeCursor:
+        def __init__(self):
+            self.rows = []
+
+        def execute(self, sql, params=()):
+            if "SELECT payload FROM policy_decisions" in sql:
+                self.rows = [
+                    (
+                        {
+                            "subject": "analyst",
+                            "resource": "crm-customer-master",
+                            "action": "preview",
+                            "effect": "allow",
+                            "decision_id": "decision-1",
+                            "obligations": {"tenant_id": "buyer-demo"},
+                            "reason": "ok",
+                        },
+                    )
+                ]
+            elif "SELECT payload FROM audit_events" in sql:
+                self.rows = [
+                    (
+                        {
+                            "id": "audit-1",
+                            "actor": "analyst",
+                            "action": "browse.preview",
+                            "resource": "crm-customer-master",
+                            "result": "allowed",
+                            "decision_id": "decision-1",
+                            "details": {"tenant_id": "buyer-demo"},
+                            "reason": "ok",
+                            "created_at": "2026-07-02T00:00:00Z",
+                        },
+                    )
+                ]
+            return self
+
+        def fetchone(self):
+            return self.rows[0] if self.rows else None
+
+        def fetchall(self):
+            return self.rows
+
+    class FakeConnection:
+        def __init__(self):
+            self.statements = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def cursor(self):
+            return FakeCursorContext(self)
+
+        def execute(self, sql, params=()):
+            self.statements.append((sql, params))
+            return FakeCursor().execute(sql, params)
+
+    class FakeCursorContext:
+        def __init__(self, connection):
+            self.connection = connection
+            self.cursor = FakeCursor()
+
+        def __enter__(self):
+            return self.cursor
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    def connect_factory(dsn, **kwargs):
+        connection = FakeConnection()
+        connections.append((dsn, kwargs, connection))
+        return connection
+
+    store = sdp_core.PostgresEvidenceStore(
+        "postgresql://buyer:secret@localhost:5432/sdp",
+        sslmode="require",
+        connect_factory=connect_factory,
+    )
+    decision = sdp_core.PolicyDecision(
+        subject="analyst",
+        resource="crm-customer-master",
+        action="preview",
+        effect="allow",
+        decision_id="decision-1",
+        obligations={"tenant_id": "buyer-demo"},
+        reason="ok",
+    )
+    event = sdp_core.AuditEvent(
+        id="audit-1",
+        actor="analyst",
+        action="browse.preview",
+        resource="crm-customer-master",
+        result="allowed",
+        decision_id="decision-1",
+        details={"tenant_id": "buyer-demo"},
+        reason="ok",
+    )
+
+    assert store.record_decision(decision) == decision
+    assert store.get_decision("decision-1") == decision
+    assert store.append_event(event) == event
+    assert store.list_decisions(resource="crm-customer-master", limit=5)[0].decision_id == "decision-1"
+    assert store.list_events(resource="crm-customer-master", limit=5)[0].id == "audit-1"
+
+    statements = "\n".join(sql for _, _, connection in connections for sql, _ in connection.statements)
+    assert "tenant_id TEXT NOT NULL" in statements
+    assert "payload JSONB NOT NULL" in statements
+    assert "created_at TIMESTAMPTZ NOT NULL" in statements
+    assert "idx_policy_decisions_tenant_resource_created" in statements
+    assert "idx_audit_events_tenant_resource_created" in statements
+    assert "ON CONFLICT" in statements
+    assert any(kwargs == {"sslmode": "require"} for _, kwargs, _ in connections)
 
 
 def test_persisted_audit_list_uses_configured_store(tmp_path):
@@ -655,8 +798,8 @@ def test_enterprise_demo_smoke_summary_is_ready():
     assert summary["rest_connector_adapter_status"] == "implemented"
     assert summary["production_current_stage"] == "pilot_candidate"
     assert summary["production_demo_release_ready"] is True
-    assert summary["production_paid_pilot_ready"] is False
-    assert summary["production_paid_pilot_blockers"] == 1
+    assert summary["production_paid_pilot_ready"] is True
+    assert summary["production_paid_pilot_blockers"] == 0
     assert summary["ready"] is True
 
 

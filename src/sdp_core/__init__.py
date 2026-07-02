@@ -44,7 +44,7 @@ from .readiness import (
     enterprise_readiness_manifest,
     SourceConnector,
 )
-from .stores import SQLiteEvidenceStore
+from .stores import PostgresEvidenceStore, SQLiteEvidenceStore
 
 __all__ = [
     "ActorContext",
@@ -75,6 +75,7 @@ __all__ = [
     "RolePermission",
     "SaleabilityKPI",
     "SourceConnector",
+    "PostgresEvidenceStore",
     "SQLiteEvidenceStore",
     "buyer_demo_context_for_dataset",
     "buyer_demo_dataset_summaries",

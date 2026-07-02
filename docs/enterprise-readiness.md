@@ -30,7 +30,7 @@
 | Buyer demo activation | 2주 안에 SQL/RDF/REST/file 중 하나로 priority domain 온보딩 | demo SQL/RDF/file fixture 구현됨, REST adapter는 env secret reference가 있으면 ready_for_demo |
 | Query safety | dataset-bound governed query만 허용하고 literal tautology/comment/multi-statement/forbidden keyword를 fail-closed 처리 | 구현됨 |
 | OIDC preview/JWKS guardrail | 만료/subject/tenant claim shape 검증, issuer/audience/JWKS 서명 검증, group-to-role allowlist mapping, 직접 roles claim 무시 | 구현됨 |
-| Production integration | paid pilot 전 Postgres evidence store, OIDC JWKS verification, connector credential vault, request observability export 필요 항목을 숨기지 않고 manifest로 추적 | demo-ready, OIDC JWKS verification, request observability export, connector credential vault 구현됨, 남은 paid pilot blocker 1건 |
+| Production integration | paid pilot 전 Postgres evidence store, OIDC JWKS verification, connector credential vault, request observability export 필요 항목을 숨기지 않고 manifest로 추적 | Postgres evidence store, OIDC JWKS verification, request observability export, connector credential vault 구현됨, paid pilot blocker 0건 |
 | Operational diligence | 중앙 required workflow, security scan, coverage evidence, OSSF baseline 통과 | PR #2/#4 병합됨, PR #5 보안 보강 후 중앙 체크 대기 |
 
 ## API 증빙
@@ -41,7 +41,7 @@
 - `GET /enterprise/controls`: `sdp_enterprise` feature gate 아래 retention, SSO/OIDC, RBAC, deployment, 중앙 workflow diligence 상태
 - `GET /enterprise/rbac-matrix`: role/action/tenant-scope permission matrix
 - `GET /enterprise/observability`: health, metrics, evidence count, request observation, bodyless structured log sink, alert condition 운영 증빙
-- `GET /enterprise/production-readiness`: demo-ready와 paid-pilot-ready를 분리해 Postgres evidence store, OIDC JWKS verification, connector credential vault, request observability export의 환경변수·acceptance criteria·blocker를 노출. OIDC JWKS verification은 `SDP_OIDC_ISSUER`/`SDP_OIDC_AUDIENCE`/`SDP_OIDC_JWKS_URL`, request observability export는 `SDP_LOG_SINK_URL`/`SDP_REQUEST_ID_HEADER`, connector credential vault는 `SDP_CONNECTOR_SECRET_REF_PREFIX`/`SDP_CONNECTOR_VAULT_PROVIDER` 기반 구현 증빙으로 paid-pilot blocker에서 제거되었다.
+- `GET /enterprise/production-readiness`: demo-ready와 paid-pilot-ready를 분리해 Postgres evidence store, OIDC JWKS verification, connector credential vault, request observability export의 환경변수·acceptance criteria·blocker를 노출. Postgres evidence store는 `SDP_DATABASE_URL`/`SDP_DATABASE_SSLMODE`, OIDC JWKS verification은 `SDP_OIDC_ISSUER`/`SDP_OIDC_AUDIENCE`/`SDP_OIDC_JWKS_URL`, request observability export는 `SDP_LOG_SINK_URL`/`SDP_REQUEST_ID_HEADER`, connector credential vault는 `SDP_CONNECTOR_SECRET_REF_PREFIX`/`SDP_CONNECTOR_VAULT_PROVIDER` 기반 구현 증빙으로 paid-pilot blocker에서 제거되었다.
 - `GET /enterprise/evidence-pack`: buyer diligence용 metadata validation, ontology mapping coverage, policy/audit evidence, proof endpoint 요약
 - `GET /enterprise/shacl-validation`: buyer priority dataset 전체의 SHACL 호환 validation pass rate와 shape/report 요약
 - `GET /enterprise/steward-review`: SHACL validation failure와 ontology patch proposal을 묶은 steward 검토 대기열 및 buyer handoff readiness 요약
@@ -67,11 +67,17 @@
 PYTHONPATH=src python -m sdp.demo_smoke
 ```
 
-성공 조건은 20억 valuation target, 10일 이하 demo activation plan, 3개 이상의 seed dataset, metadata validation pass rate 95% 이상, SHACL 호환 validation pass rate 95% 이상, steward review queue 0건, ontology mapping coverage 70% 이상, KPI framework, enterprise controls manifest, SQL/RDF/file connector probe와 REST adapter evidence, production readiness manifest가 모두 준비 상태인 것이다. `ready=true`는 demo release 기준이며, paid pilot은 `/enterprise/production-readiness`의 planned blockers가 모두 닫혀야 한다.
+성공 조건은 20억 valuation target, 10일 이하 demo activation plan, 3개 이상의 seed dataset, metadata validation pass rate 95% 이상, SHACL 호환 validation pass rate 95% 이상, steward review queue 0건, ontology mapping coverage 70% 이상, KPI framework, enterprise controls manifest, SQL/RDF/file connector probe와 REST adapter evidence, production readiness manifest가 모두 준비 상태인 것이다. `ready=true`는 demo release 기준이며, paid pilot 상태는 `/enterprise/production-readiness`의 `paid_pilot_ready`와 `paid_pilot_blockers`로 확인한다.
 
-## 로컬 Evidence Store
+## Evidence Store
 
-`SDP_SQLITE_PATH`를 지정하면 audit event와 policy decision이 stdlib SQLite 파일에 기록된다. 운영 Postgres 저장소를 붙이기 전 demo/pilot 환경의 로컬 지속성 fallback이다.
+`SDP_DATABASE_URL`를 지정하면 audit event와 policy decision이 Postgres에 기록된다. 각 행은 tenant, resource, decision id, timestamp, immutable payload snapshot을 함께 저장한다. `SDP_DATABASE_SSLMODE`로 managed database의 SSL mode를 지정할 수 있다.
+
+```bash
+SDP_DATABASE_URL=postgresql://sdp:sdp@localhost:5432/sdp SDP_DATABASE_SSLMODE=require uvicorn sdp.api:app --reload
+```
+
+`SDP_SQLITE_PATH`를 지정하면 audit event와 policy decision이 stdlib SQLite 파일에 기록된다. production credential 없이 같은 store protocol을 검증하는 로컬 fallback이다. `SDP_DATABASE_URL`이 있으면 Postgres가 우선한다.
 
 ```bash
 SDP_SQLITE_PATH=.local/sdp-evidence.sqlite3 uvicorn sdp.api:app --reload
@@ -84,7 +90,7 @@ SDP_SQLITE_PATH=.local/sdp-evidence.sqlite3 uvicorn sdp.api:app --reload
 3. 완료: demo RDF/SPARQL connector adapter를 semantic glossary fixture와 `SourceConnector` contract test로 추가한다.
 4. 완료: demo file lake connector adapter를 S3/parquet fixture와 `SourceConnector` contract test로 추가한다.
 5. 완료: demo REST connector adapter를 governed API fixture와 `SourceConnector` contract test로 추가하고, credential vault control은 env secret reference presence로 fail-closed 처리한다.
-6. 완료: `SQLiteEvidenceStore` fallback으로 audit event와 policy decision의 로컬 지속성을 검증한다.
+6. 완료: `PostgresEvidenceStore`와 `SQLiteEvidenceStore` fallback으로 audit event와 policy decision의 지속성을 검증한다.
 7. 완료: local `ActorContext` 기반 tenant authorization을 preview/query/schema policy path에 적용한다.
 8. 완료: buyer demo seed를 도메인별 fixture로 분리하고, `GET /enterprise/demo-plan` 및 connector probe와 연결한다.
 9. 완료: retention policy, SSO/RBAC, deployment template를 `sdp_enterprise` feature gate manifest로 묶고 RBAC matrix와 Dockerfile/Compose deployment template를 추가한다.
