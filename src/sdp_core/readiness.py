@@ -395,6 +395,12 @@ def enterprise_readiness_manifest() -> EnterpriseReadinessManifest:
                 "code_connect": "disabled",
             },
             {
+                "id": "operator_console_design_capture",
+                "type": "figma_design",
+                "url": "https://www.figma.com/design/JjYSqr6nWxpARUjaVKhG16",
+                "code_connect": "disabled",
+            },
+            {
                 "id": "product_design_review",
                 "type": "information_architecture",
                 "url": "docs/enterprise-readiness.md",

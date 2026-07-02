@@ -46,6 +46,9 @@ def test_enterprise_readiness_manifest_exposes_saleable_gates():
     assert gates["policy_audit_coverage"]["status"] == "implemented"
     assert gates["operational_due_diligence"]["status"] == "external"
     assert any(artifact["code_connect"] == "disabled" for artifact in body["design_artifacts"])
+    artifacts = {artifact["id"]: artifact for artifact in body["design_artifacts"]}
+    assert artifacts["operator_console_design_capture"]["url"].startswith("https://www.figma.com/design/")
+    assert artifacts["operator_console_design_capture"]["code_connect"] == "disabled"
 
 
 def test_enterprise_demo_plan_supports_buyer_activation_path():
