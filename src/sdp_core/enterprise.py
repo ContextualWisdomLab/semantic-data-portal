@@ -105,6 +105,22 @@ def enterprise_control_registry() -> list[EnterpriseControl]:
             ],
         ),
         EnterpriseControl(
+            id="operational_observability",
+            label="Operational observability",
+            status="implemented",
+            risk_reduced="Pilot operators can inspect health, minimal metrics, evidence counts, and alert conditions before production integration.",
+            evidence=[
+                "GET /health",
+                "GET /metrics",
+                "GET /enterprise/observability",
+                "tests/test_api.py::test_enterprise_observability_and_metrics_endpoints",
+            ],
+            release_criteria=[
+                "Health and metrics endpoints are exposed without source credentials.",
+                "Audit, policy, catalog, and enterprise control counts are visible to operators.",
+            ],
+        ),
+        EnterpriseControl(
             id="central_workflow_due_diligence",
             label="Central workflow due diligence",
             status="external",

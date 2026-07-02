@@ -125,6 +125,8 @@ def test_enterprise_controls_expose_feature_gate_manifest():
     assert "GET /enterprise/controls" in controls["rbac_matrix"]["evidence"]
     assert controls["deployment_template"]["status"] == "implemented"
     assert "Dockerfile" in controls["deployment_template"]["evidence"]
+    assert controls["operational_observability"]["status"] == "implemented"
+    assert "GET /metrics" in controls["operational_observability"]["evidence"]
     assert controls["central_workflow_due_diligence"]["status"] == "external"
 
 
@@ -142,6 +144,25 @@ def test_enterprise_rbac_matrix_exposes_roles_actions_and_tenant_scope():
     assert "publish_dataset" in roles["data-analyst"]["denied_actions"]
     assert roles["data-analyst"]["tenant_scope"] == "own_tenant_only"
     assert roles["platform-admin"]["tenant_scope"] == "all_tenants"
+
+
+def test_enterprise_observability_and_metrics_endpoints():
+    observability = client.get("/enterprise/observability")
+    assert observability.status_code == 200
+    body = observability.json()
+
+    assert body["service"] == "semantic-data-portal"
+    assert body["health_endpoint"] == "/health"
+    assert body["metrics_endpoint"] == "/metrics"
+    assert body["metrics"]["catalog_datasets_total"] >= 3
+    assert body["metrics"]["enterprise_controls_implemented"] >= 5
+    assert any(alert["id"] == "policy_audit_gap" for alert in body["alerts"])
+
+    metrics = client.get("/metrics")
+    assert metrics.status_code == 200
+    text = metrics.text
+    assert "sdp_catalog_datasets_total" in text
+    assert "sdp_enterprise_controls_implemented" in text
 
 
 def test_oidc_preview_maps_claims_to_actor_context():

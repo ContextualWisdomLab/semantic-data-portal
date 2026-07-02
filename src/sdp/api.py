@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sdp_core import (
     buyer_demo_activation_plan,
@@ -42,6 +42,7 @@ from .domain import (
 )
 from .enterprise_evidence import build_enterprise_evidence_pack
 from .evidence import list_policy_decisions
+from .observability import build_observability_manifest, prometheus_metrics_text
 from .policy import evaluate
 
 
@@ -74,6 +75,11 @@ def health() -> dict[str, str]:
     return {"status": "ok", "at": datetime.now(timezone.utc).isoformat()}
 
 
+@app.get("/metrics")
+def metrics() -> Response:
+    return Response(content=prometheus_metrics_text(), media_type="text/plain; version=0.0.4")
+
+
 @app.get("/enterprise/readiness")
 def enterprise_readiness() -> dict[str, Any]:
     return enterprise_readiness_manifest().model_dump()
@@ -103,6 +109,11 @@ def enterprise_controls() -> dict[str, Any]:
 @app.get("/enterprise/rbac-matrix")
 def enterprise_rbac() -> dict[str, Any]:
     return enterprise_rbac_matrix().model_dump()
+
+
+@app.get("/enterprise/observability")
+def enterprise_observability() -> dict[str, Any]:
+    return build_observability_manifest()
 
 
 @app.get("/enterprise/evidence-pack")

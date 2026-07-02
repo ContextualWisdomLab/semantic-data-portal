@@ -61,9 +61,11 @@ def build_enterprise_evidence_pack() -> dict[str, Any]:
             "/enterprise/kpis",
             "/enterprise/controls",
             "/enterprise/rbac-matrix",
+            "/enterprise/observability",
             "/enterprise/connectors/sql_connector/probe?dataset_id=crm-customer-master",
             "/policy/decisions",
             "/audit/events",
+            "/metrics",
         ],
         "saleability_gates": {
             "metadata_validation_pass_rate": "pass" if _metadata_validation_pass_rate() >= 0.95 else "gap",
