@@ -39,6 +39,7 @@ from .domain import (
     QueryDraftRequest,
     QueryExecutionRequest,
 )
+from .enterprise_evidence import build_enterprise_evidence_pack
 from .evidence import list_policy_decisions
 from .policy import evaluate
 
@@ -96,6 +97,11 @@ def enterprise_kpis() -> dict[str, Any]:
 @app.get("/enterprise/controls")
 def enterprise_controls() -> dict[str, Any]:
     return enterprise_controls_manifest().model_dump()
+
+
+@app.get("/enterprise/evidence-pack")
+def enterprise_evidence_pack() -> dict[str, Any]:
+    return build_enterprise_evidence_pack()
 
 
 @app.get("/enterprise/connectors/{connector_id}/probe")

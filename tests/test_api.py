@@ -122,6 +122,35 @@ def test_enterprise_controls_expose_feature_gate_manifest():
     assert controls["central_workflow_due_diligence"]["status"] == "external"
 
 
+def test_enterprise_evidence_pack_summarizes_buyer_diligence():
+    client.post(
+        "/policy/decision",
+        json={
+            "subject": "analyst",
+            "resource": "crm-customer-master",
+            "action": "preview",
+            "purpose": "analysis",
+        },
+    )
+    client.post(
+        "/browse/crm-customer-master/preview",
+        json={"user": "analyst", "purpose": "analysis", "limit": 1},
+    )
+
+    response = client.get("/enterprise/evidence-pack")
+    assert response.status_code == 200
+
+    body = response.json()
+    assert body["valuation_target_krw"] == 2_000_000_000
+    assert body["metadata_validation_pass_rate"] >= 0.95
+    assert body["ontology_mapping_coverage"] >= 0.7
+    assert body["policy_decision_count"] >= 1
+    assert body["audit_event_count"] >= 1
+    assert body["saleability_gates"]["metadata_validation_pass_rate"] == "pass"
+    assert body["saleability_gates"]["ontology_mapping_coverage"] == "pass"
+    assert "/policy/decisions" in body["proof_endpoints"]
+
+
 def test_sdp_core_owns_stable_contracts_with_app_compatibility_exports():
     assert app_domain.ActorContext is sdp_core.ActorContext
     assert app_domain.Dataset is sdp_core.Dataset
@@ -193,6 +222,8 @@ def test_enterprise_demo_smoke_summary_is_ready():
     assert summary["valuation_target_krw"] == 2_000_000_000
     assert summary["demo_activation_days"] <= 10
     assert summary["demo_seed_datasets"] >= 3
+    assert summary["metadata_validation_pass_rate"] >= 0.95
+    assert summary["ontology_mapping_coverage"] >= 0.7
     assert summary["primary_kpis"] >= 3
     assert summary["guardrail_kpis"] >= 3
     assert summary["enterprise_controls"] >= 6

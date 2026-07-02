@@ -143,7 +143,7 @@ def _customer_intelligence_datasets() -> list[Dataset]:
                     steward="biz-admin",
                     approved_at=approved_at,
                 ),
-                _proposed_mapping("활성 고객"),
+                _approved_mapping("활성 고객", steward="biz-admin"),
             ],
             profile={"row_count": 1200000, "updated_at": "2026-06-29T00:00:00Z"},
             lineage_inputs=["crm-event"],
@@ -256,7 +256,7 @@ def _customer_intelligence_datasets() -> list[Dataset]:
             ],
             mappings=[
                 _approved_mapping("전환", steward="sales-ops"),
-                _proposed_mapping("매출"),
+                _approved_mapping("매출", steward="sales-ops"),
             ],
             profile={"row_count": 8700000, "updated_at": "2026-06-29T00:00:00Z"},
             lineage_inputs=["commerce-order"],
