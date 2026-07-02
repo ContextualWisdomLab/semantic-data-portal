@@ -12,6 +12,7 @@ from sdp_core import (
 
 from .catalog import list_audit_events, list_datasets, validate_metadata
 from .evidence import list_policy_decisions
+from .semantic_validation import enterprise_shacl_validation_summary
 
 
 def _ratio(numerator: int, denominator: int) -> float:
@@ -37,6 +38,7 @@ def build_enterprise_evidence_pack() -> dict[str, Any]:
     demo_plan = buyer_demo_activation_plan()
     controls = enterprise_controls_manifest()
     kpis = enterprise_kpi_framework()
+    shacl_validation = enterprise_shacl_validation_summary()
     datasets = list_datasets()
     audit_events = list_audit_events(limit=500)
     policy_decisions = list_policy_decisions(limit=500)
@@ -48,6 +50,7 @@ def build_enterprise_evidence_pack() -> dict[str, Any]:
         "dataset_count": len(datasets),
         "demo_seed_datasets": [dataset.id for dataset in demo_plan.demo_datasets],
         "metadata_validation_pass_rate": _metadata_validation_pass_rate(),
+        "shacl_validation_pass_rate": shacl_validation["validation_pass_rate"],
         "ontology_mapping_coverage": _ontology_mapping_coverage(),
         "policy_decision_count": len(policy_decisions),
         "audit_event_count": len(audit_events),
@@ -62,6 +65,7 @@ def build_enterprise_evidence_pack() -> dict[str, Any]:
             "/enterprise/controls",
             "/enterprise/rbac-matrix",
             "/enterprise/observability",
+            "/enterprise/shacl-validation",
             "/enterprise/connectors/sql_connector/probe?dataset_id=crm-customer-master",
             "/policy/decisions",
             "/audit/events",
@@ -69,6 +73,7 @@ def build_enterprise_evidence_pack() -> dict[str, Any]:
         ],
         "saleability_gates": {
             "metadata_validation_pass_rate": "pass" if _metadata_validation_pass_rate() >= 0.95 else "gap",
+            "shacl_validation_pass_rate": "pass" if shacl_validation["validation_pass_rate"] >= 0.95 else "gap",
             "ontology_mapping_coverage": "pass" if _ontology_mapping_coverage() >= 0.7 else "gap",
             "policy_decisions_inspectable": "pass" if policy_decisions else "needs_activity",
             "audit_events_inspectable": "pass" if audit_events else "needs_activity",

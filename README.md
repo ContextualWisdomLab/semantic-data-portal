@@ -41,6 +41,7 @@ docker compose up --build
 - `GET /catalog/datasets/{dataset_id}`
 - `GET /catalog/datasets/{dataset_id}/jsonld`
 - `GET /catalog/datasets/{dataset_id}/validate`
+- `GET /catalog/datasets/{dataset_id}/semantic-validation`
 - `POST /policy/decision`
 - `GET /policy/decisions`
 - `POST /ontology/resolve`
@@ -56,6 +57,7 @@ docker compose up --build
 - `GET /enterprise/rbac-matrix`
 - `GET /enterprise/observability`
 - `GET /enterprise/evidence-pack`
+- `GET /enterprise/shacl-validation`
 - `POST /enterprise/auth/oidc-preview`
 - `GET /enterprise/connectors/{connector_id}/probe`
 
@@ -76,9 +78,10 @@ PYTHONPATH=src python -m sdp.demo_smoke
 | Policy Service | `src/sdp/policy.py`, `/policy/decision` |
 | LLM Orchestrator | `src/sdp/orchestrator.py`, `/llm/*` |
 | JSON-LD Export | `/catalog/datasets/{id}/jsonld` |
-| Enterprise Core Contracts | `src/sdp_core/contracts.py`, `src/sdp_core/readiness.py`, `src/sdp_core/demo_seed.py`, `src/sdp_core/enterprise.py`, `src/sdp_core/rbac.py`, `src/sdp/enterprise_evidence.py`, `src/sdp/observability.py`, `/enterprise/*` |
+| Enterprise Core Contracts | `src/sdp_core/contracts.py`, `src/sdp_core/readiness.py`, `src/sdp_core/demo_seed.py`, `src/sdp_core/enterprise.py`, `src/sdp_core/rbac.py`, `src/sdp/enterprise_evidence.py`, `src/sdp/semantic_validation.py`, `src/sdp/observability.py`, `/enterprise/*` |
 
 `src/sdp_core/demo_seed.py`는 buyer demo domain, SQL/RDF/file/API seed dataset, analyst/governance question을 catalog seed, `/enterprise/demo-plan`, connector probe가 함께 쓰는 단일 계약으로 둡니다.
+`src/sdp/semantic_validation.py`는 현재 metadata gate와 approved mapping을 SHACL 호환 리포트 형태로 노출해 `/enterprise/shacl-validation`과 smoke readiness가 같은 validation pass rate를 쓰게 합니다.
 
 ## 요구사항 대응 증적
 

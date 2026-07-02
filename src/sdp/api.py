@@ -44,6 +44,7 @@ from .enterprise_evidence import build_enterprise_evidence_pack
 from .evidence import list_policy_decisions
 from .observability import build_observability_manifest, prometheus_metrics_text
 from .policy import evaluate
+from .semantic_validation import enterprise_shacl_validation_summary, validate_dataset_semantics
 
 
 app = FastAPI(
@@ -119,6 +120,11 @@ def enterprise_observability() -> dict[str, Any]:
 @app.get("/enterprise/evidence-pack")
 def enterprise_evidence_pack() -> dict[str, Any]:
     return build_enterprise_evidence_pack()
+
+
+@app.get("/enterprise/shacl-validation")
+def enterprise_shacl_validation() -> dict[str, Any]:
+    return enterprise_shacl_validation_summary()
 
 
 @app.post("/enterprise/auth/oidc-preview")
@@ -268,6 +274,14 @@ def dataset_jsonld(dataset_id: str) -> dict[str, Any]:
         "distribution": [d.model_dump() for d in dataset.distributions],
         "mappings": [m.model_dump() for m in dataset.mappings],
     }
+
+
+@app.get("/catalog/datasets/{dataset_id}/semantic-validation")
+def catalog_dataset_semantic_validation(dataset_id: str) -> dict[str, Any]:
+    try:
+        return validate_dataset_semantics(dataset_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="dataset not found")
 
 
 @app.get("/catalog/datasets/{dataset_id}/schema-history")

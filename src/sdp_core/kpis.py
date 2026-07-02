@@ -111,7 +111,11 @@ def enterprise_kpi_framework() -> KPIFramework:
                 definition="Share of priority datasets passing metadata validation before pilot handoff.",
                 target=">=95 percent",
                 cadence="pilot handoff",
-                source_endpoints=["/catalog/datasets/{dataset_id}/validate"],
+                source_endpoints=[
+                    "/catalog/datasets/{dataset_id}/validate",
+                    "/catalog/datasets/{dataset_id}/semantic-validation",
+                    "/enterprise/shacl-validation",
+                ],
                 owner="data steward",
                 guardrails=["Critical validation failures block publish."],
                 status="implemented",

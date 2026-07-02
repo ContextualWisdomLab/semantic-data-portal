@@ -107,6 +107,32 @@ def test_enterprise_kpis_expose_saleability_measurement_plan():
     assert "/enterprise/connectors/{connector_id}/probe" in kpis["demo_setup_minutes"]["source_endpoints"]
 
 
+def test_catalog_dataset_semantic_validation_exposes_shacl_report():
+    response = client.get("/catalog/datasets/crm-customer-master/semantic-validation")
+    assert response.status_code == 200
+
+    body = response.json()
+    assert body["dataset_id"] == "crm-customer-master"
+    assert body["shacl_compatible"] is True
+    assert body["conforms"] is True
+    assert body["approved_mapping_count"] >= 1
+    assert {shape["id"] for shape in body["shapes"]} >= {"DatasetShape", "BusinessMappingShape"}
+    assert body["violations"] == []
+
+
+def test_enterprise_shacl_validation_summary_tracks_saleability_target():
+    response = client.get("/enterprise/shacl-validation")
+    assert response.status_code == 200
+
+    body = response.json()
+    assert body["shacl_compatible"] is True
+    assert body["target_pass_rate"] == 0.95
+    assert body["validation_pass_rate"] >= 0.95
+    assert body["dataset_count"] >= 5
+    assert body["conforming_datasets"] == body["dataset_count"]
+    assert body["shape_count"] >= 3
+
+
 def test_enterprise_controls_expose_feature_gate_manifest():
     response = client.get("/enterprise/controls")
     assert response.status_code == 200
@@ -220,11 +246,14 @@ def test_enterprise_evidence_pack_summarizes_buyer_diligence():
     body = response.json()
     assert body["valuation_target_krw"] == 2_000_000_000
     assert body["metadata_validation_pass_rate"] >= 0.95
+    assert body["shacl_validation_pass_rate"] >= 0.95
     assert body["ontology_mapping_coverage"] >= 0.7
     assert body["policy_decision_count"] >= 1
     assert body["audit_event_count"] >= 1
     assert body["saleability_gates"]["metadata_validation_pass_rate"] == "pass"
+    assert body["saleability_gates"]["shacl_validation_pass_rate"] == "pass"
     assert body["saleability_gates"]["ontology_mapping_coverage"] == "pass"
+    assert "/enterprise/shacl-validation" in body["proof_endpoints"]
     assert "/policy/decisions" in body["proof_endpoints"]
 
 
@@ -300,6 +329,7 @@ def test_enterprise_demo_smoke_summary_is_ready():
     assert summary["demo_activation_days"] <= 10
     assert summary["demo_seed_datasets"] >= 3
     assert summary["metadata_validation_pass_rate"] >= 0.95
+    assert summary["shacl_validation_pass_rate"] >= 0.95
     assert summary["ontology_mapping_coverage"] >= 0.7
     assert summary["primary_kpis"] >= 3
     assert summary["guardrail_kpis"] >= 3

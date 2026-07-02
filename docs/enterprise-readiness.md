@@ -24,7 +24,7 @@
 | Gate | 목표 | 현재 상태 |
 |---|---|---|
 | Policy/Audit coverage | preview, query, catalog mutation 100%가 policy decision 또는 audit evidence를 노출 | 구현됨 |
-| Metadata quality | buyer priority dataset의 validation pass 95% 이상 | 구현 기반 있음 |
+| Metadata quality | buyer priority dataset의 validation pass 95% 이상, SHACL 호환 리포트 노출 | 구현됨 |
 | Ontology mapping coverage | 핵심 business glossary term 70% 이상 mapping | 구현 기반 있음 |
 | Tenant authorization | actor tenant context와 dataset tenant가 맞지 않으면 preview/query/schema 접근 차단 | 구현됨 |
 | Buyer demo activation | 2주 안에 SQL/RDF/REST/file 중 하나로 priority domain 온보딩 | demo SQL/RDF/file fixture 구현됨, REST adapter는 credential vault 전 단계 contract_only |
@@ -39,9 +39,11 @@
 - `GET /enterprise/rbac-matrix`: role/action/tenant-scope permission matrix
 - `GET /enterprise/observability`: health, metrics, evidence count, alert condition 운영 증빙
 - `GET /enterprise/evidence-pack`: buyer diligence용 metadata validation, ontology mapping coverage, policy/audit evidence, proof endpoint 요약
+- `GET /enterprise/shacl-validation`: buyer priority dataset 전체의 SHACL 호환 validation pass rate와 shape/report 요약
 - `POST /enterprise/auth/oidc-preview`: 실제 token verification 전 단계에서 OIDC claim-to-role/tenant mapping을 `ActorContext`로 검토하는 증빙 endpoint
 - `GET /enterprise/connectors/{connector_id}/probe`: demo dataset 기준 connector contract, source metadata, control evidence, proof endpoint 확인
 - `GET /catalog/datasets/{dataset_id}/validate`: metadata quality
+- `GET /catalog/datasets/{dataset_id}/semantic-validation`: dataset 단위 SHACL 호환 shape, conformance, violation path 리포트
 - `GET /catalog/datasets/{dataset_id}/lineage`: lineage evidence
 - `POST /browse/{dataset_id}/preview`: policy-before-data + audit
 - `POST /browse/query`: governed query path
@@ -58,7 +60,7 @@
 PYTHONPATH=src python -m sdp.demo_smoke
 ```
 
-성공 조건은 20억 valuation target, 10일 이하 demo activation plan, 3개 이상의 seed dataset, metadata validation pass rate 95% 이상, ontology mapping coverage 70% 이상, KPI framework, enterprise controls manifest, SQL connector probe와 demo context가 모두 준비 상태인 것이다.
+성공 조건은 20억 valuation target, 10일 이하 demo activation plan, 3개 이상의 seed dataset, metadata validation pass rate 95% 이상, SHACL 호환 validation pass rate 95% 이상, ontology mapping coverage 70% 이상, KPI framework, enterprise controls manifest, SQL/RDF/file connector probe와 REST adapter evidence가 모두 준비 상태인 것이다.
 
 ## 로컬 Evidence Store
 
@@ -81,4 +83,5 @@ SDP_SQLITE_PATH=.local/sdp-evidence.sqlite3 uvicorn sdp.api:app --reload
 9. 완료: retention policy, SSO/RBAC, deployment template를 `sdp_enterprise` feature gate manifest로 묶고 RBAC matrix와 Dockerfile/Compose deployment template를 추가한다.
 10. 완료: buyer evidence pack endpoint로 metadata, ontology, policy, audit, controls 증빙을 한 번에 요약한다.
 11. 완료: health, metrics, evidence count, alert condition을 `/enterprise/observability`와 `/metrics`로 노출한다.
-12. Figma/FigJam 산출물의 IA와 component state를 구현 backlog와 연결하되 Code Connect는 사용하지 않는다.
+12. 완료: `/catalog/datasets/{dataset_id}/semantic-validation`과 `/enterprise/shacl-validation`으로 SHACL 호환 validation report와 95% pass rate 증빙을 노출한다.
+13. Figma/FigJam 산출물의 IA와 component state를 구현 backlog와 연결하되 Code Connect는 사용하지 않는다.
