@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from .catalog import get_dataset
+from .catalog import get_dataset, ingest_event
 from .domain import QueryDraftRequest
 from .policy import evaluate
 from .domain import QueryExecutionRequest
@@ -64,8 +64,9 @@ def draft_sql(req: QueryDraftRequest) -> dict:
         return {"error": "invalid_timeout", "reason": "timeout_ms must be between 500 and 120000"}
 
     if req.group_by:
-        group_clause = f"GROUP BY {req.group_by}"
-        select_fields = f"{_safe_identifier(req.group_by)}, count(*) AS active_customer_count"
+        group_identifier = _safe_identifier(req.group_by)
+        group_clause = f"GROUP BY {group_identifier}"
+        select_fields = f"{group_identifier}, count(*) AS active_customer_count"
     else:
         group_clause = ""
         if "*" in requested_columns:
@@ -116,76 +117,102 @@ def draft_sql(req: QueryDraftRequest) -> dict:
 
 
 def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
-    if req.language.strip().upper() != "SQL":
+    request_id = _safe_request_id()
+
+    def response(
+        *,
+        dataset_id: str,
+        query_id: str = "",
+        policy_decision_id: str = "",
+        status: str,
+        row_count: int = 0,
+        columns: list[str] | None = None,
+        rows: list[dict[str, str | int | float | bool | None]] | None = None,
+        execution: dict[str, object] | None = None,
+        warnings: list[str] | None = None,
+    ) -> QueryExecutionResponse:
         return QueryExecutionResponse(
-            request_id=_safe_request_id(),
-            dataset_id=req.dataset_ids[0],
-            query_id="",
-            policy_decision_id="",
+            request_id=request_id,
+            dataset_id=dataset_id,
+            query_id=query_id,
+            policy_decision_id=policy_decision_id,
+            status=status,
+            row_count=row_count,
+            columns=columns or [],
+            rows=rows or [],
+            execution=execution or {"elapsedMs": 0, "source": "validation", "bytesScanned": 0},
+            warnings=warnings or [],
+        )
+
+    def audit(
+        *,
+        dataset_id: str,
+        result: str,
+        reason: str,
+        decision_id: str | None = None,
+        details: dict[str, object] | None = None,
+    ) -> None:
+        audit_details = {"purpose": req.purpose, "request_id": request_id, "dry_run": req.dry_run}
+        if details:
+            audit_details.update(details)
+        ingest_event(
+            event_type="browse.query",
+            actor=req.user,
+            dataset_id=dataset_id,
+            decision=result,
+            decision_id=decision_id,
+            reason=reason,
+            details=audit_details,
+        )
+
+    dataset_id = req.dataset_ids[0]
+    if req.language.strip().upper() != "SQL":
+        audit(dataset_id=dataset_id, result="rejected", reason="unsupported_language")
+        return response(
+            dataset_id=dataset_id,
             status="REJECTED",
-            row_count=0,
-            columns=[],
-            rows=[],
-            execution={"elapsedMs": 0, "source": "validation", "bytesScanned": 0},
             warnings=["unsupported_language"],
         )
 
     lowered = req.query.lower()
     if any(token in lowered for token in _FORBIDDEN_KEYWORDS):
-        return QueryExecutionResponse(
-            request_id=_safe_request_id(),
-            dataset_id=req.dataset_ids[0],
-            query_id="",
-            policy_decision_id="",
+        audit(dataset_id=dataset_id, result="rejected", reason="forbidden_keyword_detected")
+        return response(
+            dataset_id=dataset_id,
             status="REJECTED",
-            row_count=0,
-            columns=[],
-            rows=[],
-            execution={"elapsedMs": 0, "source": "validation", "bytesScanned": 0},
             warnings=["forbidden_keyword_detected"],
         )
 
     if len(req.dataset_ids) > 1:
-        return QueryExecutionResponse(
-            request_id=_safe_request_id(),
-            dataset_id=req.dataset_ids[0],
-            query_id="",
-            policy_decision_id="",
+        audit(dataset_id=dataset_id, result="rejected", reason="cross_source_join_not_supported")
+        return response(
+            dataset_id=dataset_id,
             status="REJECTED",
-            row_count=0,
-            columns=[],
-            rows=[],
-            execution={"elapsedMs": 0, "source": "validation", "bytesScanned": 0},
             warnings=["cross_source_join_not_supported"],
         )
 
-    dataset_id = req.dataset_ids[0]
     dataset = get_dataset(dataset_id)
     if not dataset:
-        return QueryExecutionResponse(
-            request_id=_safe_request_id(),
+        audit(dataset_id=dataset_id, result="rejected", reason="dataset_not_found")
+        return response(
             dataset_id=dataset_id,
-            query_id="",
-            policy_decision_id="",
             status="REJECTED",
-            row_count=0,
-            columns=[],
-            rows=[],
-            execution={"elapsedMs": 0, "source": "validation", "bytesScanned": 0},
             warnings=["dataset_not_found"],
         )
 
     decision = evaluate(subject=req.user, resource=dataset_id, action="query", purpose=req.purpose)
     if decision.effect != "allow":
-        return QueryExecutionResponse(
-            request_id=_safe_request_id(),
+        audit(
             dataset_id=dataset.id,
-            query_id="",
+            result="denied",
+            reason=decision.reason,
+            decision_id=decision.decision_id,
+            details={"policy_decision_id": decision.decision_id},
+        )
+        return response(
+            dataset_id=dataset.id,
             policy_decision_id=decision.decision_id,
             status="DENIED",
-            row_count=0,
-            columns=[],
-            rows=[],
             execution={"elapsedMs": 0, "source": "policy", "bytesScanned": 0},
             warnings=[decision.reason],
         )
@@ -196,19 +223,34 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
         row_count = min(2000, dataset.profile.get("row_count", 1000))
 
     now = datetime.utcnow().isoformat() + "Z"
-    return QueryExecutionResponse(
-        request_id=_safe_request_id(),
+    query_id = f"qry-{now.replace(':', '')}"
+    columns = ["week", "active_count"] if "group by" in lowered else ["result"]
+    rows = (
+        [{"week": now[:10], "active_count": 1}]
+        if "group by" in lowered
+        else [{"result": row_count}]
+    )
+    execution = {"elapsedMs": 100, "source": "mock-trino", "bytesScanned": 1024}
+    audit(
         dataset_id=dataset.id,
-        query_id=f"qry-{now.replace(':', '')}",
+        result="allowed",
+        reason="ok",
+        decision_id=decision.decision_id,
+        details={
+            "policy_decision_id": decision.decision_id,
+            "query_id": query_id,
+            "row_count": row_count,
+            "bytes_scanned": execution["bytesScanned"],
+        },
+    )
+    return response(
+        dataset_id=dataset.id,
+        query_id=query_id,
         policy_decision_id=decision.decision_id,
         status="SUCCEEDED",
         row_count=row_count,
-        columns=["week", "active_count"] if "group by" in lowered else ["result"],
-        rows=[
-            {"week": now[:10], "active_count": 1}
-        ] if "group by" in lowered else [
-            {"result": row_count}
-        ],
-        execution={"elapsedMs": 100, "source": "mock-trino", "bytesScanned": 1024},
+        columns=columns,
+        rows=rows,
+        execution=execution,
         warnings=["mock_execution_no_real_data"],
     )

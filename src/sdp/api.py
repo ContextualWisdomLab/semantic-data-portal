@@ -423,8 +423,6 @@ def browse_schema(dataset_id: str, user: str = Query(default="anonymous"), purpo
 
 @app.post("/browse/{dataset_id}/preview")
 def browse_preview(dataset_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-    if not get_dataset(dataset_id):
-        raise HTTPException(status_code=404, detail="dataset not found")
     try:
         if "user" not in payload:
             raise HTTPException(status_code=400, detail="user is required")
@@ -460,12 +458,13 @@ def llm_search(payload: dict[str, str]) -> dict[str, Any]:
             "purpose": purpose,
         }
     top = resolved[0]
-    decision = evaluate(subject=user, resource=top.term, action="query", purpose=purpose)
+    decision = evaluate(subject=user, resource="catalog", action="discover", purpose=purpose)
     return {
         "question": query,
         "mapped_term": top.term,
         "user": user,
         "purpose": purpose,
+        "policy_scope": "catalog_discovery",
         "policy": decision.dict(),
         "recommendations": ontology.concept_assets(top.term),
     }

@@ -247,9 +247,12 @@ _REQUIRED_METADATA_FIELDS = [
     "steward",
     "title",
     "description",
+    "domain",
     "sensitivity",
     "update_frequency",
     "source_system",
+    "schema",
+    "distributions",
 ]
 
 

@@ -58,6 +58,19 @@ def test_ontology_resolve():
     assert body["resolved"][0]["term"] in {"활성 고객", "고객"}
 
 
+def test_llm_search_uses_catalog_discovery_policy_scope():
+    response = client.post(
+        "/llm/search",
+        json={"question": "활성 고객 데이터를 찾아줘", "user": "analyst", "purpose": "analysis"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["policy_scope"] == "catalog_discovery"
+    assert body["policy"]["action"] == "discover"
+    assert body["policy"]["resource"] == "catalog"
+    assert body["policy"]["effect"] == "allow"
+
+
 def test_ontology_concept_graph():
     response = client.get("/ontology/term/활성 고객/graph")
     assert response.status_code == 200
@@ -95,6 +108,15 @@ def test_dataset_profile_endpoint():
 def test_preview_policy_denies_missing_dataset():
     response = client.post("/browse/unknown/preview", json={"user": "user1", "purpose": "analysis"})
     assert response.status_code == 404
+
+    events = client.get("/audit/events", params={"resource": "unknown"})
+    assert events.status_code == 200
+    assert any(
+        event["action"] == "browse.preview"
+        and event["result"] == "denied"
+        and event["reason"] == "dataset_not_found"
+        for event in events.json()
+    )
 
 
 def test_preview_pagination_and_decision_traceability():
@@ -157,6 +179,66 @@ def test_draft_query():
     assert "LIMIT 50" in body["query"]
 
 
+def test_draft_query_sanitizes_group_by_identifier():
+    create_payload = {
+        "actor": "admin",
+        "id": "hyphenated-column-dataset",
+        "title": "하이픈 컬럼 데이터셋",
+        "description": "SQL 식별자 sanitization 검증용 데이터셋",
+        "owner": "data-platform",
+        "steward": "qa",
+        "domain": "테스트",
+        "source_system": "postgresql://analytics.dw/hyphen_table",
+        "sensitivity": "low",
+        "update_frequency": "daily",
+        "quality_score": 0.91,
+        "freshness_score": 0.93,
+        "tags": ["테스트"],
+        "terms": ["테스트"],
+        "related_datasets": [],
+        "schema": [
+            {
+                "name": "segment-name",
+                "datatype": "string",
+                "nullable_ratio": 0.0,
+                "distinct_ratio": 0.5,
+                "pii": False,
+            }
+        ],
+        "distributions": [
+            {
+                "id": "dist-hyphenated-column",
+                "format": "postgresql.table",
+                "endpoint": "https://example.internal/api/table/hyphen_table",
+            }
+        ],
+        "mappings": [],
+        "profile": {},
+    }
+    created = client.post("/catalog/datasets", json=create_payload)
+    assert created.status_code == 200
+    published = client.post("/catalog/datasets/hyphenated-column-dataset/publish", json={"actor": "admin"})
+    assert published.status_code == 200
+
+    response = client.post(
+        "/llm/draft-query",
+        json={
+            "question": "세그먼트별 고객 수",
+            "user": "analyst",
+            "purpose": "analysis",
+            "dataset_id": "hyphenated-column-dataset",
+            "group_by": "segment-name",
+            "date_window_days": 30,
+            "row_limit": 25,
+        },
+    )
+    assert response.status_code == 200
+    query = response.json()["query"]
+    assert "SELECT segment_name" in query
+    assert "GROUP BY segment_name" in query
+    assert "segment-name" not in query
+
+
 def test_catalog_schema_history_and_diff():
     patch = client.patch("/catalog/datasets/crm-event", json={"actor": "admin", "schema": []})
     assert patch.status_code == 200
@@ -200,8 +282,22 @@ def test_dataset_mutation_policy_and_lifecycle():
         "tags": ["테스트"],
         "terms": ["테스트"],
         "related_datasets": [],
-        "schema": [],
-        "distributions": [],
+        "schema": [
+            {
+                "name": "sample_id",
+                "datatype": "string",
+                "nullable_ratio": 0.0,
+                "distinct_ratio": 1.0,
+                "pii": False,
+            }
+        ],
+        "distributions": [
+            {
+                "id": "dist-temp-dataset",
+                "format": "postgresql.table",
+                "endpoint": "https://example.internal/api/table/temp_dataset",
+            }
+        ],
         "mappings": [],
         "profile": {},
     }
@@ -225,6 +321,36 @@ def test_dataset_mutation_policy_and_lifecycle():
     deprecated = client.post("/catalog/datasets/temp-dataset/deprecate", json={"actor": "admin", "reason": "e2e cleanup"})
     assert deprecated.status_code == 200
     assert deprecated.json()["dataset"]["status"] == "deprecated"
+
+
+def test_publish_requires_schema_and_distribution_metadata():
+    create_payload = {
+        "actor": "admin",
+        "id": "invalid-publish-dataset",
+        "title": "불완전한 데이터셋",
+        "description": "publish gate 실패 검증",
+        "owner": "data-platform",
+        "steward": "qa",
+        "domain": "테스트",
+        "source_system": "postgresql://analytics/tmp_invalid",
+        "sensitivity": "low",
+        "update_frequency": "daily",
+        "quality_score": 0.75,
+        "freshness_score": 0.88,
+        "tags": ["테스트"],
+        "terms": ["테스트"],
+        "related_datasets": [],
+        "schema": [],
+        "distributions": [],
+        "mappings": [],
+        "profile": {},
+    }
+    created = client.post("/catalog/datasets", json=create_payload)
+    assert created.status_code == 200
+
+    published = client.post("/catalog/datasets/invalid-publish-dataset/publish", json={"actor": "admin"})
+    assert published.status_code == 400
+    assert "metadata validation failed" in published.json()["detail"]
 
 
 def test_browse_schema_requires_purpose():
@@ -304,6 +430,16 @@ def test_browse_query_success():
     assert body["policy_decision_id"] is not None
     assert "request_id" in body
 
+    events = client.get("/audit/events", params={"resource": "crm-event"})
+    assert events.status_code == 200
+    assert any(
+        event["action"] == "browse.query"
+        and event["result"] == "allowed"
+        and event["decision_id"] == body["policy_decision_id"]
+        and event["details"].get("request_id") == body["request_id"]
+        for event in events.json()
+    )
+
 
 def test_browse_query_denied_without_user():
     response = client.post(
@@ -317,3 +453,12 @@ def test_browse_query_denied_without_user():
         },
     )
     assert response.status_code == 403
+
+    events = client.get("/audit/events", params={"resource": "crm-event"})
+    assert events.status_code == 200
+    assert any(
+        event["action"] == "browse.query"
+        and event["result"] == "denied"
+        and event["actor"] == "guest"
+        for event in events.json()
+    )
