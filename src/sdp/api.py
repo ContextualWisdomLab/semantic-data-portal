@@ -45,6 +45,7 @@ from .evidence import list_policy_decisions
 from .observability import build_observability_manifest, prometheus_metrics_text
 from .policy import evaluate
 from .semantic_validation import enterprise_shacl_validation_summary, validate_dataset_semantics
+from .steward_review import build_steward_review_summary
 
 
 app = FastAPI(
@@ -125,6 +126,11 @@ def enterprise_evidence_pack() -> dict[str, Any]:
 @app.get("/enterprise/shacl-validation")
 def enterprise_shacl_validation() -> dict[str, Any]:
     return enterprise_shacl_validation_summary()
+
+
+@app.get("/enterprise/steward-review")
+def enterprise_steward_review() -> dict[str, Any]:
+    return build_steward_review_summary()
 
 
 @app.post("/enterprise/auth/oidc-preview")

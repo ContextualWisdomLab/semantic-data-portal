@@ -40,6 +40,7 @@
 - `GET /enterprise/observability`: health, metrics, evidence count, alert condition 운영 증빙
 - `GET /enterprise/evidence-pack`: buyer diligence용 metadata validation, ontology mapping coverage, policy/audit evidence, proof endpoint 요약
 - `GET /enterprise/shacl-validation`: buyer priority dataset 전체의 SHACL 호환 validation pass rate와 shape/report 요약
+- `GET /enterprise/steward-review`: SHACL validation failure와 ontology patch proposal을 묶은 steward 검토 대기열 및 buyer handoff readiness 요약
 - `POST /enterprise/auth/oidc-preview`: 실제 token verification 전 단계에서 OIDC claim-to-role/tenant mapping을 `ActorContext`로 검토하는 증빙 endpoint
 - `GET /enterprise/connectors/{connector_id}/probe`: demo dataset 기준 connector contract, source metadata, control evidence, proof endpoint 확인
 - `GET /catalog/datasets/{dataset_id}/validate`: metadata quality
@@ -60,7 +61,7 @@
 PYTHONPATH=src python -m sdp.demo_smoke
 ```
 
-성공 조건은 20억 valuation target, 10일 이하 demo activation plan, 3개 이상의 seed dataset, metadata validation pass rate 95% 이상, SHACL 호환 validation pass rate 95% 이상, ontology mapping coverage 70% 이상, KPI framework, enterprise controls manifest, SQL/RDF/file connector probe와 REST adapter evidence가 모두 준비 상태인 것이다.
+성공 조건은 20억 valuation target, 10일 이하 demo activation plan, 3개 이상의 seed dataset, metadata validation pass rate 95% 이상, SHACL 호환 validation pass rate 95% 이상, steward review queue 0건, ontology mapping coverage 70% 이상, KPI framework, enterprise controls manifest, SQL/RDF/file connector probe와 REST adapter evidence가 모두 준비 상태인 것이다.
 
 ## 로컬 Evidence Store
 
@@ -84,4 +85,5 @@ SDP_SQLITE_PATH=.local/sdp-evidence.sqlite3 uvicorn sdp.api:app --reload
 10. 완료: buyer evidence pack endpoint로 metadata, ontology, policy, audit, controls 증빙을 한 번에 요약한다.
 11. 완료: health, metrics, evidence count, alert condition을 `/enterprise/observability`와 `/metrics`로 노출한다.
 12. 완료: `/catalog/datasets/{dataset_id}/semantic-validation`과 `/enterprise/shacl-validation`으로 SHACL 호환 validation report와 95% pass rate 증빙을 노출한다.
-13. Figma/FigJam 산출물의 IA와 component state를 구현 backlog와 연결하되 Code Connect는 사용하지 않는다.
+13. 완료: `/enterprise/steward-review`로 validation failure와 ontology patch proposal 검토 대기열, 2영업일 SLA, buyer handoff readiness를 노출한다.
+14. Figma/FigJam 산출물의 IA와 component state를 구현 backlog와 연결하되 Code Connect는 사용하지 않는다.

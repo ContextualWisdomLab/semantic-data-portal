@@ -13,6 +13,7 @@ from sdp_core import (
 from .connectors import connector_probe
 from .enterprise_evidence import build_enterprise_evidence_pack
 from .semantic_validation import enterprise_shacl_validation_summary
+from .steward_review import build_steward_review_summary
 
 
 def smoke_summary() -> dict[str, Any]:
@@ -21,6 +22,7 @@ def smoke_summary() -> dict[str, Any]:
     controls = enterprise_controls_manifest()
     evidence = build_enterprise_evidence_pack()
     shacl_validation = enterprise_shacl_validation_summary()
+    steward_review = build_steward_review_summary()
     kpis = enterprise_kpi_framework()
     sql_probe = connector_probe("sql_connector", "crm-customer-master")
     rdf_probe = connector_probe("rdf_connector", "semantic-glossary")
@@ -36,6 +38,8 @@ def smoke_summary() -> dict[str, Any]:
         "demo_seed_datasets": len(demo_plan.demo_datasets),
         "metadata_validation_pass_rate": evidence["metadata_validation_pass_rate"],
         "shacl_validation_pass_rate": shacl_validation["validation_pass_rate"],
+        "steward_review_queue_count": steward_review["review_queue_count"],
+        "steward_buyer_handoff_ready": steward_review["buyer_handoff_ready"],
         "ontology_mapping_coverage": evidence["ontology_mapping_coverage"],
         "enterprise_controls": len(controls.controls),
         "implemented_enterprise_controls": controls.implemented_controls,
@@ -54,6 +58,7 @@ def smoke_summary() -> dict[str, Any]:
             and len(demo_plan.demo_datasets) >= 3
             and evidence["metadata_validation_pass_rate"] >= 0.95
             and shacl_validation["validation_pass_rate"] >= 0.95
+            and steward_review["buyer_handoff_ready"]
             and evidence["ontology_mapping_coverage"] >= 0.7
             and len(kpis.primary_kpis) >= 3
             and controls.implemented_controls >= 2

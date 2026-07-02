@@ -133,6 +133,37 @@ def test_enterprise_shacl_validation_summary_tracks_saleability_target():
     assert body["shape_count"] >= 3
 
 
+def test_enterprise_steward_review_summarizes_governance_queue():
+    proposed = client.post(
+        "/ontology/patches",
+        json={
+            "concept": "고객",
+            "suggestion": "VIP 고객 세그먼트를 구매자 데모 glossary 후보로 추가",
+            "requestor": "governance-analyst",
+        },
+    )
+    assert proposed.status_code == 200
+
+    response = client.get("/enterprise/steward-review")
+    assert response.status_code == 200
+
+    body = response.json()
+    assert body["feature_gate"] == "sdp_enterprise"
+    assert body["validation_pass_rate"] >= 0.95
+    assert body["validation_review_count"] == 0
+    assert body["ontology_patch_count"] >= 1
+    assert body["review_queue_count"] >= 1
+    assert body["buyer_handoff_ready"] is False
+    assert any(item["type"] == "ontology_patch" and item["id"] == proposed.json()["id"] for item in body["review_items"])
+    assert "/enterprise/shacl-validation" in body["proof_endpoints"]
+    assert "/ontology/patches" in body["proof_endpoints"]
+
+    client.post(
+        f"/ontology/patches/{proposed.json()['id']}/review",
+        json={"decision": "approve", "reviewer": "admin", "comment": "테스트 queue 정리"},
+    )
+
+
 def test_enterprise_controls_expose_feature_gate_manifest():
     response = client.get("/enterprise/controls")
     assert response.status_code == 200
@@ -247,13 +278,17 @@ def test_enterprise_evidence_pack_summarizes_buyer_diligence():
     assert body["valuation_target_krw"] == 2_000_000_000
     assert body["metadata_validation_pass_rate"] >= 0.95
     assert body["shacl_validation_pass_rate"] >= 0.95
+    assert body["steward_review_queue_count"] == 0
+    assert body["steward_buyer_handoff_ready"] is True
     assert body["ontology_mapping_coverage"] >= 0.7
     assert body["policy_decision_count"] >= 1
     assert body["audit_event_count"] >= 1
     assert body["saleability_gates"]["metadata_validation_pass_rate"] == "pass"
     assert body["saleability_gates"]["shacl_validation_pass_rate"] == "pass"
+    assert body["saleability_gates"]["steward_review_queue"] == "pass"
     assert body["saleability_gates"]["ontology_mapping_coverage"] == "pass"
     assert "/enterprise/shacl-validation" in body["proof_endpoints"]
+    assert "/enterprise/steward-review" in body["proof_endpoints"]
     assert "/policy/decisions" in body["proof_endpoints"]
 
 
@@ -330,6 +365,8 @@ def test_enterprise_demo_smoke_summary_is_ready():
     assert summary["demo_seed_datasets"] >= 3
     assert summary["metadata_validation_pass_rate"] >= 0.95
     assert summary["shacl_validation_pass_rate"] >= 0.95
+    assert summary["steward_review_queue_count"] == 0
+    assert summary["steward_buyer_handoff_ready"] is True
     assert summary["ontology_mapping_coverage"] >= 0.7
     assert summary["primary_kpis"] >= 3
     assert summary["guardrail_kpis"] >= 3
