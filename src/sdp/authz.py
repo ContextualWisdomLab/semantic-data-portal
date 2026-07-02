@@ -4,7 +4,10 @@ import json
 import os
 from datetime import datetime, timezone
 from typing import Any
+from urllib.request import urlopen
 
+import jwt
+from jwt import InvalidTokenError, PyJWK
 from sdp_core import ActorContext
 
 
@@ -25,6 +28,7 @@ _DEFAULT_OIDC_GROUP_ROLE_MAP = {
 }
 
 _SUBJECT_CLAIMS = ("preferred_username", "email", "sub")
+_ALLOWED_JWT_ALGORITHMS = {"RS256", "RS384", "RS512", "ES256", "ES384", "ES512"}
 
 
 def resolve_actor_context(subject: str) -> ActorContext:
@@ -105,3 +109,64 @@ def resolve_oidc_actor_context(
         roles.update(mapping.get(group, []))
 
     return ActorContext(subject=str(subject), tenant_id=tenant_id, roles=sorted(roles))
+
+
+def _load_jwks_from_url(jwks_url: str) -> dict[str, Any]:
+    timeout = float(os.getenv("SDP_OIDC_JWKS_TIMEOUT_SECONDS", "2"))
+    with urlopen(jwks_url, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _select_jwk(jwks: dict[str, Any], kid: str | None) -> dict[str, Any]:
+    if not kid:
+        raise ValueError("missing token kid")
+    keys = jwks.get("keys")
+    if not isinstance(keys, list):
+        raise ValueError("jwks must contain keys")
+    for key in keys:
+        if isinstance(key, dict) and key.get("kid") == kid:
+            return key
+    raise ValueError("no matching jwks key")
+
+
+def verify_oidc_jwks_token(
+    token: str,
+    *,
+    issuer: str | None = None,
+    audience: str | None = None,
+    jwks: dict[str, Any] | None = None,
+    role_map: dict[str, list[str]] | None = None,
+) -> tuple[ActorContext, dict[str, Any]]:
+    expected_issuer = issuer or os.getenv("SDP_OIDC_ISSUER")
+    expected_audience = audience or os.getenv("SDP_OIDC_AUDIENCE")
+    jwks_url = os.getenv("SDP_OIDC_JWKS_URL")
+
+    if not expected_issuer:
+        raise ValueError("missing OIDC issuer")
+    if not expected_audience:
+        raise ValueError("missing OIDC audience")
+    if jwks is None:
+        if not jwks_url:
+            raise ValueError("missing OIDC JWKS")
+        jwks = _load_jwks_from_url(jwks_url)
+
+    try:
+        header = jwt.get_unverified_header(token)
+        alg = header.get("alg")
+        if alg not in _ALLOWED_JWT_ALGORITHMS:
+            raise ValueError("unsupported token algorithm")
+        jwk = _select_jwk(jwks, header.get("kid"))
+        signing_key = PyJWK.from_dict(jwk).key
+        claims = jwt.decode(
+            token,
+            signing_key,
+            algorithms=[alg],
+            audience=expected_audience,
+            issuer=expected_issuer,
+            options={"require": ["exp", "iss", "aud"]},
+        )
+    except (InvalidTokenError, ValueError) as exc:
+        raise ValueError(f"invalid token: {exc}") from exc
+
+    context = resolve_oidc_actor_context(claims, role_map=role_map)
+    return context, claims

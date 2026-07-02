@@ -25,6 +25,7 @@ uvicorn sdp.api:app --reload
 `SDP_SQLITE_PATH=.local/sdp-evidence.sqlite3`를 지정하면 policy decision과 audit event가 로컬 SQLite evidence store에 기록됩니다.
 `SDP_LOG_SINK_URL=file://.local/sdp-requests.jsonl`과 `SDP_REQUEST_ID_HEADER=X-Request-Id`를 지정하면 request id, tenant, actor, route, status, latency, evidence ids만 body 없이 request observation log로 기록됩니다.
 REST connector secret은 `SDP_CONNECTOR_SECRET_REF_PREFIX=SDP_CONNECTOR_SECRET_` 기준의 env secret reference로 조회합니다. 예: `SDP_CONNECTOR_SECRET_REST_CONNECTOR_MARKETING_CAMPAIGN_TOKEN` 값은 presence만 검증하며 API 응답에는 노출하지 않습니다.
+OIDC token verification은 `SDP_OIDC_ISSUER`, `SDP_OIDC_AUDIENCE`, `SDP_OIDC_JWKS_URL`, `SDP_OIDC_GROUP_ROLE_MAP`를 사용합니다.
 
 Docker 기반 로컬 데모는 다음 명령으로 실행합니다.
 
@@ -64,6 +65,7 @@ docker compose up --build
 - `GET /enterprise/steward-review`
 - `GET /enterprise/console`
 - `POST /enterprise/auth/oidc-preview`
+- `POST /enterprise/auth/oidc-verify`
 - `GET /enterprise/connectors/{connector_id}/probe`
 
 ## 테스트

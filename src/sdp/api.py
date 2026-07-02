@@ -203,6 +203,42 @@ def enterprise_oidc_preview(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+@app.post("/enterprise/auth/oidc-verify")
+def enterprise_oidc_verify(payload: dict[str, Any]) -> dict[str, Any]:
+    token = payload.get("token")
+    if not isinstance(token, str) or not token:
+        raise HTTPException(status_code=400, detail="token is required")
+
+    jwks = payload.get("jwks")
+    if jwks is not None and not isinstance(jwks, dict):
+        raise HTTPException(status_code=400, detail="jwks must be an object")
+
+    role_map = payload.get("role_map")
+    if role_map is not None and not isinstance(role_map, dict):
+        raise HTTPException(status_code=400, detail="role_map must be an object")
+
+    try:
+        context, claims = authz.verify_oidc_jwks_token(
+            token,
+            issuer=payload.get("issuer"),
+            audience=payload.get("audience"),
+            jwks=jwks,
+            role_map=role_map,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return {
+        "mode": "jwks_signature_verification",
+        "token_verification": "jwks_signature_verified",
+        "actor_context": context.model_dump(),
+        "issuer": claims.get("iss"),
+        "audience": claims.get("aud"),
+        "groups": claims.get("groups", []),
+        "ignored_role_claims": authz.oidc_role_claims(claims),
+    }
+
+
 @app.get("/enterprise/connectors/{connector_id}/probe")
 def enterprise_connector_probe(
     connector_id: str,

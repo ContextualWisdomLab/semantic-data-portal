@@ -3,8 +3,11 @@ from copy import deepcopy
 from pathlib import Path
 from time import time
 
+import jwt
 import pytest
 from fastapi.testclient import TestClient
+from cryptography.hazmat.primitives.asymmetric import rsa
+from jwt.algorithms import RSAAlgorithm
 
 import sdp.catalog as app_catalog
 import sdp.domain as app_domain
@@ -327,7 +330,7 @@ def test_enterprise_production_readiness_tracks_paid_pilot_integrations():
     assert "SDP_SQLITE_PATH" in integrations["postgres_evidence_store"]["current_evidence"]
     assert any("policy decisions and audit events" in item for item in integrations["postgres_evidence_store"]["acceptance_criteria"])
 
-    assert integrations["oidc_jwks_verification"]["status"] == "planned"
+    assert integrations["oidc_jwks_verification"]["status"] == "implemented"
     assert "SDP_OIDC_JWKS_URL" in integrations["oidc_jwks_verification"]["required_environment"]
     assert any("direct role claims" in item for item in integrations["oidc_jwks_verification"]["acceptance_criteria"])
 
@@ -340,8 +343,8 @@ def test_enterprise_production_readiness_tracks_paid_pilot_integrations():
 
     assert set(body["paid_pilot_blockers"]) >= {
         "postgres_evidence_store",
-        "oidc_jwks_verification",
     }
+    assert "oidc_jwks_verification" not in body["paid_pilot_blockers"]
     assert "connector_credential_vault" not in body["paid_pilot_blockers"]
     assert "request_observability_export" not in body["paid_pilot_blockers"]
     assert body["demo_blockers"] == []
@@ -404,6 +407,78 @@ def test_oidc_preview_ignores_direct_role_escalation_claims():
     assert body["ignored_role_claims"] == ["sdp-platform-admins"]
 
 
+def test_oidc_jwks_verification_maps_verified_token_without_token_leak():
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    jwk = json.loads(RSAAlgorithm.to_jwk(private_key.public_key()))
+    jwk.update({"kid": "buyer-key-1", "alg": "RS256", "use": "sig"})
+    token = jwt.encode(
+        {
+            "iss": "https://idp.example.com/",
+            "aud": "semantic-data-portal",
+            "email": "analyst@example.com",
+            "tenant_id": "buyer-demo",
+            "groups": ["sdp-analysts"],
+            "roles": ["sdp-platform-admins"],
+            "exp": int(time()) + 3600,
+        },
+        private_key,
+        algorithm="RS256",
+        headers={"kid": "buyer-key-1"},
+    )
+
+    response = client.post(
+        "/enterprise/auth/oidc-verify",
+        json={
+            "token": token,
+            "issuer": "https://idp.example.com/",
+            "audience": "semantic-data-portal",
+            "jwks": {"keys": [jwk]},
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["mode"] == "jwks_signature_verification"
+    assert body["token_verification"] == "jwks_signature_verified"
+    assert body["actor_context"]["subject"] == "analyst@example.com"
+    assert body["actor_context"]["tenant_id"] == "buyer-demo"
+    assert body["actor_context"]["roles"] == ["data-analyst"]
+    assert body["ignored_role_claims"] == ["sdp-platform-admins"]
+    assert token not in json.dumps(body)
+
+
+def test_oidc_jwks_verification_rejects_wrong_audience():
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    jwk = json.loads(RSAAlgorithm.to_jwk(private_key.public_key()))
+    jwk.update({"kid": "buyer-key-1", "alg": "RS256", "use": "sig"})
+    token = jwt.encode(
+        {
+            "iss": "https://idp.example.com/",
+            "aud": "wrong-audience",
+            "email": "analyst@example.com",
+            "tenant_id": "buyer-demo",
+            "groups": ["sdp-analysts"],
+            "exp": int(time()) + 3600,
+        },
+        private_key,
+        algorithm="RS256",
+        headers={"kid": "buyer-key-1"},
+    )
+
+    response = client.post(
+        "/enterprise/auth/oidc-verify",
+        json={
+            "token": token,
+            "issuer": "https://idp.example.com/",
+            "audience": "semantic-data-portal",
+            "jwks": {"keys": [jwk]},
+        },
+    )
+
+    assert response.status_code == 400
+    assert "invalid token" in response.json()["detail"]
+
+
 def test_deployment_template_files_define_local_demo_runtime():
     project_root = Path(__file__).resolve().parents[1]
     dockerfile = (project_root / "Dockerfile").read_text()
@@ -445,7 +520,7 @@ def test_enterprise_evidence_pack_summarizes_buyer_diligence():
     assert body["audit_event_count"] >= 1
     assert body["production_demo_release_ready"] is True
     assert body["production_paid_pilot_ready"] is False
-    assert body["production_paid_pilot_blockers"] == 2
+    assert body["production_paid_pilot_blockers"] == 1
     assert body["saleability_gates"]["metadata_validation_pass_rate"] == "pass"
     assert body["saleability_gates"]["shacl_validation_pass_rate"] == "pass"
     assert body["saleability_gates"]["steward_review_queue"] == "pass"
@@ -581,7 +656,7 @@ def test_enterprise_demo_smoke_summary_is_ready():
     assert summary["production_current_stage"] == "pilot_candidate"
     assert summary["production_demo_release_ready"] is True
     assert summary["production_paid_pilot_ready"] is False
-    assert summary["production_paid_pilot_blockers"] == 2
+    assert summary["production_paid_pilot_blockers"] == 1
     assert summary["ready"] is True
 
 
