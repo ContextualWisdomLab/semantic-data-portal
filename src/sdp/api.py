@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
@@ -70,7 +70,7 @@ def _require_actor(payload: dict[str, Any]) -> str:
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "at": datetime.utcnow().isoformat() + "Z"}
+    return {"status": "ok", "at": datetime.now(timezone.utc).isoformat()}
 
 
 @app.get("/enterprise/readiness")

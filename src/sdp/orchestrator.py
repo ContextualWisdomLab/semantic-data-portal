@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from .catalog import get_dataset, ingest_event
 from .domain import QueryDraftRequest
 from .policy import evaluate
@@ -17,7 +17,7 @@ def _safe_identifier(value: str) -> str:
 
 
 def _safe_request_id() -> str:
-    return "req-" + str(datetime.utcnow().timestamp()).replace(".", "")
+    return "req-" + str(datetime.now(timezone.utc).timestamp()).replace(".", "")
 
 
 def _source_table_name(source_system: str) -> str:
@@ -144,7 +144,7 @@ def draft_sql(req: QueryDraftRequest) -> dict:
         "query": sql,
         "policy_decision_id": decision.decision_id,
         "assumptions": assumptions,
-        "policy_decision": decision.dict(),
+        "policy_decision": decision.model_dump(),
         "preview_required": req.purpose == "analysis",
         "dialect": "postgresql",
         "row_limit": max_rows,
@@ -280,7 +280,7 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
     else:
         row_count = min(2000, dataset.profile.get("row_count", 1000))
 
-    now = datetime.utcnow().isoformat() + "Z"
+    now = datetime.now(timezone.utc).isoformat()
     query_id = f"qry-{now.replace(':', '')}"
     columns = ["week", "active_count"] if "group by" in lowered else ["result"]
     rows = (
