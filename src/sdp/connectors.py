@@ -43,8 +43,85 @@ class DemoSQLConnector(SourceConnector):
         return result["rows"]
 
 
+class DemoRDFConnector(SourceConnector):
+    connector_id = "rdf_connector"
+    source_type = "semantic_store"
+
+    def inspect_schema(self, dataset_id: str) -> dict[str, Any]:
+        dataset = get_dataset(dataset_id)
+        if not dataset:
+            raise KeyError(dataset_id)
+        if not dataset.source_system.startswith("sparql://"):
+            raise ValueError("dataset is not backed by the demo RDF connector")
+        return {
+            "dataset_id": dataset.id,
+            "source_system": dataset.source_system,
+            "named_graph": dataset.source_system.removeprefix("sparql://"),
+            "columns": [column.model_dump() for column in dataset.schema],
+        }
+
+    def preview(self, dataset_id: str, *, limit: int, offset: int) -> list[dict[str, Any]]:
+        from .catalog import ingest_event
+        from .policy import evaluate
+
+        dataset = get_dataset(dataset_id)
+        if not dataset:
+            raise KeyError(dataset_id)
+        if not dataset.source_system.startswith("sparql://"):
+            raise ValueError("dataset is not backed by the demo RDF connector")
+
+        decision = evaluate(subject="analyst", resource=dataset_id, action="preview", purpose="analysis")
+        if decision.effect != "allow":
+            ingest_event(
+                event_type="connector.rdf.preview",
+                actor="analyst",
+                dataset_id=dataset_id,
+                decision="denied",
+                decision_id=decision.decision_id,
+                reason=decision.reason,
+                details={"policy_decision_id": decision.decision_id},
+            )
+            raise PermissionError(decision.reason)
+
+        rows = [
+            {
+                "concept_uri": "https://semantic-data-portal.local/concepts/customer",
+                "preferred_label": "고객",
+                "broader_concept": "https://semantic-data-portal.local/concepts/party",
+            },
+            {
+                "concept_uri": "https://semantic-data-portal.local/concepts/active-customer",
+                "preferred_label": "활성 고객",
+                "broader_concept": "https://semantic-data-portal.local/concepts/customer",
+            },
+            {
+                "concept_uri": "https://semantic-data-portal.local/concepts/churn",
+                "preferred_label": "이탈",
+                "broader_concept": "https://semantic-data-portal.local/concepts/customer",
+            },
+        ]
+        selected = rows[offset : offset + limit]
+        ingest_event(
+            event_type="connector.rdf.preview",
+            actor="analyst",
+            dataset_id=dataset_id,
+            decision="allowed",
+            decision_id=decision.decision_id,
+            reason="ok",
+            details={
+                "policy_decision_id": decision.decision_id,
+                "requested_offset": offset,
+                "requested_limit": limit,
+                "returned_rows": len(selected),
+                "named_graph": dataset.source_system.removeprefix("sparql://"),
+            },
+        )
+        return selected
+
+
 _SOURCE_CONNECTORS: dict[str, SourceConnector] = {
     "sql_connector": DemoSQLConnector(),
+    "rdf_connector": DemoRDFConnector(),
 }
 
 
@@ -86,7 +163,7 @@ def connector_probe(connector_id: str, dataset_id: str) -> dict[str, Any]:
             }
         )
 
-    ready_for_demo = implemented_controls == len(connector.required_controls)
+    ready_for_demo = adapter_status == "implemented" and implemented_controls == len(connector.required_controls)
     return {
         "connector_id": connector.id,
         "dataset_id": dataset.id,

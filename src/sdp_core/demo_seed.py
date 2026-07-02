@@ -69,8 +69,8 @@ def _customer_intelligence_domain() -> BuyerDemoDomain:
             "자연어 질문이 catalog search, ontology resolve, governed query path로 이어진다.",
             "모든 preview/query 증빙이 audit event와 policy decision에 연결된다.",
         ],
-        dataset_ids=["crm-customer-master", "crm-event", "sales-order"],
-        glossary_terms=["고객", "활성 고객", "이탈", "고객 활동", "전환"],
+        dataset_ids=["crm-customer-master", "crm-event", "sales-order", "semantic-glossary"],
+        glossary_terms=["고객", "활성 고객", "이탈", "고객 활동", "전환", "비즈니스 용어"],
     )
 
 
@@ -262,6 +262,61 @@ def _customer_intelligence_datasets() -> list[Dataset]:
             lineage_inputs=["commerce-order"],
             lineage_outputs=["revenue-dashboard"],
         ),
+        Dataset(
+            id="semantic-glossary",
+            title="고객 인텔리전스 비즈니스 용어 그래프",
+            description="고객, 활성 고객, 이탈, 전환 개념과 동의어를 관리하는 RDF/SPARQL semantic store dataset",
+            owner="data-governance",
+            steward="ontology-admin",
+            domain="온톨로지",
+            source_system="sparql://semantic.graph/customer-intelligence",
+            sensitivity="low",
+            update_frequency="daily",
+            quality_score=0.94,
+            freshness_score=0.97,
+            tags=["온톨로지", "비즈니스 용어", "RDF"],
+            terms=["고객", "활성 고객", "이탈", "전환", "비즈니스 용어"],
+            related_datasets=["crm-customer-master", "crm-event", "sales-order"],
+            schema=[
+                ColumnMetadata(
+                    name="concept_uri",
+                    datatype="iri",
+                    nullable_ratio=0.0,
+                    distinct_ratio=1.0,
+                    pii=False,
+                ),
+                ColumnMetadata(
+                    name="preferred_label",
+                    datatype="string",
+                    nullable_ratio=0.0,
+                    distinct_ratio=0.9,
+                    pii=False,
+                ),
+                ColumnMetadata(
+                    name="broader_concept",
+                    datatype="iri",
+                    nullable_ratio=0.2,
+                    distinct_ratio=0.7,
+                    pii=False,
+                ),
+            ],
+            distributions=[
+                DatasetDistribution(
+                    id="dist-semantic-glossary",
+                    format="sparql.graph",
+                    endpoint="https://example.internal/sparql/customer-intelligence",
+                )
+            ],
+            mappings=[
+                _approved_mapping("고객", steward="ontology-admin"),
+                _approved_mapping("활성 고객", steward="ontology-admin"),
+                _approved_mapping("이탈", steward="ontology-admin"),
+                _approved_mapping("전환", steward="ontology-admin"),
+            ],
+            profile={"triple_count": 4200, "updated_at": "2026-06-29T00:00:00Z"},
+            lineage_inputs=["business-glossary"],
+            lineage_outputs=["crm-customer-master", "crm-event", "sales-order"],
+        ),
     ]
 
 
@@ -274,7 +329,12 @@ def buyer_demo_datasets(domain_id: str = "customer_intelligence") -> list[Datase
 def buyer_demo_dataset_summaries(domain_id: str = "customer_intelligence") -> list[BuyerDemoDatasetSummary]:
     summaries = []
     for dataset in buyer_demo_datasets(domain_id):
-        source_type = "sql" if dataset.source_system.startswith("postgresql://") else "file_lake"
+        if dataset.source_system.startswith("postgresql://"):
+            source_type = "sql"
+        elif dataset.source_system.startswith("sparql://"):
+            source_type = "rdf"
+        else:
+            source_type = "file_lake"
         summaries.append(
             BuyerDemoDatasetSummary(
                 id=dataset.id,

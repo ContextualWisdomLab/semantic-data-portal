@@ -75,6 +75,7 @@ def test_enterprise_demo_plan_uses_core_buyer_demo_fixture():
     assert body["domain_fixture_id"] == "customer_intelligence"
     assert fixture_ids == response_ids
     assert fixture_ids <= catalog_ids
+    assert "semantic-glossary" in fixture_ids
     assert body["analyst_questions"]
     assert body["governance_questions"]
 
@@ -306,6 +307,8 @@ def test_enterprise_demo_smoke_summary_is_ready():
     assert summary["implemented_enterprise_controls"] >= 2
     assert summary["connector_probe_status"] == "ready_for_demo"
     assert summary["connector_probe_domain"] == "customer_intelligence"
+    assert summary["rdf_connector_probe_status"] == "ready_for_demo"
+    assert summary["rdf_connector_probe_dataset"] == "semantic-glossary"
     assert summary["ready"] is True
 
 
@@ -330,6 +333,26 @@ def test_enterprise_connector_probe_exposes_demo_evidence():
     assert controls["audit_event"]["status"] == "implemented"
 
 
+def test_enterprise_rdf_connector_probe_exposes_semantic_store_evidence():
+    response = client.get(
+        "/enterprise/connectors/rdf_connector/probe",
+        params={"dataset_id": "semantic-glossary"},
+    )
+    assert response.status_code == 200
+
+    body = response.json()
+    assert body["connector_id"] == "rdf_connector"
+    assert body["dataset_id"] == "semantic-glossary"
+    assert body["status"] == "ready_for_demo"
+    assert body["adapter_status"] == "implemented"
+    assert body["source_system"].startswith("sparql://")
+    assert body["data_contract"]["schema_fields"] >= 3
+
+    controls = {item["control"]: item for item in body["control_evidence"]}
+    assert controls["ontology_version_pin"]["status"] == "implemented"
+    assert "/ontology/search" in controls["ontology_version_pin"]["proof_endpoints"]
+
+
 def test_sql_connector_adapter_implements_source_connector_contract():
     connector = get_source_connector("sql_connector")
     schema = connector.inspect_schema("crm-customer-master")
@@ -340,6 +363,18 @@ def test_sql_connector_adapter_implements_source_connector_contract():
     assert schema["columns"]
     assert rows
     assert rows[0]["customer_email"] == "***"
+
+
+def test_rdf_connector_adapter_implements_source_connector_contract():
+    connector = get_source_connector("rdf_connector")
+    schema = connector.inspect_schema("semantic-glossary")
+    rows = connector.preview("semantic-glossary", limit=2, offset=0)
+
+    assert connector.connector_id == "rdf_connector"
+    assert schema["source_system"].startswith("sparql://")
+    assert schema["named_graph"] == "semantic.graph/customer-intelligence"
+    assert rows
+    assert rows[0]["concept_uri"].startswith("https://semantic-data-portal.local/concepts/")
 
 
 def test_enterprise_connector_probe_fails_closed():

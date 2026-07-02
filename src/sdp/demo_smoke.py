@@ -20,7 +20,8 @@ def smoke_summary() -> dict[str, Any]:
     controls = enterprise_controls_manifest()
     evidence = build_enterprise_evidence_pack()
     kpis = enterprise_kpi_framework()
-    probe = connector_probe("sql_connector", "crm-customer-master")
+    sql_probe = connector_probe("sql_connector", "crm-customer-master")
+    rdf_probe = connector_probe("rdf_connector", "semantic-glossary")
 
     return {
         "product": readiness.product,
@@ -33,9 +34,11 @@ def smoke_summary() -> dict[str, Any]:
         "ontology_mapping_coverage": evidence["ontology_mapping_coverage"],
         "enterprise_controls": len(controls.controls),
         "implemented_enterprise_controls": controls.implemented_controls,
-        "connector_probe_status": probe["status"],
-        "connector_probe_dataset": probe["dataset_id"],
-        "connector_probe_domain": (probe["demo_context"] or {}).get("domain_id"),
+        "connector_probe_status": sql_probe["status"],
+        "connector_probe_dataset": sql_probe["dataset_id"],
+        "connector_probe_domain": (sql_probe["demo_context"] or {}).get("domain_id"),
+        "rdf_connector_probe_status": rdf_probe["status"],
+        "rdf_connector_probe_dataset": rdf_probe["dataset_id"],
         "ready": (
             readiness.valuation_target_krw == 2_000_000_000
             and demo_plan.activation_days <= 10
@@ -44,8 +47,9 @@ def smoke_summary() -> dict[str, Any]:
             and evidence["ontology_mapping_coverage"] >= 0.7
             and len(kpis.primary_kpis) >= 3
             and controls.implemented_controls >= 2
-            and probe["demo_context"] is not None
-            and probe["status"] == "ready_for_demo"
+            and sql_probe["demo_context"] is not None
+            and sql_probe["status"] == "ready_for_demo"
+            and rdf_probe["status"] == "ready_for_demo"
         ),
     }
 

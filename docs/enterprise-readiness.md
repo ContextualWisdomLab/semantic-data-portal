@@ -27,7 +27,7 @@
 | Metadata quality | buyer priority dataset의 validation pass 95% 이상 | 구현 기반 있음 |
 | Ontology mapping coverage | 핵심 business glossary term 70% 이상 mapping | 구현 기반 있음 |
 | Tenant authorization | actor tenant context와 dataset tenant가 맞지 않으면 preview/query/schema 접근 차단 | 구현됨 |
-| Buyer demo activation | 2주 안에 SQL/RDF/REST/file 중 하나로 priority domain 온보딩 | demo fixture 구현됨, 실제 buyer connector pilot은 다음 단계 |
+| Buyer demo activation | 2주 안에 SQL/RDF/REST/file 중 하나로 priority domain 온보딩 | demo SQL/RDF fixture 구현됨, 실제 buyer connector pilot은 다음 단계 |
 | Operational diligence | 중앙 required workflow, security scan, coverage evidence, OSSF baseline 통과 | GitHub Actions 중앙 체크 대기 |
 
 ## API 증빙
@@ -72,10 +72,11 @@ SDP_SQLITE_PATH=.local/sdp-evidence.sqlite3 uvicorn sdp.api:app --reload
 
 1. 완료: `Dataset`, `PolicyDecision`, `AuditEvent`, `QueryExecution` 계약은 `sdp_core.contracts`가 소유하고, `sdp.domain`은 app 호환 re-export로 유지한다.
 2. 완료: demo SQL connector adapter를 `SourceConnector` contract test와 함께 추가한다.
-3. 완료: `SQLiteEvidenceStore` fallback으로 audit event와 policy decision의 로컬 지속성을 검증한다.
-4. 완료: local `ActorContext` 기반 tenant authorization을 preview/query/schema policy path에 적용한다.
-5. 완료: buyer demo seed를 도메인별 fixture로 분리하고, `GET /enterprise/demo-plan` 및 connector probe와 연결한다.
-6. 완료: retention policy, SSO/RBAC, deployment template를 `sdp_enterprise` feature gate manifest로 묶고 RBAC matrix와 Dockerfile/Compose deployment template를 추가한다.
-7. 완료: buyer evidence pack endpoint로 metadata, ontology, policy, audit, controls 증빙을 한 번에 요약한다.
-8. 완료: health, metrics, evidence count, alert condition을 `/enterprise/observability`와 `/metrics`로 노출한다.
-9. Figma/FigJam 산출물의 IA와 component state를 구현 backlog와 연결하되 Code Connect는 사용하지 않는다.
+3. 완료: demo RDF/SPARQL connector adapter를 semantic glossary fixture와 `SourceConnector` contract test로 추가한다.
+4. 완료: `SQLiteEvidenceStore` fallback으로 audit event와 policy decision의 로컬 지속성을 검증한다.
+5. 완료: local `ActorContext` 기반 tenant authorization을 preview/query/schema policy path에 적용한다.
+6. 완료: buyer demo seed를 도메인별 fixture로 분리하고, `GET /enterprise/demo-plan` 및 connector probe와 연결한다.
+7. 완료: retention policy, SSO/RBAC, deployment template를 `sdp_enterprise` feature gate manifest로 묶고 RBAC matrix와 Dockerfile/Compose deployment template를 추가한다.
+8. 완료: buyer evidence pack endpoint로 metadata, ontology, policy, audit, controls 증빙을 한 번에 요약한다.
+9. 완료: health, metrics, evidence count, alert condition을 `/enterprise/observability`와 `/metrics`로 노출한다.
+10. Figma/FigJam 산출물의 IA와 component state를 구현 backlog와 연결하되 Code Connect는 사용하지 않는다.
