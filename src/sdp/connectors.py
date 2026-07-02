@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sdp_core import SourceConnector, connector_registry_manifest
+from sdp_core import SourceConnector, buyer_demo_context_for_dataset, connector_registry_manifest
 
 from .catalog import get_dataset
 
@@ -101,6 +101,7 @@ def connector_probe(connector_id: str, dataset_id: str) -> dict[str, Any]:
             "quality_score": dataset.quality_score,
             "freshness_score": dataset.freshness_score,
         },
+        "demo_context": buyer_demo_context_for_dataset(dataset.id),
         "control_evidence": control_evidence,
         "proof": connector.proof,
     }

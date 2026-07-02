@@ -44,6 +44,7 @@ uvicorn sdp.api:app --reload
 
 ```bash
 pytest
+PYTHONPATH=src python -m sdp.demo_smoke
 ```
 
 ## 구현 대응 요약
@@ -56,7 +57,9 @@ pytest
 | Policy Service | `src/sdp/policy.py`, `/policy/decision` |
 | LLM Orchestrator | `src/sdp/orchestrator.py`, `/llm/*` |
 | JSON-LD Export | `/catalog/datasets/{id}/jsonld` |
-| Enterprise Core Contracts | `src/sdp_core/contracts.py`, `src/sdp_core/readiness.py`, `/enterprise/*` |
+| Enterprise Core Contracts | `src/sdp_core/contracts.py`, `src/sdp_core/readiness.py`, `src/sdp_core/demo_seed.py`, `/enterprise/*` |
+
+`src/sdp_core/demo_seed.py`는 buyer demo domain, seed dataset, analyst/governance question을 catalog seed, `/enterprise/demo-plan`, connector probe가 함께 쓰는 단일 계약으로 둡니다.
 
 ## 요구사항 대응 증적
 

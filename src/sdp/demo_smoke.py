@@ -20,12 +20,16 @@ def smoke_summary() -> dict[str, Any]:
         "demo_activation_days": demo_plan.activation_days,
         "primary_kpis": len(kpis.primary_kpis),
         "guardrail_kpis": len(kpis.guardrail_kpis),
+        "demo_seed_datasets": len(demo_plan.demo_datasets),
         "connector_probe_status": probe["status"],
         "connector_probe_dataset": probe["dataset_id"],
+        "connector_probe_domain": (probe["demo_context"] or {}).get("domain_id"),
         "ready": (
             readiness.valuation_target_krw == 2_000_000_000
             and demo_plan.activation_days <= 10
+            and len(demo_plan.demo_datasets) >= 3
             and len(kpis.primary_kpis) >= 3
+            and probe["demo_context"] is not None
             and probe["status"] == "ready_for_demo"
         ),
     }

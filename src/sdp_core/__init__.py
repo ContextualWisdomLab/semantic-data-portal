@@ -17,6 +17,15 @@ from .contracts import (
     QueryExecutionRequest,
     QueryExecutionResponse,
 )
+from .demo_seed import (
+    BuyerDemoDatasetSummary,
+    BuyerDemoDomain,
+    buyer_demo_context_for_dataset,
+    buyer_demo_dataset_summaries,
+    buyer_demo_datasets,
+    buyer_demo_domains,
+    get_buyer_demo_domain,
+)
 from .kpis import KPIFramework, SaleabilityKPI, enterprise_kpi_framework
 from .readiness import (
     BuyerDemoActivationPlan,
@@ -33,7 +42,9 @@ __all__ = [
     "ActorContext",
     "AuditEvent",
     "BusinessMapping",
+    "BuyerDemoDatasetSummary",
     "BuyerDemoActivationPlan",
+    "BuyerDemoDomain",
     "ColumnMetadata",
     "Dataset",
     "DatasetCreateRequest",
@@ -51,9 +62,14 @@ __all__ = [
     "SaleabilityKPI",
     "SourceConnector",
     "SQLiteEvidenceStore",
+    "buyer_demo_context_for_dataset",
+    "buyer_demo_dataset_summaries",
+    "buyer_demo_datasets",
+    "buyer_demo_domains",
     "buyer_demo_activation_plan",
     "catalog_store_capabilities",
     "connector_registry_manifest",
     "enterprise_kpi_framework",
     "enterprise_readiness_manifest",
+    "get_buyer_demo_domain",
 ]

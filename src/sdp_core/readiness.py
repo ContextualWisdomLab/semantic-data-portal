@@ -5,6 +5,11 @@ from typing import Any, Protocol
 from pydantic import BaseModel, Field
 
 from .contracts import AuditEvent, Dataset, PolicyDecision
+from .demo_seed import (
+    BuyerDemoDatasetSummary,
+    buyer_demo_dataset_summaries,
+    get_buyer_demo_domain,
+)
 
 
 class CatalogStore(Protocol):
@@ -96,8 +101,12 @@ class DemoWorkflowStep(BaseModel):
 
 class BuyerDemoActivationPlan(BaseModel):
     priority_domain: str
+    domain_fixture_id: str | None = None
     activation_days: int
     selected_connectors: list[ConnectorCapability]
+    demo_datasets: list[BuyerDemoDatasetSummary] = Field(default_factory=list)
+    analyst_questions: list[str] = Field(default_factory=list)
+    governance_questions: list[str] = Field(default_factory=list)
     data_requirements: list[str]
     control_requirements: list[str]
     workflow: list[DemoWorkflowStep]
@@ -188,17 +197,28 @@ def buyer_demo_activation_plan(
     priority_domain: str = "customer intelligence",
     connector_ids: list[str] | None = None,
 ) -> BuyerDemoActivationPlan:
+    domain_fixture = get_buyer_demo_domain(priority_domain)
     connectors = {connector.id: connector for connector in connector_registry_manifest()}
-    selected_ids = connector_ids or ["sql_connector", "rdf_connector"]
+    selected_ids = connector_ids or (
+        domain_fixture.default_connectors if domain_fixture else ["sql_connector", "rdf_connector"]
+    )
     unknown = sorted(set(selected_ids) - set(connectors))
     if unknown:
         raise ValueError(f"unsupported connector ids: {', '.join(unknown)}")
 
     selected = [connectors[connector_id] for connector_id in selected_ids]
+    demo_datasets = buyer_demo_dataset_summaries(domain_fixture.id) if domain_fixture else []
+    analyst_questions = domain_fixture.analyst_questions if domain_fixture else []
+    governance_questions = domain_fixture.governance_questions if domain_fixture else []
+    fixture_acceptance = domain_fixture.acceptance_questions if domain_fixture else []
     return BuyerDemoActivationPlan(
         priority_domain=priority_domain,
+        domain_fixture_id=domain_fixture.id if domain_fixture else None,
         activation_days=10,
         selected_connectors=selected,
+        demo_datasets=demo_datasets,
+        analyst_questions=analyst_questions,
+        governance_questions=governance_questions,
         data_requirements=[
             "3 to 5 priority datasets with owner, steward, schema, sensitivity, freshness, and source system.",
             "20 to 50 buyer glossary terms with approved definitions and synonyms.",
@@ -252,7 +272,7 @@ def buyer_demo_activation_plan(
                 proof_endpoints=["/enterprise/demo-plan", "docs/enterprise-readiness.md"],
             ),
         ],
-        acceptance_criteria=[
+        acceptance_criteria=fixture_acceptance + [
             "At least one buyer analyst question resolves from natural language to dataset recommendation and governed query path.",
             "All preview/query paths produce policy_decision_id and audit evidence.",
             "Critical glossary mapping coverage is at least 70 percent or every gap has a steward patch proposal.",

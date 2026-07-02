@@ -61,6 +61,22 @@ def test_enterprise_demo_plan_supports_buyer_activation_path():
     assert any("policy_decision_id" in criterion for criterion in body["acceptance_criteria"])
 
 
+def test_enterprise_demo_plan_uses_core_buyer_demo_fixture():
+    response = client.get("/enterprise/demo-plan")
+    assert response.status_code == 200
+
+    body = response.json()
+    fixture_ids = {dataset.id for dataset in sdp_core.buyer_demo_datasets()}
+    response_ids = {dataset["id"] for dataset in body["demo_datasets"]}
+    catalog_ids = {dataset["id"] for dataset in client.get("/catalog/datasets").json()}
+
+    assert body["domain_fixture_id"] == "customer_intelligence"
+    assert fixture_ids == response_ids
+    assert fixture_ids <= catalog_ids
+    assert body["analyst_questions"]
+    assert body["governance_questions"]
+
+
 def test_enterprise_demo_plan_rejects_unsupported_connector():
     response = client.get("/enterprise/demo-plan", params={"connector": "warehouse_admin_shell"})
     assert response.status_code == 400
@@ -134,9 +150,11 @@ def test_enterprise_demo_smoke_summary_is_ready():
     summary = smoke_summary()
     assert summary["valuation_target_krw"] == 2_000_000_000
     assert summary["demo_activation_days"] <= 10
+    assert summary["demo_seed_datasets"] >= 3
     assert summary["primary_kpis"] >= 3
     assert summary["guardrail_kpis"] >= 3
     assert summary["connector_probe_status"] == "ready_for_demo"
+    assert summary["connector_probe_domain"] == "customer_intelligence"
     assert summary["ready"] is True
 
 
@@ -153,6 +171,7 @@ def test_enterprise_connector_probe_exposes_demo_evidence():
     assert body["status"] == "ready_for_demo"
     assert body["adapter_status"] == "implemented"
     assert body["data_contract"]["schema_fields"] > 0
+    assert body["demo_context"]["domain_id"] == "customer_intelligence"
 
     controls = {item["control"]: item for item in body["control_evidence"]}
     assert controls["policy_before_query"]["status"] == "implemented"
