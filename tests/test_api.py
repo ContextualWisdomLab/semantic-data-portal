@@ -331,7 +331,7 @@ def test_enterprise_production_readiness_tracks_paid_pilot_integrations():
     assert "SDP_OIDC_JWKS_URL" in integrations["oidc_jwks_verification"]["required_environment"]
     assert any("direct role claims" in item for item in integrations["oidc_jwks_verification"]["acceptance_criteria"])
 
-    assert integrations["connector_credential_vault"]["status"] == "planned"
+    assert integrations["connector_credential_vault"]["status"] == "implemented"
     assert "SDP_CONNECTOR_SECRET_REF_PREFIX" in integrations["connector_credential_vault"]["required_environment"]
     assert any("raw connector credentials" in item for item in integrations["connector_credential_vault"]["acceptance_criteria"])
 
@@ -341,8 +341,8 @@ def test_enterprise_production_readiness_tracks_paid_pilot_integrations():
     assert set(body["paid_pilot_blockers"]) >= {
         "postgres_evidence_store",
         "oidc_jwks_verification",
-        "connector_credential_vault",
     }
+    assert "connector_credential_vault" not in body["paid_pilot_blockers"]
     assert "request_observability_export" not in body["paid_pilot_blockers"]
     assert body["demo_blockers"] == []
 
@@ -445,7 +445,7 @@ def test_enterprise_evidence_pack_summarizes_buyer_diligence():
     assert body["audit_event_count"] >= 1
     assert body["production_demo_release_ready"] is True
     assert body["production_paid_pilot_ready"] is False
-    assert body["production_paid_pilot_blockers"] == 3
+    assert body["production_paid_pilot_blockers"] == 2
     assert body["saleability_gates"]["metadata_validation_pass_rate"] == "pass"
     assert body["saleability_gates"]["shacl_validation_pass_rate"] == "pass"
     assert body["saleability_gates"]["steward_review_queue"] == "pass"
@@ -581,7 +581,7 @@ def test_enterprise_demo_smoke_summary_is_ready():
     assert summary["production_current_stage"] == "pilot_candidate"
     assert summary["production_demo_release_ready"] is True
     assert summary["production_paid_pilot_ready"] is False
-    assert summary["production_paid_pilot_blockers"] == 3
+    assert summary["production_paid_pilot_blockers"] == 2
     assert summary["ready"] is True
 
 
@@ -661,8 +661,29 @@ def test_enterprise_rest_connector_probe_exposes_api_contract_gap():
     assert body["source_system"].startswith("https://")
 
     controls = {item["control"]: item for item in body["control_evidence"]}
-    assert controls["credential_vault"]["status"] == "planned"
+    assert controls["credential_vault"]["status"] == "implemented"
+    assert controls["credential_vault"]["secret_present"] is False
+    assert controls["credential_vault"]["secret_ref"] == "SDP_CONNECTOR_SECRET_REST_CONNECTOR_MARKETING_CAMPAIGN_TOKEN"
     assert controls["purpose_binding"]["status"] == "implemented"
+
+
+def test_enterprise_rest_connector_probe_uses_vault_reference_without_secret_leak(monkeypatch):
+    monkeypatch.setenv("SDP_CONNECTOR_SECRET_REF_PREFIX", "SDP_CONNECTOR_SECRET_")
+    monkeypatch.setenv("SDP_CONNECTOR_SECRET_REST_CONNECTOR_MARKETING_CAMPAIGN_TOKEN", "buyer-api-token-secret")
+
+    response = client.get(
+        "/enterprise/connectors/rest_connector/probe",
+        params={"dataset_id": "marketing-campaign"},
+    )
+    assert response.status_code == 200
+
+    body = response.json()
+    assert body["status"] == "ready_for_demo"
+    controls = {item["control"]: item for item in body["control_evidence"]}
+    assert controls["credential_vault"]["status"] == "implemented"
+    assert controls["credential_vault"]["secret_present"] is True
+    assert controls["credential_vault"]["secret_ref"] == "SDP_CONNECTOR_SECRET_REST_CONNECTOR_MARKETING_CAMPAIGN_TOKEN"
+    assert "buyer-api-token-secret" not in json.dumps(body)
 
 
 def test_sql_connector_adapter_implements_source_connector_contract():

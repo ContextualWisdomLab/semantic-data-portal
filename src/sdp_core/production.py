@@ -75,12 +75,15 @@ def production_integration_registry() -> list[ProductionIntegration]:
         ProductionIntegration(
             id="connector_credential_vault",
             label="Connector credential vault",
-            status="planned",
+            status="implemented",
             buyer_risk="Connector contracts are implemented for demo, but real source credentials must never live in catalog metadata or LLM prompts.",
             current_evidence=[
+                "SDP_CONNECTOR_SECRET_REF_PREFIX",
+                "SDP_CONNECTOR_VAULT_PROVIDER",
+                "sdp.credentials.connector_secret_status",
                 "GET /enterprise/connectors/{connector_id}/probe",
                 "sdp_core.SourceConnector",
-                "rest_connector status contract_only until credential vault exists",
+                "tests/test_api.py::test_enterprise_rest_connector_probe_uses_vault_reference_without_secret_leak",
             ],
             required_environment=[
                 "SDP_CONNECTOR_SECRET_REF_PREFIX",

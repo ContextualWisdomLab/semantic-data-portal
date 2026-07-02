@@ -5,10 +5,12 @@ from typing import Any
 from sdp_core import SourceConnector, buyer_demo_context_for_dataset, connector_registry_manifest
 
 from .catalog import get_dataset
+from .credentials import connector_secret_status
 
 
 _IMPLEMENTED_PROOF = {
     "audit_event": ["/audit/events"],
+    "credential_vault": ["/enterprise/connectors/{connector_id}/probe", "SDP_CONNECTOR_SECRET_REF_PREFIX"],
     "lineage_capture": ["/catalog/datasets/{dataset_id}/lineage"],
     "ontology_version_pin": ["/ontology/search", "/ontology/resolve"],
     "pii_masking": ["/browse/{dataset_id}/preview"],
@@ -290,20 +292,24 @@ def connector_probe(connector_id: str, dataset_id: str) -> dict[str, Any]:
         adapter_status = "implemented"
 
     control_evidence = []
-    implemented_controls = 0
+    satisfied_controls = 0
     for control in connector.required_controls:
         proof_endpoints = _IMPLEMENTED_PROOF.get(control, [])
         implemented = bool(proof_endpoints)
-        implemented_controls += int(implemented)
-        control_evidence.append(
-            {
-                "control": control,
-                "status": "implemented" if implemented else "planned",
-                "proof_endpoints": proof_endpoints,
-            }
-        )
+        satisfied = implemented
+        evidence_payload: dict[str, Any] = {
+            "control": control,
+            "status": "implemented" if implemented else "planned",
+            "proof_endpoints": proof_endpoints,
+        }
+        if control == "credential_vault":
+            vault = connector_secret_status(connector_id, dataset_id)
+            evidence_payload.update(vault.public_dict())
+            satisfied = implemented and vault.secret_present
+        satisfied_controls += int(satisfied)
+        control_evidence.append(evidence_payload)
 
-    ready_for_demo = adapter_status == "implemented" and implemented_controls == len(connector.required_controls)
+    ready_for_demo = adapter_status == "implemented" and satisfied_controls == len(connector.required_controls)
     return {
         "connector_id": connector.id,
         "dataset_id": dataset.id,
