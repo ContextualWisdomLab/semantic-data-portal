@@ -111,16 +111,20 @@ def enterprise_control_registry() -> list[EnterpriseControl]:
             id="operational_observability",
             label="Operational observability",
             status="implemented",
-            risk_reduced="Pilot operators can inspect health, minimal metrics, evidence counts, and alert conditions before production integration.",
+            risk_reduced="Pilot operators can inspect health, minimal metrics, evidence counts, request logs, and alert conditions before production integration.",
             evidence=[
+                "SDP_LOG_SINK_URL",
+                "SDP_REQUEST_ID_HEADER",
                 "GET /health",
                 "GET /metrics",
                 "GET /enterprise/observability",
                 "tests/test_api.py::test_enterprise_observability_and_metrics_endpoints",
+                "tests/test_api.py::test_request_observability_export_writes_bodyless_jsonl",
             ],
             release_criteria=[
                 "Health and metrics endpoints are exposed without source credentials.",
-                "Audit, policy, catalog, and enterprise control counts are visible to operators.",
+                "Audit, policy, catalog, request observation, and enterprise control counts are visible to operators.",
+                "Request logs include id, tenant, actor, route, status, latency, and evidence ids without request bodies.",
             ],
         ),
         EnterpriseControl(

@@ -23,6 +23,7 @@ uvicorn sdp.api:app --reload
 ```
 
 `SDP_SQLITE_PATH=.local/sdp-evidence.sqlite3`를 지정하면 policy decision과 audit event가 로컬 SQLite evidence store에 기록됩니다.
+`SDP_LOG_SINK_URL=file://.local/sdp-requests.jsonl`과 `SDP_REQUEST_ID_HEADER=X-Request-Id`를 지정하면 request id, tenant, actor, route, status, latency, evidence ids만 body 없이 request observation log로 기록됩니다.
 
 Docker 기반 로컬 데모는 다음 명령으로 실행합니다.
 

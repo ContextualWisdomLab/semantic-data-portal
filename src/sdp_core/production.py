@@ -96,12 +96,16 @@ def production_integration_registry() -> list[ProductionIntegration]:
         ProductionIntegration(
             id="request_observability_export",
             label="Request observability export",
-            status="planned",
+            status="implemented",
             buyer_risk="Local metrics are enough for pilot review, but paid operation needs tenant-scoped logs and external alert routing.",
             current_evidence=[
+                "SDP_LOG_SINK_URL",
+                "SDP_REQUEST_ID_HEADER",
+                "sdp.observability.record_request_observation",
                 "/enterprise/observability",
                 "/metrics",
                 "tests/test_api.py::test_enterprise_observability_and_metrics_endpoints",
+                "tests/test_api.py::test_request_observability_export_writes_bodyless_jsonl",
             ],
             required_environment=[
                 "SDP_LOG_SINK_URL",

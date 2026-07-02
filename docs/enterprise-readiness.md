@@ -30,7 +30,7 @@
 | Buyer demo activation | 2주 안에 SQL/RDF/REST/file 중 하나로 priority domain 온보딩 | demo SQL/RDF/file fixture 구현됨, REST adapter는 credential vault 전 단계 contract_only |
 | Query safety | dataset-bound governed query만 허용하고 literal tautology/comment/multi-statement/forbidden keyword를 fail-closed 처리 | 구현됨 |
 | OIDC preview guardrail | 만료/subject/tenant claim shape 검증, group-to-role allowlist mapping, 직접 roles claim 무시 | 구현됨, production JWKS 검증은 통합 항목 |
-| Production integration | paid pilot 전 Postgres evidence store, OIDC JWKS verification, connector credential vault, request observability export 필요 항목을 숨기지 않고 manifest로 추적 | demo-ready, paid pilot blockers 4건 명시 |
+| Production integration | paid pilot 전 Postgres evidence store, OIDC JWKS verification, connector credential vault, request observability export 필요 항목을 숨기지 않고 manifest로 추적 | demo-ready, request observability export 구현됨, 남은 paid pilot blockers 3건 |
 | Operational diligence | 중앙 required workflow, security scan, coverage evidence, OSSF baseline 통과 | PR #2/#4 병합됨, PR #5 보안 보강 후 중앙 체크 대기 |
 
 ## API 증빙
@@ -40,8 +40,8 @@
 - `GET /enterprise/kpis`: 20억 판매 가능성 판단용 primary KPI, guardrail KPI, 목표, 측정 원천
 - `GET /enterprise/controls`: `sdp_enterprise` feature gate 아래 retention, SSO/OIDC, RBAC, deployment, 중앙 workflow diligence 상태
 - `GET /enterprise/rbac-matrix`: role/action/tenant-scope permission matrix
-- `GET /enterprise/observability`: health, metrics, evidence count, alert condition 운영 증빙
-- `GET /enterprise/production-readiness`: demo-ready와 paid-pilot-ready를 분리해 Postgres evidence store, OIDC JWKS verification, connector credential vault, request observability export의 환경변수·acceptance criteria·blocker를 노출
+- `GET /enterprise/observability`: health, metrics, evidence count, request observation, bodyless structured log sink, alert condition 운영 증빙
+- `GET /enterprise/production-readiness`: demo-ready와 paid-pilot-ready를 분리해 Postgres evidence store, OIDC JWKS verification, connector credential vault, request observability export의 환경변수·acceptance criteria·blocker를 노출. request observability export는 `SDP_LOG_SINK_URL`과 `SDP_REQUEST_ID_HEADER` 기반 구현 증빙으로 paid-pilot blocker에서 제거되었다.
 - `GET /enterprise/evidence-pack`: buyer diligence용 metadata validation, ontology mapping coverage, policy/audit evidence, proof endpoint 요약
 - `GET /enterprise/shacl-validation`: buyer priority dataset 전체의 SHACL 호환 validation pass rate와 shape/report 요약
 - `GET /enterprise/steward-review`: SHACL validation failure와 ontology patch proposal을 묶은 steward 검토 대기열 및 buyer handoff readiness 요약
@@ -94,4 +94,5 @@ SDP_SQLITE_PATH=.local/sdp-evidence.sqlite3 uvicorn sdp.api:app --reload
 14. 완료: `/enterprise/auth/oidc-preview` claim-shape 검증과 직접 role-claim 무시 동작을 추가한다. Production JWKS/issuer/audience 검증은 실제 IdP 연결 시 adapter 안에서 붙인다.
 15. 완료: `/browse/query` literal tautology injection을 query-safety validation에서 fail-closed로 거절한다.
 16. 완료: `/enterprise/console`로 evidence, KPI, controls, connector probe 상태를 한 화면에 노출한다.
-17. Figma/FigJam 산출물의 IA와 component state를 구현 backlog와 연결하되 Code Connect는 사용하지 않는다.
+17. 완료: request observability export를 `SDP_LOG_SINK_URL=file://...` 또는 `http(s)://...` sink로 연결하고, request id, tenant, actor, route, status, latency, evidence ids만 body 없이 기록한다.
+18. Figma/FigJam 산출물의 IA와 component state를 구현 backlog와 연결하되 Code Connect는 사용하지 않는다.

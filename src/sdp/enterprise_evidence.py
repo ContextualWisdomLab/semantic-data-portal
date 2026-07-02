@@ -7,6 +7,7 @@ from sdp_core import (
     buyer_demo_activation_plan,
     enterprise_controls_manifest,
     enterprise_kpi_framework,
+    enterprise_production_readiness_manifest,
     enterprise_readiness_manifest,
 )
 
@@ -39,6 +40,7 @@ def build_enterprise_evidence_pack() -> dict[str, Any]:
     demo_plan = buyer_demo_activation_plan()
     controls = enterprise_controls_manifest()
     kpis = enterprise_kpi_framework()
+    production = enterprise_production_readiness_manifest()
     shacl_validation = enterprise_shacl_validation_summary()
     steward_review = build_steward_review_summary()
     datasets = list_datasets()
@@ -58,6 +60,9 @@ def build_enterprise_evidence_pack() -> dict[str, Any]:
         "ontology_mapping_coverage": _ontology_mapping_coverage(),
         "policy_decision_count": len(policy_decisions),
         "audit_event_count": len(audit_events),
+        "production_demo_release_ready": production.demo_release_ready,
+        "production_paid_pilot_ready": production.paid_pilot_ready,
+        "production_paid_pilot_blockers": len(production.paid_pilot_blockers),
         "implemented_enterprise_controls": controls.implemented_controls,
         "planned_enterprise_controls": controls.planned_controls,
         "primary_kpis": [kpi.id for kpi in kpis.primary_kpis],
@@ -69,6 +74,7 @@ def build_enterprise_evidence_pack() -> dict[str, Any]:
             "/enterprise/controls",
             "/enterprise/rbac-matrix",
             "/enterprise/observability",
+            "/enterprise/production-readiness",
             "/enterprise/shacl-validation",
             "/enterprise/steward-review",
             "/enterprise/connectors/sql_connector/probe?dataset_id=crm-customer-master",
@@ -84,5 +90,7 @@ def build_enterprise_evidence_pack() -> dict[str, Any]:
             "policy_decisions_inspectable": "pass" if policy_decisions else "needs_activity",
             "audit_events_inspectable": "pass" if audit_events else "needs_activity",
             "enterprise_controls_visible": "pass" if controls.implemented_controls >= 2 else "gap",
+            "production_demo_release": "pass" if production.demo_release_ready else "gap",
+            "production_paid_pilot": "pass" if production.paid_pilot_ready else "needs_integration",
         },
     }

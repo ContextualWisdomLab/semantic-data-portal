@@ -1,3 +1,4 @@
+import json
 from copy import deepcopy
 from pathlib import Path
 from time import time
@@ -8,6 +9,7 @@ from fastapi.testclient import TestClient
 import sdp.catalog as app_catalog
 import sdp.domain as app_domain
 import sdp.evidence as app_evidence
+import sdp.observability as app_observability
 import sdp_core
 from sdp.api import app
 from sdp.connectors import get_source_connector
@@ -25,6 +27,8 @@ def isolate_in_memory_app_state():
     audit_log = list(app_catalog._AUDIT_LOG)
     schema_history = deepcopy(app_catalog._SCHEMA_HISTORY)
     policy_log = list(app_evidence._POLICY_DECISION_LOG)
+    request_observations = app_observability.list_request_observations()
+    export_errors = app_observability.list_observability_export_errors()
     yield
     app_catalog._DATA.clear()
     app_catalog._DATA.update(data)
@@ -32,6 +36,11 @@ def isolate_in_memory_app_state():
     app_catalog._SCHEMA_HISTORY.clear()
     app_catalog._SCHEMA_HISTORY.update(schema_history)
     app_evidence._POLICY_DECISION_LOG[:] = policy_log
+    app_observability.reset_request_observability()
+    for observation in request_observations:
+        app_observability.record_request_observation(observation, export=False)
+    for error in export_errors:
+        app_observability.record_observability_export_error(error)
 
 
 def test_health():
@@ -265,6 +274,43 @@ def test_enterprise_observability_and_metrics_endpoints():
     assert "sdp_enterprise_controls_implemented" in text
 
 
+def test_request_observability_export_writes_bodyless_jsonl(tmp_path, monkeypatch):
+    log_path = tmp_path / "requests.jsonl"
+    monkeypatch.setenv("SDP_LOG_SINK_URL", f"file://{log_path}")
+    monkeypatch.setenv("SDP_REQUEST_ID_HEADER", "X-Correlation-Id")
+
+    response = client.post(
+        "/browse/crm-customer-master/preview",
+        headers={"X-Correlation-Id": "buyer-trace-001", "X-SDP-Actor": "analyst@example.com", "X-SDP-Tenant": "demo"},
+        json={"user": "analyst", "purpose": "analysis", "limit": 1},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["X-Correlation-Id"] == "buyer-trace-001"
+
+    records = [json.loads(line) for line in log_path.read_text().splitlines()]
+    assert len(records) == 1
+    record = records[0]
+    assert record["request_id"] == "buyer-trace-001"
+    assert record["route"] == "/browse/crm-customer-master/preview"
+    assert record["method"] == "POST"
+    assert record["status_code"] == 200
+    assert record["actor"] == "analyst@example.com"
+    assert record["tenant_id"] == "demo"
+    assert "latency_ms" in record
+    assert "purpose" not in record
+    assert "analysis" not in json.dumps(record)
+
+    manifest = client.get("/enterprise/observability").json()
+    assert manifest["structured_logs"]["status"] == "implemented"
+    assert manifest["structured_logs"]["sink"]["scheme"] == "file"
+    assert manifest["metrics"]["request_observations_total"] >= 1
+    assert any(item["request_id"] == "buyer-trace-001" for item in manifest["recent_requests"])
+
+    metrics = client.get("/metrics").text
+    assert "sdp_request_observations_total" in metrics
+
+
 def test_enterprise_production_readiness_tracks_paid_pilot_integrations():
     response = client.get("/enterprise/production-readiness")
     assert response.status_code == 200
@@ -289,15 +335,15 @@ def test_enterprise_production_readiness_tracks_paid_pilot_integrations():
     assert "SDP_CONNECTOR_SECRET_REF_PREFIX" in integrations["connector_credential_vault"]["required_environment"]
     assert any("raw connector credentials" in item for item in integrations["connector_credential_vault"]["acceptance_criteria"])
 
-    assert integrations["request_observability_export"]["status"] == "planned"
+    assert integrations["request_observability_export"]["status"] == "implemented"
     assert "/enterprise/observability" in integrations["request_observability_export"]["current_evidence"]
 
     assert set(body["paid_pilot_blockers"]) >= {
         "postgres_evidence_store",
         "oidc_jwks_verification",
         "connector_credential_vault",
-        "request_observability_export",
     }
+    assert "request_observability_export" not in body["paid_pilot_blockers"]
     assert body["demo_blockers"] == []
 
 
@@ -397,10 +443,16 @@ def test_enterprise_evidence_pack_summarizes_buyer_diligence():
     assert body["ontology_mapping_coverage"] >= 0.7
     assert body["policy_decision_count"] >= 1
     assert body["audit_event_count"] >= 1
+    assert body["production_demo_release_ready"] is True
+    assert body["production_paid_pilot_ready"] is False
+    assert body["production_paid_pilot_blockers"] == 3
     assert body["saleability_gates"]["metadata_validation_pass_rate"] == "pass"
     assert body["saleability_gates"]["shacl_validation_pass_rate"] == "pass"
     assert body["saleability_gates"]["steward_review_queue"] == "pass"
     assert body["saleability_gates"]["ontology_mapping_coverage"] == "pass"
+    assert body["saleability_gates"]["production_demo_release"] == "pass"
+    assert body["saleability_gates"]["production_paid_pilot"] == "needs_integration"
+    assert "/enterprise/production-readiness" in body["proof_endpoints"]
     assert "/enterprise/shacl-validation" in body["proof_endpoints"]
     assert "/enterprise/steward-review" in body["proof_endpoints"]
     assert "/policy/decisions" in body["proof_endpoints"]
@@ -529,7 +581,7 @@ def test_enterprise_demo_smoke_summary_is_ready():
     assert summary["production_current_stage"] == "pilot_candidate"
     assert summary["production_demo_release_ready"] is True
     assert summary["production_paid_pilot_ready"] is False
-    assert summary["production_paid_pilot_blockers"] == 4
+    assert summary["production_paid_pilot_blockers"] == 3
     assert summary["ready"] is True
 
 

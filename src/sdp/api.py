@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from time import monotonic
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query, Response
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sdp_core import (
@@ -45,7 +46,14 @@ from .domain import (
 )
 from .enterprise_evidence import build_enterprise_evidence_pack
 from .evidence import list_policy_decisions
-from .observability import build_observability_manifest, prometheus_metrics_text
+from .observability import (
+    build_observability_manifest,
+    build_request_observation,
+    prometheus_metrics_text,
+    record_request_observation,
+    request_id_from_headers,
+    request_id_header,
+)
 from .policy import evaluate
 from .semantic_validation import enterprise_shacl_validation_summary, validate_dataset_semantics
 from .steward_review import build_steward_review_summary
@@ -63,6 +71,31 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def record_request_observability(request: Request, call_next):
+    started = monotonic()
+    request_id = request_id_from_headers(request.headers)
+    response: Response | None = None
+
+    try:
+        response = await call_next(request)
+        return response
+    finally:
+        latency_ms = (monotonic() - started) * 1000
+        status_code = response.status_code if response is not None else 500
+        observation = build_request_observation(
+            method=request.method,
+            route=request.url.path,
+            status_code=status_code,
+            latency_ms=latency_ms,
+            headers=request.headers,
+            request_id=request_id,
+        )
+        record_request_observation(observation)
+        if response is not None:
+            response.headers[request_id_header()] = request_id
 
 
 def _actor(payload: dict[str, Any] | None) -> str:
