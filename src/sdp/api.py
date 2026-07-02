@@ -10,6 +10,7 @@ from sdp_core import (
     buyer_demo_activation_plan,
     enterprise_controls_manifest,
     enterprise_kpi_framework,
+    enterprise_production_readiness_manifest,
     enterprise_rbac_matrix,
     enterprise_readiness_manifest,
 )
@@ -118,6 +119,11 @@ def enterprise_rbac() -> dict[str, Any]:
 @app.get("/enterprise/observability")
 def enterprise_observability() -> dict[str, Any]:
     return build_observability_manifest()
+
+
+@app.get("/enterprise/production-readiness")
+def enterprise_production_readiness() -> dict[str, Any]:
+    return enterprise_production_readiness_manifest().model_dump()
 
 
 @app.get("/enterprise/evidence-pack")

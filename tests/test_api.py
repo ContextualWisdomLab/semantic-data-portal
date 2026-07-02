@@ -67,7 +67,7 @@ def test_enterprise_readiness_manifest_exposes_saleable_gates():
     assert any(artifact["code_connect"] == "disabled" for artifact in body["design_artifacts"])
     artifacts = {artifact["id"]: artifact for artifact in body["design_artifacts"]}
     assert artifacts["operator_console_design_capture"]["url"].startswith("https://www.figma.com/design/")
-    assert "node-id=2-2" in artifacts["operator_console_design_capture"]["url"]
+    assert "node-id=3-2" in artifacts["operator_console_design_capture"]["url"]
     assert artifacts["operator_console_design_capture"]["code_connect"] == "disabled"
 
 
@@ -199,6 +199,7 @@ def test_enterprise_console_renders_operator_surface():
     assert "KRW 2B enterprise readiness" in body
     assert 'href="/docs"' in body
     assert 'aria-label="Evidence scorecard"' in body
+    assert "/enterprise/production-readiness" in body
     assert "/enterprise/evidence-pack" in body
     assert "/enterprise/steward-review" in body
     assert "/enterprise/connectors/sql_connector/probe" in body
@@ -262,6 +263,42 @@ def test_enterprise_observability_and_metrics_endpoints():
     text = metrics.text
     assert "sdp_catalog_datasets_total" in text
     assert "sdp_enterprise_controls_implemented" in text
+
+
+def test_enterprise_production_readiness_tracks_paid_pilot_integrations():
+    response = client.get("/enterprise/production-readiness")
+    assert response.status_code == 200
+
+    body = response.json()
+    assert body["valuation_target_krw"] == 2_000_000_000
+    assert body["current_stage"] == "pilot_candidate"
+    assert body["demo_release_ready"] is True
+    assert body["paid_pilot_ready"] is False
+
+    integrations = {item["id"]: item for item in body["integrations"]}
+    assert integrations["postgres_evidence_store"]["status"] == "planned"
+    assert "SDP_DATABASE_URL" in integrations["postgres_evidence_store"]["required_environment"]
+    assert "SDP_SQLITE_PATH" in integrations["postgres_evidence_store"]["current_evidence"]
+    assert any("policy decisions and audit events" in item for item in integrations["postgres_evidence_store"]["acceptance_criteria"])
+
+    assert integrations["oidc_jwks_verification"]["status"] == "planned"
+    assert "SDP_OIDC_JWKS_URL" in integrations["oidc_jwks_verification"]["required_environment"]
+    assert any("direct role claims" in item for item in integrations["oidc_jwks_verification"]["acceptance_criteria"])
+
+    assert integrations["connector_credential_vault"]["status"] == "planned"
+    assert "SDP_CONNECTOR_SECRET_REF_PREFIX" in integrations["connector_credential_vault"]["required_environment"]
+    assert any("raw connector credentials" in item for item in integrations["connector_credential_vault"]["acceptance_criteria"])
+
+    assert integrations["request_observability_export"]["status"] == "planned"
+    assert "/enterprise/observability" in integrations["request_observability_export"]["current_evidence"]
+
+    assert set(body["paid_pilot_blockers"]) >= {
+        "postgres_evidence_store",
+        "oidc_jwks_verification",
+        "connector_credential_vault",
+        "request_observability_export",
+    }
+    assert body["demo_blockers"] == []
 
 
 def test_oidc_preview_maps_claims_to_actor_context():
@@ -489,6 +526,10 @@ def test_enterprise_demo_smoke_summary_is_ready():
     assert summary["file_lake_connector_probe_dataset"] == "crm-event"
     assert summary["rest_connector_probe_status"] == "contract_only"
     assert summary["rest_connector_adapter_status"] == "implemented"
+    assert summary["production_current_stage"] == "pilot_candidate"
+    assert summary["production_demo_release_ready"] is True
+    assert summary["production_paid_pilot_ready"] is False
+    assert summary["production_paid_pilot_blockers"] == 4
     assert summary["ready"] is True
 
 

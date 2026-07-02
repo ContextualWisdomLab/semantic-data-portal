@@ -56,6 +56,7 @@ docker compose up --build
 - `GET /enterprise/controls`
 - `GET /enterprise/rbac-matrix`
 - `GET /enterprise/observability`
+- `GET /enterprise/production-readiness`
 - `GET /enterprise/evidence-pack`
 - `GET /enterprise/shacl-validation`
 - `GET /enterprise/steward-review`

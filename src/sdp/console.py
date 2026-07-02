@@ -275,6 +275,7 @@ def render_enterprise_console() -> str:
       <nav class="actions" aria-label="Console evidence links">
         <a class="action" href="/enterprise/readiness">Readiness</a>
         <a class="action" href="/enterprise/evidence-pack">Evidence</a>
+        <a class="action" href="/enterprise/production-readiness">Production</a>
         <a class="action" href="/enterprise/demo-plan">Demo Plan</a>
         <a class="action" href="/docs">API Docs</a>
       </nav>

@@ -28,6 +28,12 @@ from .demo_seed import (
 )
 from .enterprise import EnterpriseControl, EnterpriseControlsManifest, enterprise_controls_manifest
 from .kpis import KPIFramework, SaleabilityKPI, enterprise_kpi_framework
+from .production import (
+    ProductionIntegration,
+    ProductionReadinessManifest,
+    enterprise_production_readiness_manifest,
+    production_integration_registry,
+)
 from .rbac import RBACMatrix, RolePermission, enterprise_rbac_matrix
 from .readiness import (
     BuyerDemoActivationPlan,
@@ -60,6 +66,8 @@ __all__ = [
     "MappingStatus",
     "OntologyPatch",
     "PolicyDecision",
+    "ProductionIntegration",
+    "ProductionReadinessManifest",
     "QueryDraftRequest",
     "QueryExecutionRequest",
     "QueryExecutionResponse",
@@ -77,7 +85,9 @@ __all__ = [
     "connector_registry_manifest",
     "enterprise_controls_manifest",
     "enterprise_kpi_framework",
+    "enterprise_production_readiness_manifest",
     "enterprise_rbac_matrix",
     "enterprise_readiness_manifest",
     "get_buyer_demo_domain",
+    "production_integration_registry",
 ]

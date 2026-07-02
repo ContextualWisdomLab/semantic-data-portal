@@ -7,6 +7,7 @@ from sdp_core import (
     buyer_demo_activation_plan,
     enterprise_controls_manifest,
     enterprise_kpi_framework,
+    enterprise_production_readiness_manifest,
     enterprise_readiness_manifest,
 )
 
@@ -24,6 +25,7 @@ def smoke_summary() -> dict[str, Any]:
     shacl_validation = enterprise_shacl_validation_summary()
     steward_review = build_steward_review_summary()
     kpis = enterprise_kpi_framework()
+    production = enterprise_production_readiness_manifest()
     sql_probe = connector_probe("sql_connector", "crm-customer-master")
     rdf_probe = connector_probe("rdf_connector", "semantic-glossary")
     file_probe = connector_probe("file_lake_connector", "crm-event")
@@ -52,6 +54,10 @@ def smoke_summary() -> dict[str, Any]:
         "file_lake_connector_probe_dataset": file_probe["dataset_id"],
         "rest_connector_probe_status": rest_probe["status"],
         "rest_connector_adapter_status": rest_probe["adapter_status"],
+        "production_current_stage": production.current_stage,
+        "production_demo_release_ready": production.demo_release_ready,
+        "production_paid_pilot_ready": production.paid_pilot_ready,
+        "production_paid_pilot_blockers": len(production.paid_pilot_blockers),
         "ready": (
             readiness.valuation_target_krw == 2_000_000_000
             and demo_plan.activation_days <= 10
