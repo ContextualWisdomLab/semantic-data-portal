@@ -59,6 +59,7 @@ docker compose up --build
 - `GET /enterprise/evidence-pack`
 - `GET /enterprise/shacl-validation`
 - `GET /enterprise/steward-review`
+- `GET /enterprise/console`
 - `POST /enterprise/auth/oidc-preview`
 - `GET /enterprise/connectors/{connector_id}/probe`
 

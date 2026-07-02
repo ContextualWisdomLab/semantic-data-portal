@@ -43,6 +43,7 @@
 - `GET /enterprise/evidence-pack`: buyer diligence용 metadata validation, ontology mapping coverage, policy/audit evidence, proof endpoint 요약
 - `GET /enterprise/shacl-validation`: buyer priority dataset 전체의 SHACL 호환 validation pass rate와 shape/report 요약
 - `GET /enterprise/steward-review`: SHACL validation failure와 ontology patch proposal을 묶은 steward 검토 대기열 및 buyer handoff readiness 요약
+- `GET /enterprise/console`: evidence, KPI, control, connector status를 한 화면에서 확인하는 운영자 콘솔
 - `POST /enterprise/auth/oidc-preview`: 실제 JWKS token verification 전 단계에서 만료/subject/tenant claim shape를 검증하고, `groups` 기반 role mapping만 `ActorContext`로 검토하는 증빙 endpoint. 직접 `roles` claim은 권한으로 쓰지 않고 `ignored_role_claims`로 반환한다.
 - `GET /enterprise/connectors/{connector_id}/probe`: demo dataset 기준 connector contract, source metadata, control evidence, proof endpoint 확인
 - `GET /catalog/datasets/{dataset_id}/validate`: metadata quality
@@ -90,4 +91,5 @@ SDP_SQLITE_PATH=.local/sdp-evidence.sqlite3 uvicorn sdp.api:app --reload
 13. 완료: `/enterprise/steward-review`로 validation failure와 ontology patch proposal 검토 대기열, 2영업일 SLA, buyer handoff readiness를 노출한다.
 14. 완료: `/enterprise/auth/oidc-preview` claim-shape 검증과 직접 role-claim 무시 동작을 추가한다. Production JWKS/issuer/audience 검증은 실제 IdP 연결 시 adapter 안에서 붙인다.
 15. 완료: `/browse/query` literal tautology injection을 query-safety validation에서 fail-closed로 거절한다.
-16. Figma/FigJam 산출물의 IA와 component state를 구현 backlog와 연결하되 Code Connect는 사용하지 않는다.
+16. 완료: `/enterprise/console`로 evidence, KPI, controls, connector probe 상태를 한 화면에 노출한다.
+17. Figma/FigJam 산출물의 IA와 component state를 구현 backlog와 연결하되 Code Connect는 사용하지 않는다.

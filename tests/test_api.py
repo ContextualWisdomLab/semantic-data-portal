@@ -165,6 +165,19 @@ def test_enterprise_steward_review_summarizes_governance_queue():
     )
 
 
+def test_enterprise_console_renders_operator_surface():
+    response = client.get("/enterprise/console")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+
+    body = response.text
+    assert "Semantic Data Portal" in body
+    assert "/enterprise/evidence-pack" in body
+    assert "/enterprise/steward-review" in body
+    assert "/enterprise/connectors/sql_connector/probe" in body
+    assert "Figma Code Connect disabled" in body
+
+
 def test_enterprise_controls_expose_feature_gate_manifest():
     response = client.get("/enterprise/controls")
     assert response.status_code == 200

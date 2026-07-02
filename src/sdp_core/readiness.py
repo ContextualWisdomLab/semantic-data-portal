@@ -287,6 +287,7 @@ def buyer_demo_activation_plan(
             "docs/enterprise-readiness.md",
             "GET /enterprise/readiness output",
             "GET /enterprise/demo-plan output",
+            "GET /enterprise/console operator surface",
             "Local pytest and central workflow evidence",
         ],
     )

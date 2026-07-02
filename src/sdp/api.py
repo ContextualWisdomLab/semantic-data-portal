@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Response
+from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sdp_core import (
     buyer_demo_activation_plan,
@@ -14,6 +15,7 @@ from sdp_core import (
 )
 
 from . import authz, browse, catalog, connectors, ontology, orchestrator
+from .console import render_enterprise_console
 from .catalog import (
     deprecate_dataset,
     get_dataset,
@@ -131,6 +133,11 @@ def enterprise_shacl_validation() -> dict[str, Any]:
 @app.get("/enterprise/steward-review")
 def enterprise_steward_review() -> dict[str, Any]:
     return build_steward_review_summary()
+
+
+@app.get("/enterprise/console", response_class=HTMLResponse)
+def enterprise_console() -> str:
+    return render_enterprise_console()
 
 
 @app.post("/enterprise/auth/oidc-preview")
