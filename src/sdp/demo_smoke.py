@@ -12,7 +12,7 @@ def smoke_summary() -> dict[str, Any]:
     readiness = enterprise_readiness_manifest()
     demo_plan = buyer_demo_activation_plan()
     kpis = enterprise_kpi_framework()
-    probe = connector_probe("sql_connector", "crm-event")
+    probe = connector_probe("sql_connector", "crm-customer-master")
 
     return {
         "product": readiness.product,

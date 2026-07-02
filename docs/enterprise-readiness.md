@@ -55,7 +55,7 @@ PYTHONPATH=src python -m sdp.demo_smoke
 ## 다음 구현 순서
 
 1. 완료: `Dataset`, `PolicyDecision`, `AuditEvent`, `QueryExecution` 계약은 `sdp_core.contracts`가 소유하고, `sdp.domain`은 app 호환 re-export로 유지한다.
-2. 실제 SQL connector adapter를 `SourceConnector` contract test와 함께 추가한다.
+2. 완료: demo SQL connector adapter를 `SourceConnector` contract test와 함께 추가한다.
 3. buyer demo seed를 도메인별 fixture로 분리하고, `GET /enterprise/demo-plan` 및 connector probe와 연결한다.
 4. retention policy, tenant policy, SSO/RBAC, deployment template를 `sdp_enterprise` feature gate로 묶는다.
 5. Figma/FigJam 산출물의 IA와 component state를 구현 backlog와 연결하되 Code Connect는 사용하지 않는다.

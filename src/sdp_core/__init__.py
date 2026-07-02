@@ -24,6 +24,7 @@ from .readiness import (
     catalog_store_capabilities,
     connector_registry_manifest,
     enterprise_readiness_manifest,
+    SourceConnector,
 )
 
 __all__ = [
@@ -45,6 +46,7 @@ __all__ = [
     "QueryExecutionRequest",
     "QueryExecutionResponse",
     "SaleabilityKPI",
+    "SourceConnector",
     "buyer_demo_activation_plan",
     "catalog_store_capabilities",
     "connector_registry_manifest",
