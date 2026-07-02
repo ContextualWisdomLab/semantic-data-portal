@@ -88,9 +88,11 @@ def enterprise_control_registry() -> list[EnterpriseControl]:
         EnterpriseControl(
             id="deployment_template",
             label="Deployment template",
-            status="planned",
+            status="implemented",
             risk_reduced="Pilot setup can move from local demo to reproducible container deployment with predictable configuration.",
             evidence=[
+                "Dockerfile",
+                "docker-compose.yml",
                 "README.md",
                 "docs/enterprise-readiness.md",
                 "PYTHONPATH=src python -m sdp.demo_smoke",

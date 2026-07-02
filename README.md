@@ -24,6 +24,14 @@ uvicorn sdp.api:app --reload
 
 `SDP_SQLITE_PATH=.local/sdp-evidence.sqlite3`를 지정하면 policy decision과 audit event가 로컬 SQLite evidence store에 기록됩니다.
 
+Docker 기반 로컬 데모는 다음 명령으로 실행합니다.
+
+```bash
+docker compose up --build
+```
+
+컨테이너는 `SDP_SQLITE_PATH=/data/sdp-evidence.sqlite3`를 사용하고 `/health` healthcheck를 노출합니다.
+
 ## API
 
 - `GET /health`

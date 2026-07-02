@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 import sdp.domain as app_domain
@@ -113,13 +115,27 @@ def test_enterprise_controls_expose_feature_gate_manifest():
 
     assert body["feature_gate"] == "sdp_enterprise"
     assert body["implemented_controls"] >= 2
-    assert body["planned_controls"] >= 3
+    assert body["planned_controls"] >= 2
     assert controls["tenant_authorization"]["status"] == "implemented"
     assert controls["local_evidence_retention"]["status"] == "implemented"
     assert controls["sso_oidc_adapter"]["status"] == "planned"
     assert controls["rbac_matrix"]["feature_gate"] == "sdp_enterprise"
     assert "GET /enterprise/controls" in controls["rbac_matrix"]["evidence"]
+    assert controls["deployment_template"]["status"] == "implemented"
+    assert "Dockerfile" in controls["deployment_template"]["evidence"]
     assert controls["central_workflow_due_diligence"]["status"] == "external"
+
+
+def test_deployment_template_files_define_local_demo_runtime():
+    project_root = Path(__file__).resolve().parents[1]
+    dockerfile = (project_root / "Dockerfile").read_text()
+    compose = (project_root / "docker-compose.yml").read_text()
+
+    assert "uvicorn" in dockerfile
+    assert "SDP_SQLITE_PATH=/data/sdp-evidence.sqlite3" in dockerfile
+    assert "semantic-data-portal" in compose
+    assert "8000:8000" in compose
+    assert "sdp-evidence" in compose
 
 
 def test_enterprise_evidence_pack_summarizes_buyer_diligence():
