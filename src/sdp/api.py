@@ -12,7 +12,7 @@ from sdp_core import (
     enterprise_readiness_manifest,
 )
 
-from . import browse, catalog, connectors, ontology, orchestrator
+from . import authz, browse, catalog, connectors, ontology, orchestrator
 from .catalog import (
     deprecate_dataset,
     get_dataset,
@@ -102,6 +102,25 @@ def enterprise_controls() -> dict[str, Any]:
 @app.get("/enterprise/evidence-pack")
 def enterprise_evidence_pack() -> dict[str, Any]:
     return build_enterprise_evidence_pack()
+
+
+@app.post("/enterprise/auth/oidc-preview")
+def enterprise_oidc_preview(payload: dict[str, Any]) -> dict[str, Any]:
+    claims = payload.get("claims", payload)
+    if not isinstance(claims, dict):
+        raise HTTPException(status_code=400, detail="claims must be an object")
+
+    role_map = payload.get("role_map")
+    if role_map is not None and not isinstance(role_map, dict):
+        raise HTTPException(status_code=400, detail="role_map must be an object")
+
+    context = authz.resolve_oidc_actor_context(claims, role_map=role_map)
+    return {
+        "mode": "claim_mapping_preview",
+        "token_verification": "external_or_planned",
+        "actor_context": context.model_dump(),
+        "groups": claims.get("groups", []),
+    }
 
 
 @app.get("/enterprise/connectors/{connector_id}/probe")

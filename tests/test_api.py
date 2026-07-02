@@ -126,6 +126,27 @@ def test_enterprise_controls_expose_feature_gate_manifest():
     assert controls["central_workflow_due_diligence"]["status"] == "external"
 
 
+def test_oidc_preview_maps_claims_to_actor_context():
+    response = client.post(
+        "/enterprise/auth/oidc-preview",
+        json={
+            "claims": {
+                "email": "analyst@example.com",
+                "tenant_id": "demo",
+                "groups": ["sdp-analysts"],
+            }
+        },
+    )
+    assert response.status_code == 200
+
+    body = response.json()
+    assert body["mode"] == "claim_mapping_preview"
+    assert body["token_verification"] == "external_or_planned"
+    assert body["actor_context"]["subject"] == "analyst@example.com"
+    assert body["actor_context"]["tenant_id"] == "demo"
+    assert body["actor_context"]["roles"] == ["data-analyst"]
+
+
 def test_deployment_template_files_define_local_demo_runtime():
     project_root = Path(__file__).resolve().parents[1]
     dockerfile = (project_root / "Dockerfile").read_text()

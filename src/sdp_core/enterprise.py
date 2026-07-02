@@ -63,6 +63,7 @@ def enterprise_control_registry() -> list[EnterpriseControl]:
             evidence=[
                 "sdp_core.ActorContext",
                 "sdp.authz",
+                "POST /enterprise/auth/oidc-preview",
                 "docs/enterprise-readiness.md",
             ],
             release_criteria=[

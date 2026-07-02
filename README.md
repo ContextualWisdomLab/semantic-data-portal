@@ -53,6 +53,7 @@ docker compose up --build
 - `GET /enterprise/kpis`
 - `GET /enterprise/controls`
 - `GET /enterprise/evidence-pack`
+- `POST /enterprise/auth/oidc-preview`
 - `GET /enterprise/connectors/{connector_id}/probe`
 
 ## 테스트

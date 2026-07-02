@@ -37,6 +37,7 @@
 - `GET /enterprise/kpis`: 20억 판매 가능성 판단용 primary KPI, guardrail KPI, 목표, 측정 원천
 - `GET /enterprise/controls`: `sdp_enterprise` feature gate 아래 retention, SSO/OIDC, RBAC, deployment, 중앙 workflow diligence 상태
 - `GET /enterprise/evidence-pack`: buyer diligence용 metadata validation, ontology mapping coverage, policy/audit evidence, proof endpoint 요약
+- `POST /enterprise/auth/oidc-preview`: 실제 token verification 전 단계에서 OIDC claim-to-role/tenant mapping을 `ActorContext`로 검토하는 증빙 endpoint
 - `GET /enterprise/connectors/{connector_id}/probe`: demo dataset 기준 connector contract, source metadata, control evidence, proof endpoint 확인
 - `GET /catalog/datasets/{dataset_id}/validate`: metadata quality
 - `GET /catalog/datasets/{dataset_id}/lineage`: lineage evidence
