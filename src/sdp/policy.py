@@ -4,6 +4,11 @@ from uuid import uuid4
 
 from .catalog import get_dataset
 from .domain import PolicyDecision
+from .evidence import record_policy_decision
+
+
+def _decision(**kwargs: object) -> PolicyDecision:
+    return record_policy_decision(PolicyDecision(**kwargs))
 
 
 def _is_admin(subject: str) -> bool:
@@ -30,13 +35,13 @@ def evaluate(subject: str, resource: str, action: str, purpose: str) -> PolicyDe
 
     if action_key == "create":
         if _is_admin(subject):
-            return PolicyDecision(
+            return _decision(
                 **decision_base,
                 effect="allow",
                 reason="관리자 권한으로 catalog mutation 권한 통과",
                 obligations={"required_role": "admin"},
             )
-        return PolicyDecision(
+        return _decision(
             **decision_base,
             effect="deny",
             reason="create 작업은 admin 권한만 가능",
@@ -45,13 +50,13 @@ def evaluate(subject: str, resource: str, action: str, purpose: str) -> PolicyDe
 
     if action_key in {"search", "search_catalog", "discover"}:
         if _has_reader_role(subject):
-            return PolicyDecision(
+            return _decision(
                 **decision_base,
                 effect="allow",
                 reason="카탈로그 발견 정책 통과",
                 obligations={"masking": []},
             )
-        return PolicyDecision(
+        return _decision(
             **decision_base,
             effect="deny",
             reason="목록 조회는 인증된 사용자만 가능합니다.",
@@ -60,14 +65,14 @@ def evaluate(subject: str, resource: str, action: str, purpose: str) -> PolicyDe
 
     dataset = get_dataset(resource)
     if not dataset:
-        return PolicyDecision(
+        return _decision(
             **decision_base,
             effect="deny",
             reason="존재하지 않는 데이터셋입니다.",
         )
 
     if dataset.sensitivity == "critical" and not _is_admin(subject):
-        return PolicyDecision(
+        return _decision(
             **decision_base,
             effect="deny",
             reason="critical 민감도 자산은 별도 심사 필요",
@@ -75,7 +80,7 @@ def evaluate(subject: str, resource: str, action: str, purpose: str) -> PolicyDe
         )
 
     if purpose.lower() == "external-export" and not _is_admin(subject):
-        return PolicyDecision(
+        return _decision(
             **decision_base,
             effect="deny",
             reason="외부 반출 목적은 데이터 운영자 승인 필요",
@@ -83,7 +88,7 @@ def evaluate(subject: str, resource: str, action: str, purpose: str) -> PolicyDe
         )
 
     if action_key in {"publish", "patch", "deprecate"} and not _can_mutate(subject, action_key):
-        return PolicyDecision(
+        return _decision(
             **decision_base,
             effect="deny",
             reason="catalog mutation 작업은 admin 권한만 가능",
@@ -91,7 +96,7 @@ def evaluate(subject: str, resource: str, action: str, purpose: str) -> PolicyDe
         )
 
     if action_key in {"query", "preview", "schema", "search", "list"} and not _has_reader_role(subject):
-        return PolicyDecision(
+        return _decision(
             **decision_base,
             effect="deny",
             reason="조회 권한이 없습니다.",
@@ -108,7 +113,7 @@ def evaluate(subject: str, resource: str, action: str, purpose: str) -> PolicyDe
     if row_filter:
         obligations["row_filter"] = row_filter
 
-    return PolicyDecision(
+    return _decision(
         **decision_base,
         effect="allow",
         reason="거버넌스 정책 조건 충족",

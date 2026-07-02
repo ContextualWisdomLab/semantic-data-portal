@@ -26,6 +26,7 @@ from .readiness import (
     enterprise_readiness_manifest,
     SourceConnector,
 )
+from .stores import SQLiteEvidenceStore
 
 __all__ = [
     "AuditEvent",
@@ -47,6 +48,7 @@ __all__ = [
     "QueryExecutionResponse",
     "SaleabilityKPI",
     "SourceConnector",
+    "SQLiteEvidenceStore",
     "buyer_demo_activation_plan",
     "catalog_store_capabilities",
     "connector_registry_manifest",

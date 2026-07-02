@@ -52,10 +52,19 @@ PYTHONPATH=src python -m sdp.demo_smoke
 
 성공 조건은 20억 valuation target, 10일 이하 demo activation plan, KPI framework, SQL connector probe가 모두 준비 상태인 것이다.
 
+## 로컬 Evidence Store
+
+`SDP_SQLITE_PATH`를 지정하면 audit event와 policy decision이 stdlib SQLite 파일에 기록된다. 운영 Postgres 저장소를 붙이기 전 demo/pilot 환경의 로컬 지속성 fallback이다.
+
+```bash
+SDP_SQLITE_PATH=.local/sdp-evidence.sqlite3 uvicorn sdp.api:app --reload
+```
+
 ## 다음 구현 순서
 
 1. 완료: `Dataset`, `PolicyDecision`, `AuditEvent`, `QueryExecution` 계약은 `sdp_core.contracts`가 소유하고, `sdp.domain`은 app 호환 re-export로 유지한다.
 2. 완료: demo SQL connector adapter를 `SourceConnector` contract test와 함께 추가한다.
-3. buyer demo seed를 도메인별 fixture로 분리하고, `GET /enterprise/demo-plan` 및 connector probe와 연결한다.
-4. retention policy, tenant policy, SSO/RBAC, deployment template를 `sdp_enterprise` feature gate로 묶는다.
-5. Figma/FigJam 산출물의 IA와 component state를 구현 backlog와 연결하되 Code Connect는 사용하지 않는다.
+3. 완료: `SQLiteEvidenceStore` fallback으로 audit event와 policy decision의 로컬 지속성을 검증한다.
+4. buyer demo seed를 도메인별 fixture로 분리하고, `GET /enterprise/demo-plan` 및 connector probe와 연결한다.
+5. retention policy, tenant policy, SSO/RBAC, deployment template를 `sdp_enterprise` feature gate로 묶는다.
+6. Figma/FigJam 산출물의 IA와 component state를 구현 backlog와 연결하되 Code Connect는 사용하지 않는다.

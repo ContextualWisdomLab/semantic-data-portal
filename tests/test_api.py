@@ -5,6 +5,8 @@ import sdp_core
 from sdp.api import app
 from sdp.connectors import get_source_connector
 from sdp.demo_smoke import smoke_summary
+from sdp.evidence import configure_evidence_store, list_persisted_audit_events
+from sdp.policy import evaluate
 
 
 client = TestClient(app)
@@ -91,6 +93,40 @@ def test_sdp_core_owns_stable_contracts_with_app_compatibility_exports():
     assert app_domain.PolicyDecision is sdp_core.PolicyDecision
     assert app_domain.AuditEvent is sdp_core.AuditEvent
     assert app_domain.QueryExecutionRequest is sdp_core.QueryExecutionRequest
+
+
+def test_sqlite_evidence_store_persists_policy_and_audit_events(tmp_path):
+    store = sdp_core.SQLiteEvidenceStore(tmp_path / "evidence.sqlite3")
+    previous = configure_evidence_store(store)
+    try:
+        decision = evaluate(subject="analyst", resource="crm-customer-master", action="preview", purpose="analysis")
+        preview = client.post(
+            "/browse/crm-customer-master/preview",
+            json={"user": "analyst", "purpose": "analysis", "limit": 1},
+        )
+        assert preview.status_code == 200
+    finally:
+        configure_evidence_store(previous)
+
+    reopened = sdp_core.SQLiteEvidenceStore(tmp_path / "evidence.sqlite3")
+    assert reopened.get_decision(decision.decision_id) == decision
+    persisted_events = reopened.list_events(resource="crm-customer-master", limit=10)
+    assert any(event.action == "browse.preview" and event.decision_id for event in persisted_events)
+
+
+def test_persisted_audit_list_uses_configured_store(tmp_path):
+    store = sdp_core.SQLiteEvidenceStore(tmp_path / "audit.sqlite3")
+    previous = configure_evidence_store(store)
+    try:
+        response = client.post(
+            "/browse/crm-customer-master/preview",
+            json={"user": "analyst", "purpose": "analysis", "limit": 1},
+        )
+        assert response.status_code == 200
+        events = list_persisted_audit_events(resource="crm-customer-master", limit=5)
+        assert any(event.action == "browse.preview" for event in events)
+    finally:
+        configure_evidence_store(previous)
 
 
 def test_enterprise_demo_smoke_summary_is_ready():

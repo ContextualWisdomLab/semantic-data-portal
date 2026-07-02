@@ -22,6 +22,8 @@ pip install -e .[dev]
 uvicorn sdp.api:app --reload
 ```
 
+`SDP_SQLITE_PATH=.local/sdp-evidence.sqlite3`를 지정하면 policy decision과 audit event가 로컬 SQLite evidence store에 기록됩니다.
+
 ## API
 
 - `GET /health`

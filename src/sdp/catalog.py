@@ -17,6 +17,7 @@ from .domain import (
     MappingStatus,
     OntologyPatch,
 )
+from .evidence import append_audit_event
 
 
 def _seed_datasets() -> List[Dataset]:
@@ -142,6 +143,12 @@ for _dataset in _DATA.values():
     _dataset.recompute_scores()
 _AUDIT_LOG: list[AuditEvent] = []
 _SCHEMA_HISTORY: dict[str, list[dict[str, Any]]] = {}
+
+
+def _record_audit_event(event: AuditEvent) -> AuditEvent:
+    _AUDIT_LOG.append(event)
+    append_audit_event(event)
+    return event
 
 
 def _column_signature(columns: list[ColumnMetadata]) -> list[dict[str, Any]]:
@@ -520,7 +527,7 @@ def register_dataset(
     dataset.recompute_scores()
     _DATA[dataset.id] = dataset
     _record_schema_snapshot(dataset)
-    _AUDIT_LOG.append(_build_dataset_payload(dataset, actor=actor, action="dataset.register", decision_id=decision_id))
+    _record_audit_event(_build_dataset_payload(dataset, actor=actor, action="dataset.register", decision_id=decision_id))
     return dataset
 
 
@@ -551,7 +558,7 @@ def patch_dataset(
     updated.recompute_scores()
     _DATA[dataset_id] = updated
     _record_schema_snapshot(updated)
-    _AUDIT_LOG.append(
+    _record_audit_event(
         _build_dataset_payload(
             updated,
             actor=actor,
@@ -575,7 +582,7 @@ def publish_dataset(
         raise ValueError("cannot publish dataset: metadata validation failed")
 
     if dataset.status == "published":
-        _AUDIT_LOG.append(
+        _record_audit_event(
             _build_dataset_payload(
                 dataset,
                 actor=actor,
@@ -594,7 +601,7 @@ def publish_dataset(
     published.recompute_scores()
     _DATA[dataset_id] = published
     _record_schema_snapshot(published)
-    _AUDIT_LOG.append(
+    _record_audit_event(
         _build_dataset_payload(
             published,
             actor=actor,
@@ -622,7 +629,7 @@ def deprecate_dataset(
     deprecated.recompute_scores()
     _DATA[dataset_id] = deprecated
     _record_schema_snapshot(deprecated)
-    _AUDIT_LOG.append(
+    _record_audit_event(
         _build_dataset_payload(
             deprecated,
             actor=actor,
@@ -677,8 +684,7 @@ def ingest_event(
         details=details or {},
         created_at=datetime.now(timezone.utc),
     )
-    _AUDIT_LOG.append(event)
-    return event
+    return _record_audit_event(event)
 
 
 def get_related_datasets(dataset_id: str) -> list[str]:

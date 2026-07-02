@@ -361,11 +361,11 @@ def enterprise_readiness_manifest() -> EnterpriseReadinessManifest:
         immediate_next_splits=[
             {
                 "package": "sdp_core",
-                "action": "Move stable Dataset, PolicyDecision, AuditEvent, and QueryExecution contracts after PR #2 lands.",
+                "action": "Keep stable contracts and SQLite evidence-store fallback in the internal package until a second consumer needs a versioned library.",
             },
             {
                 "package": "sdp_connectors",
-                "action": "Create optional connector package after the first real SQL/RDF/file adapter is added with contract tests.",
+                "action": "Create optional connector package after a second real SQL/RDF/file adapter is added with separate CI and secrets policy.",
             },
             {
                 "package": "sdp_enterprise",
