@@ -3,7 +3,12 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from sdp_core import buyer_demo_activation_plan, enterprise_kpi_framework, enterprise_readiness_manifest
+from sdp_core import (
+    buyer_demo_activation_plan,
+    enterprise_controls_manifest,
+    enterprise_kpi_framework,
+    enterprise_readiness_manifest,
+)
 
 from .connectors import connector_probe
 
@@ -11,6 +16,7 @@ from .connectors import connector_probe
 def smoke_summary() -> dict[str, Any]:
     readiness = enterprise_readiness_manifest()
     demo_plan = buyer_demo_activation_plan()
+    controls = enterprise_controls_manifest()
     kpis = enterprise_kpi_framework()
     probe = connector_probe("sql_connector", "crm-customer-master")
 
@@ -21,6 +27,8 @@ def smoke_summary() -> dict[str, Any]:
         "primary_kpis": len(kpis.primary_kpis),
         "guardrail_kpis": len(kpis.guardrail_kpis),
         "demo_seed_datasets": len(demo_plan.demo_datasets),
+        "enterprise_controls": len(controls.controls),
+        "implemented_enterprise_controls": controls.implemented_controls,
         "connector_probe_status": probe["status"],
         "connector_probe_dataset": probe["dataset_id"],
         "connector_probe_domain": (probe["demo_context"] or {}).get("domain_id"),
@@ -29,6 +37,7 @@ def smoke_summary() -> dict[str, Any]:
             and demo_plan.activation_days <= 10
             and len(demo_plan.demo_datasets) >= 3
             and len(kpis.primary_kpis) >= 3
+            and controls.implemented_controls >= 2
             and probe["demo_context"] is not None
             and probe["status"] == "ready_for_demo"
         ),

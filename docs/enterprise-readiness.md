@@ -35,6 +35,7 @@
 - `GET /enterprise/readiness`: 본 문서 기준의 manifest
 - `GET /enterprise/demo-plan`: buyer priority domain, connector 선택, seed dataset, analyst/governance question, 10일 활성화 workflow, acceptance criteria
 - `GET /enterprise/kpis`: 20억 판매 가능성 판단용 primary KPI, guardrail KPI, 목표, 측정 원천
+- `GET /enterprise/controls`: `sdp_enterprise` feature gate 아래 retention, SSO/OIDC, RBAC, deployment, 중앙 workflow diligence 상태
 - `GET /enterprise/connectors/{connector_id}/probe`: demo dataset 기준 connector contract, source metadata, control evidence, proof endpoint 확인
 - `GET /catalog/datasets/{dataset_id}/validate`: metadata quality
 - `GET /catalog/datasets/{dataset_id}/lineage`: lineage evidence
@@ -51,7 +52,7 @@
 PYTHONPATH=src python -m sdp.demo_smoke
 ```
 
-성공 조건은 20억 valuation target, 10일 이하 demo activation plan, 3개 이상의 seed dataset, KPI framework, SQL connector probe와 demo context가 모두 준비 상태인 것이다.
+성공 조건은 20억 valuation target, 10일 이하 demo activation plan, 3개 이상의 seed dataset, KPI framework, enterprise controls manifest, SQL connector probe와 demo context가 모두 준비 상태인 것이다.
 
 ## 로컬 Evidence Store
 
@@ -68,5 +69,5 @@ SDP_SQLITE_PATH=.local/sdp-evidence.sqlite3 uvicorn sdp.api:app --reload
 3. 완료: `SQLiteEvidenceStore` fallback으로 audit event와 policy decision의 로컬 지속성을 검증한다.
 4. 완료: local `ActorContext` 기반 tenant authorization을 preview/query/schema policy path에 적용한다.
 5. 완료: buyer demo seed를 도메인별 fixture로 분리하고, `GET /enterprise/demo-plan` 및 connector probe와 연결한다.
-6. retention policy, SSO/RBAC, deployment template를 `sdp_enterprise` feature gate로 묶는다.
+6. 완료: retention policy, SSO/RBAC, deployment template를 `sdp_enterprise` feature gate manifest로 묶는다.
 7. Figma/FigJam 산출물의 IA와 component state를 구현 backlog와 연결하되 Code Connect는 사용하지 않는다.

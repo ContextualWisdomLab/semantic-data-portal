@@ -5,7 +5,12 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from sdp_core import buyer_demo_activation_plan, enterprise_kpi_framework, enterprise_readiness_manifest
+from sdp_core import (
+    buyer_demo_activation_plan,
+    enterprise_controls_manifest,
+    enterprise_kpi_framework,
+    enterprise_readiness_manifest,
+)
 
 from . import browse, catalog, connectors, ontology, orchestrator
 from .catalog import (
@@ -85,6 +90,11 @@ def enterprise_demo_plan(
 @app.get("/enterprise/kpis")
 def enterprise_kpis() -> dict[str, Any]:
     return enterprise_kpi_framework().model_dump()
+
+
+@app.get("/enterprise/controls")
+def enterprise_controls() -> dict[str, Any]:
+    return enterprise_controls_manifest().model_dump()
 
 
 @app.get("/enterprise/connectors/{connector_id}/probe")

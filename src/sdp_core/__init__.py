@@ -26,6 +26,7 @@ from .demo_seed import (
     buyer_demo_domains,
     get_buyer_demo_domain,
 )
+from .enterprise import EnterpriseControl, EnterpriseControlsManifest, enterprise_controls_manifest
 from .kpis import KPIFramework, SaleabilityKPI, enterprise_kpi_framework
 from .readiness import (
     BuyerDemoActivationPlan,
@@ -52,6 +53,8 @@ __all__ = [
     "DatasetPatchRequest",
     "DatasetProfile",
     "EnterpriseReadinessManifest",
+    "EnterpriseControl",
+    "EnterpriseControlsManifest",
     "KPIFramework",
     "MappingStatus",
     "OntologyPatch",
@@ -69,6 +72,7 @@ __all__ = [
     "buyer_demo_activation_plan",
     "catalog_store_capabilities",
     "connector_registry_manifest",
+    "enterprise_controls_manifest",
     "enterprise_kpi_framework",
     "enterprise_readiness_manifest",
     "get_buyer_demo_domain",

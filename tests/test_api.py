@@ -104,6 +104,24 @@ def test_enterprise_kpis_expose_saleability_measurement_plan():
     assert "/enterprise/connectors/{connector_id}/probe" in kpis["demo_setup_minutes"]["source_endpoints"]
 
 
+def test_enterprise_controls_expose_feature_gate_manifest():
+    response = client.get("/enterprise/controls")
+    assert response.status_code == 200
+
+    body = response.json()
+    controls = {control["id"]: control for control in body["controls"]}
+
+    assert body["feature_gate"] == "sdp_enterprise"
+    assert body["implemented_controls"] >= 2
+    assert body["planned_controls"] >= 3
+    assert controls["tenant_authorization"]["status"] == "implemented"
+    assert controls["local_evidence_retention"]["status"] == "implemented"
+    assert controls["sso_oidc_adapter"]["status"] == "planned"
+    assert controls["rbac_matrix"]["feature_gate"] == "sdp_enterprise"
+    assert "GET /enterprise/controls" in controls["rbac_matrix"]["evidence"]
+    assert controls["central_workflow_due_diligence"]["status"] == "external"
+
+
 def test_sdp_core_owns_stable_contracts_with_app_compatibility_exports():
     assert app_domain.ActorContext is sdp_core.ActorContext
     assert app_domain.Dataset is sdp_core.Dataset
@@ -153,6 +171,8 @@ def test_enterprise_demo_smoke_summary_is_ready():
     assert summary["demo_seed_datasets"] >= 3
     assert summary["primary_kpis"] >= 3
     assert summary["guardrail_kpis"] >= 3
+    assert summary["enterprise_controls"] >= 6
+    assert summary["implemented_enterprise_controls"] >= 2
     assert summary["connector_probe_status"] == "ready_for_demo"
     assert summary["connector_probe_domain"] == "customer_intelligence"
     assert summary["ready"] is True

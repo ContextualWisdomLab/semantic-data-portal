@@ -360,7 +360,7 @@ def enterprise_readiness_manifest() -> EnterpriseReadinessManifest:
                 id="tenant_authz_model",
                 label="Tenant authorization model",
                 target="Dataset access is scoped by actor tenant context before preview, query, or schema access.",
-                evidence=["sdp_core.ActorContext", "sdp.authz", "tests/test_api.py::test_tenant_boundary_denies_cross_tenant_preview"],
+                evidence=["sdp_core.ActorContext", "sdp.authz", "/enterprise/controls", "tests/test_api.py::test_tenant_boundary_denies_cross_tenant_preview"],
                 status="implemented",
             ),
             EnterpriseGate(
@@ -396,7 +396,7 @@ def enterprise_readiness_manifest() -> EnterpriseReadinessManifest:
             },
             {
                 "package": "sdp_enterprise",
-                "action": "Keep SSO, tenant policy, retention policy, and deployment templates behind enterprise feature gates.",
+                "action": "Expose SSO, RBAC, retention, deployment, and org workflow controls behind the /enterprise/controls feature-gate manifest.",
             },
         ],
     )

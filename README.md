@@ -39,6 +39,11 @@ uvicorn sdp.api:app --reload
 - `POST /browse/{dataset_id}/preview`
 - `POST /llm/search`
 - `POST /llm/draft-query`
+- `GET /enterprise/readiness`
+- `GET /enterprise/demo-plan`
+- `GET /enterprise/kpis`
+- `GET /enterprise/controls`
+- `GET /enterprise/connectors/{connector_id}/probe`
 
 ## 테스트
 
@@ -57,7 +62,7 @@ PYTHONPATH=src python -m sdp.demo_smoke
 | Policy Service | `src/sdp/policy.py`, `/policy/decision` |
 | LLM Orchestrator | `src/sdp/orchestrator.py`, `/llm/*` |
 | JSON-LD Export | `/catalog/datasets/{id}/jsonld` |
-| Enterprise Core Contracts | `src/sdp_core/contracts.py`, `src/sdp_core/readiness.py`, `src/sdp_core/demo_seed.py`, `/enterprise/*` |
+| Enterprise Core Contracts | `src/sdp_core/contracts.py`, `src/sdp_core/readiness.py`, `src/sdp_core/demo_seed.py`, `src/sdp_core/enterprise.py`, `/enterprise/*` |
 
 `src/sdp_core/demo_seed.py`는 buyer demo domain, seed dataset, analyst/governance question을 catalog seed, `/enterprise/demo-plan`, connector probe가 함께 쓰는 단일 계약으로 둡니다.
 
