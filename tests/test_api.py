@@ -311,6 +311,8 @@ def test_enterprise_demo_smoke_summary_is_ready():
     assert summary["rdf_connector_probe_dataset"] == "semantic-glossary"
     assert summary["file_lake_connector_probe_status"] == "ready_for_demo"
     assert summary["file_lake_connector_probe_dataset"] == "crm-event"
+    assert summary["rest_connector_probe_status"] == "contract_only"
+    assert summary["rest_connector_adapter_status"] == "implemented"
     assert summary["ready"] is True
 
 
@@ -375,6 +377,25 @@ def test_enterprise_file_lake_connector_probe_exposes_manifest_evidence():
     assert "/catalog/datasets/{dataset_id}/profile" in controls["pii_profile"]["proof_endpoints"]
 
 
+def test_enterprise_rest_connector_probe_exposes_api_contract_gap():
+    response = client.get(
+        "/enterprise/connectors/rest_connector/probe",
+        params={"dataset_id": "marketing-campaign"},
+    )
+    assert response.status_code == 200
+
+    body = response.json()
+    assert body["connector_id"] == "rest_connector"
+    assert body["dataset_id"] == "marketing-campaign"
+    assert body["status"] == "contract_only"
+    assert body["adapter_status"] == "implemented"
+    assert body["source_system"].startswith("https://")
+
+    controls = {item["control"]: item for item in body["control_evidence"]}
+    assert controls["credential_vault"]["status"] == "planned"
+    assert controls["purpose_binding"]["status"] == "implemented"
+
+
 def test_sql_connector_adapter_implements_source_connector_contract():
     connector = get_source_connector("sql_connector")
     schema = connector.inspect_schema("crm-customer-master")
@@ -409,6 +430,18 @@ def test_file_lake_connector_adapter_implements_source_connector_contract():
     assert schema["manifest_path"].endswith("/_manifest.json")
     assert rows
     assert rows[0]["event_id"] == "evt-1001"
+
+
+def test_rest_connector_adapter_implements_source_connector_contract():
+    connector = get_source_connector("rest_connector")
+    schema = connector.inspect_schema("marketing-campaign")
+    rows = connector.preview("marketing-campaign", limit=1, offset=0)
+
+    assert connector.connector_id == "rest_connector"
+    assert schema["source_system"].startswith("https://")
+    assert schema["auth_mode"] == "service_account_reference"
+    assert rows
+    assert rows[0]["campaign_id"] == "cmp-1001"
 
 
 def test_enterprise_connector_probe_fails_closed():

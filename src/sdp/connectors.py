@@ -194,10 +194,74 @@ class DemoFileLakeConnector(SourceConnector):
         return selected
 
 
+class DemoRESTConnector(SourceConnector):
+    connector_id = "rest_connector"
+    source_type = "governed_api"
+
+    def inspect_schema(self, dataset_id: str) -> dict[str, Any]:
+        dataset = get_dataset(dataset_id)
+        if not dataset:
+            raise KeyError(dataset_id)
+        if not dataset.source_system.startswith(("https://", "http://")):
+            raise ValueError("dataset is not backed by the demo REST connector")
+        return {
+            "dataset_id": dataset.id,
+            "source_system": dataset.source_system,
+            "auth_mode": "service_account_reference",
+            "columns": [column.model_dump() for column in dataset.schema],
+        }
+
+    def preview(self, dataset_id: str, *, limit: int, offset: int) -> list[dict[str, Any]]:
+        from .catalog import ingest_event
+        from .policy import evaluate
+
+        dataset = get_dataset(dataset_id)
+        if not dataset:
+            raise KeyError(dataset_id)
+        if not dataset.source_system.startswith(("https://", "http://")):
+            raise ValueError("dataset is not backed by the demo REST connector")
+
+        decision = evaluate(subject="analyst", resource=dataset_id, action="preview", purpose="analysis")
+        if decision.effect != "allow":
+            ingest_event(
+                event_type="connector.rest.preview",
+                actor="analyst",
+                dataset_id=dataset_id,
+                decision="denied",
+                decision_id=decision.decision_id,
+                reason=decision.reason,
+                details={"policy_decision_id": decision.decision_id},
+            )
+            raise PermissionError(decision.reason)
+
+        rows = [
+            {"campaign_id": "cmp-1001", "target_segment": "active_customers", "channel": "email"},
+            {"campaign_id": "cmp-1002", "target_segment": "churn_risk", "channel": "push"},
+        ]
+        selected = rows[offset : offset + limit]
+        ingest_event(
+            event_type="connector.rest.preview",
+            actor="analyst",
+            dataset_id=dataset_id,
+            decision="allowed",
+            decision_id=decision.decision_id,
+            reason="ok",
+            details={
+                "policy_decision_id": decision.decision_id,
+                "requested_offset": offset,
+                "requested_limit": limit,
+                "returned_rows": len(selected),
+                "auth_mode": "service_account_reference",
+            },
+        )
+        return selected
+
+
 _SOURCE_CONNECTORS: dict[str, SourceConnector] = {
     "sql_connector": DemoSQLConnector(),
     "rdf_connector": DemoRDFConnector(),
     "file_lake_connector": DemoFileLakeConnector(),
+    "rest_connector": DemoRESTConnector(),
 }
 
 

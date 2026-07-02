@@ -23,6 +23,7 @@ def smoke_summary() -> dict[str, Any]:
     sql_probe = connector_probe("sql_connector", "crm-customer-master")
     rdf_probe = connector_probe("rdf_connector", "semantic-glossary")
     file_probe = connector_probe("file_lake_connector", "crm-event")
+    rest_probe = connector_probe("rest_connector", "marketing-campaign")
 
     return {
         "product": readiness.product,
@@ -42,6 +43,8 @@ def smoke_summary() -> dict[str, Any]:
         "rdf_connector_probe_dataset": rdf_probe["dataset_id"],
         "file_lake_connector_probe_status": file_probe["status"],
         "file_lake_connector_probe_dataset": file_probe["dataset_id"],
+        "rest_connector_probe_status": rest_probe["status"],
+        "rest_connector_adapter_status": rest_probe["adapter_status"],
         "ready": (
             readiness.valuation_target_krw == 2_000_000_000
             and demo_plan.activation_days <= 10
@@ -54,6 +57,7 @@ def smoke_summary() -> dict[str, Any]:
             and sql_probe["status"] == "ready_for_demo"
             and rdf_probe["status"] == "ready_for_demo"
             and file_probe["status"] == "ready_for_demo"
+            and rest_probe["adapter_status"] == "implemented"
         ),
     }
 

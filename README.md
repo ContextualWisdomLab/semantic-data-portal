@@ -78,7 +78,7 @@ PYTHONPATH=src python -m sdp.demo_smoke
 | JSON-LD Export | `/catalog/datasets/{id}/jsonld` |
 | Enterprise Core Contracts | `src/sdp_core/contracts.py`, `src/sdp_core/readiness.py`, `src/sdp_core/demo_seed.py`, `src/sdp_core/enterprise.py`, `src/sdp_core/rbac.py`, `src/sdp/enterprise_evidence.py`, `src/sdp/observability.py`, `/enterprise/*` |
 
-`src/sdp_core/demo_seed.py`는 buyer demo domain, SQL/RDF/file seed dataset, analyst/governance question을 catalog seed, `/enterprise/demo-plan`, connector probe가 함께 쓰는 단일 계약으로 둡니다.
+`src/sdp_core/demo_seed.py`는 buyer demo domain, SQL/RDF/file/API seed dataset, analyst/governance question을 catalog seed, `/enterprise/demo-plan`, connector probe가 함께 쓰는 단일 계약으로 둡니다.
 
 ## 요구사항 대응 증적
 

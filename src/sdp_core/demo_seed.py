@@ -69,8 +69,8 @@ def _customer_intelligence_domain() -> BuyerDemoDomain:
             "자연어 질문이 catalog search, ontology resolve, governed query path로 이어진다.",
             "모든 preview/query 증빙이 audit event와 policy decision에 연결된다.",
         ],
-        dataset_ids=["crm-customer-master", "crm-event", "sales-order", "semantic-glossary"],
-        glossary_terms=["고객", "활성 고객", "이탈", "고객 활동", "전환", "비즈니스 용어"],
+        dataset_ids=["crm-customer-master", "crm-event", "sales-order", "semantic-glossary", "marketing-campaign"],
+        glossary_terms=["고객", "활성 고객", "이탈", "고객 활동", "전환", "캠페인", "비즈니스 용어"],
     )
 
 
@@ -317,6 +317,59 @@ def _customer_intelligence_datasets() -> list[Dataset]:
             lineage_inputs=["business-glossary"],
             lineage_outputs=["crm-customer-master", "crm-event", "sales-order"],
         ),
+        Dataset(
+            id="marketing-campaign",
+            title="마케팅 캠페인 API",
+            description="캠페인 노출, 채널, 타겟 세그먼트를 제공하는 governed REST API 데이터셋",
+            owner="growth-platform",
+            steward="marketing-ops",
+            domain="마케팅",
+            source_system="https://api.example.internal/marketing/campaigns",
+            sensitivity="medium",
+            update_frequency="daily",
+            quality_score=0.89,
+            freshness_score=0.93,
+            tags=["캠페인", "마케팅", "세그먼트"],
+            terms=["캠페인", "고객", "전환"],
+            related_datasets=["crm-customer-master", "crm-event", "sales-order"],
+            schema=[
+                ColumnMetadata(
+                    name="campaign_id",
+                    datatype="string",
+                    nullable_ratio=0.0,
+                    distinct_ratio=1.0,
+                    pii=False,
+                ),
+                ColumnMetadata(
+                    name="target_segment",
+                    datatype="string",
+                    nullable_ratio=0.03,
+                    distinct_ratio=0.62,
+                    pii=False,
+                ),
+                ColumnMetadata(
+                    name="channel",
+                    datatype="string",
+                    nullable_ratio=0.0,
+                    distinct_ratio=0.15,
+                    pii=False,
+                ),
+            ],
+            distributions=[
+                DatasetDistribution(
+                    id="dist-marketing-campaign",
+                    format="rest.json",
+                    endpoint="https://api.example.internal/marketing/campaigns",
+                )
+            ],
+            mappings=[
+                _approved_mapping("캠페인", steward="marketing-ops"),
+                _approved_mapping("전환", steward="marketing-ops"),
+            ],
+            profile={"endpoint_count": 3, "updated_at": "2026-06-29T00:00:00Z"},
+            lineage_inputs=["campaign-manager"],
+            lineage_outputs=["sales-order", "crm-event"],
+        ),
     ]
 
 
@@ -333,6 +386,8 @@ def buyer_demo_dataset_summaries(domain_id: str = "customer_intelligence") -> li
             source_type = "sql"
         elif dataset.source_system.startswith("sparql://"):
             source_type = "rdf"
+        elif dataset.source_system.startswith("https://") or dataset.source_system.startswith("http://"):
+            source_type = "api"
         else:
             source_type = "file_lake"
         summaries.append(
