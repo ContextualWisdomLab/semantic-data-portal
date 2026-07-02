@@ -22,6 +22,7 @@ def smoke_summary() -> dict[str, Any]:
     kpis = enterprise_kpi_framework()
     sql_probe = connector_probe("sql_connector", "crm-customer-master")
     rdf_probe = connector_probe("rdf_connector", "semantic-glossary")
+    file_probe = connector_probe("file_lake_connector", "crm-event")
 
     return {
         "product": readiness.product,
@@ -39,6 +40,8 @@ def smoke_summary() -> dict[str, Any]:
         "connector_probe_domain": (sql_probe["demo_context"] or {}).get("domain_id"),
         "rdf_connector_probe_status": rdf_probe["status"],
         "rdf_connector_probe_dataset": rdf_probe["dataset_id"],
+        "file_lake_connector_probe_status": file_probe["status"],
+        "file_lake_connector_probe_dataset": file_probe["dataset_id"],
         "ready": (
             readiness.valuation_target_krw == 2_000_000_000
             and demo_plan.activation_days <= 10
@@ -50,6 +53,7 @@ def smoke_summary() -> dict[str, Any]:
             and sql_probe["demo_context"] is not None
             and sql_probe["status"] == "ready_for_demo"
             and rdf_probe["status"] == "ready_for_demo"
+            and file_probe["status"] == "ready_for_demo"
         ),
     }
 

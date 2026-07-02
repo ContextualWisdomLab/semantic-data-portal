@@ -309,6 +309,8 @@ def test_enterprise_demo_smoke_summary_is_ready():
     assert summary["connector_probe_domain"] == "customer_intelligence"
     assert summary["rdf_connector_probe_status"] == "ready_for_demo"
     assert summary["rdf_connector_probe_dataset"] == "semantic-glossary"
+    assert summary["file_lake_connector_probe_status"] == "ready_for_demo"
+    assert summary["file_lake_connector_probe_dataset"] == "crm-event"
     assert summary["ready"] is True
 
 
@@ -353,6 +355,26 @@ def test_enterprise_rdf_connector_probe_exposes_semantic_store_evidence():
     assert "/ontology/search" in controls["ontology_version_pin"]["proof_endpoints"]
 
 
+def test_enterprise_file_lake_connector_probe_exposes_manifest_evidence():
+    response = client.get(
+        "/enterprise/connectors/file_lake_connector/probe",
+        params={"dataset_id": "crm-event"},
+    )
+    assert response.status_code == 200
+
+    body = response.json()
+    assert body["connector_id"] == "file_lake_connector"
+    assert body["dataset_id"] == "crm-event"
+    assert body["status"] == "ready_for_demo"
+    assert body["adapter_status"] == "implemented"
+    assert body["source_system"].startswith("s3://")
+
+    controls = {item["control"]: item for item in body["control_evidence"]}
+    assert controls["sample_budget"]["status"] == "implemented"
+    assert controls["pii_profile"]["status"] == "implemented"
+    assert "/catalog/datasets/{dataset_id}/profile" in controls["pii_profile"]["proof_endpoints"]
+
+
 def test_sql_connector_adapter_implements_source_connector_contract():
     connector = get_source_connector("sql_connector")
     schema = connector.inspect_schema("crm-customer-master")
@@ -375,6 +397,18 @@ def test_rdf_connector_adapter_implements_source_connector_contract():
     assert schema["named_graph"] == "semantic.graph/customer-intelligence"
     assert rows
     assert rows[0]["concept_uri"].startswith("https://semantic-data-portal.local/concepts/")
+
+
+def test_file_lake_connector_adapter_implements_source_connector_contract():
+    connector = get_source_connector("file_lake_connector")
+    schema = connector.inspect_schema("crm-event")
+    rows = connector.preview("crm-event", limit=1, offset=0)
+
+    assert connector.connector_id == "file_lake_connector"
+    assert schema["source_system"].startswith("s3://")
+    assert schema["manifest_path"].endswith("/_manifest.json")
+    assert rows
+    assert rows[0]["event_id"] == "evt-1001"
 
 
 def test_enterprise_connector_probe_fails_closed():
