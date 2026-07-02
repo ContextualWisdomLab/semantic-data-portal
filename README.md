@@ -33,6 +33,7 @@ uvicorn sdp.api:app --reload
 - `GET /catalog/datasets/{dataset_id}/jsonld`
 - `GET /catalog/datasets/{dataset_id}/validate`
 - `POST /policy/decision`
+- `GET /policy/decisions`
 - `POST /ontology/resolve`
 - `GET /ontology/concept/{concept}`
 - `GET /browse/{dataset_id}/schema`

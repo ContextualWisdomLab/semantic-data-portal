@@ -5,7 +5,7 @@ import sdp_core
 from sdp.api import app
 from sdp.connectors import get_source_connector
 from sdp.demo_smoke import smoke_summary
-from sdp.evidence import configure_evidence_store, list_persisted_audit_events
+from sdp.evidence import configure_evidence_store, list_persisted_audit_events, list_persisted_policy_decisions
 from sdp.policy import evaluate
 
 
@@ -145,6 +145,8 @@ def test_sqlite_evidence_store_persists_policy_and_audit_events(tmp_path):
 
     reopened = sdp_core.SQLiteEvidenceStore(tmp_path / "evidence.sqlite3")
     assert reopened.get_decision(decision.decision_id) == decision
+    persisted_decisions = reopened.list_decisions(resource="crm-customer-master", limit=10)
+    assert any(row.decision_id == decision.decision_id for row in persisted_decisions)
     persisted_events = reopened.list_events(resource="crm-customer-master", limit=10)
     assert any(event.action == "browse.preview" and event.decision_id for event in persisted_events)
 
@@ -160,8 +162,30 @@ def test_persisted_audit_list_uses_configured_store(tmp_path):
         assert response.status_code == 200
         events = list_persisted_audit_events(resource="crm-customer-master", limit=5)
         assert any(event.action == "browse.preview" for event in events)
+        decisions = list_persisted_policy_decisions(resource="crm-customer-master", limit=5)
+        assert any(decision.action == "preview" for decision in decisions)
     finally:
         configure_evidence_store(previous)
+
+
+def test_policy_decisions_endpoint_exposes_decision_evidence():
+    decision_response = client.post(
+        "/policy/decision",
+        json={
+            "subject": "analyst",
+            "resource": "crm-customer-master",
+            "action": "preview",
+            "purpose": "analysis",
+        },
+    )
+    assert decision_response.status_code == 200
+    decision_id = decision_response.json()["decision_id"]
+
+    response = client.get("/policy/decisions", params={"resource": "crm-customer-master", "limit": 10})
+    assert response.status_code == 200
+
+    decisions = response.json()
+    assert any(decision["decision_id"] == decision_id for decision in decisions)
 
 
 def test_enterprise_demo_smoke_summary_is_ready():

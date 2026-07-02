@@ -34,6 +34,9 @@ class PolicyDecisionStore(Protocol):
     def get_decision(self, decision_id: str) -> PolicyDecision | None:
         ...
 
+    def list_decisions(self, *, resource: str | None = None, limit: int = 100) -> list[PolicyDecision]:
+        ...
+
 
 class AuditEventStore(Protocol):
     """Append-only boundary for user-visible compliance evidence."""

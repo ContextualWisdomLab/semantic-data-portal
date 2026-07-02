@@ -41,6 +41,7 @@
 - `GET /catalog/datasets/{dataset_id}/lineage`: lineage evidence
 - `POST /browse/{dataset_id}/preview`: policy-before-data + audit
 - `POST /browse/query`: governed query path
+- `GET /policy/decisions`: policy decision evidence inspection
 - `GET /audit/events`: audit trail
 - `GET /ontology/search`, `POST /ontology/resolve`, `GET /ontology/patches`: ontology coverage 및 steward workflow
 

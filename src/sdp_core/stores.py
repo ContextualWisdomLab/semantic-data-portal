@@ -80,6 +80,19 @@ class SQLiteEvidenceStore:
             return None
         return PolicyDecision.model_validate(json.loads(row[0]))
 
+    def list_decisions(self, *, resource: str | None = None, limit: int = 100) -> list[PolicyDecision]:
+        sql = "SELECT payload FROM policy_decisions"
+        params: tuple[object, ...] = ()
+        if resource:
+            sql += " WHERE resource = ?"
+            params = (resource,)
+        sql += " ORDER BY recorded_at DESC LIMIT ?"
+        params = (*params, limit)
+
+        with self._connect() as connection:
+            rows = connection.execute(sql, params).fetchall()
+        return [PolicyDecision.model_validate(json.loads(row[0])) for row in rows]
+
     def append_event(self, event: AuditEvent) -> AuditEvent:
         payload = event.model_dump(mode="json")
         with self._connect() as connection:

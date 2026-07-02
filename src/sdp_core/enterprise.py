@@ -47,6 +47,7 @@ def enterprise_control_registry() -> list[EnterpriseControl]:
             evidence=[
                 "SDP_SQLITE_PATH",
                 "sdp_core.SQLiteEvidenceStore",
+                "GET /policy/decisions",
                 "tests/test_api.py::test_sqlite_evidence_store_persists_policy_and_audit_events",
             ],
             release_criteria=[

@@ -39,6 +39,7 @@ from .domain import (
     QueryDraftRequest,
     QueryExecutionRequest,
 )
+from .evidence import list_policy_decisions
 from .policy import evaluate
 
 
@@ -379,7 +380,15 @@ def policy_decision(payload: dict[str, str]) -> dict[str, Any]:
         action=payload.get("action", "preview"),
         purpose=payload.get("purpose", "analysis"),
     )
-    return decision.dict()
+    return decision.model_dump()
+
+
+@app.get("/policy/decisions")
+def policy_decisions(
+    limit: int = Query(default=100, ge=1, le=500),
+    resource: str | None = Query(default=None),
+) -> list[dict[str, Any]]:
+    return [decision.model_dump() for decision in list_policy_decisions(resource=resource, limit=limit)]
 
 
 @app.post("/ontology/resolve")
@@ -510,7 +519,7 @@ def llm_search(payload: dict[str, str]) -> dict[str, Any]:
         "user": user,
         "purpose": purpose,
         "policy_scope": "catalog_discovery",
-        "policy": decision.dict(),
+        "policy": decision.model_dump(),
         "recommendations": ontology.concept_assets(top.term),
     }
 
