@@ -1,9 +1,13 @@
+from copy import deepcopy
 from pathlib import Path
 from time import time
 
+import pytest
 from fastapi.testclient import TestClient
 
+import sdp.catalog as app_catalog
 import sdp.domain as app_domain
+import sdp.evidence as app_evidence
 import sdp_core
 from sdp.api import app
 from sdp.connectors import get_source_connector
@@ -13,6 +17,21 @@ from sdp.policy import evaluate
 
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def isolate_in_memory_app_state():
+    data = {dataset_id: dataset.model_copy(deep=True) for dataset_id, dataset in app_catalog._DATA.items()}
+    audit_log = list(app_catalog._AUDIT_LOG)
+    schema_history = deepcopy(app_catalog._SCHEMA_HISTORY)
+    policy_log = list(app_evidence._POLICY_DECISION_LOG)
+    yield
+    app_catalog._DATA.clear()
+    app_catalog._DATA.update(data)
+    app_catalog._AUDIT_LOG[:] = audit_log
+    app_catalog._SCHEMA_HISTORY.clear()
+    app_catalog._SCHEMA_HISTORY.update(schema_history)
+    app_evidence._POLICY_DECISION_LOG[:] = policy_log
 
 
 def test_health():
@@ -394,6 +413,38 @@ def test_persisted_audit_list_uses_configured_store(tmp_path):
         assert any(decision.action == "preview" for decision in decisions)
     finally:
         configure_evidence_store(previous)
+
+
+def test_audit_events_endpoint_reads_configured_evidence_store_after_memory_clear(tmp_path):
+    store = sdp_core.SQLiteEvidenceStore(tmp_path / "audit-endpoint.sqlite3")
+    previous = configure_evidence_store(store)
+    try:
+        response = client.post(
+            "/browse/crm-customer-master/preview",
+            json={"user": "analyst", "purpose": "analysis", "limit": 1},
+        )
+        assert response.status_code == 200
+
+        app_catalog._AUDIT_LOG.clear()
+
+        events_response = client.get("/audit/events", params={"resource": "crm-customer-master", "limit": 10})
+        assert events_response.status_code == 200
+        assert any(event["action"] == "browse.preview" for event in events_response.json())
+    finally:
+        configure_evidence_store(previous)
+
+
+def test_policy_decision_store_does_not_duplicate_configured_store_in_memory(tmp_path):
+    store = sdp_core.SQLiteEvidenceStore(tmp_path / "policy-memory.sqlite3")
+    previous_log = list(app_evidence._POLICY_DECISION_LOG)
+    previous = configure_evidence_store(store)
+    try:
+        decision = evaluate(subject="analyst", resource="crm-customer-master", action="preview", purpose="analysis")
+    finally:
+        configure_evidence_store(previous)
+
+    assert app_evidence._POLICY_DECISION_LOG == previous_log
+    assert store.get_decision(decision.decision_id) == decision
 
 
 def test_policy_decisions_endpoint_exposes_decision_evidence():

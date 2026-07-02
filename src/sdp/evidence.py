@@ -17,10 +17,15 @@ def configure_evidence_store(store: EvidenceStore) -> EvidenceStore:
     return previous
 
 
+def has_configured_evidence_store() -> bool:
+    return _STORE is not None
+
+
 def record_policy_decision(decision: PolicyDecision) -> PolicyDecision:
-    _POLICY_DECISION_LOG.append(decision)
     if _STORE:
         _STORE.record_decision(decision)
+    else:
+        _POLICY_DECISION_LOG.append(decision)
     return decision
 
 

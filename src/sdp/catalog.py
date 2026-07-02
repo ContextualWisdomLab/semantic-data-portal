@@ -16,7 +16,7 @@ from .domain import (
     DatasetPatchRequest,
     OntologyPatch,
 )
-from .evidence import append_audit_event
+from .evidence import append_audit_event, has_configured_evidence_store, list_persisted_audit_events
 
 
 def _seed_datasets() -> List[Dataset]:
@@ -31,8 +31,9 @@ _SCHEMA_HISTORY: dict[str, list[dict[str, Any]]] = {}
 
 
 def _record_audit_event(event: AuditEvent) -> AuditEvent:
-    _AUDIT_LOG.append(event)
     append_audit_event(event)
+    if not has_configured_evidence_store():
+        _AUDIT_LOG.append(event)
     return event
 
 
@@ -528,9 +529,17 @@ def deprecate_dataset(
 
 
 def list_audit_events(*, limit: int = 100, resource: str | None = None) -> list[AuditEvent]:
-    events = _AUDIT_LOG
+    events = list(_AUDIT_LOG)
     if resource:
         events = [event for event in events if event.resource == resource]
+
+    if has_configured_evidence_store():
+        persisted = list_persisted_audit_events(resource=resource, limit=limit)
+        by_id = {event.id: event for event in events}
+        for event in persisted:
+            by_id[event.id] = event
+        events = list(by_id.values())
+
     events = sorted(events, key=lambda row: row.created_at, reverse=True)
     return events[:limit]
 
