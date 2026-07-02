@@ -89,6 +89,7 @@ def test_enterprise_kpis_expose_saleability_measurement_plan():
 
 
 def test_sdp_core_owns_stable_contracts_with_app_compatibility_exports():
+    assert app_domain.ActorContext is sdp_core.ActorContext
     assert app_domain.Dataset is sdp_core.Dataset
     assert app_domain.PolicyDecision is sdp_core.PolicyDecision
     assert app_domain.AuditEvent is sdp_core.AuditEvent
@@ -494,6 +495,62 @@ def test_dataset_mutation_policy_and_lifecycle():
     deprecated = client.post("/catalog/datasets/temp-dataset/deprecate", json={"actor": "admin", "reason": "e2e cleanup"})
     assert deprecated.status_code == 200
     assert deprecated.json()["dataset"]["status"] == "deprecated"
+
+
+def test_tenant_boundary_denies_cross_tenant_preview():
+    create_payload = {
+        "actor": "admin",
+        "id": "external-tenant-dataset",
+        "tenant_id": "external",
+        "title": "외부 테넌트 데이터셋",
+        "description": "tenant isolation 검증용 데이터셋",
+        "owner": "external-data-platform",
+        "steward": "external-steward",
+        "domain": "테스트",
+        "source_system": "postgresql://external.dw/customer",
+        "sensitivity": "low",
+        "update_frequency": "daily",
+        "quality_score": 0.88,
+        "freshness_score": 0.9,
+        "tags": ["테스트"],
+        "terms": ["테스트"],
+        "related_datasets": [],
+        "schema": [
+            {
+                "name": "customer_id",
+                "datatype": "string",
+                "nullable_ratio": 0.0,
+                "distinct_ratio": 1.0,
+                "pii": False,
+            }
+        ],
+        "distributions": [
+            {
+                "id": "dist-external-tenant-dataset",
+                "format": "postgresql.table",
+                "endpoint": "https://example.internal/api/table/external_customer",
+            }
+        ],
+        "mappings": [],
+        "profile": {},
+    }
+    created = client.post("/catalog/datasets", json=create_payload)
+    assert created.status_code == 200
+    assert created.json()["dataset"]["tenant_id"] == "external"
+
+    denied = client.post(
+        "/browse/external-tenant-dataset/preview",
+        json={"user": "analyst", "purpose": "analysis", "limit": 1},
+    )
+    assert denied.status_code == 403
+    assert "tenant boundary denied" in denied.json()["detail"]
+
+    allowed = client.post(
+        "/browse/external-tenant-dataset/preview",
+        json={"user": "external-analyst", "purpose": "analysis", "limit": 1},
+    )
+    assert allowed.status_code == 200
+    assert allowed.json()["policy_decision"]["obligations"]["tenant_id"] == "external"
 
 
 def test_publish_requires_schema_and_distribution_metadata():

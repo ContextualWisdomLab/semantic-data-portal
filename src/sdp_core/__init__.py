@@ -1,6 +1,7 @@
 """Core contracts for Semantic Data Portal."""
 
 from .contracts import (
+    ActorContext,
     AuditEvent,
     BusinessMapping,
     ColumnMetadata,
@@ -29,6 +30,7 @@ from .readiness import (
 from .stores import SQLiteEvidenceStore
 
 __all__ = [
+    "ActorContext",
     "AuditEvent",
     "BusinessMapping",
     "BuyerDemoActivationPlan",

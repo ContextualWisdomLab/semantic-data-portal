@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+from .authz import can_access_tenant, has_role, resolve_actor_context
 from .catalog import get_dataset
 from .domain import PolicyDecision
 from .evidence import record_policy_decision
@@ -12,7 +13,7 @@ def _decision(**kwargs: object) -> PolicyDecision:
 
 
 def _is_admin(subject: str) -> bool:
-    return subject in {"admin", "security", "data-admin"}
+    return has_role(subject, "admin", "platform-admin")
 
 
 def _can_mutate(subject: str, action: str) -> bool:
@@ -20,7 +21,7 @@ def _can_mutate(subject: str, action: str) -> bool:
 
 
 def _has_reader_role(subject: str) -> bool:
-    return subject in {"admin", "analyst", "data-analyst", "data-admin", "security"}
+    return has_role(subject, "data-analyst", "admin", "platform-admin", "security")
 
 
 def evaluate(subject: str, resource: str, action: str, purpose: str) -> PolicyDecision:
@@ -71,6 +72,15 @@ def evaluate(subject: str, resource: str, action: str, purpose: str) -> PolicyDe
             reason="존재하지 않는 데이터셋입니다.",
         )
 
+    actor_context = resolve_actor_context(subject)
+    if not can_access_tenant(subject, dataset.tenant_id):
+        return _decision(
+            **decision_base,
+            effect="deny",
+            reason="tenant boundary denied",
+            obligations={"tenant_id": dataset.tenant_id, "actor_tenant_id": actor_context.tenant_id},
+        )
+
     if dataset.sensitivity == "critical" and not _is_admin(subject):
         return _decision(
             **decision_base,
@@ -108,6 +118,7 @@ def evaluate(subject: str, resource: str, action: str, purpose: str) -> PolicyDe
         row_filter.append("business_unit = current_user_unit")
 
     obligations = {
+        "tenant_id": dataset.tenant_id,
         "masking": [col.name for col in dataset.schema if col.pii],
     }
     if row_filter:

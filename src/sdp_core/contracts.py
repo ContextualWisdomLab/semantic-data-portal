@@ -45,6 +45,7 @@ class DatasetProfile(BaseModel):
 
 class Dataset(BaseModel):
     id: str
+    tenant_id: str = "demo"
     title: str
     description: str
     owner: str
@@ -150,6 +151,12 @@ class PolicyDecision(BaseModel):
     reason: str = ""
 
 
+class ActorContext(BaseModel):
+    subject: str
+    tenant_id: str
+    roles: list[str] = Field(default_factory=list)
+
+
 class OntologyPatch(BaseModel):
     id: str
     concept: str
@@ -211,6 +218,7 @@ class AuditEvent(BaseModel):
 
 class DatasetCreateRequest(BaseModel):
     id: Optional[str] = None
+    tenant_id: str = "demo"
     title: str
     description: str
     owner: str

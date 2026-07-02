@@ -337,6 +337,13 @@ def enterprise_readiness_manifest() -> EnterpriseReadinessManifest:
                 status="planned",
             ),
             EnterpriseGate(
+                id="tenant_authz_model",
+                label="Tenant authorization model",
+                target="Dataset access is scoped by actor tenant context before preview, query, or schema access.",
+                evidence=["sdp_core.ActorContext", "sdp.authz", "tests/test_api.py::test_tenant_boundary_denies_cross_tenant_preview"],
+                status="implemented",
+            ),
+            EnterpriseGate(
                 id="operational_due_diligence",
                 label="Operational diligence",
                 target="Central required workflows, security scan, coverage evidence, and OSSF baseline pass before production pilot.",

@@ -503,6 +503,7 @@ def register_dataset(
     now = datetime.now(timezone.utc)
     dataset = Dataset(
         id=dataset_id,
+        tenant_id=payload.tenant_id,
         title=payload.title,
         description=payload.description,
         owner=payload.owner,
