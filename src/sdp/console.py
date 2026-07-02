@@ -7,7 +7,7 @@ def render_enterprise_console() -> str:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Semantic Data Portal</title>
+  <title>Enterprise Data Trust Console | Semantic Data Portal</title>
   <style>
     :root {
       color-scheme: light;
@@ -37,16 +37,39 @@ def render_enterprise_console() -> str:
       background: var(--surface);
       border-bottom: 1px solid var(--line);
     }
+    .brand {
+      display: grid;
+      gap: 4px;
+      min-width: 0;
+    }
+    .eyebrow {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+      letter-spacing: 0;
+    }
     h1 {
       margin: 0;
-      font-size: 20px;
+      font-size: 24px;
       font-weight: 700;
       letter-spacing: 0;
+    }
+    .subtitle {
+      margin: 0;
+      max-width: 720px;
+      color: var(--muted);
+      font-size: 13px;
     }
     main {
       width: min(1480px, 100%);
       margin: 0 auto;
       padding: 20px 24px 28px;
+    }
+    .header-tools {
+      display: grid;
+      gap: 10px;
+      justify-items: end;
     }
     .status-line {
       display: flex;
@@ -54,6 +77,30 @@ def render_enterprise_console() -> str:
       gap: 8px;
       align-items: center;
       color: var(--muted);
+    }
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+    .action {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      padding: 4px 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--ink);
+      font-size: 12px;
+      font-weight: 650;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .action:hover, .action:focus-visible {
+      border-color: var(--accent);
+      outline: none;
     }
     .badge {
       display: inline-flex;
@@ -132,11 +179,18 @@ def render_enterprise_console() -> str:
       grid-template-columns: repeat(5, minmax(0, 1fr));
     }
     .node {
+      display: block;
       min-height: 86px;
       padding: 12px;
       border: 1px solid var(--line);
       border-radius: 8px;
       background: var(--panel-strong);
+      color: inherit;
+      text-decoration: none;
+    }
+    .node:hover, .node:focus-visible {
+      border-color: var(--accent);
+      outline: none;
     }
     .node strong {
       display: block;
@@ -171,6 +225,25 @@ def render_enterprise_console() -> str:
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       font-size: 12px;
     }
+    .endpoint-link {
+      display: grid;
+      gap: 3px;
+      color: inherit;
+      text-decoration: none;
+    }
+    .endpoint-link:hover strong, .endpoint-link:focus-visible strong {
+      color: var(--accent);
+    }
+    .endpoint-link:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    .endpoint-link code {
+      color: var(--muted);
+      font-size: 11px;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
     .footer {
       margin-top: 14px;
       color: var(--muted);
@@ -178,6 +251,8 @@ def render_enterprise_console() -> str:
     }
     @media (max-width: 980px) {
       header { align-items: flex-start; flex-direction: column; }
+      .header-tools { justify-items: start; width: 100%; }
+      .actions { justify-content: flex-start; }
       main { padding: 14px; }
       .grid, .metrics, .flow { grid-template-columns: 1fr; }
       td:last-child, th:last-child { text-align: left; }
@@ -186,17 +261,29 @@ def render_enterprise_console() -> str:
 </head>
 <body>
   <header>
-    <h1>Semantic Data Portal</h1>
-    <div class="status-line">
-      <span class="badge ok" id="readyBadge">pilot evidence</span>
-      <span class="badge">valuation target KRW 2B</span>
-      <span class="badge warn">Figma Code Connect disabled</span>
+    <div class="brand">
+      <p class="eyebrow">Semantic Data Portal</p>
+      <h1>Enterprise Data Trust Console</h1>
+      <p class="subtitle">Buyer pilot evidence surface for KRW 2B enterprise readiness.</p>
+    </div>
+    <div class="header-tools">
+      <div class="status-line">
+        <span class="badge ok" id="readyBadge">pilot evidence</span>
+        <span class="badge">KRW 2B enterprise readiness</span>
+        <span class="badge warn">Figma Code Connect disabled</span>
+      </div>
+      <nav class="actions" aria-label="Console evidence links">
+        <a class="action" href="/enterprise/readiness">Readiness</a>
+        <a class="action" href="/enterprise/evidence-pack">Evidence</a>
+        <a class="action" href="/enterprise/demo-plan">Demo Plan</a>
+        <a class="action" href="/docs">API Docs</a>
+      </nav>
     </div>
   </header>
   <main>
     <div class="grid">
       <div class="stack">
-        <section aria-labelledby="metricsTitle">
+        <section aria-label="Evidence scorecard" aria-labelledby="metricsTitle">
           <h2 id="metricsTitle">Evidence</h2>
           <div class="metrics">
             <div class="metric">
@@ -221,17 +308,17 @@ def render_enterprise_console() -> str:
             </div>
           </div>
         </section>
-        <section aria-labelledby="flowTitle">
+        <section aria-label="Pilot workflow" aria-labelledby="flowTitle">
           <h2 id="flowTitle">Pilot Flow</h2>
           <div class="flow">
-            <div class="node"><strong>Readiness</strong><code>/enterprise/readiness</code></div>
-            <div class="node"><strong>Evidence</strong><code>/enterprise/evidence-pack</code></div>
-            <div class="node"><strong>Steward</strong><code>/enterprise/steward-review</code></div>
-            <div class="node"><strong>Query</strong><code>/browse/query</code></div>
-            <div class="node"><strong>Connector</strong><code>/enterprise/connectors/sql_connector/probe</code></div>
+            <a class="node" href="/enterprise/readiness"><strong>Readiness</strong><code>/enterprise/readiness</code></a>
+            <a class="node" href="/enterprise/evidence-pack"><strong>Evidence</strong><code>/enterprise/evidence-pack</code></a>
+            <a class="node" href="/enterprise/steward-review"><strong>Steward</strong><code>/enterprise/steward-review</code></a>
+            <a class="node" href="/browse/query"><strong>Query</strong><code>/browse/query</code></a>
+            <a class="node" href="/enterprise/connectors/sql_connector/probe"><strong>Connector</strong><code>/enterprise/connectors/sql_connector/probe</code></a>
           </div>
         </section>
-        <section aria-labelledby="controlsTitle">
+        <section aria-label="Enterprise controls" aria-labelledby="controlsTitle">
           <h2 id="controlsTitle">Controls</h2>
           <table>
             <thead><tr><th>Control</th><th>Status</th></tr></thead>
@@ -240,16 +327,16 @@ def render_enterprise_console() -> str:
         </section>
       </div>
       <div class="stack">
-        <section aria-labelledby="connectorsTitle">
+        <section aria-label="Connector readiness" aria-labelledby="connectorsTitle">
           <h2 id="connectorsTitle">Connectors</h2>
           <table>
-            <thead><tr><th>Path</th><th>Status</th></tr></thead>
+            <thead><tr><th>Connector</th><th>Dataset</th><th>Status</th></tr></thead>
             <tbody id="connectorRows">
-              <tr><td class="mono">/enterprise/connectors/sql_connector/probe</td><td>--</td></tr>
+              <tr><td>SQL connector</td><td class="mono">crm-customer-master</td><td>--</td></tr>
             </tbody>
           </table>
         </section>
-        <section aria-labelledby="kpiTitle">
+        <section aria-label="KPI gate targets" aria-labelledby="kpiTitle">
           <h2 id="kpiTitle">KPI Gates</h2>
           <table>
             <thead><tr><th>Gate</th><th>Target</th></tr></thead>
@@ -261,6 +348,13 @@ def render_enterprise_console() -> str:
     <div class="footer">Figma/FigJam board: https://www.figma.com/board/UptVQaUlwbLVYv20ot4ZDm</div>
   </main>
   <script>
+    const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;',
+    })[char]);
     const pct = (value) => `${Math.round(Number(value || 0) * 100)}%`;
     const width = (id, value) => document.getElementById(id).style.width = pct(value);
     const text = (id, value) => document.getElementById(id).textContent = value;
@@ -286,27 +380,27 @@ def render_enterprise_console() -> str:
     async function loadControls() {
       const controls = await json('/enterprise/controls');
       document.getElementById('controlsRows').innerHTML = controls.controls.map((item) =>
-        `<tr><td>${item.label}</td><td><span class="badge ${item.status === 'implemented' ? 'ok' : 'warn'}">${item.status}</span></td></tr>`
+        `<tr><td>${esc(item.label)}</td><td><span class="badge ${item.status === 'implemented' ? 'ok' : 'warn'}">${esc(item.status)}</span></td></tr>`
       ).join('');
     }
 
     async function loadKpis() {
       const kpis = await json('/enterprise/kpis');
       document.getElementById('kpiRows').innerHTML = [...kpis.primary_kpis, ...kpis.guardrail_kpis].map((item) =>
-        `<tr><td>${item.label}</td><td>${item.target}</td></tr>`
+        `<tr><td>${esc(item.label)}</td><td>${esc(item.target)}</td></tr>`
       ).join('');
     }
 
     async function loadConnectors() {
       const rows = await Promise.all([
-        ['sql_connector', 'crm-customer-master'],
-        ['rdf_connector', 'semantic-glossary'],
-        ['file_lake_connector', 'crm-event'],
-        ['rest_connector', 'marketing-campaign'],
-      ].map(async ([connector, dataset]) => {
+        ['SQL connector', 'sql_connector', 'crm-customer-master'],
+        ['RDF connector', 'rdf_connector', 'semantic-glossary'],
+        ['File lake connector', 'file_lake_connector', 'crm-event'],
+        ['REST connector', 'rest_connector', 'marketing-campaign'],
+      ].map(async ([label, connector, dataset]) => {
         const path = `/enterprise/connectors/${connector}/probe?dataset_id=${dataset}`;
         const probe = await json(path);
-        return `<tr><td class="mono">${path}</td><td><span class="badge ${probe.status === 'ready_for_demo' ? 'ok' : 'warn'}">${probe.status}</span></td></tr>`;
+        return `<tr><td><a class="endpoint-link" href="${esc(path)}" aria-label="${esc(label)} probe endpoint for ${esc(dataset)}"><strong>${esc(label)}</strong></a></td><td class="mono">${esc(dataset)}</td><td><span class="badge ${probe.status === 'ready_for_demo' ? 'ok' : 'warn'}">${esc(probe.status)}</span></td></tr>`;
       }));
       document.getElementById('connectorRows').innerHTML = rows.join('');
     }

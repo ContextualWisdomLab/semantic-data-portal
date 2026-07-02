@@ -48,6 +48,7 @@ def test_enterprise_readiness_manifest_exposes_saleable_gates():
     assert any(artifact["code_connect"] == "disabled" for artifact in body["design_artifacts"])
     artifacts = {artifact["id"]: artifact for artifact in body["design_artifacts"]}
     assert artifacts["operator_console_design_capture"]["url"].startswith("https://www.figma.com/design/")
+    assert "node-id=2-2" in artifacts["operator_console_design_capture"]["url"]
     assert artifacts["operator_console_design_capture"]["code_connect"] == "disabled"
 
 
@@ -174,7 +175,11 @@ def test_enterprise_console_renders_operator_surface():
     assert response.headers["content-type"].startswith("text/html")
 
     body = response.text
-    assert "Semantic Data Portal" in body
+    assert "<title>Enterprise Data Trust Console | Semantic Data Portal</title>" in body
+    assert "Enterprise Data Trust Console" in body
+    assert "KRW 2B enterprise readiness" in body
+    assert 'href="/docs"' in body
+    assert 'aria-label="Evidence scorecard"' in body
     assert "/enterprise/evidence-pack" in body
     assert "/enterprise/steward-review" in body
     assert "/enterprise/connectors/sql_connector/probe" in body

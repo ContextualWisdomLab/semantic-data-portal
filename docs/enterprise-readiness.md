@@ -8,7 +8,7 @@
 - 완성 기준: 구매자가 자기 조직의 우선 도메인을 연결해 catalog, ontology, policy, audit, query 데모를 코드 수정 없이 실행하고, 거버넌스 증빙을 확인할 수 있어야 한다.
 - 라이브러리 분리: `sdp_core`를 먼저 분리한다. 현재는 별도 repository나 submodule이 아니라 같은 monorepo 안의 순수 계약 패키지로 둔다.
 - submodule 판단: 아직 독립 릴리스 주기와 별도 CI/secrets 정책을 가진 외부 connector가 없으므로 보류한다. 첫 실제 SQL/RDF/file connector가 별도 운영 주체를 가지면 `sdp_connectors`를 별도 패키지 또는 submodule로 승격한다.
-- Figma 판단: Figma/FigJam은 IA, flow, component state, token handoff에 사용한다. Figma Code Connect는 사용하지 않는다. 운영자 콘솔 capture는 `https://www.figma.com/design/JjYSqr6nWxpARUjaVKhG16`에 둔다.
+- Figma 판단: Figma/FigJam은 IA, flow, component state, token handoff에 사용한다. Figma Code Connect는 사용하지 않는다. 최신 운영자 콘솔 capture는 `https://www.figma.com/design/JjYSqr6nWxpARUjaVKhG16?node-id=2-2`에 둔다.
 
 ## 패키지 경계
 
