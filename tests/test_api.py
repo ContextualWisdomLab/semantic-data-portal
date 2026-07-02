@@ -1,4 +1,5 @@
 from pathlib import Path
+from time import time
 
 from fastapi.testclient import TestClient
 
@@ -231,6 +232,7 @@ def test_oidc_preview_maps_claims_to_actor_context():
                 "email": "analyst@example.com",
                 "tenant_id": "demo",
                 "groups": ["sdp-analysts"],
+                "exp": int(time()) + 3600,
             }
         },
     )
@@ -238,10 +240,45 @@ def test_oidc_preview_maps_claims_to_actor_context():
 
     body = response.json()
     assert body["mode"] == "claim_mapping_preview"
-    assert body["token_verification"] == "external_or_planned"
+    assert body["token_verification"] == "external_signature_required_claim_shape_validated"
     assert body["actor_context"]["subject"] == "analyst@example.com"
     assert body["actor_context"]["tenant_id"] == "demo"
     assert body["actor_context"]["roles"] == ["data-analyst"]
+
+
+def test_oidc_preview_rejects_unverified_claim_shape():
+    response = client.post(
+        "/enterprise/auth/oidc-preview",
+        json={
+            "claims": {
+                "email": "analyst@example.com",
+                "tenant_id": "demo",
+                "groups": ["sdp-analysts"],
+            }
+        },
+    )
+
+    assert response.status_code == 400
+    assert "missing exp" in response.json()["detail"]
+
+
+def test_oidc_preview_ignores_direct_role_escalation_claims():
+    response = client.post(
+        "/enterprise/auth/oidc-preview",
+        json={
+            "claims": {
+                "email": "analyst@example.com",
+                "tenant_id": "demo",
+                "roles": ["sdp-platform-admins"],
+                "exp": int(time()) + 3600,
+            }
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["actor_context"]["roles"] == []
+    assert body["ignored_role_claims"] == ["sdp-platform-admins"]
 
 
 def test_deployment_template_files_define_local_demo_runtime():
@@ -1032,6 +1069,24 @@ def test_browse_query_rejects_table_outside_dataset_binding():
         and event["reason"] == "query_safety_validation_failed"
         for event in events.json()
     )
+
+
+def test_browse_query_rejects_literal_tautology_injection():
+    response = client.post(
+        "/browse/query",
+        json={
+            "user": "analyst",
+            "purpose": "analysis",
+            "dataset_ids": ["crm-event"],
+            "language": "SQL",
+            "query": "SELECT count(*) AS active_count FROM crm WHERE customer_id = 'x' OR '1'='1'",
+        },
+    )
+
+    assert response.status_code == 400
+    warnings = response.json()["detail"]["warnings"]
+    assert "literal_values_not_allowed" in warnings
+    assert "boolean_operator_not_allowed" in warnings
 
 
 def test_browse_query_denied_without_user():

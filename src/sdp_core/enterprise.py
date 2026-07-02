@@ -65,10 +65,13 @@ def enterprise_control_registry() -> list[EnterpriseControl]:
                 "sdp.authz",
                 "POST /enterprise/auth/oidc-preview",
                 "docs/enterprise-readiness.md",
+                "tests/test_api.py::test_oidc_preview_rejects_unverified_claim_shape",
+                "tests/test_api.py::test_oidc_preview_ignores_direct_role_escalation_claims",
             ],
             release_criteria=[
                 "OIDC issuer, audience, and JWKS are environment-configured.",
                 "Group-to-role mapping is tenant scoped and auditable.",
+                "Preview rejects missing or expired identity claims and ignores direct role escalation claims.",
             ],
         ),
         EnterpriseControl(

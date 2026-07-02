@@ -143,12 +143,17 @@ def enterprise_oidc_preview(payload: dict[str, Any]) -> dict[str, Any]:
     if role_map is not None and not isinstance(role_map, dict):
         raise HTTPException(status_code=400, detail="role_map must be an object")
 
-    context = authz.resolve_oidc_actor_context(claims, role_map=role_map)
+    try:
+        context = authz.resolve_oidc_actor_context(claims, role_map=role_map)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
     return {
         "mode": "claim_mapping_preview",
-        "token_verification": "external_or_planned",
+        "token_verification": "external_signature_required_claim_shape_validated",
         "actor_context": context.model_dump(),
         "groups": claims.get("groups", []),
+        "ignored_role_claims": authz.oidc_role_claims(claims),
     }
 
 

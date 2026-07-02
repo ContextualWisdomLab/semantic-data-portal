@@ -35,6 +35,10 @@ def validate_sql_query(sql: str, *, source_system: str) -> list[str]:
         warnings.append("single_statement_required")
     if "--" in stripped or "/*" in stripped or "*/" in stripped:
         warnings.append("sql_comments_not_allowed")
+    if "'" in stripped or '"' in stripped:
+        warnings.append("literal_values_not_allowed")
+    if re.search(r"\b(and|or)\b", lowered):
+        warnings.append("boolean_operator_not_allowed")
 
     for token in _FORBIDDEN_KEYWORDS:
         if re.search(rf"\b{re.escape(token)}\b", lowered):

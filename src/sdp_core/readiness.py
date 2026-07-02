@@ -335,7 +335,13 @@ def enterprise_readiness_manifest() -> EnterpriseReadinessManifest:
                 id="policy_audit_coverage",
                 label="Policy and audit coverage",
                 target="100 percent of preview, query, and catalog mutation requests expose policy_decision_id or audit evidence.",
-                evidence=["/browse/{dataset_id}/preview", "/browse/query", "/audit/events", "tests/test_api.py"],
+                evidence=[
+                    "/browse/{dataset_id}/preview",
+                    "/browse/query",
+                    "/audit/events",
+                    "tests/test_api.py",
+                    "tests/test_api.py::test_browse_query_rejects_literal_tautology_injection",
+                ],
                 status="implemented",
             ),
             EnterpriseGate(
@@ -363,7 +369,13 @@ def enterprise_readiness_manifest() -> EnterpriseReadinessManifest:
                 id="tenant_authz_model",
                 label="Tenant authorization model",
                 target="Dataset access is scoped by actor tenant context before preview, query, or schema access.",
-                evidence=["sdp_core.ActorContext", "sdp.authz", "/enterprise/controls", "tests/test_api.py::test_tenant_boundary_denies_cross_tenant_preview"],
+                evidence=[
+                    "sdp_core.ActorContext",
+                    "sdp.authz",
+                    "/enterprise/controls",
+                    "tests/test_api.py::test_tenant_boundary_denies_cross_tenant_preview",
+                    "tests/test_api.py::test_oidc_preview_rejects_unverified_claim_shape",
+                ],
                 status="implemented",
             ),
             EnterpriseGate(
