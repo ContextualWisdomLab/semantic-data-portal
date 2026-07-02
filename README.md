@@ -54,9 +54,9 @@ pytest
 | Policy Service | `src/sdp/policy.py`, `/policy/decision` |
 | LLM Orchestrator | `src/sdp/orchestrator.py`, `/llm/*` |
 | JSON-LD Export | `/catalog/datasets/{id}/jsonld` |
+| Enterprise Core Contracts | `src/sdp_core/contracts.py`, `src/sdp_core/readiness.py`, `/enterprise/*` |
 
 ## 요구사항 대응 증적
 
 - PRD/TRD: `docs/prd-trd.md`
 - 요구사항 대응 매트릭스: `docs/implementation-compliance.md`
-

@@ -4,37 +4,39 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
 
+from .contracts import AuditEvent, Dataset, PolicyDecision
+
 
 class CatalogStore(Protocol):
     """Persistence boundary for catalog metadata."""
 
-    def list_datasets(self) -> list[Any]:
+    def list_datasets(self) -> list[Dataset]:
         ...
 
-    def get_dataset(self, dataset_id: str) -> Any | None:
+    def get_dataset(self, dataset_id: str) -> Dataset | None:
         ...
 
-    def upsert_dataset(self, dataset: Any) -> Any:
+    def upsert_dataset(self, dataset: Dataset) -> Dataset:
         ...
 
 
 class PolicyDecisionStore(Protocol):
     """Persistence boundary for explainable policy decisions."""
 
-    def record_decision(self, decision: Any) -> Any:
+    def record_decision(self, decision: PolicyDecision) -> PolicyDecision:
         ...
 
-    def get_decision(self, decision_id: str) -> Any | None:
+    def get_decision(self, decision_id: str) -> PolicyDecision | None:
         ...
 
 
 class AuditEventStore(Protocol):
     """Append-only boundary for user-visible compliance evidence."""
 
-    def append_event(self, event: Any) -> Any:
+    def append_event(self, event: AuditEvent) -> AuditEvent:
         ...
 
-    def list_events(self, *, resource: str | None = None, limit: int = 100) -> list[Any]:
+    def list_events(self, *, resource: str | None = None, limit: int = 100) -> list[AuditEvent]:
         ...
 
 

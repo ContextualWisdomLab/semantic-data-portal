@@ -1,5 +1,7 @@
 from fastapi.testclient import TestClient
 
+import sdp.domain as app_domain
+import sdp_core
 from sdp.api import app
 from sdp.demo_smoke import smoke_summary
 
@@ -81,6 +83,13 @@ def test_enterprise_kpis_expose_saleability_measurement_plan():
     assert kpis["clean_pr_queue"]["target"] == "0 blocking PRs"
     assert kpis["clean_pr_queue"]["status"] == "external"
     assert "/enterprise/connectors/{connector_id}/probe" in kpis["demo_setup_minutes"]["source_endpoints"]
+
+
+def test_sdp_core_owns_stable_contracts_with_app_compatibility_exports():
+    assert app_domain.Dataset is sdp_core.Dataset
+    assert app_domain.PolicyDecision is sdp_core.PolicyDecision
+    assert app_domain.AuditEvent is sdp_core.AuditEvent
+    assert app_domain.QueryExecutionRequest is sdp_core.QueryExecutionRequest
 
 
 def test_enterprise_demo_smoke_summary_is_ready():
