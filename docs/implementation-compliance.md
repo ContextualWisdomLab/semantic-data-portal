@@ -111,8 +111,9 @@
 ## 5) 운영/품질
 
 - 단위 테스트: `tests/test_api.py` (헬스체크 + 엔드포인트별 동작 + 정책/감사 검증)
-- 워크플로우: `.github/workflows/opencode-review.yml`, `.github/workflows/pr-review-merge-scheduler.yml`, `.github/workflows/strix.yml`
-- 정적/CI 게이트: 워크플로우 내 OpenCode/Strix/coverage evidence 단계
+- 워크플로우: 조직 공통 규칙셋 `CWL Central required workflows`의 중앙 required workflow를 사용한다.
+- 정적/CI 게이트: repo-local OpenCode/Strix workflow 복사본은 `main`에서 제거되었으므로 이 브랜치도 중앙 workflow 정책을 따른다.
+- 로컬 증빙: `PYTHONPATH=src python3 -m pytest -q` 결과 22개 테스트 통과.
 
 ## 6) 다음 단계 (현재 브랜치에서 미반영 권고)
 
@@ -123,7 +124,7 @@
 ## 7) 구현 완료 증적(현재 HEAD 기준)
 
 - 대상 브랜치: `codex/sdp-complete-impl`
-- 기준 SHA: `b621ef6` (remote: `origin/codex/sdp-complete-impl`)
+- 기준: `origin/main` 병합 후 현재 브랜치 HEAD
 - 증적 파일:
   - `src/sdp/api.py`
   - `src/sdp/catalog.py`
@@ -134,7 +135,6 @@
   - `tests/test_api.py`
   - `docs/implementation-compliance.md`
   - `docs/retrigger-evidence.md`
-- PR 상태: `open`. 조직 리뷰 증적은 `e981dca` 기준까지 반영되었는지 확인 필요하며, OpenCode는 workflow 재실행 큐에서 최신 실행으로의 동기화가 진행 중입니다.
-- 현재 잠재 블로커: 마지막 동기화 단계의 상태 불일치(오래된 체크 코멘트). 추적 파일:
-  - [docs/retrigger-evidence.md](/C:/Users/Seongho%20Bae/Documents/Codex/2026-06-29/f/semantic-data-portal/docs/retrigger-evidence.md)
-  - [최근 워크플로우 이벤트](/C:/Users/Seongho%20Bae/Documents/Codex/2026-06-29/f/semantic-data-portal/.github/workflows/opencode-review.yml)
+- PR 상태: `open`. `origin/main`의 repo-local central workflow 삭제 정책과 충돌을 해소했다.
+- 현재 잠재 블로커: GitHub Actions required workflow 재실행 및 review state 갱신 대기. 추적 파일:
+  - [docs/retrigger-evidence.md](docs/retrigger-evidence.md)

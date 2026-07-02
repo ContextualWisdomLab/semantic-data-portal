@@ -5,3 +5,4 @@
 - Added OpenCode workflow heredoc-repair + parser stabilization commit `e981dca` on 2026-06-29.
 - Added this trace update to align implementation matrix with branch head `e981dca`; current OpenCode workflow status is expected to clear stale run comment linkage after synchronized completion.
 - Added a follow-up retrigger marker on 2026-06-29 at 21:32:30 local time to force a single fresh pull_request_target OpenCode run for branch head 1ea432de350594e0ae9ca2c3b6c849c2ae215cff.
+- On 2026-07-02, merged current `origin/main` into the PR repair branch, kept the main-branch removal of repo-local central review workflow files, and verified `PYTHONPATH=src python3 -m pytest -q` passes 22 tests locally.
