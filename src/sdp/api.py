@@ -5,8 +5,9 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from sdp_core import buyer_demo_activation_plan, enterprise_kpi_framework, enterprise_readiness_manifest
 
-from . import browse, catalog, ontology, orchestrator
+from . import browse, catalog, connectors, ontology, orchestrator
 from .catalog import (
     deprecate_dataset,
     get_dataset,
@@ -63,6 +64,40 @@ def _require_actor(payload: dict[str, Any]) -> str:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "at": datetime.utcnow().isoformat() + "Z"}
+
+
+@app.get("/enterprise/readiness")
+def enterprise_readiness() -> dict[str, Any]:
+    return enterprise_readiness_manifest().model_dump()
+
+
+@app.get("/enterprise/demo-plan")
+def enterprise_demo_plan(
+    domain: str = Query(default="customer intelligence", min_length=1),
+    connector: list[str] | None = Query(default=None),
+) -> dict[str, Any]:
+    try:
+        return buyer_demo_activation_plan(priority_domain=domain, connector_ids=connector).model_dump()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/enterprise/kpis")
+def enterprise_kpis() -> dict[str, Any]:
+    return enterprise_kpi_framework().model_dump()
+
+
+@app.get("/enterprise/connectors/{connector_id}/probe")
+def enterprise_connector_probe(
+    connector_id: str,
+    dataset_id: str = Query(..., min_length=1),
+) -> dict[str, Any]:
+    try:
+        return connectors.connector_probe(connector_id, dataset_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except KeyError:
+        raise HTTPException(status_code=404, detail="dataset not found")
 
 
 @app.get("/catalog/search")

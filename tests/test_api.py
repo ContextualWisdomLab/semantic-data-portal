@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from sdp.api import app
+from sdp.demo_smoke import smoke_summary
 
 
 client = TestClient(app)
@@ -10,6 +11,119 @@ def test_health():
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+def test_enterprise_readiness_manifest_exposes_saleable_gates():
+    response = client.get("/enterprise/readiness")
+    assert response.status_code == 200
+
+    body = response.json()
+    assert body["valuation_target_krw"] == 2_000_000_000
+    assert body["submodule_decision"]["decision"] == "monorepo_package_split_first"
+
+    packages = {package["id"]: package for package in body["package_boundary"]}
+    assert packages["sdp_core"]["kind"] == "library"
+    assert "store protocols" in packages["sdp_core"]["owns"]
+    assert packages["sdp_app"]["kind"] == "application"
+
+    stores = {store["id"]: store for store in body["storage_capabilities"]}
+    assert stores["audit_events"]["durability_required"] is True
+    assert stores["policy_decisions"]["scale_gate"].startswith("100 percent")
+
+    connectors = {connector["id"]: connector for connector in body["connector_capabilities"]}
+    assert {"sql_connector", "rdf_connector", "rest_connector", "file_lake_connector"} <= set(connectors)
+    assert "policy_before_query" in connectors["sql_connector"]["required_controls"]
+
+    gates = {gate["id"]: gate for gate in body["enterprise_gates"]}
+    assert gates["policy_audit_coverage"]["status"] == "implemented"
+    assert gates["operational_due_diligence"]["status"] == "external"
+    assert any(artifact["code_connect"] == "disabled" for artifact in body["design_artifacts"])
+
+
+def test_enterprise_demo_plan_supports_buyer_activation_path():
+    response = client.get(
+        "/enterprise/demo-plan",
+        params={"domain": "insurance claims", "connector": ["sql_connector", "rest_connector"]},
+    )
+    assert response.status_code == 200
+
+    body = response.json()
+    assert body["priority_domain"] == "insurance claims"
+    assert body["activation_days"] == 10
+    assert [connector["id"] for connector in body["selected_connectors"]] == ["sql_connector", "rest_connector"]
+    assert any(step["id"] == "governed_browse_query" for step in body["workflow"])
+    assert any("/enterprise/demo-plan" in artifact for artifact in body["handoff_artifacts"])
+    assert any("policy_decision_id" in criterion for criterion in body["acceptance_criteria"])
+
+
+def test_enterprise_demo_plan_rejects_unsupported_connector():
+    response = client.get("/enterprise/demo-plan", params={"connector": "warehouse_admin_shell"})
+    assert response.status_code == 400
+    assert "unsupported connector ids" in response.json()["detail"]
+
+
+def test_enterprise_kpis_expose_saleability_measurement_plan():
+    response = client.get("/enterprise/kpis")
+    assert response.status_code == 200
+
+    body = response.json()
+    assert body["valuation_target_krw"] == 2_000_000_000
+
+    all_kpis = body["primary_kpis"] + body["guardrail_kpis"]
+    kpis = {item["id"]: item for item in all_kpis}
+    assert kpis["discovery_time_reduction"]["target"] == ">=50 percent reduction"
+    assert kpis["metadata_completeness"]["target"] == ">=90 percent display coverage"
+    assert kpis["policy_audit_coverage"]["target"] == "100 percent"
+    assert kpis["nl_catalog_search_success"]["target"] == ">=80 percent"
+    assert kpis["ontology_mapping_coverage"]["target"] == ">=70 percent"
+    assert kpis["validation_pass_rate"]["target"] == ">=95 percent"
+    assert kpis["demo_setup_minutes"]["target"] == "<=15 minutes"
+    assert kpis["clean_pr_queue"]["target"] == "0 blocking PRs"
+    assert kpis["clean_pr_queue"]["status"] == "external"
+    assert "/enterprise/connectors/{connector_id}/probe" in kpis["demo_setup_minutes"]["source_endpoints"]
+
+
+def test_enterprise_demo_smoke_summary_is_ready():
+    summary = smoke_summary()
+    assert summary["valuation_target_krw"] == 2_000_000_000
+    assert summary["demo_activation_days"] <= 10
+    assert summary["primary_kpis"] >= 3
+    assert summary["guardrail_kpis"] >= 3
+    assert summary["connector_probe_status"] == "ready_for_demo"
+    assert summary["ready"] is True
+
+
+def test_enterprise_connector_probe_exposes_demo_evidence():
+    response = client.get(
+        "/enterprise/connectors/sql_connector/probe",
+        params={"dataset_id": "crm-event"},
+    )
+    assert response.status_code == 200
+
+    body = response.json()
+    assert body["connector_id"] == "sql_connector"
+    assert body["dataset_id"] == "crm-event"
+    assert body["status"] == "ready_for_demo"
+    assert body["data_contract"]["schema_fields"] > 0
+
+    controls = {item["control"]: item for item in body["control_evidence"]}
+    assert controls["policy_before_query"]["status"] == "implemented"
+    assert "/browse/query" in controls["policy_before_query"]["proof_endpoints"]
+    assert controls["audit_event"]["status"] == "implemented"
+
+
+def test_enterprise_connector_probe_fails_closed():
+    unsupported = client.get(
+        "/enterprise/connectors/admin_shell/probe",
+        params={"dataset_id": "crm-event"},
+    )
+    assert unsupported.status_code == 400
+
+    missing_dataset = client.get(
+        "/enterprise/connectors/sql_connector/probe",
+        params={"dataset_id": "unknown"},
+    )
+    assert missing_dataset.status_code == 404
 
 
 def test_catalog_search_and_detail():
