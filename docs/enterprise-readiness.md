@@ -9,6 +9,7 @@
 - 라이브러리 분리: `sdp_core`를 먼저 분리한다. 현재는 별도 repository나 submodule이 아니라 같은 monorepo 안의 순수 계약 패키지로 둔다.
 - submodule 판단: 아직 독립 릴리스 주기와 별도 CI/secrets 정책을 가진 외부 connector가 없으므로 보류한다. 첫 실제 SQL/RDF/file connector가 별도 운영 주체를 가지면 `sdp_connectors`를 별도 패키지 또는 submodule로 승격한다.
 - Figma 판단: Figma/FigJam은 IA, flow, component state, token handoff에 사용한다. Figma Code Connect는 사용하지 않는다. 최신 운영자 콘솔 capture는 `https://www.figma.com/design/JjYSqr6nWxpARUjaVKhG16?node-id=3-2`에 둔다.
+- 디자인 토큰 판단: Figma가 소유하는 primitive·semantic 토큰을 코드가 동일하게 소비하도록 `src/sdp/design_tokens.py`에 3계층(primitive/semantic/component) CSS 변수 원천을 둔다. 운영자 콘솔은 임의 hex/px 대신 `var(--sdp-*)` 토큰만 참조한다(무회귀 리팩터, `tests/test_design_tokens.py`가 보장). 상세 매핑과 Gap은 `docs/design-tokens.md` 참조.
 
 ## 패키지 경계
 
