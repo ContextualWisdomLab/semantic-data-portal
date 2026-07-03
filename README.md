@@ -1,6 +1,6 @@
-# Semantic Data Portal (MVP)
+# Semantic Data Portal
 
-온톨로지 기반 데이터 카탈로그/브라우징 플랫폼 PRD/TRD(v0.1, 2026-06-29) 기반의 MVP 구현입니다.
+온톨로지 기반 데이터 카탈로그/브라우징 플랫폼 PRD/TRD(v0.1, 2026-06-29) 기반의 구현입니다.
 
 ## 목표
 
