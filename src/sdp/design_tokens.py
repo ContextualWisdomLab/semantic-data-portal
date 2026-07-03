@@ -42,6 +42,20 @@ PRIMITIVE: "OrderedDict[str, str]" = OrderedDict(
         ("--sdp-color-gray-900", "#17202a"),
         # brand ramp (teal)
         ("--sdp-color-teal-700", "#0f766e"),
+        # KRDS-style primary ramp (color.primary.5-95), anchored so 70 == the
+        # shipping product accent #0f766e. Values are the well-formed Tailwind
+        # teal scale (700 == #0f766e), used here as a monotonic, accessible ramp.
+        ("--sdp-color-primary-5", "#f0fdfa"),
+        ("--sdp-color-primary-10", "#ccfbf1"),
+        ("--sdp-color-primary-20", "#99f6e4"),
+        ("--sdp-color-primary-30", "#5eead4"),
+        ("--sdp-color-primary-40", "#2dd4bf"),
+        ("--sdp-color-primary-50", "#14b8a6"),
+        ("--sdp-color-primary-60", "#0d9488"),
+        ("--sdp-color-primary-70", "#0f766e"),
+        ("--sdp-color-primary-80", "#115e59"),
+        ("--sdp-color-primary-90", "#134e4a"),
+        ("--sdp-color-primary-95", "#042f2e"),
         # status: success (green)
         ("--sdp-color-green-50", "#eff8f0"),
         ("--sdp-color-green-200", "#bbd7c0"),
@@ -66,9 +80,19 @@ PRIMITIVE: "OrderedDict[str, str]" = OrderedDict(
         ("--sdp-space-20", "20px"),
         ("--sdp-space-24", "24px"),
         ("--sdp-space-28", "28px"),
+        # KRDS space scale completion (space.0-64)
+        ("--sdp-space-0", "0"),
+        ("--sdp-space-32", "32px"),
+        ("--sdp-space-40", "40px"),
+        ("--sdp-space-48", "48px"),
+        ("--sdp-space-64", "64px"),
         # radius scale
+        ("--sdp-radius-0", "0"),
+        ("--sdp-radius-2", "2px"),
+        ("--sdp-radius-4", "4px"),
         ("--sdp-radius-6", "6px"),
         ("--sdp-radius-8", "8px"),
+        ("--sdp-radius-12", "12px"),
         ("--sdp-radius-pill", "999px"),
         # type scale
         ("--sdp-font-size-11", "11px"),
@@ -107,6 +131,19 @@ SEMANTIC: "OrderedDict[str, str]" = OrderedDict(
         ("--sdp-radius-control", "var(--sdp-radius-6)"),
         ("--sdp-radius-surface", "var(--sdp-radius-8)"),
         ("--sdp-radius-track", "var(--sdp-radius-pill)"),
+        # KRDS radius aliases (xsmall-xlarge, 2-12px) + full
+        ("--sdp-radius-xs", "var(--sdp-radius-2)"),
+        ("--sdp-radius-sm", "var(--sdp-radius-4)"),
+        ("--sdp-radius-md", "var(--sdp-radius-6)"),
+        ("--sdp-radius-lg", "var(--sdp-radius-8)"),
+        ("--sdp-radius-xl", "var(--sdp-radius-12)"),
+        ("--sdp-radius-full", "var(--sdp-radius-pill)"),
+        # brand + extra semantic colours (alias existing primitives)
+        ("--sdp-color-brand-primary", "var(--sdp-color-primary-70)"),
+        ("--sdp-color-text-inverse", "var(--sdp-color-white)"),
+        ("--sdp-color-text-disabled", "var(--sdp-color-gray-500)"),
+        ("--sdp-color-background-inverse", "var(--sdp-color-gray-900)"),
+        ("--sdp-color-border-strong", "var(--sdp-color-gray-500)"),
     ]
 )
 
@@ -121,6 +158,26 @@ COMPONENT: "OrderedDict[str, str]" = OrderedDict(
         ("--sdp-badge-warning-bg", "var(--sdp-color-status-warning-bg)"),
     ]
 )
+
+# --- High Contrast mode (KRDS 선명한 화면 모드) -------------------------------
+# Additive override map: redefines a subset of SEMANTIC tokens to higher-contrast
+# values. Values are var() references to existing primitives (never raw hex), so a
+# consumer that injects the override keeps the "no raw hex in rules" guarantee.
+# KRDS contrast targets — body text 7:1(default)/15:1(HC); heading/label 4.5:1/7:1;
+# icon/graphic 3:1/4.5:1. This is NOT injected into the console by default.
+HIGH_CONTRAST: "OrderedDict[str, str]" = OrderedDict(
+    [
+        ("--sdp-color-text-primary", "var(--sdp-color-gray-900)"),
+        ("--sdp-color-text-muted", "var(--sdp-color-gray-900)"),
+        ("--sdp-color-border-default", "var(--sdp-color-gray-900)"),
+        ("--sdp-color-border-muted", "var(--sdp-color-gray-900)"),
+        ("--sdp-color-interaction-primary", "var(--sdp-color-primary-95)"),
+        ("--sdp-color-focus-ring", "var(--sdp-color-primary-95)"),
+        ("--sdp-color-status-success-fg", "var(--sdp-color-green-600)"),
+        ("--sdp-color-status-warning-fg", "var(--sdp-color-amber-700)"),
+    ]
+)
+
 
 _TIERS = (("primitive", PRIMITIVE), ("semantic", SEMANTIC), ("component", COMPONENT))
 
@@ -174,5 +231,19 @@ def root_css_variables(indent: str = "      ") -> str:
         lines.append(f"{indent}{headings[tier_name]}")
         for name, value in tier.items():
             lines.append(f"{indent}{name}: {value};")
+    lines.append("    }")
+    return "\n".join(lines)
+
+
+def high_contrast_css(selector: str = '[data-theme="high-contrast"]', indent: str = "      ") -> str:
+    """Render a KRDS 선명한 화면 모드 override block for the given selector.
+
+    Redefines the :root semantic tokens under *selector* with higher-contrast
+    aliases from :data:`HIGH_CONTRAST`. Values are ``var()`` references only, so
+    the block contains no raw hex. Not injected into the console by default.
+    """
+    lines = [f"{selector} {{", f"{indent}/* KRDS high contrast overrides */"]
+    for name, value in HIGH_CONTRAST.items():
+        lines.append(f"{indent}{name}: {value};")
     lines.append("    }")
     return "\n".join(lines)

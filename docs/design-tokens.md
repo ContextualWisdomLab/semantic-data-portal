@@ -78,3 +78,16 @@ css = f"<style>{root_css_variables()} /* ... rules use var(--sdp-*) ... */</styl
 - semantic/component tier는 리터럴이 아니라 다른 토큰만 alias 한다.
 - 콘솔 규칙 영역에 raw hex가 남아 있지 않다(색은 전부 토큰 경유).
 - 콘솔이 참조하는 모든 `var(--sdp-*)`가 정의되어 있고, `:root`가 모든 토큰을 선언한다.
+
+## KRDS 스케일 확장 (v0.3)
+
+`design_tokens.py`에 KRDS 스타일 스케일을 추가(전부 additive, 기존 토큰/값 불변, 콘솔 무회귀).
+
+- **Primary ramp** `--sdp-color-primary-5..95`: KRDS `color.primary.5-95` 대응. 70 단계 == 제품 accent `#0f766e`에 앵커된 단조 teal ramp.
+- **Space scale** `--sdp-space-0/32/40/48/64` 추가 → KRDS `space.0-64` 완성.
+- **Radius** `--sdp-radius-0/2/4/12` primitive + `--sdp-radius-xs/sm/md/lg/xl/full` semantic alias(KRDS xsmall–xlarge, 2–12px).
+- **추가 semantic**: `--sdp-color-brand-primary`, `--sdp-color-text-inverse`, `--sdp-color-text-disabled`, `--sdp-color-background-inverse`, `--sdp-color-border-strong`.
+
+### High Contrast (선명한 화면 모드)
+
+`HIGH_CONTRAST` 오버라이드 맵 + `high_contrast_css(selector='[data-theme="high-contrast"]')` 함수. semantic 토큰을 고대비 값으로 재정의하되 값은 전부 `var(--sdp-*)` 참조라 raw hex 없음. 기본 콘솔에는 주입하지 않음(opt-in). KRDS 대비 목표: 본문 7:1(기본)/15:1(HC), 헤딩·레이블 4.5:1/7:1, 아이콘·그래픽 3:1/4.5:1.

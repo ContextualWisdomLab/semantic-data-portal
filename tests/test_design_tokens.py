@@ -66,3 +66,40 @@ def test_root_block_defines_every_token():
     root = re.search(r":root \{.*?\}", html, re.DOTALL).group(0)
     for name in dt.all_tokens():
         assert f"{name}:" in root, f"token {name} missing from :root block"
+
+
+def test_krds_primary_ramp_is_complete_and_anchored():
+    flat = dt.flatten()
+    steps = [5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 95]
+    for s in steps:
+        name = f"--sdp-color-primary-{s}"
+        assert name in flat, f"missing {name}"
+        assert re.fullmatch(r"#[0-9a-f]{6}", flat[name]), flat[name]
+    # 70 must equal the shipping product accent
+    assert flat["--sdp-color-primary-70"] == "#0f766e"
+
+
+def test_krds_space_and_radius_scales():
+    flat = dt.flatten()
+    for s in (0, 32, 40, 48, 64):
+        assert f"--sdp-space-{s}" in flat
+    assert flat["--sdp-radius-xs"] == "2px"
+    assert flat["--sdp-radius-md"] == "6px"
+    assert flat["--sdp-radius-xl"] == "12px"
+    assert flat["--sdp-radius-full"] == "999px"
+
+
+def test_high_contrast_overrides_are_var_only_and_defined():
+    names = set(dt.all_tokens())
+    for target, value in dt.HIGH_CONTRAST.items():
+        assert target in names, f"HC overrides undefined token {target}"
+        refs = re.findall(r"var\((--sdp-[a-z0-9-]+)\)", value)
+        assert refs, f"HC value must be a var() reference: {value}"
+        for ref in refs:
+            assert ref in names, f"HC references undefined token {ref}"
+
+
+def test_high_contrast_css_block_has_no_raw_hex():
+    block = dt.high_contrast_css()
+    assert '[data-theme="high-contrast"]' in block
+    assert not re.findall(r"#[0-9a-fA-F]{3,6}", block)
