@@ -1,205 +1,195 @@
 from __future__ import annotations
 
+from .design_tokens import root_css_variables
 
-def render_enterprise_console() -> str:
-    return """<!doctype html>
+
+_CONSOLE_TEMPLATE = """<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Enterprise Data Trust Console | Semantic Data Portal</title>
   <style>
-    :root {
-      color-scheme: light;
-      --ink: #17202a;
-      --muted: #5b6778;
-      --line: #d8dee8;
-      --panel: #f7f9fc;
-      --panel-strong: #eef3f8;
-      --accent: #0f766e;
-      --warn: #a16207;
-      --ok: #166534;
-      --surface: #ffffff;
-    }
+    __SDP_ROOT_TOKENS__
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      color: var(--ink);
-      background: #eef2f6;
-      font: 14px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--sdp-color-text-primary);
+      background: var(--sdp-color-background-canvas);
+      font: var(--sdp-font-size-14)/var(--sdp-line-height-normal) system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
     header {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 16px;
-      padding: 18px 24px;
-      background: var(--surface);
-      border-bottom: 1px solid var(--line);
+      gap: var(--sdp-space-16);
+      padding: var(--sdp-space-18) var(--sdp-space-24);
+      background: var(--sdp-color-surface-default);
+      border-bottom: 1px solid var(--sdp-color-border-default);
     }
     .brand {
       display: grid;
-      gap: 4px;
+      gap: var(--sdp-space-4);
       min-width: 0;
     }
     .eyebrow {
       margin: 0;
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 650;
+      color: var(--sdp-color-text-muted);
+      font-size: var(--sdp-font-size-12);
+      font-weight: var(--sdp-font-weight-medium);
       letter-spacing: 0;
     }
     h1 {
       margin: 0;
-      font-size: 24px;
-      font-weight: 700;
+      font-size: var(--sdp-font-size-24);
+      font-weight: var(--sdp-font-weight-bold);
       letter-spacing: 0;
     }
     .subtitle {
       margin: 0;
       max-width: 720px;
-      color: var(--muted);
-      font-size: 13px;
+      color: var(--sdp-color-text-muted);
+      font-size: var(--sdp-font-size-13);
     }
     main {
       width: min(1480px, 100%);
       margin: 0 auto;
-      padding: 20px 24px 28px;
+      padding: var(--sdp-space-20) var(--sdp-space-24) var(--sdp-space-28);
     }
     .header-tools {
       display: grid;
-      gap: 10px;
+      gap: var(--sdp-space-10);
       justify-items: end;
     }
     .status-line {
       display: flex;
       flex-wrap: wrap;
-      gap: 8px;
+      gap: var(--sdp-space-8);
       align-items: center;
-      color: var(--muted);
+      color: var(--sdp-color-text-muted);
     }
     .actions {
       display: flex;
       flex-wrap: wrap;
-      gap: 8px;
+      gap: var(--sdp-space-8);
       justify-content: flex-end;
     }
     .action {
       display: inline-flex;
       align-items: center;
       min-height: 30px;
-      padding: 4px 10px;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      background: var(--surface);
-      color: var(--ink);
-      font-size: 12px;
-      font-weight: 650;
+      padding: var(--sdp-space-4) var(--sdp-space-10);
+      border: 1px solid var(--sdp-color-border-default);
+      border-radius: var(--sdp-radius-control);
+      background: var(--sdp-color-surface-default);
+      color: var(--sdp-color-text-primary);
+      font-size: var(--sdp-font-size-12);
+      font-weight: var(--sdp-font-weight-medium);
       text-decoration: none;
       white-space: nowrap;
     }
     .action:hover, .action:focus-visible {
-      border-color: var(--accent);
+      border-color: var(--sdp-color-interaction-primary);
       outline: none;
     }
     .badge {
       display: inline-flex;
       align-items: center;
       min-height: 26px;
-      padding: 2px 9px;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      background: var(--panel);
-      color: var(--ink);
-      font-size: 12px;
+      padding: var(--sdp-space-2) var(--sdp-space-9);
+      border: 1px solid var(--sdp-color-border-default);
+      border-radius: var(--sdp-radius-control);
+      background: var(--sdp-color-surface-muted);
+      color: var(--sdp-color-text-primary);
+      font-size: var(--sdp-font-size-12);
       white-space: nowrap;
     }
-    .badge.ok { color: var(--ok); border-color: #bbd7c0; background: #eff8f0; }
-    .badge.warn { color: var(--warn); border-color: #e7cf96; background: #fff8e7; }
+    .badge.ok { color: var(--sdp-badge-success-fg); border-color: var(--sdp-badge-success-border); background: var(--sdp-badge-success-bg); }
+    .badge.warn { color: var(--sdp-badge-warning-fg); border-color: var(--sdp-badge-warning-border); background: var(--sdp-badge-warning-bg); }
     .grid {
       display: grid;
-      gap: 14px;
+      gap: var(--sdp-space-14);
       grid-template-columns: 1.15fr 0.85fr;
       align-items: start;
     }
-    .stack { display: grid; gap: 14px; }
+    .stack { display: grid; gap: var(--sdp-space-14); }
     section {
-      background: var(--surface);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 16px;
+      background: var(--sdp-color-surface-default);
+      border: 1px solid var(--sdp-color-border-default);
+      border-radius: var(--sdp-radius-surface);
+      padding: var(--sdp-space-16);
     }
     h2 {
-      margin: 0 0 12px;
-      font-size: 15px;
-      font-weight: 700;
+      margin: 0 0 var(--sdp-space-12);
+      font-size: var(--sdp-font-size-15);
+      font-weight: var(--sdp-font-weight-bold);
       letter-spacing: 0;
     }
     .metrics {
       display: grid;
-      gap: 10px;
+      gap: var(--sdp-space-10);
       grid-template-columns: repeat(4, minmax(0, 1fr));
     }
     .metric {
       min-width: 0;
-      padding: 12px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: var(--panel);
+      padding: var(--sdp-space-12);
+      border: 1px solid var(--sdp-color-border-default);
+      border-radius: var(--sdp-radius-surface);
+      background: var(--sdp-color-surface-muted);
     }
     .metric .label {
-      color: var(--muted);
-      font-size: 12px;
+      color: var(--sdp-color-text-muted);
+      font-size: var(--sdp-font-size-12);
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
     }
     .metric .value {
-      margin-top: 6px;
-      font-size: 22px;
-      font-weight: 750;
+      margin-top: var(--sdp-space-6);
+      font-size: var(--sdp-font-size-22);
+      font-weight: var(--sdp-font-weight-heavy);
       letter-spacing: 0;
     }
     .bar {
       height: 8px;
-      margin-top: 8px;
+      margin-top: var(--sdp-space-8);
       overflow: hidden;
-      border-radius: 999px;
-      background: #dce5ee;
+      border-radius: var(--sdp-radius-pill);
+      background: var(--sdp-color-border-muted);
     }
     .bar > span {
       display: block;
       height: 100%;
       width: 0;
-      background: var(--accent);
+      background: var(--sdp-color-interaction-primary);
     }
     .flow {
       display: grid;
-      gap: 8px;
+      gap: var(--sdp-space-8);
       grid-template-columns: repeat(5, minmax(0, 1fr));
     }
     .node {
       display: block;
       min-height: 86px;
-      padding: 12px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: var(--panel-strong);
+      padding: var(--sdp-space-12);
+      border: 1px solid var(--sdp-color-border-default);
+      border-radius: var(--sdp-radius-surface);
+      background: var(--sdp-color-surface-strong);
       color: inherit;
       text-decoration: none;
     }
     .node:hover, .node:focus-visible {
-      border-color: var(--accent);
+      border-color: var(--sdp-color-interaction-primary);
       outline: none;
     }
     .node strong {
       display: block;
-      margin-bottom: 6px;
-      font-size: 13px;
+      margin-bottom: var(--sdp-space-6);
+      font-size: var(--sdp-font-size-13);
     }
     .node code {
-      color: var(--muted);
-      font-size: 11px;
+      color: var(--sdp-color-text-muted);
+      font-size: var(--sdp-font-size-11);
       white-space: normal;
       overflow-wrap: anywhere;
     }
@@ -209,51 +199,51 @@ def render_enterprise_console() -> str:
       table-layout: fixed;
     }
     th, td {
-      padding: 9px 8px;
-      border-bottom: 1px solid var(--line);
+      padding: var(--sdp-space-9) var(--sdp-space-8);
+      border-bottom: 1px solid var(--sdp-color-border-default);
       text-align: left;
       vertical-align: top;
       overflow-wrap: anywhere;
     }
     th {
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 650;
+      color: var(--sdp-color-text-muted);
+      font-size: var(--sdp-font-size-12);
+      font-weight: var(--sdp-font-weight-medium);
     }
     td:last-child, th:last-child { text-align: right; }
     .mono {
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      font-size: 12px;
+      font-size: var(--sdp-font-size-12);
     }
     .endpoint-link {
       display: grid;
-      gap: 3px;
+      gap: var(--sdp-space-3);
       color: inherit;
       text-decoration: none;
     }
     .endpoint-link:hover strong, .endpoint-link:focus-visible strong {
-      color: var(--accent);
+      color: var(--sdp-color-interaction-primary);
     }
     .endpoint-link:focus-visible {
-      outline: 2px solid var(--accent);
+      outline: 2px solid var(--sdp-color-interaction-primary);
       outline-offset: 2px;
     }
     .endpoint-link code {
-      color: var(--muted);
-      font-size: 11px;
+      color: var(--sdp-color-text-muted);
+      font-size: var(--sdp-font-size-11);
       white-space: normal;
       overflow-wrap: anywhere;
     }
     .footer {
-      margin-top: 14px;
-      color: var(--muted);
-      font-size: 12px;
+      margin-top: var(--sdp-space-14);
+      color: var(--sdp-color-text-muted);
+      font-size: var(--sdp-font-size-12);
     }
     @media (max-width: 980px) {
       header { align-items: flex-start; flex-direction: column; }
       .header-tools { justify-items: start; width: 100%; }
       .actions { justify-content: flex-start; }
-      main { padding: 14px; }
+      main { padding: var(--sdp-space-14); }
       .grid, .metrics, .flow { grid-template-columns: 1fr; }
       td:last-child, th:last-child { text-align: left; }
     }
@@ -412,3 +402,7 @@ def render_enterprise_console() -> str:
   </script>
 </body>
 </html>"""
+
+
+def render_enterprise_console() -> str:
+    return _CONSOLE_TEMPLATE.replace("__SDP_ROOT_TOKENS__", root_css_variables())
