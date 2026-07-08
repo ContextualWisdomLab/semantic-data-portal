@@ -54,4 +54,37 @@ Claude, Codex, Cursor, opencode, …). This repo is a Python / FastAPI MVP
   The moment real credentials appear — e.g. wiring `/llm/*` to an actual LLM
   provider, or `orchestrator`/`browse` to a real database — pull them from the KV
   via `get_credential(...)`, **not** `os.getenv`.
+
+### This repo's role in the ecosystem
+- **`semantic-data-portal`** is the higher-level ontology-driven dataset catalog /
+  glossary / governance plane with its **OWN graph engine + persistence** (target:
+  Postgres + Apache AGE + pgvector) for semantic retrieval; layered **above**
+  naruon's document KG, **not** the document-KG store itself.
+- **Ecosystem context:** the org is an ecosystem around **naruon** (the hub:
+  email/PIM that DOM-decomposes emails/files into a persisted knowledge graph).
+  Each component is a **standalone program that must ALSO work as a git
+  submodule** — grown separately and together:
+  - `waf-ids-ai-soc` — WAF / IDS / AI SOC / LB / APIM
+  - `clearfolio` — document viewer
+  - `pg-erd-cloud` — ERD tool
+  - `contextual-orchestrator` — LLM cost/perf/upstream-LB gateway (beyond LiteLLM)
+  - `codec-carver` — STT / omni-modal speech-video codec
+  - `fast-mlsirm` — LLM-as-a-Judge calibration + evaluation-item quality (uses
+    aFIPC FIPC + kaefa item-fit)
+  - `feelanet-adfs` — passwordless SSO (OIDC/SCIM/ADFS/LDAP/FIDO2/OAuth2.1,
+    eliminate passwords)
+  - `newsdom-api` — PDF→DOM sidecar
+  - `semantic-data-portal` — upper ontology / catalog / governance plane with its
+    own graph engine (this repo)
+
+### Research grounding (attach paper PDFs)
+- **Org rule:** substantive feature/process PRs should find the relevant academic
+  papers and **commit their PDFs into the PR** (e.g. a `docs/papers/` or
+  `references/` dir) with **full citations**, **respecting copyright** — attach the
+  PDF only when redistribution is permissible; otherwise **cite + link +
+  summarize** instead of committing the file.
+- **For this repo (graph/ontology retrieval):** e.g. a PR adding semantic retrieval
+  over the catalog should ground it in graph/ontology-retrieval and vector-search
+  literature (knowledge-graph embeddings, ontology alignment, GraphRAG / hybrid
+  dense+graph retrieval) under `docs/papers/`.
 <!-- END cwl-agent-guidance -->
