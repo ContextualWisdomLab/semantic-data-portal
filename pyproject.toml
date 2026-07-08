@@ -15,8 +15,20 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.2.0", "httpx>=0.27.0"]
+# Hypothesis (MPL-2.0) property tests run as part of the normal suite, so it is
+# a dev dependency. Atheris lives in the separate `fuzz` extra because the
+# coverage-guided runtime only supports CPython 3.6–3.12.
+dev = ["pytest>=8.2.0", "httpx>=0.27.0", "hypothesis>=6.100.0"]
+fuzz = ["hypothesis>=6.100.0", "atheris>=2.3.0; python_version < '3.13'"]
 
 [tool.pytest.ini_options]
 addopts = "-q"
+# fuzz_*.py under tests/fuzz/atheris are standalone libFuzzer harnesses, not
+# pytest modules. Belt-and-braces: they are also named fuzz_* (not test_*), so
+# the default collection ignores them; this keeps the corpus/harness dirs out of
+# recursion too. The list extends the pytest defaults.
+norecursedirs = [
+  "*.egg", ".*", "_darcs", "build", "CVS", "dist", "node_modules", "venv",
+  "{arch}", "tests/fuzz/atheris", "tests/fuzz/corpus",
+]
 

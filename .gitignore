@@ -1,6 +1,9 @@
 .venv/
+.venv*/
 __pycache__/
 .pytest_cache/
 *.pyc
 .coverage
-
+.codegraph/
+*.egg-info/
+.hypothesis/
