@@ -3,10 +3,20 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import browse, catalog, ontology, orchestrator
+from .config import get_app_config
+from .graph_models import (
+    GraphEdgeRequest,
+    GraphNodeRequest,
+    GraphTraversalRequest,
+    OntologyConceptRequest,
+    SemanticSearchRequest,
+)
+from .graph_store import get_store
+from .seed import seed_store
 from .catalog import (
     deprecate_dataset,
     get_dataset,
@@ -38,16 +48,38 @@ from .policy import evaluate
 
 app = FastAPI(
     title="Semantic Data Portal",
-    description="온톨로지 기반 데이터 카탈로그 및 브라우징 MVP",
-    version="0.2.1",
+    description="온톨로지 기반 그래프 데이터 카탈로그 및 시맨틱 검색 서비스",
+    version="0.3.0",
 )
 
+# CORS allowlist comes from config (KV table `config_entries` when a database is
+# reachable, otherwise bundled safe defaults). Tightened from the previous "*".
+_config = get_app_config()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_config.cors_allow_origins,
+    allow_methods=_config.cors_allow_methods,
+    allow_headers=_config.cors_allow_headers,
 )
+
+
+@app.on_event("startup")
+def _bootstrap_graph_engine() -> None:
+    """Seed the active graph store on startup (idempotent)."""
+
+    try:
+        seed_store()
+    except Exception:  # pragma: no cover - seeding must never block startup
+        pass
+
+
+# Seed at import time as well: the test client and embedded/submodule callers
+# may hit endpoints without triggering ASGI startup events. Seeding is
+# idempotent so running it here and on startup is safe.
+try:
+    seed_store()
+except Exception:  # pragma: no cover
+    pass
 
 
 def _actor(payload: dict[str, Any] | None) -> str:
@@ -63,6 +95,28 @@ def _require_actor(payload: dict[str, Any]) -> str:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "at": datetime.utcnow().isoformat() + "Z"}
+
+
+@app.get("/healthz")
+def healthz(response: Response) -> dict[str, Any]:
+    """Readiness probe verifying graph-engine backend availability.
+
+    Returns 200 when the active store is ready (in-memory always ready; the
+    Postgres backend requires AGE + pgvector reachable), 503 otherwise.
+    """
+
+    store = get_store()
+    readiness = store.readiness()
+    payload = {
+        "status": "ready" if readiness.get("ready") else "unavailable",
+        "config_source": _config.source,
+        "store": readiness,
+        "stats": store.stats(),
+        "at": datetime.utcnow().isoformat() + "Z",
+    }
+    if not readiness.get("ready"):
+        response.status_code = 503
+    return payload
 
 
 @app.get("/catalog/search")
@@ -408,7 +462,83 @@ def ontology_patch_review(patch_id: str, payload: dict[str, str]) -> dict[str, A
 
 @app.get("/ontology/term/{term}/graph")
 def ontology_term_graph(term: str) -> dict[str, Any]:
-    return ontology.concept_graph(term)
+    # Backed by the persistent graph store now; falls back to the legacy
+    # in-memory ontology module when the concept is not in the store.
+    graph = get_store().concept_graph(term)
+    if graph.get("not_found"):
+        return ontology.concept_graph(term)
+    return graph
+
+
+# --- Graph ingestion (nodes / edges / concepts) ------------------------------
+
+
+@app.post("/ontology/concepts")
+def ingest_concept(payload: OntologyConceptRequest) -> dict[str, Any]:
+    record = get_store().upsert_concept(payload.model_dump())
+    return {"status": "upserted", "concept": record}
+
+
+@app.post("/graph/nodes")
+def ingest_graph_node(payload: GraphNodeRequest) -> dict[str, Any]:
+    node = get_store().upsert_node(
+        payload.node_id,
+        payload.kind,
+        label=payload.label,
+        properties=payload.properties,
+        text=payload.text,
+    )
+    return {"status": "upserted", "node": node.as_dict()}
+
+
+@app.post("/graph/edges")
+def ingest_graph_edge(payload: GraphEdgeRequest) -> dict[str, Any]:
+    edge = get_store().upsert_edge(
+        payload.edge_type,
+        payload.source_id,
+        payload.target_id,
+        properties=payload.properties,
+    )
+    return {"status": "upserted", "edge": edge.as_dict()}
+
+
+@app.get("/graph/nodes/{node_id}")
+def get_graph_node(node_id: str) -> dict[str, Any]:
+    node = get_store().get_node(node_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="node not found")
+    return node.as_dict()
+
+
+# --- Graph traversal + semantic retrieval ------------------------------------
+
+
+@app.post("/graph/query")
+def graph_query(payload: GraphTraversalRequest) -> dict[str, Any]:
+    try:
+        return get_store().traverse(
+            payload.start_id,
+            edge_types=payload.edge_types,
+            direction=payload.direction,
+            max_depth=payload.max_depth,
+            cypher=payload.cypher,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.post("/search/semantic")
+def semantic_search(payload: SemanticSearchRequest) -> dict[str, Any]:
+    results = get_store().semantic_search(
+        payload.query, kind=payload.kind, limit=payload.limit
+    )
+    return {"query": payload.query, "count": len(results), "results": results}
+
+
+@app.get("/graph/stats")
+def graph_stats() -> dict[str, Any]:
+    store = get_store()
+    return {"backend": store.readiness().get("backend"), "stats": store.stats()}
 
 
 @app.get("/browse/{dataset_id}/schema")
