@@ -38,4 +38,20 @@ Claude, Codex, Cursor, opencode, …). This repo is a Python / FastAPI MVP
   is later added at the repo root, prefer CodeGraph
   (`codegraph explore "<query>"`, or the code-review-graph MCP tools) **before**
   grep/find — it surfaces callers/callees/impact that text search misses.
+
+### Config & secrets (KV, not env)
+- **Org rule: do NOT read runtime config/secrets via `os.getenv()` / raw
+  environment variables.** Read them from a KV / credential registry. Org Actions
+  secrets (e.g. `OPENAI_API_KEY`) flow **into** the KV via a bootstrap/CI step;
+  runtime reads from the KV — env is only transport into the KV, never the
+  runtime source.
+- **Reference implementation:** xtrmLLMBatchPython's pgcrypto-encrypted Postgres
+  credential registry (`get_credential(name)`). Reuse that pattern (a DB-backed KV
+  is fine) unless a dedicated KV is adopted.
+- **Status in this repo:** the service is an in-memory MVP that reads **no**
+  runtime secrets today — no `os.getenv`, no DB credentials, no external API keys,
+  nothing in CI. So there is no deviation to migrate; this rule is forward-looking.
+  The moment real credentials appear — e.g. wiring `/llm/*` to an actual LLM
+  provider, or `orchestrator`/`browse` to a real database — pull them from the KV
+  via `get_credential(...)`, **not** `os.getenv`.
 <!-- END cwl-agent-guidance -->
