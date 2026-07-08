@@ -42,7 +42,7 @@ def test_health_still_present():
 def test_ingest_node_edge_and_fetch():
     node = client.post(
         "/graph/nodes",
-        json={"node_id": "svc-A", "kind": "service", "label": "Billing", "text": "billing invoices"},
+        json={"node_id": "svc-A", "kind": "service", "label": "Billing", "text": "billing invoices", "actor": "admin"},
     )
     assert node.status_code == 200
     assert node.json()["node"]["node_id"] == "svc-A"
@@ -53,7 +53,7 @@ def test_ingest_node_edge_and_fetch():
 
     edge = client.post(
         "/graph/edges",
-        json={"edge_type": "depends_on", "source_id": "svc-A", "target_id": "고객"},
+        json={"edge_type": "depends_on", "source_id": "svc-A", "target_id": "고객", "actor": "admin"},
     )
     assert edge.status_code == 200
     assert edge.json()["edge"]["target_id"] == "고객"
@@ -68,6 +68,7 @@ def test_ingest_concept_creates_traversable_node():
             "aliases": ["subscription", "정기결제"],
             "related": ["매출"],
             "multilingual": ["subscription"],
+            "actor": "admin",
         },
     )
     assert resp.status_code == 200
@@ -87,7 +88,7 @@ def test_missing_node_returns_404():
 def test_graph_query_traverses_concept_hierarchy():
     resp = client.post(
         "/graph/query",
-        json={"start_id": "고객", "direction": "both", "max_depth": 1},
+        json={"start_id": "고객", "direction": "both", "max_depth": 1, "actor": "analyst"},
     )
     assert resp.status_code == 200
     body = resp.json()
@@ -102,7 +103,7 @@ def test_graph_query_traverses_concept_hierarchy():
 def test_graph_query_edge_type_filter():
     resp = client.post(
         "/graph/query",
-        json={"start_id": "고객", "edge_types": ["narrower"], "direction": "out", "max_depth": 1},
+        json={"start_id": "고객", "edge_types": ["narrower"], "direction": "out", "max_depth": 1, "actor": "analyst"},
     )
     assert resp.status_code == 200
     for edge in resp.json()["edges"]:
@@ -110,7 +111,7 @@ def test_graph_query_edge_type_filter():
 
 
 def test_graph_query_unknown_start_is_404():
-    resp = client.post("/graph/query", json={"start_id": "nope", "max_depth": 1})
+    resp = client.post("/graph/query", json={"start_id": "nope", "max_depth": 1, "actor": "analyst"})
     assert resp.status_code == 404
 
 
@@ -119,7 +120,7 @@ def test_graph_query_unknown_start_is_404():
 
 def test_semantic_search_ranks_churn_concept_first():
     resp = client.post(
-        "/search/semantic", json={"query": "churn 이탈한 고객", "kind": "concept", "limit": 3}
+        "/search/semantic", json={"query": "churn 이탈한 고객", "kind": "concept", "limit": 3, "actor": "analyst"}
     )
     assert resp.status_code == 200
     results = resp.json()["results"]
@@ -132,7 +133,7 @@ def test_semantic_search_ranks_churn_concept_first():
 
 def test_semantic_search_kind_filter_only_returns_datasets():
     resp = client.post(
-        "/search/semantic", json={"query": "고객 프로필 데이터", "kind": "dataset", "limit": 5}
+        "/search/semantic", json={"query": "고객 프로필 데이터", "kind": "dataset", "limit": 5, "actor": "analyst"}
     )
     assert resp.status_code == 200
     results = resp.json()["results"]

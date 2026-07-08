@@ -473,14 +473,41 @@ def ontology_term_graph(term: str) -> dict[str, Any]:
 # --- Graph ingestion (nodes / edges / concepts) ------------------------------
 
 
+def _authorize_graph_write(actor: str, resource: str) -> None:
+    """Graph/ontology writes require an authorized (admin) subject.
+
+    Uses the same policy engine as the catalog mutation endpoints: the ``create``
+    action is allowed only for an admin subject, so unauthenticated/anonymous
+    writers are refused with 403.
+    """
+
+    decision = evaluate(subject=actor, resource=resource, action="create", purpose="graph")
+    if decision.effect != "allow":
+        raise HTTPException(status_code=403, detail=decision.reason)
+
+
+def _authorize_graph_read(actor: str, resource: str) -> None:
+    """Graph traversal / semantic search require an authenticated reader.
+
+    Uses the catalog discovery policy branch (``search``): allowed for any reader
+    role, denied for anonymous/unauthenticated subjects.
+    """
+
+    decision = evaluate(subject=actor, resource=resource, action="search", purpose="graph")
+    if decision.effect != "allow":
+        raise HTTPException(status_code=403, detail=decision.reason)
+
+
 @app.post("/ontology/concepts")
 def ingest_concept(payload: OntologyConceptRequest) -> dict[str, Any]:
-    record = get_store().upsert_concept(payload.model_dump())
+    _authorize_graph_write(payload.actor, payload.concept)
+    record = get_store().upsert_concept(payload.model_dump(exclude={"actor"}))
     return {"status": "upserted", "concept": record}
 
 
 @app.post("/graph/nodes")
 def ingest_graph_node(payload: GraphNodeRequest) -> dict[str, Any]:
+    _authorize_graph_write(payload.actor, payload.node_id)
     node = get_store().upsert_node(
         payload.node_id,
         payload.kind,
@@ -493,12 +520,16 @@ def ingest_graph_node(payload: GraphNodeRequest) -> dict[str, Any]:
 
 @app.post("/graph/edges")
 def ingest_graph_edge(payload: GraphEdgeRequest) -> dict[str, Any]:
-    edge = get_store().upsert_edge(
-        payload.edge_type,
-        payload.source_id,
-        payload.target_id,
-        properties=payload.properties,
-    )
+    _authorize_graph_write(payload.actor, payload.source_id)
+    try:
+        edge = get_store().upsert_edge(
+            payload.edge_type,
+            payload.source_id,
+            payload.target_id,
+            properties=payload.properties,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     return {"status": "upserted", "edge": edge.as_dict()}
 
 
@@ -515,20 +546,23 @@ def get_graph_node(node_id: str) -> dict[str, Any]:
 
 @app.post("/graph/query")
 def graph_query(payload: GraphTraversalRequest) -> dict[str, Any]:
+    _authorize_graph_read(payload.actor, payload.start_id)
     try:
         return get_store().traverse(
             payload.start_id,
             edge_types=payload.edge_types,
             direction=payload.direction,
             max_depth=payload.max_depth,
-            cypher=payload.cypher,
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @app.post("/search/semantic")
 def semantic_search(payload: SemanticSearchRequest) -> dict[str, Any]:
+    _authorize_graph_read(payload.actor, "graph")
     results = get_store().semantic_search(
         payload.query, kind=payload.kind, limit=payload.limit
     )

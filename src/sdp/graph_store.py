@@ -18,6 +18,8 @@ the same tests exercise the contract regardless of backend.
 from __future__ import annotations
 
 import json
+import re
+import secrets
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -64,6 +66,28 @@ class GraphEdge:
 
 def _normalize(value: str) -> str:
     return value.strip().replace("_", " ").lower()
+
+
+# openCypher / AGE relationship types occupy an *identifier* position in the
+# graph mutation/traversal statements and therefore CANNOT be bound as a query
+# parameter. They are strict-allowlisted against ``^[A-Za-z_][A-Za-z0-9_]*$`` and
+# rejected outright otherwise, so an arbitrary string (e.g. one carrying cypher
+# or SQL breakout characters) can never reach the statement text. Both backends
+# enforce this identically for behaviour parity.
+_AGE_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _relationship_label(edge_type: str) -> str:
+    """Validate ``edge_type`` as a safe identifier and return its AGE label.
+
+    Raises :class:`ValueError` when ``edge_type`` is not a bare identifier. The
+    returned label is upper-cased to match the AGE relationship-type convention
+    used across the seed data (``BROADER``/``NARROWER``/``HAS_COLUMN``/...).
+    """
+
+    if not _AGE_IDENTIFIER_RE.match(edge_type):
+        raise ValueError(f"invalid relationship type: {edge_type!r}")
+    return edge_type.upper()
 
 
 # --- Backend contract ---------------------------------------------------------
@@ -114,7 +138,6 @@ class GraphStore:
         edge_types: Optional[List[str]] = None,
         direction: str = "both",
         max_depth: int = 2,
-        cypher: Optional[str] = None,
     ) -> Dict[str, Any]:
         raise NotImplementedError
 
@@ -170,6 +193,9 @@ class InMemoryGraphStore(GraphStore):
         *,
         properties: Optional[Dict[str, Any]] = None,
     ) -> GraphEdge:
+        # Reject non-identifier relationship types for parity with the AGE
+        # backend (where the type occupies a cypher identifier position).
+        _relationship_label(edge_type)
         for existing in self._edges:
             if (
                 existing.edge_type == edge_type
@@ -263,10 +289,12 @@ class InMemoryGraphStore(GraphStore):
         edge_types: Optional[List[str]] = None,
         direction: str = "both",
         max_depth: int = 2,
-        cypher: Optional[str] = None,
     ) -> Dict[str, Any]:
         if start_id not in self._nodes:
             raise KeyError(f"node not found: {start_id}")
+        if edge_types:
+            for etype in edge_types:
+                _relationship_label(etype)  # reject bad labels (AGE parity)
         allowed = set(edge_types) if edge_types else None
         visited_nodes: Dict[str, GraphNode] = {start_id: self._nodes[start_id]}
         visited_edges: List[GraphEdge] = []
@@ -352,10 +380,6 @@ def _vector_literal(vector: List[float]) -> str:
     return "[" + ",".join(f"{component:.8f}" for component in vector) + "]"
 
 
-def _cypher_str(value: str) -> str:
-    return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
-
-
 class PostgresGraphStore(GraphStore):
     """Backend on Postgres with Apache AGE (openCypher) and pgvector (KNN)."""
 
@@ -376,12 +400,34 @@ class PostgresGraphStore(GraphStore):
         conn.execute(text("LOAD 'age'"))
         conn.execute(text('SET search_path = ag_catalog, "$user", public'))
 
-    def _cypher(self, conn, query: str, columns: str) -> List[Tuple]:
-        # exec_driver_sql bypasses SQLAlchemy's ":name" bind-param parsing, which
-        # would otherwise misread openCypher tokens such as "[:NARROWER" as binds.
-        # Literals are already escaped via _cypher_str, so this is safe.
-        stmt = f"SELECT * FROM cypher('{self.graph_name}', $$ {query} $$) AS ({columns})"
-        return conn.exec_driver_sql(stmt).fetchall()
+    def _cypher(
+        self,
+        conn,
+        query: str,
+        columns: str,
+        params: Dict[str, Any],
+    ) -> List[Tuple]:
+        """Execute an openCypher statement via Apache AGE, injection-safe.
+
+        User values are NEVER interpolated into ``query``. They are passed as an
+        agtype **parameter map** bound to a real positional SQL parameter, so the
+        ``cypher()`` body references them as ``$name`` and they never touch the
+        SQL/cypher text. The dollar-quoted body wrapper uses a per-call **random
+        dollar tag** so no input (even one containing ``$$``) can terminate the
+        wrapper early. ``query`` itself is always server-built (fixed keywords +
+        allowlisted identifiers), so it contains no user text.
+
+        ``exec_driver_sql`` bypasses SQLAlchemy's ``":name"`` bind parsing, which
+        would otherwise misread openCypher tokens such as ``[:NARROWER`` as binds;
+        the agtype parameter is bound positionally via the driver's ``%s``.
+        """
+
+        tag = f"$c{secrets.token_hex(8)}$"
+        stmt = (
+            f"SELECT * FROM cypher('{self.graph_name}', {tag} {query} {tag}, %s) "
+            f"AS ({columns})"
+        )
+        return conn.exec_driver_sql(stmt, (json.dumps(params),)).fetchall()
 
     def upsert_node(
         self,
@@ -402,9 +448,10 @@ class PostgresGraphStore(GraphStore):
             self._prepare(conn)
             self._cypher(
                 conn,
-                f"MERGE (n:GraphNode {{node_id: {_cypher_str(node_id)}}}) "
-                f"SET n.kind = {_cypher_str(kind)}, n.label = {_cypher_str(label)}",
+                "MERGE (n:GraphNode {node_id: $node_id}) "
+                "SET n.kind = $kind, n.label = $label",
                 "v agtype",
+                params={"node_id": node_id, "kind": kind, "label": label},
             )
             conn.execute(
                 sql(
@@ -437,15 +484,16 @@ class PostgresGraphStore(GraphStore):
         from sqlalchemy import text as sql
 
         props = dict(properties or {})
-        rel = "".join(ch if ch.isalnum() or ch == "_" else "_" for ch in edge_type).upper()
+        rel = _relationship_label(edge_type)
         with self._engine.begin() as conn:
             self._prepare(conn)
             self._cypher(
                 conn,
-                f"MERGE (a:GraphNode {{node_id: {_cypher_str(source_id)}}}) "
-                f"MERGE (b:GraphNode {{node_id: {_cypher_str(target_id)}}}) "
+                "MERGE (a:GraphNode {node_id: $source_id}) "
+                "MERGE (b:GraphNode {node_id: $target_id}) "
                 f"MERGE (a)-[r:{rel}]->(b)",
                 "v agtype",
+                params={"source_id": source_id, "target_id": target_id},
             )
             conn.execute(
                 sql(
@@ -584,34 +632,35 @@ class PostgresGraphStore(GraphStore):
         edge_types: Optional[List[str]] = None,
         direction: str = "both",
         max_depth: int = 2,
-        cypher: Optional[str] = None,
     ) -> Dict[str, Any]:
         # Parity with the in-memory backend: an unknown start node is a 404.
-        if not cypher and self.get_node(start_id) is None:
+        if self.get_node(start_id) is None:
             raise KeyError(f"node not found: {start_id}")
+        # Depth is clamped server-side (never interpolated from a raw value); the
+        # API layer also validates it, but bound the identifier-position integer
+        # here so the cypher text is always well-formed.
+        depth = max(1, min(int(max_depth), self._config.traversal_max_depth))
         with self._engine.connect() as conn:
             self._prepare(conn)
-            if cypher:
-                rows = self._cypher(conn, cypher, "node_id agtype, kind agtype, label agtype")
-            else:
-                rel_filter = ""
-                if edge_types:
-                    rels = "|".join(
-                        "".join(c if c.isalnum() or c == "_" else "_" for c in etype).upper()
-                        for etype in edge_types
-                    )
-                    rel_filter = f":{rels}"
-                left = "<-" if direction == "in" else "-"
-                right = "->" if direction == "out" else "-"
-                pattern = (
-                    f"(a:GraphNode {{node_id: {_cypher_str(start_id)}}})"
-                    f"{left}[{rel_filter}*1..{max_depth}]{right}(b:GraphNode)"
-                )
-                rows = self._cypher(
-                    conn,
-                    f"MATCH p = {pattern} RETURN DISTINCT b.node_id, b.kind, b.label",
-                    "node_id agtype, kind agtype, label agtype",
-                )
+            rel_filter = ""
+            if edge_types:
+                rels = "|".join(_relationship_label(etype) for etype in edge_types)
+                rel_filter = f":{rels}"
+            left = "<-" if direction == "in" else "-"
+            right = "->" if direction == "out" else "-"
+            # start_id is bound as an agtype parameter ($start_id); only the
+            # allowlisted relationship filter and the clamped integer depth are
+            # interpolated into the (server-built) pattern.
+            pattern = (
+                "(a:GraphNode {node_id: $start_id})"
+                f"{left}[{rel_filter}*1..{depth}]{right}(b:GraphNode)"
+            )
+            rows = self._cypher(
+                conn,
+                f"MATCH p = {pattern} RETURN DISTINCT b.node_id, b.kind, b.label",
+                "node_id agtype, kind agtype, label agtype",
+                params={"start_id": start_id},
+            )
 
         def _clean(value: Any) -> str:
             return str(value).strip('"') if value is not None else ""
@@ -725,18 +774,45 @@ _STORE: Optional[GraphStore] = None
 
 
 def build_store() -> GraphStore:
-    """Construct the best available backend for the current bootstrap config."""
+    """Construct the configured backend for the current bootstrap config.
+
+    Fails LOUD on a misconfigured/unreachable database instead of silently
+    downgrading to the in-memory backend (which would drop every write). The
+    in-memory backend is used ONLY when it is the explicit choice:
+
+    * ``graph_backend = "memory"`` -- always in-memory.
+    * ``graph_backend = "auto"`` (default) with **no** database DSN configured
+      -- standalone / submodule / CI mode.
+
+    When a database DSN *is* configured (or ``graph_backend = "postgres"``), the
+    Postgres+AGE+pgvector backend must construct and report ready, otherwise a
+    :class:`RuntimeError` is raised so the misconfiguration surfaces immediately.
+    """
 
     bootstrap = load_bootstrap()
     config = get_app_config()
+    backend = config.graph_backend
+
+    if backend == "memory":
+        return InMemoryGraphStore(config=config)
+
     if bootstrap.has_database:
-        try:
-            store = PostgresGraphStore(bootstrap.database_dsn, config=config)
-            readiness = store.readiness()
-            if readiness.get("ready"):
-                return store
-        except Exception:
-            pass
+        store = PostgresGraphStore(bootstrap.database_dsn, config=config)
+        readiness = store.readiness()
+        if not readiness.get("ready"):
+            raise RuntimeError(
+                "configured database backend is not ready (AGE/pgvector/DB "
+                f"unreachable or misconfigured): {readiness}. Set graph_backend="
+                "'memory' to run without a database."
+            )
+        return store
+
+    if backend == "postgres":
+        raise RuntimeError(
+            "graph_backend='postgres' but no database DSN was configured "
+            "(bootstrap transport SDP_DATABASE_DSN is unset)."
+        )
+
     return InMemoryGraphStore(config=config)
 
 

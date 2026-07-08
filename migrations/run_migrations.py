@@ -15,10 +15,37 @@ from __future__ import annotations
 import glob
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent
+
+# The embedding column is declared ``vector(128)`` in the SQL (the default
+# ``embedding_dimension``). The pgvector column dimension MUST match the
+# configured embedding dimension, otherwise inserts of a differently-sized
+# vector fail at runtime. We render the configured dimension into the DDL at
+# apply time so the migration and the inserts always agree.
+_DEFAULT_EMBEDDING_DIMENSION = 128
+_VECTOR_DIM_RE = re.compile(r"vector\(\d+\)")
+
+
+def _embedding_dimension() -> int:
+    """Read the configured embedding dimension (falls back to the default)."""
+
+    try:
+        sys.path.insert(0, str(MIGRATIONS_DIR.parent / "src"))
+        from sdp.config import get_app_config  # noqa: E402
+
+        return int(get_app_config().embedding_dimension)
+    except Exception:  # pragma: no cover - config always importable in practice
+        return _DEFAULT_EMBEDDING_DIMENSION
+
+
+def _render_sql(sql_text: str, embedding_dimension: int) -> str:
+    """Substitute the configured pgvector dimension into the migration DDL."""
+
+    return _VECTOR_DIM_RE.sub(f"vector({int(embedding_dimension)})", sql_text)
 
 
 def _statements(sql_text: str):
@@ -47,9 +74,10 @@ def apply_migrations(dsn: str) -> None:
 
     engine = create_engine(dsn, future=True)
     files = sorted(glob.glob(str(MIGRATIONS_DIR / "*.sql")))
+    dimension = _embedding_dimension()
     with engine.begin() as conn:
         for path in files:
-            sql_text = Path(path).read_text(encoding="utf-8")
+            sql_text = _render_sql(Path(path).read_text(encoding="utf-8"), dimension)
             for statement in _statements(sql_text):
                 conn.execute(text(statement))
             print(f"applied migration: {os.path.basename(path)}")

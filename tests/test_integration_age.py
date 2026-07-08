@@ -82,3 +82,41 @@ def test_postgres_unknown_start_raises(seeded_store):
 
     with _pytest.raises(KeyError):
         seeded_store.traverse("no-such-node", max_depth=1)
+
+
+# The proven ``$$`` dollar-quote breakout payload from the adversarial review.
+_INJECTION = "x$$)AS(v agtype); DROP TABLE graph_nodes; --"
+
+
+def _graph_nodes_exists(store) -> bool:
+    from sqlalchemy import text
+
+    with store._engine.connect() as conn:
+        return conn.execute(text("SELECT to_regclass('public.graph_nodes')")).scalar() is not None
+
+
+def test_injection_payload_is_neutralized_end_to_end(seeded_store):
+    """The stacked-SQL DROP payload must be stored as data, never executed."""
+
+    assert _graph_nodes_exists(seeded_store)
+
+    # node_id / label / kind carrying the breakout payload
+    seeded_store.upsert_node(_INJECTION, "concept", label=_INJECTION, text="payload")
+    # edge endpoints carrying the payload
+    seeded_store.upsert_edge("related", _INJECTION, "고객")
+    # traversal starting from the payload node
+    result = seeded_store.traverse(_INJECTION, direction="both", max_depth=2)
+    assert result["backend"] == "postgres_age"
+
+    # The table the payload tried to DROP is still present ...
+    assert _graph_nodes_exists(seeded_store)
+    # ... and the payload round-trips as ordinary data (it was never executed).
+    node = seeded_store.get_node(_INJECTION)
+    assert node is not None and node.node_id == _INJECTION
+
+
+def test_bad_relationship_label_is_rejected(seeded_store):
+    import pytest as _pytest
+
+    with _pytest.raises(ValueError):
+        seeded_store.upsert_edge("foo]->(x) DETACH DELETE x //", "고객", "이탈")

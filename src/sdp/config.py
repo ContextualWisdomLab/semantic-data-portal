@@ -37,6 +37,13 @@ _DEFAULT_CONFIG: Dict[str, Any] = {
     "graph_name": "semantic_graph",
     "semantic_search_default_limit": 5,
     "traversal_max_depth": 4,
+    # Backend selection for the graph store:
+    #   "auto"     -- Postgres+AGE+pgvector when a DB DSN is configured (and it
+    #                 must be ready, else bootstrap fails loud), otherwise the
+    #                 in-memory backend (standalone / submodule / CI).
+    #   "postgres" -- require the database backend (fail loud if unavailable).
+    #   "memory"   -- always use the in-memory backend.
+    "graph_backend": "auto",
 }
 
 
@@ -90,12 +97,16 @@ class AppConfig:
     graph_name: str = "semantic_graph"
     semantic_search_default_limit: int = 5
     traversal_max_depth: int = 4
+    graph_backend: str = "auto"
     source: str = "defaults"
 
     @classmethod
     def from_mapping(cls, values: Dict[str, Any], *, source: str) -> "AppConfig":
         merged = dict(_DEFAULT_CONFIG)
         merged.update({k: v for k, v in values.items() if v is not None})
+        backend = str(merged["graph_backend"]).lower()
+        if backend not in {"auto", "postgres", "memory"}:
+            raise ValueError(f"invalid graph_backend: {merged['graph_backend']!r}")
         return cls(
             cors_allow_origins=list(merged["cors_allow_origins"]),
             cors_allow_methods=list(merged["cors_allow_methods"]),
@@ -104,6 +115,7 @@ class AppConfig:
             graph_name=str(merged["graph_name"]),
             semantic_search_default_limit=int(merged["semantic_search_default_limit"]),
             traversal_max_depth=int(merged["traversal_max_depth"]),
+            graph_backend=backend,
             source=source,
         )
 
