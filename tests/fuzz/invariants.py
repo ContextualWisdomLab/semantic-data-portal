@@ -8,7 +8,6 @@ drives the code under test.
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from sdp import catalog, ontology, orchestrator
@@ -16,9 +15,6 @@ from sdp.domain import QueryDraftRequest, QueryExecutionRequest, QueryExecutionR
 
 # Anything the query drafter/executor must never let through unescaped.
 FORBIDDEN_KEYWORDS = orchestrator._FORBIDDEN_KEYWORDS
-
-# Strict ASCII identifier shape (documentation of the *intended* contract).
-_SAFE_IDENTIFIER = re.compile(r"^[A-Za-z0-9_]*$")
 
 # The genuine injection-relevant contract: an emitted identifier must contain no
 # ASCII whitespace and no SQL metacharacter. (NB: fuzzing surfaced that
