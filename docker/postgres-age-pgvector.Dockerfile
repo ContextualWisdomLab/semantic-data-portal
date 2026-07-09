@@ -3,11 +3,12 @@
 #
 # Base: Apache AGE ships on top of postgres:16. We add pgvector by building it
 # from source against the same server so `CREATE EXTENSION vector` works.
-FROM apache/age:release_PG16_1.6.0
+FROM apache/age:release_PG16_1.6.0@sha256:16aa423d20a31aed36a3313244bf7aa00731325862f20ed584510e381f2feaed
 
 USER root
 
 ARG PGVECTOR_VERSION=v0.7.4
+WORKDIR /tmp/pgvector
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         build-essential \
@@ -18,7 +19,6 @@ RUN apt-get update \
     && curl -fsSL "https://github.com/pgvector/pgvector/archive/refs/tags/${PGVECTOR_VERSION}.tar.gz" -o /tmp/pgvector.tar.gz \
     && mkdir -p /tmp/pgvector \
     && tar -xzf /tmp/pgvector.tar.gz -C /tmp/pgvector --strip-components=1 \
-    && cd /tmp/pgvector \
     # OPTFLAGS="" disables -march=native, which segfaults when the build host's
     # CPU features differ from the runtime (common in VM/emulated builders).
     && make OPTFLAGS="" \
@@ -29,4 +29,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # AGE preloads via shared_preload_libraries; pgvector needs no preload.
+WORKDIR /var/lib/postgresql
 USER postgres
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=5 \
+    CMD pg_isready -U "${POSTGRES_USER:-postgres}" || exit 1
