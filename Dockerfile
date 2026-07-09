@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.12-slim@sha256:423ed6ab25b1921a477529254bfeeabf5855151dc2c3141699a1bfc852199fbf
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
@@ -7,10 +7,10 @@ ENV SDP_SQLITE_PATH=/data/sdp-evidence.sqlite3
 
 WORKDIR /app
 
-COPY pyproject.toml README.md ./
+COPY requirements.txt ./
 COPY src ./src
 
-RUN pip install --no-cache-dir .
+RUN python -m pip install --no-cache-dir --require-hashes -r requirements.txt
 
 # Run as a non-root user to avoid container-escape risk (Trivy DS-0002 / CIS Docker 4.1).
 # Create an unprivileged user and give it ownership of the app and writable data dir.

@@ -18,8 +18,8 @@
 ```bash
 python -m venv .venv
 . .venv/Scripts/Activate.ps1
-pip install -e .[dev]
-uvicorn sdp.api:app --reload
+python -m pip install --require-hashes -r requirements-dev.txt
+PYTHONPATH=src uvicorn sdp.api:app --reload
 ```
 
 `SDP_DATABASE_URL=postgresql://...`를 지정하면 policy decision과 audit event가 tenant/resource/evidence id 기준의 Postgres evidence store에 기록됩니다. `SDP_DATABASE_SSLMODE=require`처럼 SSL mode를 함께 지정할 수 있습니다.
@@ -80,7 +80,7 @@ docker compose --profile postgres up --build
 ## 테스트
 
 ```bash
-pytest
+PYTHONPATH=src pytest
 PYTHONPATH=src python -m sdp.demo_smoke
 ```
 

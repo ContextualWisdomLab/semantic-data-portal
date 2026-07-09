@@ -16,36 +16,36 @@ class CatalogStore(Protocol):
     """Persistence boundary for catalog metadata."""
 
     def list_datasets(self) -> list[Dataset]:
-        ...
+        pass
 
     def get_dataset(self, dataset_id: str) -> Dataset | None:
-        ...
+        pass
 
     def upsert_dataset(self, dataset: Dataset) -> Dataset:
-        ...
+        pass
 
 
 class PolicyDecisionStore(Protocol):
     """Persistence boundary for explainable policy decisions."""
 
     def record_decision(self, decision: PolicyDecision) -> PolicyDecision:
-        ...
+        pass
 
     def get_decision(self, decision_id: str) -> PolicyDecision | None:
-        ...
+        pass
 
     def list_decisions(self, *, resource: str | None = None, limit: int = 100) -> list[PolicyDecision]:
-        ...
+        pass
 
 
 class AuditEventStore(Protocol):
     """Append-only boundary for user-visible compliance evidence."""
 
     def append_event(self, event: AuditEvent) -> AuditEvent:
-        ...
+        pass
 
     def list_events(self, *, resource: str | None = None, limit: int = 100) -> list[AuditEvent]:
-        ...
+        pass
 
 
 class SourceConnector(Protocol):
@@ -55,10 +55,10 @@ class SourceConnector(Protocol):
     source_type: str
 
     def inspect_schema(self, dataset_id: str) -> dict[str, Any]:
-        ...
+        pass
 
     def preview(self, dataset_id: str, *, limit: int, offset: int) -> list[dict[str, Any]]:
-        ...
+        pass
 
 
 class PackageBoundary(BaseModel):

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 from urllib.request import Request as UrlRequest, urlopen
+from urllib.request import url2pathname
 from uuid import uuid4
 
 from sdp_core import enterprise_controls_manifest
@@ -45,6 +46,18 @@ def _header_value(headers: Any, name: str, default: str | None = None) -> str | 
 
 def request_id_from_headers(headers: Any) -> str:
     return _header_value(headers, request_id_header()) or f"sdp-{uuid4().hex}"
+
+
+def _file_sink_path(sink_url: str, parsed: Any) -> Path:
+    if parsed.netloc and not parsed.path:
+        return Path(url2pathname(parsed.netloc))
+
+    raw_path = url2pathname(parsed.path or sink_url)
+    if os.name == "nt" and len(raw_path) >= 3 and raw_path[0] in {"\\", "/"} and raw_path[2] == ":":
+        raw_path = raw_path[1:]
+    if parsed.netloc:
+        raw_path = f"//{parsed.netloc}{raw_path}"
+    return Path(raw_path)
 
 
 def build_request_observation(
@@ -85,7 +98,7 @@ def _sink_status() -> dict[str, Any]:
     parsed = urlparse(sink_url)
     scheme = parsed.scheme or "file"
     if scheme == "file":
-        target = parsed.path or sink_url
+        target = str(_file_sink_path(sink_url, parsed))
     elif scheme in {"http", "https"}:
         target = parsed.netloc
     else:
@@ -109,7 +122,7 @@ def _export_to_sink(observation: dict[str, Any]) -> None:
     payload = json.dumps(observation, ensure_ascii=False, sort_keys=True)
 
     if scheme == "file":
-        path = Path(parsed.path or sink_url)
+        path = _file_sink_path(sink_url, parsed)
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as handle:
             handle.write(payload + "\n")
