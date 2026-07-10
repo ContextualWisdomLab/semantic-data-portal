@@ -17,7 +17,6 @@ import sdp_core
 from sdp.api import app
 from sdp.connectors import get_source_connector
 from sdp.demo_smoke import smoke_summary
-from sdp.evidence import configure_evidence_store, list_persisted_audit_events, list_persisted_policy_decisions
 from sdp.policy import evaluate
 
 
@@ -541,7 +540,7 @@ def test_sdp_core_owns_stable_contracts_with_app_compatibility_exports():
 
 def test_sqlite_evidence_store_persists_policy_and_audit_events(tmp_path):
     store = sdp_core.SQLiteEvidenceStore(tmp_path / "evidence.sqlite3")
-    previous = configure_evidence_store(store)
+    previous = app_evidence.configure_evidence_store(store)
     try:
         decision = evaluate(subject="analyst", resource="crm-customer-master", action="preview", purpose="analysis")
         preview = client.post(
@@ -550,7 +549,7 @@ def test_sqlite_evidence_store_persists_policy_and_audit_events(tmp_path):
         )
         assert preview.status_code == 200
     finally:
-        configure_evidence_store(previous)
+        app_evidence.configure_evidence_store(previous)
 
     reopened = sdp_core.SQLiteEvidenceStore(tmp_path / "evidence.sqlite3")
     assert reopened.get_decision(decision.decision_id) == decision
@@ -707,24 +706,24 @@ def test_postgres_evidence_store_uses_tenant_columns_and_store_protocol():
 
 def test_persisted_audit_list_uses_configured_store(tmp_path):
     store = sdp_core.SQLiteEvidenceStore(tmp_path / "audit.sqlite3")
-    previous = configure_evidence_store(store)
+    previous = app_evidence.configure_evidence_store(store)
     try:
         response = client.post(
             "/browse/crm-customer-master/preview",
             json={"user": "analyst", "purpose": "analysis", "limit": 1},
         )
         assert response.status_code == 200
-        events = list_persisted_audit_events(resource="crm-customer-master", limit=5)
+        events = app_evidence.list_persisted_audit_events(resource="crm-customer-master", limit=5)
         assert any(event.action == "browse.preview" for event in events)
-        decisions = list_persisted_policy_decisions(resource="crm-customer-master", limit=5)
+        decisions = app_evidence.list_persisted_policy_decisions(resource="crm-customer-master", limit=5)
         assert any(decision.action == "preview" for decision in decisions)
     finally:
-        configure_evidence_store(previous)
+        app_evidence.configure_evidence_store(previous)
 
 
 def test_audit_events_endpoint_reads_configured_evidence_store_after_memory_clear(tmp_path):
     store = sdp_core.SQLiteEvidenceStore(tmp_path / "audit-endpoint.sqlite3")
-    previous = configure_evidence_store(store)
+    previous = app_evidence.configure_evidence_store(store)
     try:
         response = client.post(
             "/browse/crm-customer-master/preview",
@@ -738,17 +737,17 @@ def test_audit_events_endpoint_reads_configured_evidence_store_after_memory_clea
         assert events_response.status_code == 200
         assert any(event["action"] == "browse.preview" for event in events_response.json())
     finally:
-        configure_evidence_store(previous)
+        app_evidence.configure_evidence_store(previous)
 
 
 def test_policy_decision_store_does_not_duplicate_configured_store_in_memory(tmp_path):
     store = sdp_core.SQLiteEvidenceStore(tmp_path / "policy-memory.sqlite3")
     previous_log = list(app_evidence._POLICY_DECISION_LOG)
-    previous = configure_evidence_store(store)
+    previous = app_evidence.configure_evidence_store(store)
     try:
         decision = evaluate(subject="analyst", resource="crm-customer-master", action="preview", purpose="analysis")
     finally:
-        configure_evidence_store(previous)
+        app_evidence.configure_evidence_store(previous)
 
     assert app_evidence._POLICY_DECISION_LOG == previous_log
     assert store.get_decision(decision.decision_id) == decision

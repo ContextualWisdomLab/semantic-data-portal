@@ -16,4 +16,13 @@ RUN python -m pip install --no-cache-dir --require-hashes -r requirements.txt \
 COPY src ./src
 COPY fuzz ./fuzz
 
+RUN groupadd --system --gid 10001 sdp-fuzz \
+    && useradd --system --uid 10001 --gid sdp-fuzz --home-dir /src --no-create-home sdp-fuzz \
+    && chown -R sdp-fuzz:sdp-fuzz /src
+
+USER 10001:10001
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+    CMD python -c "import pathlib; raise SystemExit(0 if pathlib.Path('/src/fuzz/fuzz_query_safety.py').is_file() else 1)"
+
 CMD ["python", "fuzz/fuzz_query_safety.py", "-runs=1000"]
