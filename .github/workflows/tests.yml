@@ -20,7 +20,12 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.12'
-      - name: Install package with dev extras
-        run: python -m pip install -e '.[dev]'
+      - name: Install dependencies
+        # Hash-pinned per OpenSSF Scorecard Pinned-Dependencies; mirrors the
+        # pins in pyproject.toml. Recompile with:
+        # uv pip compile --generate-hashes --universal --python-version 3.12 requirements-test.in -o requirements-test.txt
+        run: python -m pip install --disable-pip-version-check --no-cache-dir --require-hashes -r requirements-test.txt
       - name: Run tests
         run: python -m pytest
+        env:
+          PYTHONPATH: src
