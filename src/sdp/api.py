@@ -1,12 +1,23 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
+from time import monotonic
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
+from sdp_core import (
+    buyer_demo_activation_plan,
+    enterprise_controls_manifest,
+    enterprise_kpi_framework,
+    enterprise_production_readiness_manifest,
+    enterprise_rbac_matrix,
+    enterprise_readiness_manifest,
+)
 
-from . import browse, catalog, ontology, orchestrator
+from . import authz, browse, catalog, connectors, ontology, orchestrator
+from .console import render_enterprise_console
 from .catalog import (
     deprecate_dataset,
     get_dataset,
@@ -33,7 +44,19 @@ from .domain import (
     QueryDraftRequest,
     QueryExecutionRequest,
 )
+from .enterprise_evidence import build_enterprise_evidence_pack
+from .evidence import list_policy_decisions
+from .observability import (
+    build_observability_manifest,
+    build_request_observation,
+    prometheus_metrics_text,
+    record_request_observation,
+    request_id_from_headers,
+    request_id_header,
+)
 from .policy import evaluate
+from .semantic_validation import enterprise_shacl_validation_summary, validate_dataset_semantics
+from .steward_review import build_steward_review_summary
 
 
 app = FastAPI(
@@ -50,6 +73,31 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def record_request_observability(request: Request, call_next):
+    started = monotonic()
+    request_id = request_id_from_headers(request.headers)
+    response: Response | None = None
+
+    try:
+        response = await call_next(request)
+        return response
+    finally:
+        latency_ms = (monotonic() - started) * 1000
+        status_code = response.status_code if response is not None else 500
+        observation = build_request_observation(
+            method=request.method,
+            route=request.url.path,
+            status_code=status_code,
+            latency_ms=latency_ms,
+            headers=request.headers,
+            request_id=request_id,
+        )
+        record_request_observation(observation)
+        if response is not None:
+            response.headers[request_id_header()] = request_id
+
+
 def _actor(payload: dict[str, Any] | None) -> str:
     if not payload:
         return "anonymous"
@@ -62,7 +110,146 @@ def _require_actor(payload: dict[str, Any]) -> str:
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "at": datetime.utcnow().isoformat() + "Z"}
+    return {"status": "ok", "at": datetime.now(timezone.utc).isoformat()}
+
+
+@app.get("/metrics")
+def metrics() -> Response:
+    return Response(content=prometheus_metrics_text(), media_type="text/plain; version=0.0.4")
+
+
+@app.get("/enterprise/readiness")
+def enterprise_readiness() -> dict[str, Any]:
+    return enterprise_readiness_manifest().model_dump()
+
+
+@app.get("/enterprise/demo-plan")
+def enterprise_demo_plan(
+    domain: str = Query(default="customer intelligence", min_length=1),
+    connector: list[str] | None = Query(default=None),
+) -> dict[str, Any]:
+    try:
+        return buyer_demo_activation_plan(priority_domain=domain, connector_ids=connector).model_dump()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/enterprise/kpis")
+def enterprise_kpis() -> dict[str, Any]:
+    return enterprise_kpi_framework().model_dump()
+
+
+@app.get("/enterprise/controls")
+def enterprise_controls() -> dict[str, Any]:
+    return enterprise_controls_manifest().model_dump()
+
+
+@app.get("/enterprise/rbac-matrix")
+def enterprise_rbac() -> dict[str, Any]:
+    return enterprise_rbac_matrix().model_dump()
+
+
+@app.get("/enterprise/observability")
+def enterprise_observability() -> dict[str, Any]:
+    return build_observability_manifest()
+
+
+@app.get("/enterprise/production-readiness")
+def enterprise_production_readiness() -> dict[str, Any]:
+    return enterprise_production_readiness_manifest().model_dump()
+
+
+@app.get("/enterprise/evidence-pack")
+def enterprise_evidence_pack() -> dict[str, Any]:
+    return build_enterprise_evidence_pack()
+
+
+@app.get("/enterprise/shacl-validation")
+def enterprise_shacl_validation() -> dict[str, Any]:
+    return enterprise_shacl_validation_summary()
+
+
+@app.get("/enterprise/steward-review")
+def enterprise_steward_review() -> dict[str, Any]:
+    return build_steward_review_summary()
+
+
+@app.get("/enterprise/console", response_class=HTMLResponse)
+def enterprise_console() -> str:
+    return render_enterprise_console()
+
+
+@app.post("/enterprise/auth/oidc-preview")
+def enterprise_oidc_preview(payload: dict[str, Any]) -> dict[str, Any]:
+    claims = payload.get("claims", payload)
+    if not isinstance(claims, dict):
+        raise HTTPException(status_code=400, detail="claims must be an object")
+
+    role_map = payload.get("role_map")
+    if role_map is not None and not isinstance(role_map, dict):
+        raise HTTPException(status_code=400, detail="role_map must be an object")
+
+    try:
+        context = authz.resolve_oidc_actor_context(claims, role_map=role_map)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return {
+        "mode": "claim_mapping_preview",
+        "token_verification": "external_signature_required_claim_shape_validated",
+        "actor_context": context.model_dump(),
+        "groups": claims.get("groups", []),
+        "ignored_role_claims": authz.oidc_role_claims(claims),
+    }
+
+
+@app.post("/enterprise/auth/oidc-verify")
+def enterprise_oidc_verify(payload: dict[str, Any]) -> dict[str, Any]:
+    token = payload.get("token")
+    if not isinstance(token, str) or not token:
+        raise HTTPException(status_code=400, detail="token is required")
+
+    jwks = payload.get("jwks")
+    if jwks is not None and not isinstance(jwks, dict):
+        raise HTTPException(status_code=400, detail="jwks must be an object")
+
+    role_map = payload.get("role_map")
+    if role_map is not None and not isinstance(role_map, dict):
+        raise HTTPException(status_code=400, detail="role_map must be an object")
+
+    try:
+        context, claims = authz.verify_oidc_jwks_token(
+            token,
+            issuer=payload.get("issuer"),
+            audience=payload.get("audience"),
+            jwks=jwks,
+            role_map=role_map,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return {
+        "mode": "jwks_signature_verification",
+        "token_verification": "jwks_signature_verified",
+        "actor_context": context.model_dump(),
+        "issuer": claims.get("iss"),
+        "audience": claims.get("aud"),
+        "groups": claims.get("groups", []),
+        "ignored_role_claims": authz.oidc_role_claims(claims),
+    }
+
+
+@app.get("/enterprise/connectors/{connector_id}/probe")
+def enterprise_connector_probe(
+    connector_id: str,
+    dataset_id: str = Query(..., min_length=1),
+) -> dict[str, Any]:
+    try:
+        return connectors.connector_probe(connector_id, dataset_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except KeyError:
+        raise HTTPException(status_code=404, detail="dataset not found")
 
 
 @app.get("/catalog/search")
@@ -180,6 +367,14 @@ def dataset_jsonld(dataset_id: str) -> dict[str, Any]:
         "distribution": [d.model_dump() for d in dataset.distributions],
         "mappings": [m.model_dump() for m in dataset.mappings],
     }
+
+
+@app.get("/catalog/datasets/{dataset_id}/semantic-validation")
+def catalog_dataset_semantic_validation(dataset_id: str) -> dict[str, Any]:
+    try:
+        return validate_dataset_semantics(dataset_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="dataset not found")
 
 
 @app.get("/catalog/datasets/{dataset_id}/schema-history")
@@ -334,7 +529,15 @@ def policy_decision(payload: dict[str, str]) -> dict[str, Any]:
         action=payload.get("action", "preview"),
         purpose=payload.get("purpose", "analysis"),
     )
-    return decision.dict()
+    return decision.model_dump()
+
+
+@app.get("/policy/decisions")
+def policy_decisions(
+    limit: int = Query(default=100, ge=1, le=500),
+    resource: str | None = Query(default=None),
+) -> list[dict[str, Any]]:
+    return [decision.model_dump() for decision in list_policy_decisions(resource=resource, limit=limit)]
 
 
 @app.post("/ontology/resolve")
@@ -465,7 +668,7 @@ def llm_search(payload: dict[str, str]) -> dict[str, Any]:
         "user": user,
         "purpose": purpose,
         "policy_scope": "catalog_discovery",
-        "policy": decision.dict(),
+        "policy": decision.model_dump(),
         "recommendations": ontology.concept_assets(top.term),
     }
 

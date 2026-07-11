@@ -1,0 +1,9 @@
+.codegraph/
+.cursor/
+.git/
+.local/
+.pytest_cache/
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
