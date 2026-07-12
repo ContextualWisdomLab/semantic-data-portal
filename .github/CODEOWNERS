@@ -1,2 +1,6 @@
-# Require owner review for all repository changes.
-* @seonghobae
+# Require owner review for repository automation and security-sensitive config.
+.github/** @seonghobae
+Dockerfile @seonghobae
+docker/** @seonghobae
+pyproject.toml @seonghobae
+requirements*.txt @seonghobae
