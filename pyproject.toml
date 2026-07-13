@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "semantic-data-portal"
-version = "0.1.0"
-description = "Ontology-driven semantic data catalog and browsing platform (MVP)"
+version = "0.3.0"
+description = "Ontology-driven, graph-backed semantic data catalog with vector retrieval"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -17,7 +17,20 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest==9.1.1", "httpx==0.28.1"]
+# Postgres + Apache AGE (openCypher) + pgvector backend for the graph engine.
+graph = [
+  "SQLAlchemy>=2.0.0",
+  "psycopg[binary]>=3.1.0",
+]
+dev = [
+  "pytest==9.1.1",
+  "httpx==0.28.1",
+  "SQLAlchemy>=2.0.0",
+  "psycopg[binary]>=3.1.0",
+]
 
 [tool.pytest.ini_options]
 addopts = "-q"
+markers = [
+  "integration: requires a live Postgres with Apache AGE + pgvector (SDP_DATABASE_DSN)",
+]

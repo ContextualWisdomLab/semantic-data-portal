@@ -14,7 +14,6 @@ from .domain import (
     Dataset,
     DatasetCreateRequest,
     DatasetPatchRequest,
-    OntologyPatch,
 )
 from .evidence import append_audit_event, has_configured_evidence_store, list_persisted_audit_events
 

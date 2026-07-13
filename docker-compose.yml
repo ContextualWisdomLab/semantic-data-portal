@@ -1,3 +1,6 @@
+# Default stack: SQLite-backed portal.        docker compose up --build
+# Evidence-store Postgres:                    docker compose --profile postgres up --build
+# Graph engine (Apache AGE + pgvector):       docker compose --profile graph up --build
 services:
   semantic-data-portal:
     build:
@@ -60,7 +63,49 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+  graph_db:
+    profiles:
+      - graph
+    build:
+      context: .
+      dockerfile: docker/postgres-age-pgvector.Dockerfile
+    environment:
+      POSTGRES_USER: sdp
+      POSTGRES_PASSWORD: sdp
+      POSTGRES_DB: sdp
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=age
+    ports:
+      - "5432:5432"
+    volumes:
+      - graph_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sdp -d sdp"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+  sdp_api:
+    profiles:
+      - graph
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      # Bootstrap transport only -- where the DB/KV lives. App config/secrets
+      # are loaded from the config_entries table, not the environment.
+      SDP_DATABASE_DSN: postgresql+psycopg://sdp:sdp@graph_db:5432/sdp
+      SDP_CONFIG_NAMESPACE: default
+      SDP_ENV: docker
+    depends_on:
+      graph_db:
+        condition: service_healthy
+    ports:
+      # 8002 on the host: the default sqlite service already binds 8000.
+      - "8002:8000"
 
 volumes:
   sdp-evidence:
   sdp-postgres:
+  graph_db_data:
