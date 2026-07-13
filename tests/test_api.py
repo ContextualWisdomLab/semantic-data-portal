@@ -488,6 +488,40 @@ def test_deployment_template_files_define_local_demo_runtime():
     assert "sdp-evidence" in compose
 
 
+def test_deployment_template_files_require_database_secrets():
+    project_root = Path(__file__).resolve().parents[1]
+    compose = (project_root / "docker-compose.yml").read_text()
+
+    assert "sdp:sdp" not in compose
+    assert "${SDP_DATABASE_URL:-}" in compose
+    assert "${SDP_DATABASE_DSN:-}" in compose
+    assert "${POSTGRES_USER:-sdp_app}" in compose
+    assert "${POSTGRES_PASSWORD:-}" in compose
+    assert "${GRAPH_POSTGRES_USER:-sdp_graph_app}" in compose
+    assert "${GRAPH_POSTGRES_PASSWORD:-}" in compose
+    assert "SDP_DATABASE_URL is required for the postgres profile" in compose
+    assert "POSTGRES_PASSWORD is required for the postgres profile" in compose
+    assert "GRAPH_POSTGRES_PASSWORD is required for the graph profile" in compose
+    assert "SDP_DATABASE_DSN is required for the graph profile" in compose
+    assert "postgres:16-alpine@sha256:" in compose
+    assert '"127.0.0.1:${POSTGRES_HOST_PORT:-54329}:5432"' in compose
+    assert '"127.0.0.1:${GRAPH_POSTGRES_HOST_PORT:-5432}:5432"' in compose
+    assert 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"' in compose
+
+
+def test_fuzz_workflow_avoids_persisted_checkout_tokens_and_editable_install():
+    project_root = Path(__file__).resolve().parents[1]
+    workflow = (project_root / ".github" / "workflows" / "fuzz.yml").read_text()
+
+    assert workflow.count("persist-credentials: false") == 2
+    assert 'pip install -e ".[dev]"' not in workflow
+    assert 'pip install -e ".[fuzz]"' not in workflow
+    assert "--require-hashes -r requirements-test.txt" in workflow
+    assert "--require-hashes -r fuzz-requirements.txt" in workflow
+    assert "PYTHONPATH: src" in workflow
+    assert "PYTHONPATH: src:." in workflow
+
+
 def test_enterprise_evidence_pack_summarizes_buyer_diligence():
     client.post(
         "/policy/decision",

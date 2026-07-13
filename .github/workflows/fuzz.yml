@@ -25,33 +25,39 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12"
       - name: Install
         run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          python -m pip install --disable-pip-version-check --no-cache-dir --require-hashes -r requirements-test.txt
       - name: Run property-based fuzz tests
         run: python -m pytest tests/fuzz/test_fuzz_properties.py -q
+        env:
+          PYTHONPATH: src
 
   atheris:
     name: Atheris coverage-guided (bounded)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           # Atheris supports CPython <= 3.12.
           python-version: "3.12"
       - name: Install (with atheris)
         run: |
-          python -m pip install --upgrade pip
+          python -m pip install --disable-pip-version-check --no-cache-dir --require-hashes -r requirements-test.txt
           # clang ships with the ubuntu runner; atheris builds against libFuzzer.
-          pip install -e ".[fuzz]"
+          python -m pip install --disable-pip-version-check --no-cache-dir --require-hashes -r fuzz-requirements.txt
       - name: Fuzz (60s per target on PRs, 300s nightly)
         env:
           FUZZ_SECONDS: ${{ github.event_name == 'schedule' && '300' || '60' }}
+          PYTHONPATH: src:.
         run: bash tests/fuzz/run_atheris.sh
       - name: Upload crash artifacts
         if: failure()

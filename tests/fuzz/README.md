@@ -28,8 +28,8 @@ properties.
 cross-platform — part of `pytest`:
 
 ```bash
-pip install -e ".[dev]"
-pytest tests/fuzz/test_fuzz_properties.py
+python -m pip install --require-hashes -r requirements-test.txt
+PYTHONPATH=src python -m pytest tests/fuzz/test_fuzz_properties.py
 ```
 
 ### 2. Atheris coverage-guided harnesses (bounded CI job)
@@ -38,12 +38,13 @@ pytest tests/fuzz/test_fuzz_properties.py
 coverage-guided mutation. The runtime supports **CPython ≤ 3.12**.
 
 ```bash
-pip install -e ".[fuzz]"           # atheris + hypothesis
+python -m pip install --require-hashes -r requirements-test.txt
+python -m pip install --require-hashes -r fuzz-requirements.txt
 # 60s per target (CI PR default); override with FUZZ_SECONDS
-FUZZ_SECONDS=60 tests/fuzz/run_atheris.sh
+PYTHONPATH=src:. FUZZ_SECONDS=60 tests/fuzz/run_atheris.sh
 
 # or a single target against its seed corpus
-python tests/fuzz/atheris/fuzz_draft_sql.py -max_total_time=30 tests/fuzz/corpus/draft_sql
+PYTHONPATH=src:. python tests/fuzz/atheris/fuzz_draft_sql.py -max_total_time=30 tests/fuzz/corpus/draft_sql
 ```
 
 Seed corpora live in `corpus/<target>/`. A reproducing crash is written to a

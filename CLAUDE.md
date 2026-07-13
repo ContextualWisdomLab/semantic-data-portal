@@ -28,13 +28,16 @@ PYTHONPATH=src python -m sdp.demo_smoke
 docker compose up --build
 
 # Postgres evidence store 포함 paid-pilot 프로파일 (http://localhost:8001)
+export POSTGRES_USER=sdp_app
+export POSTGRES_PASSWORD='<strong-postgres-password>'
+export SDP_DATABASE_URL='postgresql://sdp_app:<url-encoded-password>@postgres:5432/sdp'
 docker compose --profile postgres up --build
 ```
 
 - 패키지는 pip install 되지 않는다. 항상 `PYTHONPATH=src`로 `src/sdp`, `src/sdp_core`를 import 경로에 올린다 (Dockerfile도 `PYTHONPATH=/app/src` 사용).
 - pytest 옵션은 `pyproject.toml`의 `addopts = "-q"`가 기본 적용된다.
 - lint/formatter 설정은 없다. lint 명령을 만들어내지 말 것.
-- CI 워크플로는 `.github/workflows/scorecard-analysis.yml`(OSSF Scorecard, main push + 주간 스케줄)뿐이다. 테스트는 로컬에서 위 명령으로 검증한다.
+- CI 워크플로는 `.github/workflows/tests.yml`, `.github/workflows/fuzz.yml`, `.github/workflows/scorecard-analysis.yml`을 사용한다. 테스트는 로컬에서 위 명령으로도 검증한다.
 
 ## 의존성 변경 절차
 
@@ -76,7 +79,7 @@ supply-chain 하드닝 유지: base image는 digest-pinned(`python:3.12-slim@sha
 ### docker-compose 서비스 구성
 
 - `semantic-data-portal` (기본): 앱 단독, `SDP_SQLITE_PATH=/data/sdp-evidence.sqlite3` + `sdp-evidence` volume, 8000 포트, `/health` healthcheck.
-- `--profile postgres` 활성화 시: `postgres`(postgres:16-alpine, 호스트 54329) + `semantic-data-portal-postgres`(동일 이미지, `SDP_DATABASE_URL=postgresql://sdp:sdp@postgres:5432/sdp`, 호스트 8001) 추가. 두 앱 인스턴스로 SQLite/Postgres store protocol 동등성을 검증하는 구성이다.
+- `--profile postgres` 활성화 시: `postgres`(digest-pinned `postgres:16-alpine`, loopback host port 54329) + `semantic-data-portal-postgres`(필수 `POSTGRES_PASSWORD`/`SDP_DATABASE_URL`, `POSTGRES_USER` 기본값은 `sdp_app`, 호스트 8001) 추가. 두 앱 인스턴스로 SQLite/Postgres store protocol 동등성을 검증하는 구성이다.
 
 ### Fuzzing
 
