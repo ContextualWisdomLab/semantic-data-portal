@@ -1,0 +1,66 @@
+services:
+  semantic-data-portal:
+    build:
+      context: .
+    environment:
+      SDP_SQLITE_PATH: /data/sdp-evidence.sqlite3
+    ports:
+      - "8000:8000"
+    volumes:
+      - sdp-evidence:/data
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).read()"
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+  semantic-data-portal-postgres:
+    profiles:
+      - postgres
+    build:
+      context: .
+    environment:
+      SDP_DATABASE_URL: postgresql://sdp:sdp@postgres:5432/sdp
+      SDP_DATABASE_SSLMODE: disable
+    ports:
+      - "8001:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).read()"
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+  postgres:
+    profiles:
+      - postgres
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: sdp
+      POSTGRES_USER: sdp
+      POSTGRES_PASSWORD: sdp
+    ports:
+      - "54329:5432"
+    volumes:
+      - sdp-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U sdp -d sdp
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  sdp-evidence:
+  sdp-postgres:
