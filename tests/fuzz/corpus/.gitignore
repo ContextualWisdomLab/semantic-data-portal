@@ -1,0 +1,5 @@
+# libFuzzer/Atheris write coverage-expanding inputs back into the corpus.
+# Keep only the curated seeds under version control.
+*
+!.gitignore
+!seed_*.txt

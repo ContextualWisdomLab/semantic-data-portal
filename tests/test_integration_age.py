@@ -4,7 +4,7 @@ Skipped unless ``SDP_DATABASE_DSN`` points at a reachable database with the
 ``age`` and ``vector`` extensions. Run locally with::
 
     docker compose up --build graph_db
-    SDP_DATABASE_DSN=postgresql+psycopg://sdp:sdp@localhost:5432/sdp \
+    SDP_DATABASE_DSN='postgresql+psycopg://sdp_graph_app:<url-encoded-password>@localhost:5432/sdp' \
         python -m pytest tests/test_integration_age.py -m integration
 """
 

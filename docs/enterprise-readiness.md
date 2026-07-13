@@ -75,7 +75,7 @@ PYTHONPATH=src python -m sdp.demo_smoke
 `SDP_DATABASE_URL`를 지정하면 audit event와 policy decision이 Postgres에 기록된다. 각 행은 tenant, resource, decision id, timestamp, immutable payload snapshot을 함께 저장한다. `SDP_DATABASE_SSLMODE`로 managed database의 SSL mode를 지정할 수 있다.
 
 ```bash
-SDP_DATABASE_URL=postgresql://sdp:sdp@localhost:5432/sdp SDP_DATABASE_SSLMODE=require uvicorn sdp.api:app --reload
+SDP_DATABASE_URL='postgresql://sdp_app:<url-encoded-password>@localhost:5432/sdp' SDP_DATABASE_SSLMODE=require uvicorn sdp.api:app --reload
 ```
 
 `SDP_SQLITE_PATH`를 지정하면 audit event와 policy decision이 stdlib SQLite 파일에 기록된다. production credential 없이 같은 store protocol을 검증하는 로컬 fallback이다. `SDP_DATABASE_URL`이 있으면 Postgres가 우선한다.

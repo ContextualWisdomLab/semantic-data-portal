@@ -6,7 +6,7 @@ written into the ``config_entries`` KV table so the running service never reads
 app config/secrets from the environment.
 
 Usage:
-    SDP_DATABASE_DSN=postgresql+psycopg://sdp:sdp@localhost:5432/sdp \
+    SDP_DATABASE_DSN='postgresql+psycopg://sdp_graph_app:<url-encoded-password>@localhost:5432/sdp' \
         python -m migrations.run_migrations
 """
 

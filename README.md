@@ -59,26 +59,31 @@ docker compose up --build
 Postgres evidence store까지 포함한 paid-pilot 프로파일은 다음 명령으로 실행합니다.
 
 ```bash
+export POSTGRES_USER=sdp_app
+export POSTGRES_PASSWORD='<strong-postgres-password>'
+export SDP_DATABASE_URL='postgresql://sdp_app:<url-encoded-password>@postgres:5432/sdp'
 docker compose --profile postgres up --build
 ```
 
-이 프로파일은 `semantic-data-portal-postgres`를 `http://localhost:8001`에 열고, `SDP_DATABASE_URL=postgresql://sdp:sdp@postgres:5432/sdp`, `SDP_DATABASE_SSLMODE=disable`로 managed Postgres 경로와 동일한 store protocol을 검증합니다.
+이 프로파일은 `semantic-data-portal-postgres`를 `http://localhost:8001`에 열고, `SDP_DATABASE_URL`과 `POSTGRES_PASSWORD`를 필수 env로 요구합니다. `POSTGRES_USER`는 `sdp_app` 기본값이 있지만 명시 설정을 권장합니다. Postgres host port는 기본적으로 `127.0.0.1:54329`에만 바인딩되어 managed Postgres 경로와 동일한 store protocol을 로컬에서 검증합니다.
 
 그래프 엔진(Postgres + Apache AGE + pgvector) 프로파일은 다음 명령으로 실행합니다.
 
 ```bash
+export GRAPH_POSTGRES_USER=sdp_graph_app
+export GRAPH_POSTGRES_PASSWORD='<strong-graph-password>'
+export SDP_DATABASE_DSN='postgresql+psycopg://sdp_graph_app:<url-encoded-password>@graph_db:5432/sdp'
 docker compose --profile graph up --build
 curl localhost:8002/healthz   # DB/AGE/pgvector 준비 상태 확인
 ```
 
-`sdp_api` 서비스는 `SDP_DATABASE_DSN=postgresql+psycopg://sdp:sdp@graph_db:5432/sdp`로
-그래프 백엔드에 연결하며, 기동 시 마이그레이션 + 시드를 멱등하게 적용합니다.
+`sdp_api` 서비스는 필수 `SDP_DATABASE_DSN`으로 그래프 백엔드에 연결하며, `GRAPH_POSTGRES_PASSWORD`도 필수입니다. `GRAPH_POSTGRES_USER`는 `sdp_graph_app` 기본값이 있지만 명시 설정을 권장합니다. 기동 시 마이그레이션 + 시드를 멱등하게 적용합니다. Graph DB host port도 기본적으로 `127.0.0.1:5432`에만 바인딩됩니다.
 
 ### 마이그레이션 + 시드 (그래프 DB 백엔드, 수동 실행)
 
 ```bash
 # 부트스트랩 전송(transport) 용도로만 env 사용 — 앱 설정/시크릿은 config_entries 테이블에서 로드
-SDP_DATABASE_DSN=postgresql+psycopg://sdp:sdp@localhost:5432/sdp \
+SDP_DATABASE_DSN='postgresql+psycopg://sdp_graph_app:<url-encoded-password>@localhost:5432/sdp' \
   python -m migrations.run_migrations
 ```
 

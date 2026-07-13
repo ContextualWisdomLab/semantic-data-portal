@@ -27,8 +27,17 @@ services:
     build:
       context: .
     environment:
-      SDP_DATABASE_URL: postgresql://sdp:sdp@postgres:5432/sdp
+      SDP_DATABASE_URL: ${SDP_DATABASE_URL:-}
       SDP_DATABASE_SSLMODE: disable
+    command:
+      - sh
+      - -c
+      - |
+        if [ -z "$${SDP_DATABASE_URL}" ]; then
+          echo "[entrypoint] SDP_DATABASE_URL is required for the postgres profile." >&2
+          exit 64
+        fi
+        exec uvicorn sdp.api:app --host 0.0.0.0 --port 8000
     ports:
       - "8001:8000"
     depends_on:
@@ -47,19 +56,31 @@ services:
   postgres:
     profiles:
       - postgres
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
     environment:
-      POSTGRES_DB: sdp
-      POSTGRES_USER: sdp
-      POSTGRES_PASSWORD: sdp
+      POSTGRES_DB: ${POSTGRES_DB:-sdp}
+      POSTGRES_USER: ${POSTGRES_USER:-sdp_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+    entrypoint:
+      - sh
+      - -c
+      - |
+        if [ -z "$${POSTGRES_PASSWORD}" ]; then
+          echo "[entrypoint] POSTGRES_PASSWORD is required for the postgres profile." >&2
+          exit 64
+        fi
+        exec docker-entrypoint.sh "$${@}"
+      - --
+    command:
+      - postgres
     ports:
-      - "54329:5432"
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-54329}:5432"
     volumes:
       - sdp-postgres:/var/lib/postgresql/data
     healthcheck:
       test:
         - CMD-SHELL
-        - pg_isready -U sdp -d sdp
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
       interval: 5s
       timeout: 3s
       retries: 10
@@ -70,19 +91,29 @@ services:
       context: .
       dockerfile: docker/postgres-age-pgvector.Dockerfile
     environment:
-      POSTGRES_USER: sdp
-      POSTGRES_PASSWORD: sdp
-      POSTGRES_DB: sdp
+      POSTGRES_USER: ${GRAPH_POSTGRES_USER:-sdp_graph_app}
+      POSTGRES_PASSWORD: ${GRAPH_POSTGRES_PASSWORD:-}
+      POSTGRES_DB: ${GRAPH_POSTGRES_DB:-sdp}
+    entrypoint:
+      - sh
+      - -c
+      - |
+        if [ -z "$${POSTGRES_PASSWORD}" ]; then
+          echo "[entrypoint] GRAPH_POSTGRES_PASSWORD is required for the graph profile." >&2
+          exit 64
+        fi
+        exec docker-entrypoint.sh "$${@}"
+      - --
     command:
       - postgres
       - -c
       - shared_preload_libraries=age
     ports:
-      - "5432:5432"
+      - "127.0.0.1:${GRAPH_POSTGRES_HOST_PORT:-5432}:5432"
     volumes:
       - graph_db_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U sdp -d sdp"]
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -95,9 +126,18 @@ services:
     environment:
       # Bootstrap transport only -- where the DB/KV lives. App config/secrets
       # are loaded from the config_entries table, not the environment.
-      SDP_DATABASE_DSN: postgresql+psycopg://sdp:sdp@graph_db:5432/sdp
+      SDP_DATABASE_DSN: ${SDP_DATABASE_DSN:-}
       SDP_CONFIG_NAMESPACE: default
       SDP_ENV: docker
+    command:
+      - sh
+      - -c
+      - |
+        if [ -z "$${SDP_DATABASE_DSN}" ]; then
+          echo "[entrypoint] SDP_DATABASE_DSN is required for the graph profile." >&2
+          exit 64
+        fi
+        exec uvicorn sdp.api:app --host 0.0.0.0 --port 8000
     depends_on:
       graph_db:
         condition: service_healthy
