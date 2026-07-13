@@ -4,8 +4,8 @@
 
 ## 구현 상태 개요
 
-- 분기: `codex/sdp-complete-impl`
-- 기준 커밋: `origin/codex/sdp-complete-impl`
+- 분기: `codex/sdp-enterprise-foundation`
+- 기준 커밋: PR #5 current head
 - 증빙: API 엔드포인트, 도메인 모델, 테스트(`tests/test_api.py`)
 
 ## 1) 필수 기능 요구사항 대응
@@ -110,20 +110,38 @@
 
 ## 5) 운영/품질
 
-- 단위 테스트: `tests/test_api.py` (헬스체크 + 엔드포인트별 동작 + 정책/감사 검증)
+- 단위 테스트: `tests/test_api.py` (헬스체크 + 엔드포인트별 동작 + 정책/감사 검증 + enterprise readiness)
 - 워크플로우: 조직 공통 규칙셋 `CWL Central required workflows`의 중앙 required workflow를 사용한다.
 - 정적/CI 게이트: repo-local OpenCode/Strix workflow 복사본은 `main`에서 제거되었으므로 이 브랜치도 중앙 workflow 정책을 따른다.
-- 로컬 증빙: `PYTHONPATH=src python3 -m pytest -q` 결과 22개 테스트 통과.
+- 로컬 증빙: `PYTHONPATH=src python3 -m pytest -q` 결과로 전체 테스트 통과 상태를 검증한다.
 
-## 6) 다음 단계 (현재 브랜치에서 미반영 권고)
+## 6) Enterprise / Buyer Evidence
+
+- `GET /enterprise/readiness`: 20억 원 valuation target, package/submodule decision, storage/connector capability, enterprise gates, Figma Code Connect disabled artifact.
+- `GET /enterprise/production-readiness`: demo release와 paid pilot readiness를 분리하고, Postgres evidence store, OIDC JWKS verification, connector credential vault, request observability export의 환경변수·acceptance criteria·blocker를 노출한다. Postgres evidence store, OIDC JWKS verification, request observability export, connector credential vault가 구현되어 남은 paid-pilot blocker는 0개다.
+- `POST /enterprise/auth/oidc-verify`: issuer/audience/expiry/JWKS 서명 검증 후 group allow-list mapping으로 `ActorContext`를 생성하고 raw token은 응답에 포함하지 않는다.
+- `GET /enterprise/evidence-pack`: metadata validation, SHACL-compatible validation, steward queue, ontology mapping coverage, policy/audit counts, controls, KPI ids, proof endpoints.
+- `GET /enterprise/console`: buyer/operator가 evidence, KPI, controls, connector 상태를 브라우저에서 확인하는 no-build-dependency UI.
+- 증빙 테스트:
+  - `tests/test_api.py::test_enterprise_readiness_manifest_exposes_saleable_gates`
+  - `tests/test_api.py::test_enterprise_production_readiness_tracks_paid_pilot_integrations`
+  - `tests/test_api.py::test_enterprise_evidence_pack_summarizes_buyer_diligence`
+  - `tests/test_api.py::test_request_observability_export_writes_bodyless_jsonl`
+  - `tests/test_api.py::test_enterprise_rest_connector_probe_uses_vault_reference_without_secret_leak`
+  - `tests/test_api.py::test_oidc_jwks_verification_maps_verified_token_without_token_leak`
+  - `tests/test_api.py::test_oidc_jwks_verification_rejects_wrong_audience`
+  - `tests/test_api.py::test_enterprise_console_renders_operator_surface`
+  - `tests/test_api.py::test_enterprise_demo_smoke_summary_is_ready`
+
+## 7) 다음 단계 (현재 브랜치에서 미반영 권고)
 
 1. 조직 정책 기준으로 `search` 및 `list` 에 대한 사용 권한/발견성 정책을 명시적으로 강화
 2. API level 감사 이벤트 보존 기간 및 위변조 방지(로그 저장소 정책) 적용
 3. OpenCode/PR 리뷰 증적 저장(`PR`, `review`, `merge` 로그)과 main 병합 완료 상태 정기 기록
 
-## 7) 구현 완료 증적(현재 HEAD 기준)
+## 8) 구현 완료 증적(현재 HEAD 기준)
 
-- 대상 브랜치: `codex/sdp-complete-impl`
+- 대상 브랜치: `codex/sdp-enterprise-foundation`
 - 기준: `origin/main` 병합 후 현재 브랜치 HEAD
 - 증적 파일:
   - `src/sdp/api.py`

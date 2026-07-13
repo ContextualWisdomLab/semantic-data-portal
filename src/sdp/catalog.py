@@ -6,135 +6,21 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
+from sdp_core import buyer_demo_datasets
+
 from .domain import (
     AuditEvent,
-    BusinessMapping,
     ColumnMetadata,
     Dataset,
     DatasetCreateRequest,
-    DatasetDistribution,
     DatasetPatchRequest,
-    MappingStatus,
     OntologyPatch,
 )
+from .evidence import append_audit_event, has_configured_evidence_store, list_persisted_audit_events
 
 
 def _seed_datasets() -> List[Dataset]:
-    return [
-        Dataset(
-            id="crm-customer-master",
-            title="고객 마스터",
-            description="고객의 상태와 핵심 상태 지표를 통합 관리하는 기본 데이터셋",
-            owner="data-platform",
-            steward="biz-admin",
-            domain="고객",
-            source_system="postgresql://analytics.dw/customer",
-            sensitivity="medium",
-            update_frequency="daily",
-            quality_score=0.92,
-            freshness_score=0.98,
-            tags=["고객", "프로필", "이탈"],
-            terms=["고객", "활성 고객", "이탈"],
-            related_datasets=["crm-event", "sales-order"],
-            schema=[
-                ColumnMetadata(
-                    name="customer_id",
-                    datatype="string",
-                    nullable_ratio=0.0,
-                    distinct_ratio=1.0,
-                    pii=False,
-                ),
-                ColumnMetadata(
-                    name="customer_email",
-                    datatype="string",
-                    nullable_ratio=0.01,
-                    distinct_ratio=0.99,
-                    pii=True,
-                ),
-                ColumnMetadata(
-                    name="signup_at",
-                    datatype="timestamp",
-                    nullable_ratio=0.0,
-                    distinct_ratio=0.88,
-                    pii=False,
-                ),
-            ],
-            distributions=[
-                DatasetDistribution(
-                    id="dist-crm-customer",
-                    format="postgresql.table",
-                    endpoint="https://example.internal/api/table/crm_customer_master",
-                )
-            ],
-        mappings=[
-                BusinessMapping(concept="고객", status=MappingStatus.APPROVED, source="steward:biz-admin", steward="biz-admin", approved_at=datetime.now(timezone.utc)),
-                BusinessMapping(concept="활성 고객", status=MappingStatus.PROPOSED, source="llm:suggestion"),
-            ],
-            profile={"row_count": 1200000, "updated_at": "2026-06-29T00:00:00Z"},
-            lineage_inputs=["crm-event"],
-            lineage_outputs=["churn-report"],
-        ),
-        Dataset(
-            id="crm-event",
-            title="행동 이벤트 로그",
-            description="고객 행태, 접속 이벤트, 전환 로그를 저장한 시계열 데이터셋",
-            owner="data-platform",
-            steward="data-engineering",
-            domain="고객행동",
-            source_system="s3://analytics/events/crm",
-            sensitivity="high",
-            update_frequency="hourly",
-            quality_score=0.88,
-            freshness_score=0.95,
-            tags=["이벤트", "행동", "로그"],
-            terms=["고객 활동", "행동", "이벤트"],
-            related_datasets=["crm-customer-master", "marketing-campaign"],
-            schema=[
-                ColumnMetadata(
-                    name="event_id",
-                    datatype="string",
-                    nullable_ratio=0.0,
-                    distinct_ratio=1.0,
-                    pii=False,
-                ),
-                ColumnMetadata(
-                    name="customer_id",
-                    datatype="string",
-                    nullable_ratio=0.0,
-                    distinct_ratio=0.98,
-                    pii=False,
-                ),
-                ColumnMetadata(
-                    name="event_timestamp",
-                    datatype="timestamp",
-                    nullable_ratio=0.0,
-                    distinct_ratio=0.97,
-                    pii=False,
-                ),
-                ColumnMetadata(
-                    name="device_id",
-                    datatype="string",
-                    nullable_ratio=0.05,
-                    distinct_ratio=0.85,
-                    pii=False,
-                ),
-            ],
-            distributions=[
-                DatasetDistribution(
-                    id="dist-crm-event",
-                    format="parquet",
-                    endpoint="https://example.internal/api/file/crm_event",
-                )
-            ],
-        mappings=[
-                BusinessMapping(concept="활성 고객", status=MappingStatus.APPROVED, source="steward:biz-admin", steward="data-engineering", approved_at=datetime.now(timezone.utc)),
-                BusinessMapping(concept="고객 이탈", status=MappingStatus.PROPOSED, source="llm:suggestion"),
-            ],
-            profile={"row_count": 54000000, "updated_at": "2026-06-29T00:00:00Z"},
-            lineage_inputs=["app-event-raw", "auth-service"],
-            lineage_outputs=["crm-customer-master"],
-        ),
-    ]
+    return buyer_demo_datasets("customer_intelligence")
 
 
 _DATA = {dataset.id: dataset for dataset in _seed_datasets()}
@@ -142,6 +28,13 @@ for _dataset in _DATA.values():
     _dataset.recompute_scores()
 _AUDIT_LOG: list[AuditEvent] = []
 _SCHEMA_HISTORY: dict[str, list[dict[str, Any]]] = {}
+
+
+def _record_audit_event(event: AuditEvent) -> AuditEvent:
+    append_audit_event(event)
+    if not has_configured_evidence_store():
+        _AUDIT_LOG.append(event)
+    return event
 
 
 def _column_signature(columns: list[ColumnMetadata]) -> list[dict[str, Any]]:
@@ -496,6 +389,7 @@ def register_dataset(
     now = datetime.now(timezone.utc)
     dataset = Dataset(
         id=dataset_id,
+        tenant_id=payload.tenant_id,
         title=payload.title,
         description=payload.description,
         owner=payload.owner,
@@ -520,7 +414,7 @@ def register_dataset(
     dataset.recompute_scores()
     _DATA[dataset.id] = dataset
     _record_schema_snapshot(dataset)
-    _AUDIT_LOG.append(_build_dataset_payload(dataset, actor=actor, action="dataset.register", decision_id=decision_id))
+    _record_audit_event(_build_dataset_payload(dataset, actor=actor, action="dataset.register", decision_id=decision_id))
     return dataset
 
 
@@ -551,7 +445,7 @@ def patch_dataset(
     updated.recompute_scores()
     _DATA[dataset_id] = updated
     _record_schema_snapshot(updated)
-    _AUDIT_LOG.append(
+    _record_audit_event(
         _build_dataset_payload(
             updated,
             actor=actor,
@@ -575,7 +469,7 @@ def publish_dataset(
         raise ValueError("cannot publish dataset: metadata validation failed")
 
     if dataset.status == "published":
-        _AUDIT_LOG.append(
+        _record_audit_event(
             _build_dataset_payload(
                 dataset,
                 actor=actor,
@@ -594,7 +488,7 @@ def publish_dataset(
     published.recompute_scores()
     _DATA[dataset_id] = published
     _record_schema_snapshot(published)
-    _AUDIT_LOG.append(
+    _record_audit_event(
         _build_dataset_payload(
             published,
             actor=actor,
@@ -622,7 +516,7 @@ def deprecate_dataset(
     deprecated.recompute_scores()
     _DATA[dataset_id] = deprecated
     _record_schema_snapshot(deprecated)
-    _AUDIT_LOG.append(
+    _record_audit_event(
         _build_dataset_payload(
             deprecated,
             actor=actor,
@@ -635,9 +529,17 @@ def deprecate_dataset(
 
 
 def list_audit_events(*, limit: int = 100, resource: str | None = None) -> list[AuditEvent]:
-    events = _AUDIT_LOG
+    events = list(_AUDIT_LOG)
     if resource:
         events = [event for event in events if event.resource == resource]
+
+    if has_configured_evidence_store():
+        persisted = list_persisted_audit_events(resource=resource, limit=limit)
+        by_id = {event.id: event for event in events}
+        for event in persisted:
+            by_id[event.id] = event
+        events = list(by_id.values())
+
     events = sorted(events, key=lambda row: row.created_at, reverse=True)
     return events[:limit]
 
@@ -677,8 +579,7 @@ def ingest_event(
         details=details or {},
         created_at=datetime.now(timezone.utc),
     )
-    _AUDIT_LOG.append(event)
-    return event
+    return _record_audit_event(event)
 
 
 def get_related_datasets(dataset_id: str) -> list[str]:
