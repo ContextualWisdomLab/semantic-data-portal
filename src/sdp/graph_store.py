@@ -18,6 +18,7 @@ the same tests exercise the contract regardless of backend.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import secrets
 from collections import deque
@@ -68,6 +69,8 @@ def _normalize(value: str) -> str:
     return value.strip().replace("_", " ").lower()
 
 
+_logger = logging.getLogger(__name__)
+
 # openCypher / AGE relationship types occupy an *identifier* position in the
 # graph mutation/traversal statements and therefore CANNOT be bound as a query
 # parameter. They are strict-allowlisted against ``^[A-Za-z_][A-Za-z0-9_]*$`` and
@@ -76,18 +79,26 @@ def _normalize(value: str) -> str:
 # enforce this identically for behaviour parity.
 _AGE_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
+# Fixed identifier alphabet used to rebuild validated labels character by
+# character. Every returned label is provably composed of these constant
+# strings only, so callers may splice it into server-built cypher text; this
+# also makes the sanitization structural (visible to SAST taint tracking)
+# instead of relying on the regex guard alone.
+_AGE_LABEL_CHARS = {c: c for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"}
+
 
 def _relationship_label(edge_type: str) -> str:
     """Validate ``edge_type`` as a safe identifier and return its AGE label.
 
     Raises :class:`ValueError` when ``edge_type`` is not a bare identifier. The
     returned label is upper-cased to match the AGE relationship-type convention
-    used across the seed data (``BROADER``/``NARROWER``/``HAS_COLUMN``/...).
+    used across the seed data (``BROADER``/``NARROWER``/``HAS_COLUMN``/...) and
+    rebuilt from the fixed ``_AGE_LABEL_CHARS`` alphabet.
     """
 
     if not _AGE_IDENTIFIER_RE.match(edge_type):
         raise ValueError(f"invalid relationship type: {edge_type!r}")
-    return edge_type.upper()
+    return "".join(_AGE_LABEL_CHARS[ch] for ch in edge_type.upper())
 
 
 # --- Backend contract ---------------------------------------------------------
@@ -748,8 +759,11 @@ class PostgresGraphStore(GraphStore):
                 status["age"] = "age" in present
                 status["pgvector"] = "vector" in present
             status["ready"] = status["database"] and status["age"] and status["pgvector"]
-        except Exception as exc:  # pragma: no cover - exercised only on outage
-            status["error"] = str(exc)
+        except Exception:  # pragma: no cover - exercised only on outage
+            # Log the details server-side only: exception text can carry DSN
+            # hosts or SQL fragments and /healthz is an unauthenticated surface.
+            _logger.exception("graph readiness probe failed")
+            status["error"] = "backend unreachable"
         return status
 
     def stats(self) -> Dict[str, int]:
