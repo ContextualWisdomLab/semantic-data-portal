@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from time import monotonic
 from typing import Any
@@ -17,7 +18,17 @@ from sdp_core import (
 )
 
 from . import authz, browse, catalog, connectors, ontology, orchestrator
+from .config import get_app_config
 from .console import render_enterprise_console
+from .graph_models import (
+    GraphEdgeRequest,
+    GraphNodeRequest,
+    GraphTraversalRequest,
+    OntologyConceptRequest,
+    SemanticSearchRequest,
+)
+from .graph_store import get_store
+from .seed import seed_store
 from .catalog import (
     deprecate_dataset,
     get_dataset,
@@ -35,7 +46,6 @@ from .catalog import (
     patch_dataset,
     publish_dataset,
     register_dataset,
-    search_catalog,
     validate_metadata,
 )
 from .domain import (
@@ -59,18 +69,43 @@ from .semantic_validation import enterprise_shacl_validation_summary, validate_d
 from .steward_review import build_steward_review_summary
 
 
+_logger = logging.getLogger(__name__)
+
+
 app = FastAPI(
     title="Semantic Data Portal",
-    description="온톨로지 기반 데이터 카탈로그 및 브라우징 MVP",
-    version="0.2.1",
+    description="온톨로지 기반 그래프 데이터 카탈로그 및 시맨틱 검색 서비스",
+    version="0.3.0",
 )
 
+# CORS allowlist comes from config (KV table `config_entries` when a database is
+# reachable, otherwise bundled safe defaults). Tightened from the previous "*".
+_config = get_app_config()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_config.cors_allow_origins,
+    allow_methods=_config.cors_allow_methods,
+    allow_headers=_config.cors_allow_headers,
 )
+
+
+@app.on_event("startup")
+def _bootstrap_graph_engine() -> None:
+    """Seed the active graph store on startup (idempotent)."""
+
+    try:
+        seed_store()
+    except Exception:  # pragma: no cover - seeding must never block startup
+        pass
+
+
+# Seed at import time as well: the test client and embedded/submodule callers
+# may hit endpoints without triggering ASGI startup events. Seeding is
+# idempotent so running it here and on startup is safe.
+try:
+    seed_store()
+except Exception:  # pragma: no cover
+    pass
 
 
 @app.middleware("http")
@@ -250,6 +285,38 @@ def enterprise_connector_probe(
         raise HTTPException(status_code=400, detail=str(exc))
     except KeyError:
         raise HTTPException(status_code=404, detail="dataset not found")
+
+
+@app.get("/healthz")
+def healthz(response: Response) -> dict[str, Any]:
+    """Readiness probe verifying graph-engine backend availability.
+
+    Returns 200 when the active store is ready (in-memory always ready; the
+    Postgres backend requires AGE + pgvector reachable), 503 otherwise.
+    """
+
+    try:
+        store = get_store()
+        readiness = store.readiness()
+        stats = store.stats() if readiness.get("ready") else {}
+    except Exception:  # details belong in server logs, never this public endpoint
+        _logger.exception("graph health probe failed")
+        readiness = {
+            "ready": False,
+            "backend": "unavailable",
+            "error": "backend unreachable",
+        }
+        stats = {}
+    payload = {
+        "status": "ready" if readiness.get("ready") else "unavailable",
+        "config_source": _config.source,
+        "store": readiness,
+        "stats": stats,
+        "at": datetime.now(timezone.utc).isoformat(),
+    }
+    if not readiness.get("ready"):
+        response.status_code = 503
+    return payload
 
 
 @app.get("/catalog/search")
@@ -611,7 +678,117 @@ def ontology_patch_review(patch_id: str, payload: dict[str, str]) -> dict[str, A
 
 @app.get("/ontology/term/{term}/graph")
 def ontology_term_graph(term: str) -> dict[str, Any]:
-    return ontology.concept_graph(term)
+    # Backed by the persistent graph store now; falls back to the legacy
+    # in-memory ontology module when the concept is not in the store.
+    graph = get_store().concept_graph(term)
+    if graph.get("not_found"):
+        return ontology.concept_graph(term)
+    return graph
+
+
+# --- Graph ingestion (nodes / edges / concepts) ------------------------------
+
+
+def _authorize_graph_write(actor: str, resource: str) -> None:
+    """Graph/ontology writes require an authorized (admin) subject.
+
+    Uses the same policy engine as the catalog mutation endpoints: the ``create``
+    action is allowed only for an admin subject, so unauthenticated/anonymous
+    writers are refused with 403.
+    """
+
+    decision = evaluate(subject=actor, resource=resource, action="create", purpose="graph")
+    if decision.effect != "allow":
+        raise HTTPException(status_code=403, detail=decision.reason)
+
+
+def _authorize_graph_read(actor: str, resource: str) -> None:
+    """Graph traversal / semantic search require an authenticated reader.
+
+    Uses the catalog discovery policy branch (``search``): allowed for any reader
+    role, denied for anonymous/unauthenticated subjects.
+    """
+
+    decision = evaluate(subject=actor, resource=resource, action="search", purpose="graph")
+    if decision.effect != "allow":
+        raise HTTPException(status_code=403, detail=decision.reason)
+
+
+@app.post("/ontology/concepts")
+def ingest_concept(payload: OntologyConceptRequest) -> dict[str, Any]:
+    _authorize_graph_write(payload.actor, payload.concept)
+    record = get_store().upsert_concept(payload.model_dump(exclude={"actor"}))
+    return {"status": "upserted", "concept": record}
+
+
+@app.post("/graph/nodes")
+def ingest_graph_node(payload: GraphNodeRequest) -> dict[str, Any]:
+    _authorize_graph_write(payload.actor, payload.node_id)
+    node = get_store().upsert_node(
+        payload.node_id,
+        payload.kind,
+        label=payload.label,
+        properties=payload.properties,
+        text=payload.text,
+    )
+    return {"status": "upserted", "node": node.as_dict()}
+
+
+@app.post("/graph/edges")
+def ingest_graph_edge(payload: GraphEdgeRequest) -> dict[str, Any]:
+    _authorize_graph_write(payload.actor, payload.source_id)
+    try:
+        edge = get_store().upsert_edge(
+            payload.edge_type,
+            payload.source_id,
+            payload.target_id,
+            properties=payload.properties,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"status": "upserted", "edge": edge.as_dict()}
+
+
+@app.get("/graph/nodes/{node_id}")
+def get_graph_node(node_id: str) -> dict[str, Any]:
+    node = get_store().get_node(node_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="node not found")
+    return node.as_dict()
+
+
+# --- Graph traversal + semantic retrieval ------------------------------------
+
+
+@app.post("/graph/query")
+def graph_query(payload: GraphTraversalRequest) -> dict[str, Any]:
+    _authorize_graph_read(payload.actor, payload.start_id)
+    try:
+        return get_store().traverse(
+            payload.start_id,
+            edge_types=payload.edge_types,
+            direction=payload.direction,
+            max_depth=payload.max_depth,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/search/semantic")
+def semantic_search(payload: SemanticSearchRequest) -> dict[str, Any]:
+    _authorize_graph_read(payload.actor, "graph")
+    results = get_store().semantic_search(
+        payload.query, kind=payload.kind, limit=payload.limit
+    )
+    return {"query": payload.query, "count": len(results), "results": results}
+
+
+@app.get("/graph/stats")
+def graph_stats() -> dict[str, Any]:
+    store = get_store()
+    return {"backend": store.readiness().get("backend"), "stats": store.stats()}
 
 
 @app.get("/browse/{dataset_id}/schema")
