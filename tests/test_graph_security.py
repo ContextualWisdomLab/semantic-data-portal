@@ -62,6 +62,38 @@ class _FakeResult:
         return self._scalar
 
 
+class _RecordingCursor:
+    """Render psycopg composed SQL and record the real driver parameters."""
+
+    def __init__(self, owner):
+        self._owner = owner
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def execute(self, statement, params=None):
+        self._owner.driver_calls.append((statement.as_string(None), params or ()))
+
+    def fetchall(self):
+        return []
+
+
+class _RecordingDriverConnection:
+    def __init__(self, owner):
+        self._owner = owner
+
+    def cursor(self):
+        return _RecordingCursor(self._owner)
+
+
+class _ConnectionFacade:
+    def __init__(self, owner):
+        self.driver_connection = _RecordingDriverConnection(owner)
+
+
 class _RecordingConn:
     """Records every statement so tests can assert what reached the DB text."""
 
@@ -69,6 +101,7 @@ class _RecordingConn:
         self.driver_calls: list[tuple[str, tuple]] = []
         self.execute_calls: list[tuple[str, dict]] = []
         self._node_row = node_row
+        self.connection = _ConnectionFacade(self)
 
     def __enter__(self):
         return self
@@ -79,11 +112,6 @@ class _RecordingConn:
     def execute(self, clause, params=None):
         self.execute_calls.append((str(clause), params))
         return _FakeResult(row=self._node_row, rows=[])
-
-    def exec_driver_sql(self, stmt, params=None):
-        self.driver_calls.append((stmt, params or ()))
-        return _FakeResult(rows=[])
-
 
 class _FakeEngine:
     def __init__(self, conn):
@@ -104,6 +132,14 @@ def _pg_store_with(conn) -> PostgresGraphStore:
 
 def _cypher_statements(conn: _RecordingConn) -> list[str]:
     return [stmt for stmt, _ in conn.driver_calls if "cypher(" in stmt]
+
+
+# --- backend contract ---------------------------------------------------------
+
+
+def test_graph_store_contract_is_abstract():
+    with pytest.raises(TypeError, match="abstract class GraphStore"):
+        gs.GraphStore()
 
 
 # --- injection: values are bound as parameters, never interpolated -----------
@@ -161,14 +197,27 @@ def test_traverse_binds_start_id_as_param():
         assert json.loads(params[0])["start_id"] == INJECTION
 
 
-def test_cypher_dollar_tag_is_random_per_call():
+def test_cypher_quotes_graph_name_and_body_with_psycopg_composition():
     conn = _RecordingConn()
     store = _pg_store_with(conn)
-    store._cypher(conn, "RETURN 1", "v agtype", {"a": 1})
-    store._cypher(conn, "RETURN 1", "v agtype", {"a": 1})
-    tag1 = conn.driver_calls[0][0].split("cypher(")[1]
-    tag2 = conn.driver_calls[1][0].split("cypher(")[1]
-    assert tag1 != tag2  # unique random dollar tag each call
+    store.graph_name = "graph'); DROP TABLE graph_nodes; --"
+
+    store._cypher(conn, "RETURN 'quoted'", "v agtype", {"a": 1})
+
+    statement, params = conn.driver_calls[0]
+    assert "cypher('graph''); DROP TABLE graph_nodes; --'" in statement
+    assert "'RETURN ''quoted'''" in statement
+    assert json.loads(params[0]) == {"a": 1}
+
+
+def test_cypher_rejects_unknown_result_declaration():
+    conn = _RecordingConn()
+    store = _pg_store_with(conn)
+
+    with pytest.raises(ValueError, match="unsupported AGE result declaration"):
+        store._cypher(conn, "RETURN 1", INJECTION, {})
+
+    assert conn.driver_calls == []
 
 
 # --- identifier allowlist -----------------------------------------------------

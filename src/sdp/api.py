@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from time import monotonic
 from typing import Any
@@ -45,7 +46,6 @@ from .catalog import (
     patch_dataset,
     publish_dataset,
     register_dataset,
-    search_catalog,
     validate_metadata,
 )
 from .domain import (
@@ -67,6 +67,9 @@ from .observability import (
 from .policy import evaluate
 from .semantic_validation import enterprise_shacl_validation_summary, validate_dataset_semantics
 from .steward_review import build_steward_review_summary
+
+
+_logger = logging.getLogger(__name__)
 
 
 app = FastAPI(
@@ -292,14 +295,24 @@ def healthz(response: Response) -> dict[str, Any]:
     Postgres backend requires AGE + pgvector reachable), 503 otherwise.
     """
 
-    store = get_store()
-    readiness = store.readiness()
+    try:
+        store = get_store()
+        readiness = store.readiness()
+        stats = store.stats() if readiness.get("ready") else {}
+    except Exception:  # details belong in server logs, never this public endpoint
+        _logger.exception("graph health probe failed")
+        readiness = {
+            "ready": False,
+            "backend": "unavailable",
+            "error": "backend unreachable",
+        }
+        stats = {}
     payload = {
         "status": "ready" if readiness.get("ready") else "unavailable",
         "config_source": _config.source,
         "store": readiness,
-        "stats": store.stats(),
-        "at": datetime.utcnow().isoformat() + "Z",
+        "stats": stats,
+        "at": datetime.now(timezone.utc).isoformat(),
     }
     if not readiness.get("ready"):
         response.status_code = 503

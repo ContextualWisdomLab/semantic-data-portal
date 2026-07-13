@@ -6,6 +6,7 @@ ranking, /healthz readiness, and the config-from-KV loading contract.
 
 from fastapi.testclient import TestClient
 
+from sdp import api as api_module
 from sdp import config as config_module
 from sdp.api import app
 from sdp.embeddings import cosine_similarity, embed_text
@@ -30,6 +31,31 @@ def test_healthz_reports_ready_and_seeded_stats():
     assert body["stats"]["concepts"] >= 5
     assert body["stats"]["nodes"] >= 5
     assert body["stats"]["embeddings"] == body["stats"]["nodes"]
+
+
+def test_healthz_logs_backend_exception_without_exposing_details(monkeypatch, caplog):
+    class FailingStore:
+        def readiness(self):
+            raise RuntimeError("postgresql://user:secret@internal.example/private")
+
+    monkeypatch.setattr(api_module, "get_store", lambda: FailingStore())
+
+    with caplog.at_level("ERROR"):
+        response = client.get("/healthz")
+
+    assert response.status_code == 503
+    body = response.json()
+    assert body["status"] == "unavailable"
+    assert body["store"] == {
+        "ready": False,
+        "backend": "unavailable",
+        "error": "backend unreachable",
+    }
+    assert body["stats"] == {}
+    assert "secret" not in response.text
+    assert "internal.example" not in response.text
+    assert "graph health probe failed" in caplog.text
+    assert "internal.example" in caplog.text
 
 
 def test_health_still_present():

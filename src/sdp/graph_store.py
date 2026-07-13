@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-import secrets
+from abc import ABC, abstractmethod
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -104,14 +104,18 @@ def _relationship_label(edge_type: str) -> str:
 # --- Backend contract ---------------------------------------------------------
 
 
-class GraphStore:
+class GraphStore(ABC):
     """Backend contract shared by the in-memory and Postgres implementations."""
 
     dimension: int
 
+    @abstractmethod
     def readiness(self) -> Dict[str, Any]:  # pragma: no cover - overridden
+        """Return whether the backend and its required capabilities are ready."""
+
         raise NotImplementedError
 
+    @abstractmethod
     def upsert_node(
         self,
         node_id: str,
@@ -121,8 +125,11 @@ class GraphStore:
         properties: Optional[Dict[str, Any]] = None,
         text: Optional[str] = None,
     ) -> GraphNode:
+        """Create or update one graph node and return its persisted value."""
+
         raise NotImplementedError
 
+    @abstractmethod
     def upsert_edge(
         self,
         edge_type: str,
@@ -131,17 +138,29 @@ class GraphStore:
         *,
         properties: Optional[Dict[str, Any]] = None,
     ) -> GraphEdge:
+        """Create or update one directed graph edge."""
+
         raise NotImplementedError
 
+    @abstractmethod
     def upsert_concept(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Create or update an ontology concept and its graph relationships."""
+
         raise NotImplementedError
 
+    @abstractmethod
     def get_node(self, node_id: str) -> Optional[GraphNode]:
+        """Return a node by identifier, or ``None`` when it does not exist."""
+
         raise NotImplementedError
 
+    @abstractmethod
     def concept_graph(self, term: str) -> Dict[str, Any]:
+        """Return the concept-centered graph for ``term``."""
+
         raise NotImplementedError
 
+    @abstractmethod
     def traverse(
         self,
         start_id: str,
@@ -150,14 +169,22 @@ class GraphStore:
         direction: str = "both",
         max_depth: int = 2,
     ) -> Dict[str, Any]:
+        """Traverse from ``start_id`` through a bounded relationship set."""
+
         raise NotImplementedError
 
+    @abstractmethod
     def semantic_search(
         self, query: str, *, kind: Optional[str] = None, limit: int = 5
     ) -> List[Dict[str, Any]]:
+        """Return the nearest graph nodes for a semantic query."""
+
         raise NotImplementedError
 
+    @abstractmethod
     def stats(self) -> Dict[str, int]:
+        """Return backend object counts suitable for readiness diagnostics."""
+
         raise NotImplementedError
 
 
@@ -423,22 +450,33 @@ class PostgresGraphStore(GraphStore):
         User values are NEVER interpolated into ``query``. They are passed as an
         agtype **parameter map** bound to a real positional SQL parameter, so the
         ``cypher()`` body references them as ``$name`` and they never touch the
-        SQL/cypher text. The dollar-quoted body wrapper uses a per-call **random
-        dollar tag** so no input (even one containing ``$$``) can terminate the
-        wrapper early. ``query`` itself is always server-built (fixed keywords +
-        allowlisted identifiers), so it contains no user text.
-
-        ``exec_driver_sql`` bypasses SQLAlchemy's ``":name"`` bind parsing, which
-        would otherwise misread openCypher tokens such as ``[:NARROWER`` as binds;
-        the agtype parameter is bound positionally via the driver's ``%s``.
+        SQL/cypher text. Psycopg's SQL composition quotes the graph name and the
+        complete server-built Cypher body as literals. Result declarations are
+        selected from a closed map because AGE requires them in SQL syntax and
+        they cannot be bound. The agtype parameter map remains a real positional
+        driver parameter.
         """
 
-        tag = f"$c{secrets.token_hex(8)}$"
-        stmt = (
-            f"SELECT * FROM cypher('{self.graph_name}', {tag} {query} {tag}, %s) "
-            f"AS ({columns})"
+        from psycopg import sql as pg_sql
+
+        result_columns = {
+            "v agtype": pg_sql.SQL("v agtype"),
+            "node_id agtype, kind agtype, label agtype": pg_sql.SQL(
+                "node_id agtype, kind agtype, label agtype"
+            ),
+        }.get(columns)
+        if result_columns is None:
+            raise ValueError(f"unsupported AGE result declaration: {columns!r}")
+
+        statement = pg_sql.SQL("SELECT * FROM cypher({}, {}, %s) AS ({})").format(
+            pg_sql.Literal(self.graph_name),
+            pg_sql.Literal(query),
+            result_columns,
         )
-        return conn.exec_driver_sql(stmt, (json.dumps(params),)).fetchall()
+        driver_connection = conn.connection.driver_connection
+        with driver_connection.cursor() as cursor:
+            cursor.execute(statement, (json.dumps(params),))
+            return cursor.fetchall()
 
     def upsert_node(
         self,
