@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 from io import BytesIO
 from types import SimpleNamespace
@@ -9,7 +10,12 @@ import pytest
 
 from pypdf import PdfWriter
 
-from sdp.document_semantics import chunk_text, extract_document_text
+from sdp.document_semantics import (
+    EphemeralCredentialRegistry,
+    OpenAISemanticExtractor,
+    chunk_text,
+    extract_document_text,
+)
 
 from sdp.file_ontology import (
     FileAsset,
@@ -278,3 +284,77 @@ def test_unsupported_legacy_format_is_reported_without_guessing():
 
     assert document.status == "unsupported_format"
     assert document.text == ""
+
+
+def fake_openai_transport(captured, *, evidence_quote="효성중공업"):
+    def transport(request, timeout):
+        payload = json.loads(request.data.decode("utf-8"))
+        captured.update(payload)
+        captured["timeout"] = timeout
+        assert request.get_header("Authorization") == "Bearer test-key"
+        return {
+            "status": "completed",
+            "output": [
+                {
+                    "type": "message",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": json.dumps(
+                                {
+                                    "assertions": [
+                                        {
+                                            "relation": "usesSystem",
+                                            "target_kind": "system",
+                                            "target_label": "C-Cube",
+                                            "confidence": 0.93,
+                                            "evidence_quote": evidence_quote,
+                                        }
+                                    ]
+                                },
+                                ensure_ascii=False,
+                            ),
+                        }
+                    ],
+                }
+            ],
+        }
+
+    return transport
+
+
+def test_openai_extractor_uses_strict_schema_and_persists_only_evidence_reference():
+    captured = {}
+    extractor = OpenAISemanticExtractor(
+        EphemeralCredentialRegistry({"OPENAI_API_KEY": "test-key"}),
+        transport=fake_openai_transport(captured),
+    )
+
+    assertions = extractor.extract("meeting.docx", chunk_text("효성중공업 C-Cube PoC"))
+
+    assert captured["store"] is False
+    assert captured["model"] == "gpt-5-mini-2025-08-07"
+    assert captured["text"]["format"]["type"] == "json_schema"
+    assert captured["text"]["format"]["strict"] is True
+    assert captured["timeout"] == 60
+    assert assertions[0].relation == "usesSystem"
+    assert assertions[0].evidence_chunk_sha256
+    assert assertions[0].evidence_start < assertions[0].evidence_end
+    assert "효성중공업" not in assertions[0].model_dump_json()
+    assert "test-key" not in repr(captured)
+
+
+def test_openai_extractor_rejects_quote_not_present_in_input():
+    extractor = OpenAISemanticExtractor(
+        EphemeralCredentialRegistry({"OPENAI_API_KEY": "test-key"}),
+        transport=fake_openai_transport({}, evidence_quote="invented evidence"),
+    )
+
+    assert extractor.extract("meeting.docx", chunk_text("효성중공업 C-Cube PoC")) == []
+
+
+def test_openai_extractor_fails_closed_without_credential():
+    extractor = OpenAISemanticExtractor(EphemeralCredentialRegistry({}), transport=lambda *_: {})
+
+    with pytest.raises(ValueError, match="credential is unavailable"):
+        extractor.extract("meeting.docx", chunk_text("효성중공업 C-Cube PoC"))
