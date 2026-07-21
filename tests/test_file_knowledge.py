@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from io import BytesIO
+from types import SimpleNamespace
 
 import pytest
 
@@ -11,6 +13,7 @@ from sdp.file_ontology import (
     file_asset_jsonld,
     validate_file_asset,
 )
+from sdp.storage_readers import AzureBlobReader, FilesystemReader, S3Reader
 
 
 ASSET_SHA256 = "a" * 64
@@ -113,3 +116,98 @@ def test_file_asset_validation_checks_provider_coordinates(provider, overrides, 
 def test_distribution_rejects_locator_query_to_avoid_secret_leak():
     with pytest.raises(ValueError, match="query or fragment"):
         sample_distribution(locator="https://objects.example/report.pdf?sig=secret")
+
+
+def test_filesystem_reader_stays_inside_root_and_reads_bytes(tmp_path):
+    path = tmp_path / "효성중공업 VOC.txt"
+    path.write_text("C-Cube PoC", encoding="utf-8")
+    (tmp_path / "~$효성중공업 VOC.docx").write_bytes(b"temporary")
+    reader = FilesystemReader(tmp_path)
+
+    refs = list(reader.list(name_pattern=r"효성중공업|중공업VOC"))
+
+    assert len(refs) == 1
+    assert reader.read(refs[0], max_bytes=1024) == "C-Cube PoC".encode()
+    assert refs[0].distribution.provider == "filesystem"
+    assert refs[0].distribution.locator == path.resolve().as_uri()
+
+
+def test_filesystem_reader_rejects_oversized_object(tmp_path):
+    path = tmp_path / "중공업VOC.txt"
+    path.write_bytes(b"12345")
+    reader = FilesystemReader(tmp_path)
+    ref = next(reader.list())
+
+    with pytest.raises(ValueError, match="maximum size"):
+        reader.read(ref, max_bytes=4)
+
+
+class FakeS3:
+    def get_paginator(self, operation):
+        assert operation == "list_objects_v2"
+        return SimpleNamespace(
+            paginate=lambda **kwargs: [
+                {
+                    "Contents": [
+                        {
+                            "Key": f"{kwargs['Prefix']}a.docx",
+                            "Size": 7,
+                            "ETag": '"etag-a"',
+                        }
+                    ]
+                }
+            ]
+        )
+
+    def get_object(self, **kwargs):
+        assert kwargs == {"Bucket": "voc", "Key": "reports/a.docx"}
+        return {"Body": BytesIO(b"content")}
+
+
+class FakeContainer:
+    url = "https://account.blob.core.windows.net/voc"
+    container_name = "voc"
+
+    def list_blobs(self, *, name_starts_with):
+        return [
+            SimpleNamespace(
+                name=f"{name_starts_with}a.docx",
+                size=7,
+                etag="etag-a",
+                version_id="version-a",
+                last_modified=None,
+            )
+        ]
+
+    def get_blob_client(self, name, **kwargs):
+        assert name == "reports/a.docx"
+        assert kwargs == {"version_id": "version-a"}
+        return SimpleNamespace(download_blob=lambda: SimpleNamespace(readall=lambda: b"content"))
+
+
+def test_s3_and_azure_readers_use_injected_clients():
+    s3 = S3Reader(FakeS3(), "voc")
+    azure = AzureBlobReader(FakeContainer())
+
+    s3_ref = next(s3.list("reports/"))
+    azure_ref = next(azure.list("reports/"))
+
+    assert s3_ref.object_key == azure_ref.object_key == "reports/a.docx"
+    assert s3.read(s3_ref, max_bytes=20) == b"content"
+    assert azure.read(azure_ref, max_bytes=20) == b"content"
+    assert s3_ref.distribution.locator == "s3://voc/reports/a.docx"
+    assert azure_ref.distribution.container == "voc"
+
+
+def test_s3_compatible_reader_uses_stable_endpoint_without_credentials():
+    reader = S3Reader(
+        FakeS3(),
+        "voc",
+        provider="s3_compatible",
+        endpoint_url="https://objects.example",
+    )
+
+    ref = next(reader.list("reports/"))
+
+    assert ref.distribution.provider == "s3_compatible"
+    assert ref.distribution.locator == "https://objects.example/voc/reports/a.docx"
