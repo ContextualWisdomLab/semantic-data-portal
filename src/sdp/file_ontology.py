@@ -6,7 +6,8 @@ import hashlib
 import json
 import re
 from datetime import datetime
-from importlib.resources import files
+# Python >=3.10 is required by pyproject.toml, so the stdlib module is valid.
+from importlib.resources import files  # nosemgrep: python.lang.compatibility.python37.python37-compatibility-importlib2
 from typing import Any, Literal
 from urllib.parse import urlsplit
 

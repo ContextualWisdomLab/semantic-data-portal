@@ -269,7 +269,8 @@ _SEMANTIC_SCHEMA = {
 
 def _orchestrator_http_transport(request: Request, timeout: int) -> dict[str, Any]:
     try:
-        with urlopen(request, timeout=timeout) as response:
+        # ContextualOrchestratorClient accepts only absolute HTTP(S) base URLs.
+        with urlopen(request, timeout=timeout) as response:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
             return json.loads(response.read().decode("utf-8"))
     except HTTPError as exc:
         raise RuntimeError(f"orchestrator request failed with HTTP {exc.code}") from None
