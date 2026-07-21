@@ -35,7 +35,8 @@ def isolate_in_memory_app_state():
     yield
     app_catalog._DATA.clear()
     app_catalog._DATA.update(data)
-    app_catalog._AUDIT_LOG[:] = audit_log
+    app_catalog._AUDIT_LOG.clear()
+    app_catalog._AUDIT_LOG.extend(audit_log)
     app_catalog._SCHEMA_HISTORY.clear()
     app_catalog._SCHEMA_HISTORY.update(schema_history)
     app_evidence._POLICY_DECISION_LOG[:] = policy_log
