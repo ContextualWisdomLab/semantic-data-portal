@@ -3,8 +3,13 @@ from __future__ import annotations
 from copy import deepcopy
 from io import BytesIO
 from types import SimpleNamespace
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
+
+from pypdf import PdfWriter
+
+from sdp.document_semantics import chunk_text, extract_document_text
 
 from sdp.file_ontology import (
     FileAsset,
@@ -211,3 +216,65 @@ def test_s3_compatible_reader_uses_stable_endpoint_without_credentials():
 
     assert ref.distribution.provider == "s3_compatible"
     assert ref.distribution.locator == "https://objects.example/voc/reports/a.docx"
+
+
+def make_openxml(member: str, text: str) -> bytes:
+    payload = BytesIO()
+    with ZipFile(payload, "w", ZIP_DEFLATED) as archive:
+        archive.writestr(
+            member,
+            f'<root xmlns:w="urn:test"><w:t>{text}</w:t></root>',
+        )
+    return payload.getvalue()
+
+
+@pytest.mark.parametrize(
+    ("filename", "member"),
+    [
+        ("meeting.docx", "word/document.xml"),
+        ("briefing.pptx", "ppt/slides/slide1.xml"),
+        ("feedback.xlsx", "xl/sharedStrings.xml"),
+    ],
+)
+def test_openxml_text_is_extracted_without_office_dependency(filename, member):
+    payload = make_openxml(member, "효성중공업 VOC C-Cube")
+
+    document = extract_document_text(filename, payload)
+
+    assert document.status == "extracted"
+    assert "효성중공업 VOC C-Cube" in document.text
+
+
+def test_chunks_are_bounded_overlapped_and_content_addressed():
+    chunks = chunk_text("가" * 13_000, max_chars=6_000, overlap=300, max_total_chars=24_000)
+
+    assert len(chunks) == 3
+    assert max(len(chunk.text) for chunk in chunks) <= 6_000
+    assert all(len(chunk.sha256) == 64 for chunk in chunks)
+    assert chunks[1].start == chunks[0].end - 300
+
+
+def test_pdf_without_extractable_text_is_marked_for_ocr():
+    payload = BytesIO()
+    writer = PdfWriter()
+    writer.add_blank_page(width=100, height=100)
+    writer.write(payload)
+
+    document = extract_document_text("scan.pdf", payload.getvalue())
+
+    assert document.status == "needs_ocr"
+    assert document.text == ""
+
+
+def test_corrupt_pdf_is_reported_without_crashing_the_batch():
+    document = extract_document_text("broken.pdf", b"not a pdf")
+
+    assert document.status == "extraction_failed"
+    assert document.text == ""
+
+
+def test_unsupported_legacy_format_is_reported_without_guessing():
+    document = extract_document_text("legacy.hwp", b"not parsed")
+
+    assert document.status == "unsupported_format"
+    assert document.text == ""
