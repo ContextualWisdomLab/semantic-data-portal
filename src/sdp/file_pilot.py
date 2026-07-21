@@ -23,9 +23,11 @@ from .storage_readers import FilesystemReader
 
 
 class PilotExtractor(Protocol):
-    def extract(self, filename: str, chunks: list[TextChunk]) -> list[SemanticAssertion]: ...
+    def extract(self, filename: str, chunks: list[TextChunk]) -> list[SemanticAssertion]:
+        pass
 
-    def embed_one(self, text: str) -> list[float]: ...
+    def embed_one(self, text: str) -> list[float]:
+        pass
 
 
 def run_local_pilot(

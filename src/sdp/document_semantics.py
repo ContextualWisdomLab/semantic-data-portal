@@ -60,7 +60,8 @@ class TextChunk:
 
 
 class CredentialRegistry(Protocol):
-    def get_credential(self, name: str) -> str | None: ...
+    def get_credential(self, name: str) -> str | None:
+        pass
 
 
 class EphemeralCredentialRegistry:

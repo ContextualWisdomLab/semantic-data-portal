@@ -36,9 +36,11 @@ class ObjectRef:
 class ObjectReader(Protocol):
     def list(
         self, prefix: str = "", *, name_pattern: str | None = None
-    ) -> Iterable[ObjectRef]: ...
+    ) -> Iterable[ObjectRef]:
+        pass
 
-    def read(self, ref: ObjectRef, *, max_bytes: int) -> bytes: ...
+    def read(self, ref: ObjectRef, *, max_bytes: int) -> bytes:
+        pass
 
 
 class FilesystemReader:
