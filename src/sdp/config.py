@@ -34,6 +34,9 @@ _DEFAULT_CONFIG: Dict[str, Any] = {
     "cors_allow_methods": ["GET", "POST", "PATCH", "OPTIONS"],
     "cors_allow_headers": ["*"],
     "embedding_dimension": 128,
+    "orchestrator_base_url": "",
+    "semantic_model": "gpt-5-mini-2025-08-07",
+    "embedding_model": "text-embedding-3-small",
     "graph_name": "semantic_graph",
     "semantic_search_default_limit": 5,
     "traversal_max_depth": 4,
@@ -94,6 +97,9 @@ class AppConfig:
     cors_allow_methods: List[str] = field(default_factory=list)
     cors_allow_headers: List[str] = field(default_factory=list)
     embedding_dimension: int = 128
+    orchestrator_base_url: str = ""
+    semantic_model: str = "gpt-5-mini-2025-08-07"
+    embedding_model: str = "text-embedding-3-small"
     graph_name: str = "semantic_graph"
     semantic_search_default_limit: int = 5
     traversal_max_depth: int = 4
@@ -112,6 +118,9 @@ class AppConfig:
             cors_allow_methods=list(merged["cors_allow_methods"]),
             cors_allow_headers=list(merged["cors_allow_headers"]),
             embedding_dimension=int(merged["embedding_dimension"]),
+            orchestrator_base_url=str(merged["orchestrator_base_url"]).rstrip("/"),
+            semantic_model=str(merged["semantic_model"]),
+            embedding_model=str(merged["embedding_model"]),
             graph_name=str(merged["graph_name"]),
             semantic_search_default_limit=int(merged["semantic_search_default_limit"]),
             traversal_max_depth=int(merged["traversal_max_depth"]),

@@ -133,13 +133,34 @@
   - `tests/test_api.py::test_enterprise_console_renders_operator_surface`
   - `tests/test_api.py::test_enterprise_demo_smoke_summary_is_ready`
 
-## 7) 다음 단계 (현재 브랜치에서 미반영 권고)
+## 7) File Knowledge / Hybrid Ontology
+
+- 표준 프로파일: RDF/OWL 2/SKOS/SHACL/DCAT 3/DCMI/PROV-O/SPDX/JSON-LD 기반 `ontology/cwl-file-profile.ttl`, `ontology/cwl-file-shapes.ttl`; `validate_file_asset`가 pySHACL로 shape를 실행한다.
+- 정체성/위치 분리: SHA-256 `FileAsset` 하나에 filesystem/S3/S3-compatible/Azure Blob `Distribution` 여러 개를 결합한다.
+- 읽기 전용 수집: `src/sdp/storage_readers.py`는 list/read만 제공하고 이동·삭제·원격 mutation 기능이 없다.
+- 의미 근거: `SemanticAssertion`은 confidence, proposed review status, chunk SHA-256, 문자 offset을 보존하며 원문 인용은 저장하지 않는다.
+- LLM 경계: `src/sdp/document_semantics.py::ContextualOrchestratorClient`가 `/v1/chat/completions`와 `/v1/embeddings`만 호출한다. 포털에는 OpenAI/provider key가 없다.
+- provider 중립성: Synology는 filesystem 배치일 뿐 필수 구성요소가 아니며, 파일 정체성은 저장소 URL과 독립적이다.
+- 정책/API: `POST /file-assets`, `GET /file-assets/{asset_id}`, `/jsonld`, `/validate`는 검증된 OIDC Bearer actor context와 저장된 `FileAsset.tenant_id`를 중앙 policy decision에 전달한다. body/query `actor`는 권한 근거가 아니며 locator 공개는 동일 tenant의 admin 또는 platform-admin이 필요하다.
+- 그래프 격리: 같은 SHA 및 파일 관계 대상의 cross-tenant merge를 거부한다. generic graph mutation은 file/distribution node를 다룰 수 없고 graph traversal/semantic search는 OIDC tenant policy로 file node를 필터링하며 locator를 redaction한다.
+- 운영 패키징: SHACL/OWL TTL은 `sdp/resources/*.ttl` package data로 wheel/container에 포함되고, `orchestrator_base_url` 구성 시 app lifespan은 runtime `CredentialRegistry` token이 없으면 fail-closed한다.
+- 벡터 일관성: KV `embedding_dimension`을 orchestrator `dimensions`에 전달하고 같은 orchestrator embedder를 memory/Postgres graph store의 ingest와 검색에 주입한다.
+- 파일럿: `src/sdp/file_pilot.py`가 content deduplication, 안전한 문서 추출, graph projection, 로컬 전용 manifest를 수행한다.
+- 2026-07-21 live 파일럿: `contextual-orchestrator`를 거친 OpenAI structured output으로 12개 파일을 10개 content-addressed 자산과 12개 distribution, 근거·신뢰도 포함 proposed assertion 286건으로 변환했다. 12개 모두 `extracted`, manifest의 10개 자산 모두 pySHACL conform이며 원문 조각·근거 인용문·credential marker는 0건이다. 민감한 파일명과 locator가 포함된 결과는 Git 제외 로컬 `outputs/hyosung-voc-file-index-live.json`에만 보관한다.
+- 증빙 테스트:
+  - `tests/test_file_knowledge.py::test_orchestrator_extractor_uses_strict_schema_and_persists_only_evidence_reference`
+  - `tests/test_file_knowledge.py::test_orchestrator_client_uses_sync_embeddings_endpoint`
+  - `tests/test_file_knowledge.py::test_local_pilot_deduplicates_content_and_writes_no_raw_text`
+  - `tests/test_file_knowledge.py::test_file_asset_api_requires_policy_and_redacts_jsonld_locator`
+  - `tests/test_graph_engine.py::test_config_loads_from_kv_mapping`
+
+## 8) 다음 단계 (현재 브랜치에서 미반영 권고)
 
 1. 조직 정책 기준으로 `search` 및 `list` 에 대한 사용 권한/발견성 정책을 명시적으로 강화
 2. API level 감사 이벤트 보존 기간 및 위변조 방지(로그 저장소 정책) 적용
 3. OpenCode/PR 리뷰 증적 저장(`PR`, `review`, `merge` 로그)과 main 병합 완료 상태 정기 기록
 
-## 8) 구현 완료 증적(현재 HEAD 기준)
+## 9) 구현 완료 증적(현재 HEAD 기준)
 
 - 대상 브랜치: `codex/sdp-enterprise-foundation`
 - 기준: `origin/main` 병합 후 현재 브랜치 HEAD

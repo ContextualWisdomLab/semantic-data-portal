@@ -24,7 +24,7 @@ from abc import ABC, abstractmethod
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from .config import AppConfig, get_app_config, load_bootstrap
 from .embeddings import cosine_similarity, embed_text
@@ -67,6 +67,24 @@ class GraphEdge:
 
 def _normalize(value: str) -> str:
     return value.strip().replace("_", " ").lower()
+
+
+def _is_governed_file_identifier(value: Any) -> bool:
+    text = str(value or "")
+    return text.startswith("urn:sha256:") or text.startswith("urn:cwl:distribution:")
+
+
+def _validate_concept_file_boundaries(payload: Dict[str, Any]) -> None:
+    values = [
+        payload.get("concept"),
+        payload.get("broader"),
+        *list(payload.get("narrower", [])),
+        *list(payload.get("related", [])),
+        *list(payload.get("aliases", [])),
+        *list(payload.get("multilingual", [])),
+    ]
+    if any(_is_governed_file_identifier(value) for value in values if value is not None):
+        raise ValueError("ontology concepts cannot use governed file identifiers")
 
 
 _logger = logging.getLogger(__name__)
@@ -175,7 +193,12 @@ class GraphStore(ABC):
 
     @abstractmethod
     def semantic_search(
-        self, query: str, *, kind: Optional[str] = None, limit: int = 5
+        self,
+        query: str,
+        *,
+        kind: Optional[str] = None,
+        limit: int = 5,
+        tenant_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Return the nearest graph nodes for a semantic query."""
 
@@ -192,9 +215,18 @@ class GraphStore(ABC):
 
 
 class InMemoryGraphStore(GraphStore):
-    def __init__(self, config: Optional[AppConfig] = None) -> None:
+    def __init__(
+        self,
+        config: Optional[AppConfig] = None,
+        *,
+        embedder: Optional[Callable[[str], List[float]]] = None,
+    ) -> None:
         self._config = config or get_app_config()
         self.dimension = self._config.embedding_dimension
+        self._embedder = embedder or (
+            lambda text: embed_text(text, self.dimension)
+        )
+        self._external_embedder = embedder is not None
         self._nodes: Dict[str, GraphNode] = {}
         self._edges: List[GraphEdge] = []
         self._embeddings: Dict[str, List[float]] = {}
@@ -220,7 +252,14 @@ class InMemoryGraphStore(GraphStore):
         )
         self._nodes[node_id] = node
         embed_source = text or label or node_id
-        self._embeddings[node_id] = embed_text(embed_source, self.dimension)
+        vector = [float(component) for component in self._embedder(embed_source)]
+        if not vector:
+            raise ValueError("embedding vector must not be empty")
+        if self._external_embedder and not self._embeddings:
+            self.dimension = len(vector)
+        if len(vector) != self.dimension:
+            raise ValueError(f"embedding dimension must be {self.dimension}")
+        self._embeddings[node_id] = vector
         return node
 
     def upsert_edge(
@@ -247,6 +286,7 @@ class InMemoryGraphStore(GraphStore):
         return edge
 
     def upsert_concept(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        _validate_concept_file_boundaries(payload)
         concept = payload["concept"].strip()
         record = {
             "concept": concept,
@@ -372,13 +412,31 @@ class InMemoryGraphStore(GraphStore):
         }
 
     def semantic_search(
-        self, query: str, *, kind: Optional[str] = None, limit: int = 5
+        self,
+        query: str,
+        *,
+        kind: Optional[str] = None,
+        limit: int = 5,
+        tenant_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        query_vec = embed_text(query, self.dimension)
+        query_vec = [float(component) for component in self._embedder(query)]
+        if len(query_vec) != self.dimension:
+            raise ValueError(f"embedding dimension must be {self.dimension}")
         scored: List[Dict[str, Any]] = []
         for node_id, vector in self._embeddings.items():
             node = self._nodes[node_id]
             if kind and node.kind != kind:
+                continue
+            node_tenant = str(
+                node.properties.get("tenant_id")
+                or (node.properties.get("file_asset") or {}).get("tenant_id")
+                or ""
+            )
+            if (
+                tenant_id is not None
+                and node.kind in {"file_asset", "distribution"}
+                and node_tenant != tenant_id
+            ):
                 continue
             score = cosine_similarity(query_vec, vector)
             scored.append(
@@ -421,11 +479,20 @@ def _vector_literal(vector: List[float]) -> str:
 class PostgresGraphStore(GraphStore):
     """Backend on Postgres with Apache AGE (openCypher) and pgvector (KNN)."""
 
-    def __init__(self, dsn: str, config: Optional[AppConfig] = None) -> None:
+    def __init__(
+        self,
+        dsn: str,
+        config: Optional[AppConfig] = None,
+        *,
+        embedder: Optional[Callable[[str], List[float]]] = None,
+    ) -> None:
         from sqlalchemy import create_engine
 
         self._config = config or get_app_config()
         self.dimension = self._config.embedding_dimension
+        self._embedder = embedder or (
+            lambda text: embed_text(text, self.dimension)
+        )
         self.graph_name = self._config.graph_name
         self._engine = create_engine(dsn, pool_pre_ping=True, future=True)
 
@@ -475,7 +542,8 @@ class PostgresGraphStore(GraphStore):
         )
         driver_connection = conn.connection.driver_connection
         with driver_connection.cursor() as cursor:
-            cursor.execute(statement, (json.dumps(params),))
+            # pg_sql quotes both literals; user values stay in the bound parameter map.
+            cursor.execute(statement, (json.dumps(params),))  # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query
             return cursor.fetchall()
 
     def upsert_node(
@@ -492,7 +560,9 @@ class PostgresGraphStore(GraphStore):
         label = label or node_id
         props = dict(properties or {})
         embed_source = text or label or node_id
-        vector = embed_text(embed_source, self.dimension)
+        vector = [float(component) for component in self._embedder(embed_source)]
+        if len(vector) != self.dimension:
+            raise ValueError(f"embedding dimension must be {self.dimension}")
         with self._engine.begin() as conn:
             self._prepare(conn)
             self._cypher(
@@ -563,6 +633,7 @@ class PostgresGraphStore(GraphStore):
     def upsert_concept(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         from sqlalchemy import text as sql
 
+        _validate_concept_file_boundaries(payload)
         concept = payload["concept"].strip()
         record = {
             "concept": concept,
@@ -747,11 +818,19 @@ class PostgresGraphStore(GraphStore):
         return result
 
     def semantic_search(
-        self, query: str, *, kind: Optional[str] = None, limit: int = 5
+        self,
+        query: str,
+        *,
+        kind: Optional[str] = None,
+        limit: int = 5,
+        tenant_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         from sqlalchemy import text as sql
 
-        vector = _vector_literal(embed_text(query, self.dimension))
+        query_vector = [float(component) for component in self._embedder(query)]
+        if len(query_vector) != self.dimension:
+            raise ValueError(f"embedding dimension must be {self.dimension}")
+        vector = _vector_literal(query_vector)
         stmt = (
             "SELECT e.node_id, e.node_kind, n.node_label, "
             "1 - (e.embedding <=> CAST(:vec AS vector)) AS score "
@@ -759,12 +838,23 @@ class PostgresGraphStore(GraphStore):
             "LEFT JOIN graph_nodes n ON n.node_id = e.node_id "
         )
         params: Dict[str, Any] = {"vec": vector, "limit": limit}
+        conditions: List[str] = []
         if kind:
-            stmt += "WHERE e.node_kind = :kind "
+            conditions.append("e.node_kind = :kind")
             params["kind"] = kind
+        if tenant_id is not None:
+            conditions.append(
+                "(e.node_kind NOT IN ('file_asset', 'distribution') OR "
+                "COALESCE(n.node_properties ->> 'tenant_id', "
+                "n.node_properties -> 'file_asset' ->> 'tenant_id') = :tenant_id)"
+            )
+            params["tenant_id"] = tenant_id
+        if conditions:
+            stmt += "WHERE " + " AND ".join(conditions) + " "
         stmt += "ORDER BY e.embedding <=> CAST(:vec AS vector) LIMIT :limit"
         with self._engine.connect() as conn:
-            rows = conn.execute(sql(stmt), params).fetchall()
+            # stmt contains only closed fragments; every dynamic value is bound in params.
+            rows = conn.execute(sql(stmt), params).fetchall()  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
         return [
             {
                 "node_id": row[0],
@@ -825,6 +915,15 @@ class PostgresGraphStore(GraphStore):
 _STORE: Optional[GraphStore] = None
 
 
+def _configured_embedder(config: AppConfig) -> Optional[Callable[[str], List[float]]]:
+    if not config.orchestrator_base_url:
+        return None
+    # Lazy import avoids the file-ontology -> graph-store dependency cycle.
+    from .document_semantics import build_orchestrator_client
+
+    return build_orchestrator_client(config).embed_one
+
+
 def build_store() -> GraphStore:
     """Construct the configured backend for the current bootstrap config.
 
@@ -844,12 +943,18 @@ def build_store() -> GraphStore:
     bootstrap = load_bootstrap()
     config = get_app_config()
     backend = config.graph_backend
+    embedder = _configured_embedder(config)
 
     if backend == "memory":
-        return InMemoryGraphStore(config=config)
+        return InMemoryGraphStore(config=config, embedder=embedder)
 
     if bootstrap.has_database:
-        store = PostgresGraphStore(bootstrap.database_dsn, config=config)
+        store_kwargs = {"embedder": embedder} if embedder is not None else {}
+        store = PostgresGraphStore(
+            bootstrap.database_dsn,
+            config=config,
+            **store_kwargs,
+        )
         readiness = store.readiness()
         if not readiness.get("ready"):
             raise RuntimeError(
@@ -865,13 +970,20 @@ def build_store() -> GraphStore:
             "(bootstrap transport SDP_DATABASE_DSN is unset)."
         )
 
-    return InMemoryGraphStore(config=config)
+    return InMemoryGraphStore(config=config, embedder=embedder)
 
 
 def get_store() -> GraphStore:
+    """Build and seed the active store lazily after runtime credentials exist."""
+
     global _STORE
     if _STORE is None:
         _STORE = build_store()
+        # Lazy import avoids the seed -> graph_store dependency cycle. Passing
+        # the concrete store prevents seed_store from recursively calling us.
+        from .seed import seed_store
+
+        seed_store(_STORE)
     return _STORE
 
 

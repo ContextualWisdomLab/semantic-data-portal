@@ -10,6 +10,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from jwt.algorithms import RSAAlgorithm
 
 import sdp.catalog as app_catalog
+import sdp.authz as app_authz
 import sdp.domain as app_domain
 import sdp.evidence as app_evidence
 import sdp.observability as app_observability
@@ -34,7 +35,8 @@ def isolate_in_memory_app_state():
     yield
     app_catalog._DATA.clear()
     app_catalog._DATA.update(data)
-    app_catalog._AUDIT_LOG[:] = audit_log
+    app_catalog._AUDIT_LOG.clear()
+    app_catalog._AUDIT_LOG.extend(audit_log)
     app_catalog._SCHEMA_HISTORY.clear()
     app_catalog._SCHEMA_HISTORY.update(schema_history)
     app_evidence._POLICY_DECISION_LOG[:] = policy_log
@@ -442,6 +444,11 @@ def test_oidc_jwks_verification_maps_verified_token_without_token_leak():
     assert body["actor_context"]["roles"] == ["data-analyst"]
     assert body["ignored_role_claims"] == ["sdp-platform-admins"]
     assert token not in json.dumps(body)
+
+
+def test_oidc_jwks_loader_rejects_non_https_url():
+    with pytest.raises(ValueError, match="HTTPS"):
+        app_authz._load_jwks_from_url("file:///etc/passwd")
 
 
 def test_oidc_jwks_verification_rejects_wrong_audience():
