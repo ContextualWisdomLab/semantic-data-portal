@@ -200,12 +200,18 @@ def test_config_loads_from_kv_mapping(monkeypatch):
     override = {
         "cors_allow_origins": ["https://portal.example.org"],
         "embedding_dimension": 128,
+        "orchestrator_base_url": "https://orchestrator.example",
+        "semantic_model": "semantic-model-v1",
+        "embedding_model": "embedding-model-v1",
     }
     monkeypatch.setattr(config_module, "_load_from_kv_table", lambda bootstrap: override)
     config_module.reset_config_cache()
     try:
         cfg = config_module.get_app_config()
         assert cfg.cors_allow_origins == ["https://portal.example.org"]
+        assert cfg.orchestrator_base_url == "https://orchestrator.example"
+        assert cfg.semantic_model == "semantic-model-v1"
+        assert cfg.embedding_model == "embedding-model-v1"
         assert cfg.source == "config_entries"
     finally:
         config_module.reset_config_cache()

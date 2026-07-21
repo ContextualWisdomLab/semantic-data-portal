@@ -3,16 +3,20 @@ from __future__ import annotations
 import json
 from copy import deepcopy
 from io import BytesIO
+from pathlib import Path
 from types import SimpleNamespace
 from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
 
+from fastapi.testclient import TestClient
 from pypdf import PdfWriter
 
+from sdp import api as api_module
+from sdp.api import app
 from sdp.document_semantics import (
+    ContextualOrchestratorClient,
     EphemeralCredentialRegistry,
-    OpenAISemanticExtractor,
     chunk_text,
     extract_document_text,
 )
@@ -22,13 +26,18 @@ from sdp.file_ontology import (
     SemanticAssertion,
     StorageDistribution,
     file_asset_jsonld,
+    get_file_asset,
+    upsert_file_asset,
     validate_file_asset,
 )
+from sdp.file_pilot import run_local_pilot
+from sdp.graph_store import InMemoryGraphStore
 from sdp.storage_readers import AzureBlobReader, FilesystemReader, S3Reader
 
 
 ASSET_SHA256 = "a" * 64
 CHUNK_SHA256 = "b" * 64
+client = TestClient(app)
 
 
 def sample_distribution(**overrides: object) -> StorageDistribution:
@@ -51,6 +60,7 @@ def sample_assertion(**overrides: object) -> SemanticAssertion:
         "evidence_chunk_sha256": CHUNK_SHA256,
         "evidence_start": 3,
         "evidence_end": 9,
+        "method": "manual-test",
     }
     values.update(overrides)
     return SemanticAssertion(**values)
@@ -98,6 +108,23 @@ def test_file_asset_validation_rejects_unverifiable_evidence():
     assert report["conforms"] is False
     paths = {violation["path"] for violation in report["violations"]}
     assert {"assertions.evidence_chunk_sha256", "assertions.evidence_end"} <= paths
+
+
+def test_semantic_assertion_requires_extraction_provenance():
+    values = sample_assertion().model_dump()
+    values.pop("method")
+
+    with pytest.raises(ValueError, match="method"):
+        SemanticAssertion(**values)
+
+
+def test_machine_readable_profile_requires_assertion_provenance():
+    root = Path(__file__).resolve().parents[1]
+    profile = (root / "ontology" / "cwl-file-profile.ttl").read_text(encoding="utf-8")
+    shapes = (root / "ontology" / "cwl-file-shapes.ttl").read_text(encoding="utf-8")
+
+    assert "cwl:extractionMethod a owl:DatatypeProperty" in profile
+    assert "sh:path cwl:extractionMethod ; sh:minCount 1" in shapes
 
 
 @pytest.mark.parametrize(
@@ -286,36 +313,33 @@ def test_unsupported_legacy_format_is_reported_without_guessing():
     assert document.text == ""
 
 
-def fake_openai_transport(captured, *, evidence_quote="효성중공업"):
+def fake_orchestrator_transport(captured, *, evidence_quote="효성중공업"):
     def transport(request, timeout):
         payload = json.loads(request.data.decode("utf-8"))
         captured.update(payload)
+        captured["url"] = request.full_url
         captured["timeout"] = timeout
-        assert request.get_header("Authorization") == "Bearer test-key"
+        assert request.get_header("Authorization") == "Bearer orchestrator-token"
         return {
-            "status": "completed",
-            "output": [
+            "choices": [
                 {
-                    "type": "message",
-                    "content": [
-                        {
-                            "type": "output_text",
-                            "text": json.dumps(
-                                {
-                                    "assertions": [
-                                        {
-                                            "relation": "usesSystem",
-                                            "target_kind": "system",
-                                            "target_label": "C-Cube",
-                                            "confidence": 0.93,
-                                            "evidence_quote": evidence_quote,
-                                        }
-                                    ]
-                                },
-                                ensure_ascii=False,
-                            ),
-                        }
-                    ],
+                    "message": {
+                        "role": "assistant",
+                        "content": json.dumps(
+                            {
+                                "assertions": [
+                                    {
+                                        "relation": "usesSystem",
+                                        "target_kind": "system",
+                                        "target_label": "C-Cube",
+                                        "confidence": 0.93,
+                                        "evidence_quote": evidence_quote,
+                                    }
+                                ]
+                            },
+                            ensure_ascii=False,
+                        ),
+                    }
                 }
             ],
         }
@@ -323,38 +347,230 @@ def fake_openai_transport(captured, *, evidence_quote="효성중공업"):
     return transport
 
 
-def test_openai_extractor_uses_strict_schema_and_persists_only_evidence_reference():
+def test_orchestrator_extractor_uses_strict_schema_and_persists_only_evidence_reference():
     captured = {}
-    extractor = OpenAISemanticExtractor(
-        EphemeralCredentialRegistry({"OPENAI_API_KEY": "test-key"}),
-        transport=fake_openai_transport(captured),
+    extractor = ContextualOrchestratorClient(
+        EphemeralCredentialRegistry(
+            {"CONTEXTUAL_ORCHESTRATOR_TOKEN": "orchestrator-token"}
+        ),
+        base_url="https://orchestrator.example",
+        transport=fake_orchestrator_transport(captured),
     )
 
     assertions = extractor.extract("meeting.docx", chunk_text("효성중공업 C-Cube PoC"))
 
     assert captured["store"] is False
     assert captured["model"] == "gpt-5-mini-2025-08-07"
-    assert captured["text"]["format"]["type"] == "json_schema"
-    assert captured["text"]["format"]["strict"] is True
+    assert captured["response_format"]["type"] == "json_schema"
+    assert captured["response_format"]["json_schema"]["strict"] is True
+    assert captured["url"] == "https://orchestrator.example/v1/chat/completions"
     assert captured["timeout"] == 60
     assert assertions[0].relation == "usesSystem"
+    assert assertions[0].method == "contextual-orchestrator"
     assert assertions[0].evidence_chunk_sha256
     assert assertions[0].evidence_start < assertions[0].evidence_end
     assert "효성중공업" not in assertions[0].model_dump_json()
-    assert "test-key" not in repr(captured)
+    assert "orchestrator-token" not in repr(captured)
 
 
-def test_openai_extractor_rejects_quote_not_present_in_input():
-    extractor = OpenAISemanticExtractor(
-        EphemeralCredentialRegistry({"OPENAI_API_KEY": "test-key"}),
-        transport=fake_openai_transport({}, evidence_quote="invented evidence"),
+def test_orchestrator_extractor_rejects_quote_not_present_in_input():
+    extractor = ContextualOrchestratorClient(
+        EphemeralCredentialRegistry(
+            {"CONTEXTUAL_ORCHESTRATOR_TOKEN": "orchestrator-token"}
+        ),
+        base_url="https://orchestrator.example",
+        transport=fake_orchestrator_transport({}, evidence_quote="invented evidence"),
     )
 
     assert extractor.extract("meeting.docx", chunk_text("효성중공업 C-Cube PoC")) == []
 
 
-def test_openai_extractor_fails_closed_without_credential():
-    extractor = OpenAISemanticExtractor(EphemeralCredentialRegistry({}), transport=lambda *_: {})
+def test_orchestrator_extractor_fails_closed_without_credential():
+    extractor = ContextualOrchestratorClient(
+        EphemeralCredentialRegistry({}),
+        base_url="https://orchestrator.example",
+        transport=lambda *_: {},
+    )
 
     with pytest.raises(ValueError, match="credential is unavailable"):
         extractor.extract("meeting.docx", chunk_text("효성중공업 C-Cube PoC"))
+
+
+def test_orchestrator_client_uses_sync_embeddings_endpoint():
+    captured = {}
+
+    def transport(request, timeout):
+        captured["url"] = request.full_url
+        captured["payload"] = json.loads(request.data.decode("utf-8"))
+        assert request.get_header("Authorization") == "Bearer orchestrator-token"
+        return {
+            "object": "list",
+            "data": [
+                {"object": "embedding", "index": 1, "embedding": [0.0, 1.0]},
+                {"object": "embedding", "index": 0, "embedding": [1.0, 0.0]},
+            ],
+            "model": "text-embedding-3-small",
+            "usage": {"prompt_tokens": 4, "total_tokens": 4},
+        }
+
+    client = ContextualOrchestratorClient(
+        EphemeralCredentialRegistry(
+            {"CONTEXTUAL_ORCHESTRATOR_TOKEN": "orchestrator-token"}
+        ),
+        base_url="https://orchestrator.example/",
+        transport=transport,
+    )
+
+    assert client.embed(["alpha", "beta"]) == [[1.0, 0.0], [0.0, 1.0]]
+    assert captured["url"] == "https://orchestrator.example/v1/embeddings"
+    assert captured["payload"] == {
+        "model": "text-embedding-3-small",
+        "input": ["alpha", "beta"],
+        "metadata": {"service": "semantic-data-portal"},
+    }
+
+
+def test_graph_store_can_use_orchestrator_embedding_client():
+    embedded = []
+
+    def embedder(text):
+        embedded.append(text)
+        return [1.0, 0.0] if "VOC" in text else [0.0, 1.0]
+
+    store = InMemoryGraphStore(embedder=embedder)
+    store.upsert_node("voc", "file_asset", label="효성중공업 VOC")
+
+    assert store.semantic_search("VOC query")[0]["node_id"] == "voc"
+    assert embedded == ["효성중공업 VOC", "VOC query"]
+
+
+def test_local_pilot_deduplicates_content_and_writes_no_raw_text(tmp_path):
+    root = tmp_path / "input"
+    root.mkdir()
+    (root / "효성중공업 VOC.txt").write_text("C-Cube PoC", encoding="utf-8")
+    (root / "중공업VOC copy.txt").write_text("C-Cube PoC", encoding="utf-8")
+    output = tmp_path / "manifest.json"
+
+    class FakeExtractor:
+        def __init__(self):
+            self.extract_calls = 0
+
+        def extract(self, filename, chunks):
+            self.extract_calls += 1
+            chunk = chunks[0]
+            return [
+                SemanticAssertion(
+                    relation="usesSystem",
+                    target_kind="system",
+                    target_label="C-Cube",
+                    confidence=0.9,
+                    evidence_chunk_sha256=chunk.sha256,
+                    evidence_start=chunk.start,
+                    evidence_end=chunk.start + len("C-Cube"),
+                    method="fake-extractor",
+                )
+            ]
+
+        def embed_one(self, text):
+            return [1.0, 0.0]
+
+    extractor = FakeExtractor()
+    summary = run_local_pilot(
+        root,
+        output,
+        name_pattern=r"효성중공업|중공업VOC",
+        extractor=extractor,
+    )
+
+    manifest = output.read_text(encoding="utf-8")
+    assert summary["files"] == 2
+    assert summary["assets"] == 1
+    assert summary["distributions"] == 2
+    assert extractor.extract_calls == 1
+    assert "C-Cube PoC" not in manifest
+    assert "evidence_quote" not in manifest
+    assert "dcat:accessURL" in manifest
+
+
+def test_upsert_file_asset_merges_same_content_distributions_and_projects_assertions():
+    store = InMemoryGraphStore()
+    first = sample_asset()
+    second = sample_asset(
+        distributions=[
+            sample_distribution(
+                id="dist-copy",
+                locator="file:///D:/Documents/report-copy.docx",
+            )
+        ]
+    )
+
+    upsert_file_asset(store, first)
+    merged = upsert_file_asset(store, second)
+
+    assert len(merged.distributions) == 2
+    assert get_file_asset(store, first.asset_id) == merged
+    graph = store.traverse(first.asset_id, direction="out", max_depth=1)
+    assert {edge["edge_type"] for edge in graph["edges"]} >= {
+        "DISTRIBUTION",
+        "USES_SYSTEM",
+    }
+    node = store.get_node(first.asset_id)
+    assert node is not None
+    assert "C-Cube PoC" not in json.dumps(node.properties, ensure_ascii=False)
+
+
+def sample_request(actor: str) -> dict[str, object]:
+    return {**sample_asset().model_dump(mode="json"), "actor": actor}
+
+
+def test_file_asset_api_requires_policy_and_redacts_jsonld_locator(monkeypatch):
+    store = InMemoryGraphStore()
+    monkeypatch.setattr(api_module, "get_store", lambda: store)
+
+    denied = client.post("/file-assets", json=sample_request("analyst"))
+    created = client.post("/file-assets", json=sample_request("admin"))
+
+    assert denied.status_code == 403
+    assert created.status_code == 200
+    asset_id = created.json()["asset_id"]
+    detail = client.get(f"/file-assets/{asset_id}", params={"actor": "analyst"})
+    graph_node = client.get(f"/graph/nodes/{asset_id}")
+    exported = client.get(f"/file-assets/{asset_id}/jsonld", params={"actor": "analyst"})
+    assert detail.status_code == 200
+    assert "file:///" not in detail.text
+    assert graph_node.status_code == 200
+    assert "file:///" not in graph_node.text
+    assert exported.status_code == 200
+    assert "dcat:accessURL" not in exported.text
+
+    location_denied = client.get(
+        f"/file-assets/{asset_id}/jsonld",
+        params={"actor": "analyst", "include_locations": True},
+    )
+    location_allowed = client.get(
+        f"/file-assets/{asset_id}/jsonld",
+        params={"actor": "admin", "include_locations": True},
+    )
+    detail_location_allowed = client.get(
+        f"/file-assets/{asset_id}",
+        params={"actor": "admin", "include_locations": True},
+    )
+    assert location_denied.status_code == 403
+    assert location_allowed.status_code == 200
+    assert location_allowed.json()["dcat:distribution"][0]["dcat:accessURL"].startswith("file:")
+    assert detail_location_allowed.status_code == 200
+    assert detail_location_allowed.json()["distributions"][0]["locator"].startswith("file:")
+
+
+def test_file_asset_api_exposes_validation_and_404(monkeypatch):
+    store = InMemoryGraphStore()
+    monkeypatch.setattr(api_module, "get_store", lambda: store)
+    created = client.post("/file-assets", json=sample_request("admin"))
+    asset_id = created.json()["asset_id"]
+
+    report = client.get(f"/file-assets/{asset_id}/validate", params={"actor": "analyst"})
+    missing = client.get(f"/file-assets/urn:sha256:{'f' * 64}", params={"actor": "analyst"})
+
+    assert report.status_code == 200
+    assert report.json()["conforms"] is True
+    assert missing.status_code == 404

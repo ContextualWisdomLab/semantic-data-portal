@@ -10,6 +10,8 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, field_validator
 
+from .graph_store import GraphStore
+
 
 StorageProvider = Literal["filesystem", "s3", "s3_compatible", "azure_blob"]
 AssertionRelation = Literal[
@@ -81,7 +83,7 @@ class SemanticAssertion(BaseModel):
     evidence_chunk_sha256: str
     evidence_start: int
     evidence_end: int
-    method: str = "openai"
+    method: str = Field(min_length=1)
     review_status: Literal["proposed", "approved", "rejected"] = "proposed"
 
 
@@ -97,6 +99,10 @@ class FileAsset(BaseModel):
     @property
     def asset_id(self) -> str:
         return f"urn:sha256:{self.sha256}"
+
+
+class FileAssetIngestRequest(FileAsset):
+    actor: str = Field(default="anonymous", min_length=1)
 
 
 def _violation(path: str, message: str) -> dict[str, str]:
@@ -225,3 +231,111 @@ def file_asset_jsonld(asset: FileAsset, *, include_locations: bool = False) -> d
     if asset.modified_at:
         payload["dcterms:modified"] = asset.modified_at.isoformat()
     return payload
+
+
+_EDGE_TYPES = {
+    "belongsToProject": "BELONGS_TO_PROJECT",
+    "usesSystem": "USES_SYSTEM",
+    "hasWorkPhase": "HAS_WORK_PHASE",
+    "hasArtifactType": "HAS_ARTIFACT_TYPE",
+    "hasTopic": "HAS_TOPIC",
+    "wasDerivedFrom": "WAS_DERIVED_FROM",
+    "previousVersion": "PREVIOUS_VERSION",
+}
+
+
+def get_file_asset(store: GraphStore, asset_id: str) -> FileAsset | None:
+    node = store.get_node(asset_id)
+    if node is None or node.kind != "file_asset":
+        return None
+    payload = node.properties.get("file_asset")
+    return FileAsset.model_validate(payload) if isinstance(payload, dict) else None
+
+
+def _merge_asset(existing: FileAsset | None, incoming: FileAsset) -> FileAsset:
+    if existing is None:
+        return incoming
+    distributions = {item.id: item for item in existing.distributions}
+    distributions.update({item.id: item for item in incoming.distributions})
+    assertions = {
+        (item.relation, item.target_kind, item.target_label.strip().casefold()): item
+        for item in existing.assertions
+    }
+    for item in incoming.assertions:
+        key = (item.relation, item.target_kind, item.target_label.strip().casefold())
+        if key not in assertions or item.confidence > assertions[key].confidence:
+            assertions[key] = item
+    return existing.model_copy(
+        update={
+            "distributions": list(distributions.values()),
+            "assertions": list(assertions.values()),
+            "modified_at": max(
+                filter(None, (existing.modified_at, incoming.modified_at)),
+                default=None,
+            ),
+        }
+    )
+
+
+def upsert_file_asset(store: GraphStore, asset: FileAsset) -> FileAsset:
+    """Validate, merge and project one content-addressed asset into the graph."""
+
+    report = validate_file_asset(asset)
+    if not report["conforms"]:
+        messages = "; ".join(item["message"] for item in report["violations"])
+        raise ValueError(f"file asset does not conform: {messages}")
+    merged = _merge_asset(get_file_asset(store, asset.asset_id), asset)
+    embedding_text = " ".join(
+        [merged.title] + [assertion.target_label for assertion in merged.assertions]
+    )
+    store.upsert_node(
+        merged.asset_id,
+        "file_asset",
+        label=merged.title,
+        properties={
+            "profile": "CWL File Knowledge Profile 0.1",
+            "file_asset": merged.model_dump(mode="json"),
+        },
+        text=embedding_text,
+    )
+
+    for distribution in merged.distributions:
+        distribution_id = f"urn:cwl:distribution:{distribution.id}"
+        store.upsert_node(
+            distribution_id,
+            "distribution",
+            label=distribution.id,
+            properties=distribution.model_dump(mode="json"),
+            text=f"{distribution.provider} {distribution.endpoint_id}",
+        )
+        store.upsert_edge("DISTRIBUTION", merged.asset_id, distribution_id)
+
+    for assertion in merged.assertions:
+        target_id = concept_id(assertion.target_kind, assertion.target_label)
+        target_kind = (
+            "file_asset_reference" if assertion.target_kind == "file_asset" else assertion.target_kind
+        )
+        store.upsert_node(
+            target_id,
+            target_kind,
+            label=assertion.target_label,
+            properties={
+                "skos_pref_label": assertion.target_label,
+                "review_status": assertion.review_status,
+            },
+            text=assertion.target_label,
+        )
+        store.upsert_edge(
+            _EDGE_TYPES[assertion.relation],
+            merged.asset_id,
+            target_id,
+            properties={
+                "confidence": assertion.confidence,
+                "evidence_chunk_sha256": assertion.evidence_chunk_sha256,
+                "evidence_start": assertion.evidence_start,
+                "evidence_end": assertion.evidence_end,
+                "method": assertion.method,
+                "review_status": assertion.review_status,
+            },
+        )
+    return merged

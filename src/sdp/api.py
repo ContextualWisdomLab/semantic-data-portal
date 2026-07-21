@@ -28,6 +28,14 @@ from .graph_models import (
     SemanticSearchRequest,
 )
 from .graph_store import get_store
+from .file_ontology import (
+    FileAsset,
+    FileAssetIngestRequest,
+    file_asset_jsonld,
+    get_file_asset,
+    upsert_file_asset,
+    validate_file_asset,
+)
 from .seed import seed_store
 from .catalog import (
     deprecate_dataset,
@@ -754,7 +762,83 @@ def get_graph_node(node_id: str) -> dict[str, Any]:
     node = get_store().get_node(node_id)
     if node is None:
         raise HTTPException(status_code=404, detail="node not found")
-    return node.as_dict()
+    return _redact_storage_coordinates(node.as_dict())
+
+
+# --- Standards-aligned file assets ------------------------------------------
+
+
+_STORAGE_COORDINATE_KEYS = {"locator", "bucket", "container", "object_key"}
+
+
+def _redact_storage_coordinates(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: _redact_storage_coordinates(item)
+            for key, item in value.items()
+            if key not in _STORAGE_COORDINATE_KEYS
+        }
+    if isinstance(value, list):
+        return [_redact_storage_coordinates(item) for item in value]
+    return value
+
+
+@app.post("/file-assets")
+def ingest_file_asset(payload: FileAssetIngestRequest) -> dict[str, Any]:
+    _authorize_graph_write(payload.actor, payload.asset_id)
+    try:
+        asset = upsert_file_asset(
+            get_store(),
+            FileAsset.model_validate(payload.model_dump(exclude={"actor"})),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {
+        "status": "upserted",
+        "asset_id": asset.asset_id,
+        "asset": asset.model_dump(mode="json"),
+    }
+
+
+def _read_file_asset(asset_id: str, actor: str):
+    _authorize_graph_read(actor, asset_id)
+    asset = get_file_asset(get_store(), asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="file asset not found")
+    return asset
+
+
+@app.get("/file-assets/{asset_id}")
+def file_asset_detail(
+    asset_id: str,
+    actor: str = Query(default="anonymous"),
+    include_locations: bool = Query(default=False),
+) -> dict[str, Any]:
+    asset = _read_file_asset(asset_id, actor)
+    if include_locations:
+        _authorize_graph_write(actor, asset_id)
+    payload = {"asset_id": asset.asset_id, **asset.model_dump(mode="json")}
+    return payload if include_locations else _redact_storage_coordinates(payload)
+
+
+@app.get("/file-assets/{asset_id}/jsonld")
+def file_asset_jsonld_export(
+    asset_id: str,
+    actor: str = Query(default="anonymous"),
+    include_locations: bool = Query(default=False),
+) -> dict[str, Any]:
+    asset = _read_file_asset(asset_id, actor)
+    if include_locations:
+        _authorize_graph_write(actor, asset_id)
+    return file_asset_jsonld(asset, include_locations=include_locations)
+
+
+@app.get("/file-assets/{asset_id}/validate")
+def file_asset_validation(
+    asset_id: str,
+    actor: str = Query(default="anonymous"),
+) -> dict[str, Any]:
+    return validate_file_asset(_read_file_asset(asset_id, actor))
 
 
 # --- Graph traversal + semantic retrieval ------------------------------------

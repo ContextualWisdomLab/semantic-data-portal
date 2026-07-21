@@ -21,4 +21,5 @@ cwl:SemanticAssertionShape a sh:NodeShape ;
     sh:property [ sh:path cwl:reviewStatus ; sh:minCount 1 ; sh:maxCount 1 ] ;
     sh:property [ sh:path cwl:evidenceChunkSha256 ; sh:minCount 1 ; sh:maxCount 1 ] ;
     sh:property [ sh:path cwl:evidenceStart ; sh:minCount 1 ; sh:maxCount 1 ] ;
-    sh:property [ sh:path cwl:evidenceEnd ; sh:minCount 1 ; sh:maxCount 1 ] .
+    sh:property [ sh:path cwl:evidenceEnd ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:property [ sh:path cwl:extractionMethod ; sh:minCount 1 ; sh:maxCount 1 ] .

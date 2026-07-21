@@ -10,6 +10,7 @@ from io import BytesIO
 from pathlib import PurePath
 from typing import Any, Callable, Literal, Mapping, Protocol
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 from zipfile import BadZipFile, ZipFile
 
@@ -163,7 +164,7 @@ def chunk_text(
     return chunks
 
 
-OpenAITransport = Callable[[Request, int], dict[str, Any]]
+OrchestratorTransport = Callable[[Request, int], dict[str, Any]]
 
 _SEMANTIC_SCHEMA = {
     "type": "object",
@@ -217,106 +218,146 @@ _SEMANTIC_SCHEMA = {
 }
 
 
-def _openai_http_transport(request: Request, timeout: int) -> dict[str, Any]:
+def _orchestrator_http_transport(request: Request, timeout: int) -> dict[str, Any]:
     try:
         with urlopen(request, timeout=timeout) as response:
             return json.loads(response.read().decode("utf-8"))
     except HTTPError as exc:
-        raise RuntimeError(f"OpenAI request failed with HTTP {exc.code}") from None
+        raise RuntimeError(f"orchestrator request failed with HTTP {exc.code}") from None
     except URLError:
-        raise RuntimeError("OpenAI request could not reach the service") from None
+        raise RuntimeError("orchestrator request could not reach the service") from None
 
 
-def _response_output_text(response: dict[str, Any]) -> str:
-    if response.get("status") != "completed":
-        raise ValueError("OpenAI response did not complete")
-    for output in response.get("output", []):
-        if output.get("type") != "message":
-            continue
-        for content in output.get("content", []):
-            if content.get("type") == "output_text" and isinstance(content.get("text"), str):
-                return content["text"]
-    raise ValueError("OpenAI response contains no output text")
+def _chat_completion_content(response: dict[str, Any]) -> str:
+    try:
+        content = response["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise ValueError("orchestrator response contains no completion") from exc
+    if not isinstance(content, str):
+        raise ValueError("orchestrator completion content must be text")
+    return content
 
 
-class OpenAISemanticExtractor:
+class ContextualOrchestratorClient:
+    """Authenticated LLM and embedding client for contextual-orchestrator."""
+
     def __init__(
         self,
         credentials: CredentialRegistry,
         *,
-        transport: OpenAITransport = _openai_http_transport,
-        model: str = "gpt-5-mini-2025-08-07",
+        base_url: str,
+        transport: OrchestratorTransport = _orchestrator_http_transport,
+        semantic_model: str = "gpt-5-mini-2025-08-07",
+        embedding_model: str = "text-embedding-3-small",
         timeout: int = 60,
     ) -> None:
+        parsed = urlsplit(base_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("orchestrator base URL must be absolute HTTP(S)")
+        if parsed.query or parsed.fragment:
+            raise ValueError("orchestrator base URL must not contain query or fragment")
         self.credentials = credentials
+        self.base_url = base_url.rstrip("/")
         self.transport = transport
-        self.model = model
+        self.semantic_model = semantic_model
+        self.embedding_model = embedding_model
         self.timeout = timeout
 
     def _payload(self, filename: str, chunk: TextChunk) -> dict[str, Any]:
         return {
-            "model": self.model,
+            "model": self.semantic_model,
             "store": False,
-            "instructions": (
-                "Extract only explicitly evidenced business semantics from the document chunk. "
-                "Return Korean labels when the source uses Korean. Do not infer facts absent from the text."
-            ),
-            "input": [
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "Extract only explicitly evidenced business semantics from the document chunk. "
+                        "Return Korean labels when the source uses Korean. Do not infer facts absent from the text."
+                    ),
+                },
                 {
                     "role": "user",
-                    "content": [
-                        {
-                            "type": "input_text",
-                            "text": f"Filename: {filename}\nDocument chunk:\n{chunk.text}",
-                        }
-                    ],
-                }
+                    "content": f"Filename: {filename}\nDocument chunk:\n{chunk.text}",
+                },
             ],
-            "text": {
-                "format": {
-                    "type": "json_schema",
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
                     "name": "cwl_file_semantics",
                     "strict": True,
                     "schema": _SEMANTIC_SCHEMA,
-                }
+                },
             },
-            "max_output_tokens": 1_500,
+            "max_completion_tokens": 1_500,
         }
 
-    def extract(self, filename: str, chunks: list[TextChunk]) -> list[SemanticAssertion]:
-        api_key = self.credentials.get_credential("OPENAI_API_KEY")
-        if not api_key:
-            raise ValueError("OpenAI credential is unavailable")
+    def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        token = self.credentials.get_credential("CONTEXTUAL_ORCHESTRATOR_TOKEN")
+        if not token:
+            raise ValueError("orchestrator credential is unavailable")
+        request = Request(
+            f"{self.base_url}{path}",
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        return self.transport(request, self.timeout)
 
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        if not texts or any(not isinstance(text, str) for text in texts):
+            raise ValueError("embedding input must be a non-empty list of strings")
+        response = self._post(
+            "/v1/embeddings",
+            {
+                "model": self.embedding_model,
+                "input": texts,
+                "metadata": {"service": "semantic-data-portal"},
+            },
+        )
+        data = response.get("data")
+        if not isinstance(data, list) or len(data) != len(texts):
+            raise ValueError("orchestrator embedding response is malformed")
+        indexed: dict[int, list[float]] = {}
+        for item in data:
+            if not isinstance(item, dict) or not isinstance(item.get("index"), int):
+                raise ValueError("orchestrator embedding item is malformed")
+            vector = item.get("embedding")
+            if not isinstance(vector, list) or not vector:
+                raise ValueError("orchestrator embedding vector is missing")
+            try:
+                indexed[item["index"]] = [float(component) for component in vector]
+            except (TypeError, ValueError) as exc:
+                raise ValueError("orchestrator embedding vector is malformed") from exc
+        if set(indexed) != set(range(len(texts))):
+            raise ValueError("orchestrator embedding indices are malformed")
+        return [indexed[index] for index in range(len(texts))]
+
+    def embed_one(self, text: str) -> list[float]:
+        return self.embed([text])[0]
+
+    def extract(self, filename: str, chunks: list[TextChunk]) -> list[SemanticAssertion]:
         merged: dict[tuple[str, str, str], SemanticAssertion] = {}
         for chunk in chunks:
-            encoded_payload = json.dumps(
-                self._payload(filename, chunk), ensure_ascii=False
-            ).encode("utf-8")
-            request = Request(
-                "https://api.openai.com/v1/responses",
-                data=encoded_payload,
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                },
-                method="POST",
+            response = self._post(
+                "/v1/chat/completions", self._payload(filename, chunk)
             )
-            response = self.transport(request, self.timeout)
             try:
-                result = json.loads(_response_output_text(response))
+                result = json.loads(_chat_completion_content(response))
                 candidates = result["assertions"]
             except (KeyError, TypeError, json.JSONDecodeError) as exc:
-                raise ValueError("OpenAI semantic output is malformed") from exc
+                raise ValueError("orchestrator semantic output is malformed") from exc
             if not isinstance(candidates, list):
-                raise ValueError("OpenAI semantic output assertions must be a list")
+                raise ValueError("orchestrator semantic output assertions must be a list")
 
             for candidate in candidates:
                 if not isinstance(candidate, dict):
-                    raise ValueError("OpenAI semantic assertion must be an object")
+                    raise ValueError("orchestrator semantic assertion must be an object")
                 quote_text = candidate.get("evidence_quote")
                 if not isinstance(quote_text, str):
-                    raise ValueError("OpenAI semantic assertion has no evidence quote")
+                    raise ValueError("orchestrator semantic assertion has no evidence quote")
                 local_start = chunk.text.find(quote_text)
                 if local_start < 0:
                     continue
@@ -329,9 +370,10 @@ class OpenAISemanticExtractor:
                         evidence_chunk_sha256=chunk.sha256,
                         evidence_start=chunk.start + local_start,
                         evidence_end=chunk.start + local_start + len(quote_text),
+                        method="contextual-orchestrator",
                     )
                 except (KeyError, TypeError, ValueError) as exc:
-                    raise ValueError("OpenAI semantic assertion is invalid") from exc
+                    raise ValueError("orchestrator semantic assertion is invalid") from exc
                 key = (
                     assertion.relation,
                     assertion.target_kind,

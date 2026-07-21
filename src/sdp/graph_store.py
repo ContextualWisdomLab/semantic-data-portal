@@ -24,7 +24,7 @@ from abc import ABC, abstractmethod
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from .config import AppConfig, get_app_config, load_bootstrap
 from .embeddings import cosine_similarity, embed_text
@@ -192,9 +192,18 @@ class GraphStore(ABC):
 
 
 class InMemoryGraphStore(GraphStore):
-    def __init__(self, config: Optional[AppConfig] = None) -> None:
+    def __init__(
+        self,
+        config: Optional[AppConfig] = None,
+        *,
+        embedder: Optional[Callable[[str], List[float]]] = None,
+    ) -> None:
         self._config = config or get_app_config()
         self.dimension = self._config.embedding_dimension
+        self._embedder = embedder or (
+            lambda text: embed_text(text, self.dimension)
+        )
+        self._external_embedder = embedder is not None
         self._nodes: Dict[str, GraphNode] = {}
         self._edges: List[GraphEdge] = []
         self._embeddings: Dict[str, List[float]] = {}
@@ -220,7 +229,14 @@ class InMemoryGraphStore(GraphStore):
         )
         self._nodes[node_id] = node
         embed_source = text or label or node_id
-        self._embeddings[node_id] = embed_text(embed_source, self.dimension)
+        vector = [float(component) for component in self._embedder(embed_source)]
+        if not vector:
+            raise ValueError("embedding vector must not be empty")
+        if self._external_embedder and not self._embeddings:
+            self.dimension = len(vector)
+        if len(vector) != self.dimension:
+            raise ValueError(f"embedding dimension must be {self.dimension}")
+        self._embeddings[node_id] = vector
         return node
 
     def upsert_edge(
@@ -374,7 +390,9 @@ class InMemoryGraphStore(GraphStore):
     def semantic_search(
         self, query: str, *, kind: Optional[str] = None, limit: int = 5
     ) -> List[Dict[str, Any]]:
-        query_vec = embed_text(query, self.dimension)
+        query_vec = [float(component) for component in self._embedder(query)]
+        if len(query_vec) != self.dimension:
+            raise ValueError(f"embedding dimension must be {self.dimension}")
         scored: List[Dict[str, Any]] = []
         for node_id, vector in self._embeddings.items():
             node = self._nodes[node_id]
@@ -421,11 +439,20 @@ def _vector_literal(vector: List[float]) -> str:
 class PostgresGraphStore(GraphStore):
     """Backend on Postgres with Apache AGE (openCypher) and pgvector (KNN)."""
 
-    def __init__(self, dsn: str, config: Optional[AppConfig] = None) -> None:
+    def __init__(
+        self,
+        dsn: str,
+        config: Optional[AppConfig] = None,
+        *,
+        embedder: Optional[Callable[[str], List[float]]] = None,
+    ) -> None:
         from sqlalchemy import create_engine
 
         self._config = config or get_app_config()
         self.dimension = self._config.embedding_dimension
+        self._embedder = embedder or (
+            lambda text: embed_text(text, self.dimension)
+        )
         self.graph_name = self._config.graph_name
         self._engine = create_engine(dsn, pool_pre_ping=True, future=True)
 
@@ -492,7 +519,9 @@ class PostgresGraphStore(GraphStore):
         label = label or node_id
         props = dict(properties or {})
         embed_source = text or label or node_id
-        vector = embed_text(embed_source, self.dimension)
+        vector = [float(component) for component in self._embedder(embed_source)]
+        if len(vector) != self.dimension:
+            raise ValueError(f"embedding dimension must be {self.dimension}")
         with self._engine.begin() as conn:
             self._prepare(conn)
             self._cypher(
@@ -751,7 +780,10 @@ class PostgresGraphStore(GraphStore):
     ) -> List[Dict[str, Any]]:
         from sqlalchemy import text as sql
 
-        vector = _vector_literal(embed_text(query, self.dimension))
+        query_vector = [float(component) for component in self._embedder(query)]
+        if len(query_vector) != self.dimension:
+            raise ValueError(f"embedding dimension must be {self.dimension}")
+        vector = _vector_literal(query_vector)
         stmt = (
             "SELECT e.node_id, e.node_kind, n.node_label, "
             "1 - (e.embedding <=> CAST(:vec AS vector)) AS score "
