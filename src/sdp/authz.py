@@ -4,6 +4,7 @@ import json
 import os
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlsplit
 from urllib.request import urlopen
 
 import jwt
@@ -112,8 +113,12 @@ def resolve_oidc_actor_context(
 
 
 def _load_jwks_from_url(jwks_url: str) -> dict[str, Any]:
+    parsed = urlsplit(jwks_url)
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise ValueError("OIDC JWKS URL must be absolute HTTPS")
     timeout = float(os.getenv("SDP_OIDC_JWKS_TIMEOUT_SECONDS", "2"))
-    with urlopen(jwks_url, timeout=timeout) as response:
+    # The HTTPS-only check above excludes urllib's local file handlers.
+    with urlopen(jwks_url, timeout=timeout) as response:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
         return json.loads(response.read().decode("utf-8"))
 
 

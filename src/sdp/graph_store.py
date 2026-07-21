@@ -542,7 +542,8 @@ class PostgresGraphStore(GraphStore):
         )
         driver_connection = conn.connection.driver_connection
         with driver_connection.cursor() as cursor:
-            cursor.execute(statement, (json.dumps(params),))
+            # pg_sql quotes both literals; user values stay in the bound parameter map.
+            cursor.execute(statement, (json.dumps(params),))  # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query
             return cursor.fetchall()
 
     def upsert_node(
@@ -852,7 +853,8 @@ class PostgresGraphStore(GraphStore):
             stmt += "WHERE " + " AND ".join(conditions) + " "
         stmt += "ORDER BY e.embedding <=> CAST(:vec AS vector) LIMIT :limit"
         with self._engine.connect() as conn:
-            rows = conn.execute(sql(stmt), params).fetchall()
+            # stmt contains only closed fragments; every dynamic value is bound in params.
+            rows = conn.execute(sql(stmt), params).fetchall()  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
         return [
             {
                 "node_id": row[0],
