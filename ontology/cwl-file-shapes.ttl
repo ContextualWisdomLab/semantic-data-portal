@@ -1,0 +1,24 @@
+@prefix cwl: <https://contextualwisdomlab.github.io/semantic-data-portal/ontology/file#> .
+@prefix dcat: <http://www.w3.org/ns/dcat#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix spdx: <http://spdx.org/rdf/terms#> .
+
+cwl:FileAssetShape a sh:NodeShape ;
+    sh:targetClass cwl:FileAsset ;
+    sh:property [ sh:path dcterms:title ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:property [ sh:path spdx:checksum ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:property [ sh:path dcat:distribution ; sh:minCount 1 ] .
+
+cwl:DistributionShape a sh:NodeShape ;
+    sh:targetClass dcat:Distribution ;
+    sh:property [ sh:path cwl:storageProvider ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:property [ sh:path cwl:endpointId ; sh:minCount 1 ; sh:maxCount 1 ] .
+
+cwl:SemanticAssertionShape a sh:NodeShape ;
+    sh:targetClass cwl:SemanticAssertion ;
+    sh:property [ sh:path cwl:confidence ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:property [ sh:path cwl:reviewStatus ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:property [ sh:path cwl:evidenceChunkSha256 ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:property [ sh:path cwl:evidenceStart ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:property [ sh:path cwl:evidenceEnd ; sh:minCount 1 ; sh:maxCount 1 ] .

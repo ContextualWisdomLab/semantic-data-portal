@@ -1,0 +1,31 @@
+@prefix cwl: <https://contextualwisdomlab.github.io/semantic-data-portal/ontology/file#> .
+@prefix dcat: <http://www.w3.org/ns/dcat#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+
+cwl: a owl:Ontology ;
+    owl:versionInfo "0.1.0" .
+
+cwl:FileAsset a owl:Class ;
+    owl:equivalentClass [ a owl:Class ; owl:intersectionOf ( dcat:Resource prov:Entity ) ] .
+
+cwl:BusinessProject a owl:Class ; owl:subClassOf skos:Concept .
+cwl:System a owl:Class ; owl:subClassOf skos:Concept .
+cwl:WorkPhase a owl:Class ; owl:subClassOf skos:Concept .
+cwl:ArtifactType a owl:Class ; owl:subClassOf skos:Concept .
+cwl:SemanticAssertion a owl:Class .
+
+cwl:belongsToProject a owl:ObjectProperty ;
+    owl:domain cwl:FileAsset ; owl:range cwl:BusinessProject .
+cwl:usesSystem a owl:ObjectProperty ;
+    owl:domain cwl:FileAsset ; owl:range cwl:System .
+cwl:hasWorkPhase a owl:ObjectProperty ;
+    owl:domain cwl:FileAsset ; owl:range cwl:WorkPhase .
+cwl:hasArtifactType a owl:ObjectProperty ;
+    owl:domain cwl:FileAsset ; owl:range cwl:ArtifactType .
+cwl:hasTopic a owl:ObjectProperty ;
+    owl:domain cwl:FileAsset ; owl:range skos:Concept .
+cwl:wasDerivedFrom a owl:ObjectProperty ;
+    owl:subPropertyOf prov:wasDerivedFrom .
+cwl:previousVersion a owl:ObjectProperty .
