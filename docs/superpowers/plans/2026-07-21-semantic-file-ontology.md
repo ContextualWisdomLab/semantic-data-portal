@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add a standards-aligned, provider-neutral file knowledge catalog with read-only filesystem/S3/S3-compatible/Azure Blob ingestion, evidence-bound OpenAI semantic extraction, and a Hyosung Heavy Industries VOC pilot.
+**Goal:** Add a standards-aligned, provider-neutral file knowledge catalog with read-only filesystem/S3/S3-compatible/Azure Blob ingestion, evidence-bound semantic extraction and embeddings routed exclusively through `contextual-orchestrator`, and a Hyosung Heavy Industries VOC pilot.
 
-**Architecture:** Keep Apache AGE and pgvector as the persistence/search implementation. Represent content-addressed `FileAsset` nodes separately from one-or-many DCAT `Distribution` nodes, project validated LLM assertions into the existing graph, and export JSON-LD. Read document bytes through small injected readers; raw text never enters graph properties or Git.
+**Architecture:** Keep Apache AGE and pgvector as the persistence/search implementation. Represent content-addressed `FileAsset` nodes separately from one-or-many DCAT `Distribution` nodes, project validated LLM assertions into the existing graph, and export JSON-LD. Read document bytes through small injected readers; raw text never enters graph properties or Git. Route all LLM and embedding traffic through `ContextualWisdomLab/contextual-orchestrator`; the portal never holds an OpenAI key.
 
 **Tech Stack:** Python 3.10+, FastAPI, Pydantic 2, existing graph store, stdlib `pathlib`/`zipfile`/`urllib`, pypdf 6.14.2, W3C RDF/OWL/SKOS/SHACL/DCAT/PROV/JSON-LD vocabularies.
 
@@ -13,12 +13,12 @@
 - File operations are read-only; no move, delete, copy, or remote mutation.
 - Providers are exactly `filesystem`, `s3`, `s3_compatible`, and `azure_blob`; Synology is a filesystem deployment.
 - Object bytes are capped at 20 MiB; LLM text is chunked at 6,000 characters with 300-character overlap and capped at 24,000 characters per file.
-- The pinned default model is `gpt-5-mini-2025-08-07`; Requests API calls set `store: false` and a 60-second timeout.
-- OpenAI API keys and cloud credentials come from an injected credential registry/client, never `os.getenv()`, graph properties, logs, CLI arguments, or GitHub fixtures.
+- The pinned semantic model is `gpt-5-mini-2025-08-07`; orchestrator chat-completions calls set `store: false`, strict `response_format`, and a 60-second timeout. The default embedding model is `text-embedding-3-small`.
+- The portal receives only an orchestrator base URL and inference token through KV config and an injected credential registry. OpenAI/provider keys stay inside orchestrator; no credential enters `os.getenv()`, graph properties, logs, CLI arguments, or GitHub fixtures.
 - LLM assertions remain `proposed`; structural validation does not imply steward approval.
 - Raw chunks and evidence quotations are not persisted. Persist only chunk SHA-256 and character offsets after verifying the quotation exists.
 - Existing policy authorization, AGE/pgvector stores, semantic search, and graph traversal are reused.
-- CI uses fake transports and fake cloud clients; it makes no OpenAI or cloud call.
+- CI uses fake orchestrator transports and fake cloud clients; it makes no LLM or cloud call.
 - No OCR, HWP, DOC, XLS parser, mandatory cloud SDK, new database, or automatic ontology approval.
 
 ---
@@ -86,7 +86,7 @@ class SemanticAssertion(BaseModel):
     evidence_chunk_sha256: str
     evidence_start: int = Field(ge=0)
     evidence_end: int = Field(gt=0)
-    method: str = "openai"
+    method: str
     review_status: Literal["proposed", "approved", "rejected"] = "proposed"
 
 class FileAsset(BaseModel):
@@ -236,46 +236,48 @@ git add pyproject.toml requirements*.txt src/sdp/document_semantics.py tests/tes
 git commit -m "feat: extract text from pilot document formats"
 ```
 
-### Task 4: Evidence-bound OpenAI semantic extraction
+### Task 4: Evidence-bound contextual-orchestrator semantic extraction and embeddings
 
 **Files:**
 - Modify: `src/sdp/document_semantics.py`
 - Modify: `tests/test_file_knowledge.py`
 
 **Interfaces:**
-- Produces: `CredentialRegistry`, `EphemeralCredentialRegistry`, `OpenAISemanticExtractor.extract()`.
+- Produces: `CredentialRegistry`, `EphemeralCredentialRegistry`, `ContextualOrchestratorClient.extract()`, `ContextualOrchestratorClient.embed()`.
 - Consumes: `TextChunk`, injected credential registry, injected JSON HTTP transport.
 
 - [ ] **Step 1: Write a failing fake-transport test**
 
 ```python
-def test_openai_extractor_uses_strict_schema_and_persists_only_evidence_reference():
+def test_orchestrator_extractor_uses_strict_schema_and_persists_only_evidence_reference():
     captured = {}
-    extractor = OpenAISemanticExtractor(
-        EphemeralCredentialRegistry({"OPENAI_API_KEY": "test-key"}),
-        transport=fake_openai_transport(captured, evidence_quote="C-Cube"),
+    extractor = ContextualOrchestratorClient(
+        EphemeralCredentialRegistry({"CONTEXTUAL_ORCHESTRATOR_TOKEN": "test-token"}),
+        base_url="https://orchestrator.example",
+        transport=fake_orchestrator_transport(captured, evidence_quote="C-Cube"),
     )
     assertions = extractor.extract("meeting.docx", chunk_text("효성중공업 C-Cube PoC"))
     assert captured["store"] is False
-    assert captured["text"]["format"]["type"] == "json_schema"
+    assert captured["response_format"]["type"] == "json_schema"
+    assert captured["url"].endswith("/v1/chat/completions")
     assert assertions[0].evidence_chunk_sha256
     assert "C-Cube" not in assertions[0].model_dump_json()
-    assert "test-key" not in repr(captured)
+    assert "test-token" not in repr(captured)
 ```
 
 - [ ] **Step 2: Run the test and confirm failure**
 
-Run: `$env:PYTHONPATH='src'; py -m pytest tests/test_file_knowledge.py -k openai -q`
+Run: `$env:PYTHONPATH='src'; py -m pytest tests/test_file_knowledge.py -k orchestrator -q`
 
 Expected: FAIL because the extractor does not exist.
 
-- [ ] **Step 3: Implement the minimal Responses API client**
+- [ ] **Step 3: Add the missing orchestrator sync endpoint and implement the portal client**
 
-Use `urllib.request.Request("https://api.openai.com/v1/responses", data=encoded_payload, headers=headers, method="POST")`, an injected `transport(request, timeout) -> dict`, model `gpt-5-mini-2025-08-07`, `store: false`, and strict JSON Schema fields `relation`, `target_kind`, `target_label`, `confidence`, `evidence_quote`. Reject empty/missing credential, non-completed responses, malformed JSON, unknown relations, and quotations not found verbatim in the input chunk. Convert a verified quote to chunk hash plus global offsets, then discard the quote. Merge duplicate `(relation, target_kind, casefold(target_label))` candidates by highest confidence.
+In `ContextualWisdomLab/contextual-orchestrator`, add authenticated `POST /v1/embeddings`. Reuse the existing embedding batch core, poll asynchronous backends for at most 30 seconds, and translate a completed batch document into the OpenAI-compatible `object/data/model/usage` response. In the portal, send strict-schema semantic requests to `/v1/chat/completions` and vectors to `/v1/embeddings` through one injected `ContextualOrchestratorClient`. Reject missing orchestrator token, malformed output, unknown relations, and quotations not found verbatim in the input chunk. Convert a verified quote to chunk hash plus global offsets, then discard the quote. Merge duplicate `(relation, target_kind, casefold(target_label))` candidates by highest confidence.
 
-- [ ] **Step 4: Run OpenAI tests**
+- [ ] **Step 4: Run orchestrator contract and portal client tests**
 
-Run: `$env:PYTHONPATH='src'; py -m pytest tests/test_file_knowledge.py -k openai -q`
+Run: `$env:PYTHONPATH='src'; py -m pytest tests/test_file_knowledge.py -k orchestrator -q`
 
 Expected: PASS with no network call.
 
@@ -283,7 +285,7 @@ Expected: PASS with no network call.
 
 ```bash
 git add src/sdp/document_semantics.py tests/test_file_knowledge.py
-git commit -m "feat: extract evidence-bound semantics with OpenAI"
+git commit -m "feat: route file semantics through contextual orchestrator"
 ```
 
 ### Task 5: Graph projection and policy-protected API
@@ -352,7 +354,7 @@ git commit -m "feat: project file knowledge into graph API"
 
 **Interfaces:**
 - Produces: `run_local_pilot()`, `python -m sdp.file_pilot`.
-- Consumes: filesystem reader, document extraction, optional OpenAI extractor, graph projection, JSON-LD export.
+- Consumes: filesystem reader, document extraction, optional contextual-orchestrator client, graph projection, JSON-LD export.
 
 - [ ] **Step 1: Write a failing end-to-end local runner test**
 
@@ -376,7 +378,7 @@ Expected: FAIL because the runner does not exist.
 
 - [ ] **Step 3: Implement the runner and CLI**
 
-`run_local_pilot()` groups by SHA-256, merges distributions, extracts/chunks each unique asset once, applies the optional extractor, validates and projects into an `InMemoryGraphStore`, and writes a UTF-8 JSON manifest containing summary, asset JSON-LD with locators, per-file status, and no raw text/quote/API response. CLI arguments are `--root`, `--output`, `--name-regex`, `--model`, `--max-files`, and `--no-llm`; with LLM enabled it obtains the API key via `getpass.getpass()` and an `EphemeralCredentialRegistry`, never a CLI argument or environment variable.
+`run_local_pilot()` groups by SHA-256, merges distributions, extracts/chunks each unique asset once, applies the optional orchestrator client, validates and projects into an `InMemoryGraphStore` using `client.embed_one`, and writes a UTF-8 JSON manifest containing summary, asset JSON-LD with locators, per-file status, and no raw text/quote/API response. CLI arguments are `--root`, `--output`, `--name-regex`, `--orchestrator-url`, `--semantic-model`, `--embedding-model`, `--max-files`, and `--no-llm`; with LLM enabled it obtains the orchestrator inference token via `getpass.getpass()` and an `EphemeralCredentialRegistry`, never a CLI argument or environment variable.
 
 - [ ] **Step 4: Run tests and the 12-file no-LLM preflight**
 
@@ -438,9 +440,9 @@ codegraph affected src/sdp/file_ontology.py src/sdp/storage_readers.py src/sdp/d
 
 Expected: index is current and affected tests include the new file knowledge tests plus API/graph tests.
 
-- [ ] **Step 4: Run the live OpenAI pilot after secure key entry**
+- [ ] **Step 4: Run the live contextual-orchestrator pilot after secure token entry**
 
-Run the Task 6 pilot command without `--no-llm`, enter the project-scoped key only at the hidden prompt, and verify the output reports proposed assertions with evidence hashes/offsets and no raw chunks. If no key is available, stop at the verified no-LLM manifest and request secure local entry; do not weaken credential handling.
+Run the Task 6 pilot command without `--no-llm`, enter only the orchestrator inference token at the hidden prompt, and verify the output reports proposed assertions with evidence hashes/offsets and no raw chunks. Provider/OpenAI keys remain exclusively in orchestrator. If the URL or token is unavailable, stop at the verified no-LLM manifest and request secure local entry; do not weaken credential handling.
 
 - [ ] **Step 5: Commit final docs and verification evidence**
 
@@ -454,7 +456,7 @@ Expected: clean worktree.
 
 ## Self-Review
 
-- Spec coverage: standards profile, provider-neutral identity/location split, four providers, safe content extraction, OpenAI evidence binding, SHACL-compatible validation, graph/API reuse, privacy, and 12-file pilot each have a task.
+- Spec coverage: standards profile, provider-neutral identity/location split, four providers, safe content extraction, orchestrator-only LLM/embedding routing, evidence binding, SHACL-compatible validation, graph/API reuse, privacy, and 12-file pilot each have a task.
 - Placeholder scan: no TBD/TODO/future implementation placeholder is used; exclusions are explicit scope decisions.
 - Type consistency: Tasks 2–7 consume the exact `StorageDistribution`, `SemanticAssertion`, `FileAsset`, `ObjectRef`, `TextChunk`, and extractor names produced in earlier tasks.
-- Dependency scope: only pypdf is added because the approved pilot includes two PDFs; cloud SDKs and the OpenAI SDK remain injected/stdlib.
+- Dependency scope: only pypdf is added because the approved pilot includes two PDFs; cloud and LLM SDKs remain injected/stdlib.

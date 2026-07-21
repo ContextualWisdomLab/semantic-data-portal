@@ -105,6 +105,40 @@ SDP_DATABASE_DSN='postgresql+psycopg://sdp_graph_app:<url-encoded-password>@loca
 - `GET  /ontology/term/{term}/graph` — 개념 그래프 (그래프 스토어 백엔드)
 - `POST /search/semantic` — pgvector KNN 시맨틱 검색 (kind 필터)
 
+### 파일 지식 온톨로지
+
+`CWL File Knowledge Profile 0.1`은 파일 내용의 SHA-256 정체성과 물리 저장 위치를
+분리합니다. 같은 bytes가 로컬/Synology 동기화 폴더, S3, S3 호환 저장소, Azure Blob에
+복제되어도 하나의 `FileAsset`과 여러 DCAT `Distribution`으로 표현됩니다. 기계 판독
+프로파일과 shape는 `ontology/cwl-file-profile.ttl`, `ontology/cwl-file-shapes.ttl`에 있습니다.
+
+- `POST /file-assets` — 관리자 정책을 통과한 자산·후보 주장 적재
+- `GET /file-assets/{asset_id}` — 자산과 의미 관계 조회
+- `GET /file-assets/{asset_id}/jsonld` — 기본 locator 비공개 JSON-LD
+- `GET /file-assets/{asset_id}/validate` — SHACL 호환 검증 리포트
+- 지원 reader: `filesystem`(로컬/UNC/Synology 포함), `s3`, `s3_compatible`, `azure_blob`
+- 지원 본문 추출: TXT/Markdown/CSV/JSON/XML, DOCX/PPTX/XLSX, PDF
+
+파일 의미 추출과 embedding은 OpenAI를 직접 호출하지 않고
+[`ContextualWisdomLab/contextual-orchestrator`](https://github.com/ContextualWisdomLab/contextual-orchestrator)만
+사용합니다. 의미 추출은 `/v1/chat/completions`, embedding은 orchestrator에 추가된 동기
+`/v1/embeddings`를 사용합니다. `orchestrator_base_url`, `semantic_model`,
+`embedding_model`은 `config_entries` KV 설정이고, inference token은 주입된 credential
+registry에서만 가져옵니다. OpenAI/provider key는 포털에 두지 않습니다.
+
+읽기 전용 로컬 파일럿은 다음처럼 실행합니다. `--no-llm`은 파일 이동·삭제나 네트워크
+호출 없이 중복·추출 상태만 확인합니다.
+
+```powershell
+$env:PYTHONPATH='src'
+py -m sdp.file_pilot --root '<approved-read-only-root>' --output '<local-gitignored-manifest.json>' --name-regex '효성중공업|중공업VOC' --max-files 12 --no-llm
+```
+
+LLM을 사용할 때는 `--orchestrator-url`을 주거나 KV의 `orchestrator_base_url`을 사용하며,
+inference token은 숨김 prompt로만 입력합니다. manifest에는 원문 조각·근거 인용문·API
+응답·credential을 저장하지 않습니다. 실제 파일명과 locator가 들어가므로 출력은 로컬의
+Git 제외 경로에만 보관합니다.
+
 ### Catalog / governance / enterprise (기존)
 
 - `GET /health`
@@ -154,6 +188,7 @@ PYTHONPATH=src python -m sdp.demo_smoke
 | Browse/Query | `src/sdp/browse.py`, `/browse/*` |
 | Policy Service | `src/sdp/policy.py`, `/policy/decision` |
 | LLM Orchestrator | `src/sdp/orchestrator.py`, `/llm/*` |
+| File Knowledge Profile | `src/sdp/file_ontology.py`, `src/sdp/storage_readers.py`, `src/sdp/document_semantics.py`, `src/sdp/file_pilot.py`, `/file-assets/*` |
 | JSON-LD Export | `/catalog/datasets/{id}/jsonld` |
 | Enterprise Core Contracts | `src/sdp_core/contracts.py`, `src/sdp_core/readiness.py`, `src/sdp_core/demo_seed.py`, `src/sdp_core/enterprise.py`, `src/sdp_core/rbac.py`, `src/sdp/enterprise_evidence.py`, `src/sdp/semantic_validation.py`, `src/sdp/steward_review.py`, `src/sdp/observability.py`, `/enterprise/*` |
 

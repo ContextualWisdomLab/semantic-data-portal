@@ -133,13 +133,30 @@
   - `tests/test_api.py::test_enterprise_console_renders_operator_surface`
   - `tests/test_api.py::test_enterprise_demo_smoke_summary_is_ready`
 
-## 7) 다음 단계 (현재 브랜치에서 미반영 권고)
+## 7) File Knowledge / Hybrid Ontology
+
+- 표준 프로파일: RDF/OWL 2/SKOS/SHACL/DCAT 3/DCMI/PROV-O/SPDX/JSON-LD 기반 `ontology/cwl-file-profile.ttl`, `ontology/cwl-file-shapes.ttl`.
+- 정체성/위치 분리: SHA-256 `FileAsset` 하나에 filesystem/S3/S3-compatible/Azure Blob `Distribution` 여러 개를 결합한다.
+- 읽기 전용 수집: `src/sdp/storage_readers.py`는 list/read만 제공하고 이동·삭제·원격 mutation 기능이 없다.
+- 의미 근거: `SemanticAssertion`은 confidence, proposed review status, chunk SHA-256, 문자 offset을 보존하며 원문 인용은 저장하지 않는다.
+- LLM 경계: `src/sdp/document_semantics.py::ContextualOrchestratorClient`가 `/v1/chat/completions`와 `/v1/embeddings`만 호출한다. 포털에는 OpenAI/provider key가 없다.
+- provider 중립성: Synology는 filesystem 배치일 뿐 필수 구성요소가 아니며, 파일 정체성은 저장소 URL과 독립적이다.
+- 정책/API: `POST /file-assets`, `GET /file-assets/{asset_id}`, `/jsonld`, `/validate`가 기존 policy 및 graph store를 재사용한다.
+- 파일럿: `src/sdp/file_pilot.py`가 content deduplication, 안전한 문서 추출, graph projection, 로컬 전용 manifest를 수행한다.
+- 증빙 테스트:
+  - `tests/test_file_knowledge.py::test_orchestrator_extractor_uses_strict_schema_and_persists_only_evidence_reference`
+  - `tests/test_file_knowledge.py::test_orchestrator_client_uses_sync_embeddings_endpoint`
+  - `tests/test_file_knowledge.py::test_local_pilot_deduplicates_content_and_writes_no_raw_text`
+  - `tests/test_file_knowledge.py::test_file_asset_api_requires_policy_and_redacts_jsonld_locator`
+  - `tests/test_graph_engine.py::test_config_loads_from_kv_mapping`
+
+## 8) 다음 단계 (현재 브랜치에서 미반영 권고)
 
 1. 조직 정책 기준으로 `search` 및 `list` 에 대한 사용 권한/발견성 정책을 명시적으로 강화
 2. API level 감사 이벤트 보존 기간 및 위변조 방지(로그 저장소 정책) 적용
 3. OpenCode/PR 리뷰 증적 저장(`PR`, `review`, `merge` 로그)과 main 병합 완료 상태 정기 기록
 
-## 8) 구현 완료 증적(현재 HEAD 기준)
+## 9) 구현 완료 증적(현재 HEAD 기준)
 
 - 대상 브랜치: `codex/sdp-enterprise-foundation`
 - 기준: `origin/main` 병합 후 현재 브랜치 HEAD
