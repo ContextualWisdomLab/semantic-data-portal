@@ -163,6 +163,7 @@ def main() -> int:
             base_url=orchestrator_url,
             semantic_model=args.semantic_model or config.semantic_model,
             embedding_model=args.embedding_model or config.embedding_model,
+            embedding_dimensions=config.embedding_dimension,
         )
 
     summary = run_local_pilot(

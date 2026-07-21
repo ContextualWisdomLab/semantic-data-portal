@@ -178,10 +178,26 @@ h11==0.16.0 \
     --hash=sha256:4e35b956cf45792e4caa5885e69fba00bdbc6ffafbfa020300e549b208ee5ff1 \
     --hash=sha256:63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86
     # via uvicorn
+html5rdf==1.2.1 \
+    --hash=sha256:1f519121bc366af3e485310dc8041d2e86e5173c1a320fac3dc9d2604069b83e \
+    --hash=sha256:ace9b420ce52995bb4f05e7425eedf19e433c981dfe7a831ab391e2fa2e1a195
+    # via rdflib
 idna==3.18 \
     --hash=sha256:7f952cbe720b688055e3f87de14f5c3e5fdaa8bc3928985c4077ca689de849a2 \
     --hash=sha256:ffb385a7e039654cef1ab9ef32c6fafe283c0c0467bba1d9029738ce4a14a848
     # via anyio
+owlrl==7.6.2 \
+    --hash=sha256:83347bf7f133979e87b2b18695d51d25510b99cec3f6919b5df05d4fbf058ae0 \
+    --hash=sha256:c743f35c2d908396e77823852bb1ebbce88340cd49961493983bec42c93283a8
+    # via pyshacl
+packaging==26.2 \
+    --hash=sha256:5fc45236b9446107ff2415ce77c807cee2862cb6fac22b8a73826d0693b0980e \
+    --hash=sha256:ff452ff5a3e828ce110190feff1178bb1f2ea2281fa2075aadb987c2fb221661
+    # via pyshacl
+prettytable==3.18.0 \
+    --hash=sha256:439217116152244369caf3d9f1caf2f9fe29b03bd79e88d2928c8e718c95d680 \
+    --hash=sha256:b3346e0e6f79180833aebaac088ae926340586cf6d7d991b9eb125b65f72313a
+    # via pyshacl
 psycopg==3.3.4 \
     --hash=sha256:b6bbc25ccf05c8fad3b061d9db2ef0909a555171b84b07f29458a447253d679a \
     --hash=sha256:e21207764952cff81b6b8bdacad9a3939f2793367fdac2987b3aac36a651b5bc
@@ -379,10 +395,24 @@ pyjwt==2.13.0 \
     --hash=sha256:41571c89ca91598c79e8ef18a2d07367d4810fbbd6f637794879baf1b7703423 \
     --hash=sha256:66adcc2aff09b3f1bbd95fc1e1577df8ac8723c978552fd43304c8a290ac5728
     # via semantic-data-portal (pyproject.toml)
+pyparsing==3.3.2 \
+    --hash=sha256:850ba148bd908d7e2411587e247a1e4f0327839c40e2e5e6d05a007ecc69911d \
+    --hash=sha256:c777f4d763f140633dcb6d8a3eda953bf7a214dc4eff598413c070bcdc117cbc
+    # via rdflib
 pypdf==6.14.2 \
     --hash=sha256:3f07891af76dc002657e04993ab9b4de81de29f9013b9761d0b7968bff12e946 \
     --hash=sha256:7873f502fe4385e79539b21d872392dc0c4e3714327c15881cbc7fbfd1f95b25
     # via semantic-data-portal (pyproject.toml)
+pyshacl==0.40.0 \
+    --hash=sha256:1f814baa7fc2b877c999819fed9e4b8e4ba2461bc00ed8ed3e8bb4346258500f \
+    --hash=sha256:d9cd86f108266a157162afb69a106689c868388e5d7be80c1fcf16070cf6ad08
+    # via semantic-data-portal (pyproject.toml)
+rdflib==7.6.0 \
+    --hash=sha256:30c0a3ebf4c0e09215f066be7246794b6492e054e782d7ac2a34c9f70a15e0dd \
+    --hash=sha256:6c831288d5e4a5a7ece85d0ccde9877d512a3d0f02d7c06455d00d6d0ea379df
+    # via
+    #   owlrl
+    #   pyshacl
 starlette==1.3.1 \
     --hash=sha256:05d0213193f2fbaae60e2ecb593b4add4262ad4e46536b54abe36f11a71724e0 \
     --hash=sha256:c7372aae11c3c3f26a42df7bd626cec2f47d03483d261d369516a615a53714c6
@@ -409,3 +439,7 @@ uvicorn==0.51.0 \
     --hash=sha256:5d38af6cd620f2ae3849fb44fd4879e0890aa1febe8d47eb355fb45d93fe6a5b \
     --hash=sha256:f6f4b69b657c312f516dd2d268ab9ae6f254b11e4bac504f37b2ab58b24dd0b0
     # via semantic-data-portal (pyproject.toml)
+wcwidth==0.8.2 \
+    --hash=sha256:91fbef97204b96a3d4d421609b80340b760cf33e26da123ff243d76b1fda8dda \
+    --hash=sha256:d63947694a0539a1d51e01eda7caf800c291020e6cdd7e28ad7b14dd33ad4f85
+    # via prettytable

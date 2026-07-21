@@ -110,12 +110,13 @@ SDP_DATABASE_DSN='postgresql+psycopg://sdp_graph_app:<url-encoded-password>@loca
 `CWL File Knowledge Profile 0.1`은 파일 내용의 SHA-256 정체성과 물리 저장 위치를
 분리합니다. 같은 bytes가 로컬/Synology 동기화 폴더, S3, S3 호환 저장소, Azure Blob에
 복제되어도 하나의 `FileAsset`과 여러 DCAT `Distribution`으로 표현됩니다. 기계 판독
-프로파일과 shape는 `ontology/cwl-file-profile.ttl`, `ontology/cwl-file-shapes.ttl`에 있습니다.
+프로파일과 shape는 `ontology/cwl-file-profile.ttl`, `ontology/cwl-file-shapes.ttl`에 있으며,
+ingest/validate 때 pySHACL로 실제 실행됩니다.
 
 - `POST /file-assets` — 관리자 정책을 통과한 자산·후보 주장 적재
 - `GET /file-assets/{asset_id}` — 자산과 의미 관계 조회
 - `GET /file-assets/{asset_id}/jsonld` — 기본 locator 비공개 JSON-LD
-- `GET /file-assets/{asset_id}/validate` — SHACL 호환 검증 리포트
+- `GET /file-assets/{asset_id}/validate` — pySHACL 검증 리포트
 - 지원 reader: `filesystem`(로컬/UNC/Synology 포함), `s3`, `s3_compatible`, `azure_blob`
 - 지원 본문 추출: TXT/Markdown/CSV/JSON/XML, DOCX/PPTX/XLSX, PDF
 
@@ -124,7 +125,27 @@ SDP_DATABASE_DSN='postgresql+psycopg://sdp_graph_app:<url-encoded-password>@loca
 사용합니다. 의미 추출은 `/v1/chat/completions`, embedding은 orchestrator에 추가된 동기
 `/v1/embeddings`를 사용합니다. `orchestrator_base_url`, `semantic_model`,
 `embedding_model`은 `config_entries` KV 설정이고, inference token은 주입된 credential
-registry에서만 가져옵니다. OpenAI/provider key는 포털에 두지 않습니다.
+registry에서만 가져옵니다. `embedding_dimension`은 `/v1/embeddings`의 `dimensions`로
+전달되어 pgvector 차원과 일치해야 합니다. 운영 graph store도 같은 orchestrator client의
+`embed_one`을 ingest와 검색에 주입합니다. OpenAI/provider key는 포털에 두지 않습니다.
+
+`/file-assets/*`는 요청 본문이나 query의 `actor`를 신뢰하지 않습니다. 검증된 OIDC Bearer
+토큰에서 subject/role/tenant를 도출합니다. `FileAsset.tenant_id`와 중앙 policy decision을
+대조해 tenant 경계를 적용하며, locator 포함 응답은 같은 tenant의 `admin` 또는
+`platform-admin`만 요청할 수 있습니다. 같은 SHA-256이나 파일 관계 대상이 다른 tenant에
+이미 속하면 ingest를 거부해 distribution/assertion을 섞지 않습니다. `/graph/nodes`,
+`/graph/edges`, `/graph/query`, `/search/semantic`, `/ontology/concepts`도 동일한 Bearer
+context를 요구하고 body `actor`를 거부합니다. 일반 graph API는 governed file
+node/edge를 수정할 수 없으며, traversal/search 결과는 tenant로 필터링되고 locator는
+항상 redaction됩니다.
+
+GitHub Secret에 값을 저장하는 것만으로는 런타임 주입이 되지 않습니다. 배포 호스트는
+secret manager에서 token을 읽는 `CredentialRegistry` 구현을 만든 뒤
+`sdp.api.create_app(registry)`로 ASGI 앱을 구성해야 합니다. KV에
+`orchestrator_base_url`이 있는데 `CONTEXTUAL_ORCHESTRATOR_TOKEN`이 주입되지 않으면
+lifespan/startup이 fail-closed하며, registry 교체 시 credential을 캡처한 graph store도
+폐기·재생성됩니다. TTL profile/shape는 `sdp/resources/*.ttl` package data로 배포되므로
+wheel과 공식 컨테이너에서도 pySHACL 검증이 동일하게 동작합니다.
 
 읽기 전용 로컬 파일럿은 다음처럼 실행합니다. `--no-llm`은 파일 이동·삭제나 네트워크
 호출 없이 중복·추출 상태만 확인합니다.

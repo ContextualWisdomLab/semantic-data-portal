@@ -5,6 +5,8 @@ ranking, /healthz readiness, and the config-from-KV loading contract.
 """
 
 from fastapi.testclient import TestClient
+import pytest
+from sdp_core import ActorContext
 
 from sdp import api as api_module
 from sdp import config as config_module
@@ -15,6 +17,18 @@ from sdp.seed import seed_store
 
 
 client = TestClient(app)
+ADMIN_HEADERS = {"Authorization": "Bearer admin-token"}
+ANALYST_HEADERS = {"Authorization": "Bearer analyst-token"}
+
+
+@pytest.fixture(autouse=True)
+def fake_graph_oidc(monkeypatch):
+    def verify(token):
+        role = token.removesuffix("-token")
+        roles = ["admin", "data-analyst"] if role == "admin" else ["data-analyst"]
+        return ActorContext(subject=role, tenant_id="demo", roles=roles), {}
+
+    monkeypatch.setattr(api_module.authz, "verify_oidc_jwks_token", verify)
 
 
 # --- readiness ---------------------------------------------------------------
@@ -68,18 +82,20 @@ def test_health_still_present():
 def test_ingest_node_edge_and_fetch():
     node = client.post(
         "/graph/nodes",
-        json={"node_id": "svc-A", "kind": "service", "label": "Billing", "text": "billing invoices", "actor": "admin"},
+        json={"node_id": "svc-A", "kind": "service", "label": "Billing", "text": "billing invoices"},
+        headers=ADMIN_HEADERS,
     )
     assert node.status_code == 200
     assert node.json()["node"]["node_id"] == "svc-A"
 
-    fetched = client.get("/graph/nodes/svc-A")
+    fetched = client.get("/graph/nodes/svc-A", headers=ANALYST_HEADERS)
     assert fetched.status_code == 200
     assert fetched.json()["kind"] == "service"
 
     edge = client.post(
         "/graph/edges",
-        json={"edge_type": "depends_on", "source_id": "svc-A", "target_id": "고객", "actor": "admin"},
+        json={"edge_type": "depends_on", "source_id": "svc-A", "target_id": "고객"},
+        headers=ADMIN_HEADERS,
     )
     assert edge.status_code == 200
     assert edge.json()["edge"]["target_id"] == "고객"
@@ -94,8 +110,8 @@ def test_ingest_concept_creates_traversable_node():
             "aliases": ["subscription", "정기결제"],
             "related": ["매출"],
             "multilingual": ["subscription"],
-            "actor": "admin",
         },
+        headers=ADMIN_HEADERS,
     )
     assert resp.status_code == 200
     graph = client.get("/ontology/term/subscription/graph")
@@ -105,7 +121,7 @@ def test_ingest_concept_creates_traversable_node():
 
 
 def test_missing_node_returns_404():
-    assert client.get("/graph/nodes/does-not-exist").status_code == 404
+    assert client.get("/graph/nodes/does-not-exist", headers=ANALYST_HEADERS).status_code == 404
 
 
 # --- traversal ---------------------------------------------------------------
@@ -114,7 +130,8 @@ def test_missing_node_returns_404():
 def test_graph_query_traverses_concept_hierarchy():
     resp = client.post(
         "/graph/query",
-        json={"start_id": "고객", "direction": "both", "max_depth": 1, "actor": "analyst"},
+        json={"start_id": "고객", "direction": "both", "max_depth": 1},
+        headers=ANALYST_HEADERS,
     )
     assert resp.status_code == 200
     body = resp.json()
@@ -129,7 +146,8 @@ def test_graph_query_traverses_concept_hierarchy():
 def test_graph_query_edge_type_filter():
     resp = client.post(
         "/graph/query",
-        json={"start_id": "고객", "edge_types": ["narrower"], "direction": "out", "max_depth": 1, "actor": "analyst"},
+        json={"start_id": "고객", "edge_types": ["narrower"], "direction": "out", "max_depth": 1},
+        headers=ANALYST_HEADERS,
     )
     assert resp.status_code == 200
     for edge in resp.json()["edges"]:
@@ -137,7 +155,11 @@ def test_graph_query_edge_type_filter():
 
 
 def test_graph_query_unknown_start_is_404():
-    resp = client.post("/graph/query", json={"start_id": "nope", "max_depth": 1, "actor": "analyst"})
+    resp = client.post(
+        "/graph/query",
+        json={"start_id": "nope", "max_depth": 1},
+        headers=ANALYST_HEADERS,
+    )
     assert resp.status_code == 404
 
 
@@ -146,7 +168,9 @@ def test_graph_query_unknown_start_is_404():
 
 def test_semantic_search_ranks_churn_concept_first():
     resp = client.post(
-        "/search/semantic", json={"query": "churn 이탈한 고객", "kind": "concept", "limit": 3, "actor": "analyst"}
+        "/search/semantic",
+        json={"query": "churn 이탈한 고객", "kind": "concept", "limit": 3},
+        headers=ANALYST_HEADERS,
     )
     assert resp.status_code == 200
     results = resp.json()["results"]
@@ -159,7 +183,9 @@ def test_semantic_search_ranks_churn_concept_first():
 
 def test_semantic_search_kind_filter_only_returns_datasets():
     resp = client.post(
-        "/search/semantic", json={"query": "고객 프로필 데이터", "kind": "dataset", "limit": 5, "actor": "analyst"}
+        "/search/semantic",
+        json={"query": "고객 프로필 데이터", "kind": "dataset", "limit": 5},
+        headers=ANALYST_HEADERS,
     )
     assert resp.status_code == 200
     results = resp.json()["results"]

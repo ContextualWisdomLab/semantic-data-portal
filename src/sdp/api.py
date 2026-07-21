@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from time import monotonic
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sdp_core import (
+    ActorContext,
     buyer_demo_activation_plan,
     enterprise_controls_manifest,
     enterprise_kpi_framework,
@@ -27,7 +29,8 @@ from .graph_models import (
     OntologyConceptRequest,
     SemanticSearchRequest,
 )
-from .graph_store import get_store
+from .document_semantics import CredentialRegistry, set_credential_registry, validate_runtime_credentials
+from .graph_store import get_store, set_store
 from .file_ontology import (
     FileAsset,
     FileAssetIngestRequest,
@@ -72,7 +75,7 @@ from .observability import (
     request_id_from_headers,
     request_id_header,
 )
-from .policy import evaluate
+from .policy import evaluate, evaluate_file_asset_access, evaluate_graph_access
 from .semantic_validation import enterprise_shacl_validation_summary, validate_dataset_semantics
 from .steward_review import build_steward_review_summary
 
@@ -80,10 +83,22 @@ from .steward_review import build_steward_review_summary
 _logger = logging.getLogger(__name__)
 
 
+@asynccontextmanager
+async def _runtime_lifespan(application: FastAPI):
+    registry = getattr(application.state, "credential_registry", None)
+    if registry is not None:
+        set_credential_registry(registry)
+    validate_runtime_credentials(get_app_config())
+    set_store(None)
+    seed_store()
+    yield
+
+
 app = FastAPI(
     title="Semantic Data Portal",
     description="온톨로지 기반 그래프 데이터 카탈로그 및 시맨틱 검색 서비스",
     version="0.3.0",
+    lifespan=_runtime_lifespan,
 )
 
 # CORS allowlist comes from config (KV table `config_entries` when a database is
@@ -97,23 +112,11 @@ app.add_middleware(
 )
 
 
-@app.on_event("startup")
-def _bootstrap_graph_engine() -> None:
-    """Seed the active graph store on startup (idempotent)."""
+def create_app(credential_registry: CredentialRegistry | None = None) -> FastAPI:
+    """Return the ASGI app with trusted credentials installed before startup."""
 
-    try:
-        seed_store()
-    except Exception:  # pragma: no cover - seeding must never block startup
-        pass
-
-
-# Seed at import time as well: the test client and embedded/submodule callers
-# may hit endpoints without triggering ASGI startup events. Seeding is
-# idempotent so running it here and on startup is safe.
-try:
-    seed_store()
-except Exception:  # pragma: no cover
-    pass
+    app.state.credential_registry = credential_registry
+    return app
 
 
 @app.middleware("http")
@@ -697,41 +700,60 @@ def ontology_term_graph(term: str) -> dict[str, Any]:
 # --- Graph ingestion (nodes / edges / concepts) ------------------------------
 
 
-def _authorize_graph_write(actor: str, resource: str) -> None:
-    """Graph/ontology writes require an authorized (admin) subject.
+def _authenticated_actor(request: Request) -> ActorContext:
+    authorization = request.headers.get("Authorization", "")
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        raise HTTPException(
+            status_code=401,
+            detail="authenticated bearer token is required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    try:
+        context, _claims = authz.verify_oidc_jwks_token(token)
+    except ValueError:
+        raise HTTPException(
+            status_code=401,
+            detail="bearer token is invalid",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from None
+    request.state.actor_context = context
+    return context
 
-    Uses the same policy engine as the catalog mutation endpoints: the ``create``
-    action is allowed only for an admin subject, so unauthenticated/anonymous
-    writers are refused with 403.
-    """
 
-    decision = evaluate(subject=actor, resource=resource, action="create", purpose="graph")
+def _enforce_graph_policy(actor: ActorContext, resource: str, action: str) -> None:
+    decision = evaluate_graph_access(actor, resource, action)
     if decision.effect != "allow":
         raise HTTPException(status_code=403, detail=decision.reason)
 
 
-def _authorize_graph_read(actor: str, resource: str) -> None:
-    """Graph traversal / semantic search require an authenticated reader.
-
-    Uses the catalog discovery policy branch (``search``): allowed for any reader
-    role, denied for anonymous/unauthenticated subjects.
-    """
-
-    decision = evaluate(subject=actor, resource=resource, action="search", purpose="graph")
-    if decision.effect != "allow":
-        raise HTTPException(status_code=403, detail=decision.reason)
+def _is_governed_file_node_id(node_id: str) -> bool:
+    return node_id.startswith("urn:sha256:") or node_id.startswith("urn:cwl:distribution:")
 
 
 @app.post("/ontology/concepts")
-def ingest_concept(payload: OntologyConceptRequest) -> dict[str, Any]:
-    _authorize_graph_write(payload.actor, payload.concept)
-    record = get_store().upsert_concept(payload.model_dump(exclude={"actor"}))
+def ingest_concept(
+    payload: OntologyConceptRequest,
+    actor: ActorContext = Depends(_authenticated_actor),
+) -> dict[str, Any]:
+    _enforce_graph_policy(actor, payload.concept, "write_graph")
+    try:
+        record = get_store().upsert_concept(payload.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     return {"status": "upserted", "concept": record}
 
 
 @app.post("/graph/nodes")
-def ingest_graph_node(payload: GraphNodeRequest) -> dict[str, Any]:
-    _authorize_graph_write(payload.actor, payload.node_id)
+def ingest_graph_node(
+    payload: GraphNodeRequest,
+    actor: ActorContext = Depends(_authenticated_actor),
+) -> dict[str, Any]:
+    _enforce_graph_policy(actor, payload.node_id, "write_graph")
+    if payload.kind in {"file_asset", "distribution"} or _is_governed_file_node_id(
+        payload.node_id
+    ):
+        raise HTTPException(status_code=400, detail="governed file nodes require /file-assets")
     node = get_store().upsert_node(
         payload.node_id,
         payload.kind,
@@ -743,10 +765,22 @@ def ingest_graph_node(payload: GraphNodeRequest) -> dict[str, Any]:
 
 
 @app.post("/graph/edges")
-def ingest_graph_edge(payload: GraphEdgeRequest) -> dict[str, Any]:
-    _authorize_graph_write(payload.actor, payload.source_id)
+def ingest_graph_edge(
+    payload: GraphEdgeRequest,
+    actor: ActorContext = Depends(_authenticated_actor),
+) -> dict[str, Any]:
+    _enforce_graph_policy(actor, payload.source_id, "write_graph")
+    store = get_store()
+    source = store.get_node(payload.source_id)
+    target = store.get_node(payload.target_id)
+    if (
+        _is_governed_file_node_id(payload.source_id)
+        or _is_governed_file_node_id(payload.target_id)
+        or any(node and node.kind in {"file_asset", "distribution"} for node in (source, target))
+    ):
+        raise HTTPException(status_code=400, detail="governed file edges require /file-assets")
     try:
-        edge = get_store().upsert_edge(
+        edge = store.upsert_edge(
             payload.edge_type,
             payload.source_id,
             payload.target_id,
@@ -758,10 +792,15 @@ def ingest_graph_edge(payload: GraphEdgeRequest) -> dict[str, Any]:
 
 
 @app.get("/graph/nodes/{node_id}")
-def get_graph_node(node_id: str) -> dict[str, Any]:
+def get_graph_node(
+    node_id: str,
+    actor: ActorContext = Depends(_authenticated_actor),
+) -> dict[str, Any]:
+    _enforce_graph_policy(actor, node_id, "read_graph")
     node = get_store().get_node(node_id)
     if node is None:
         raise HTTPException(status_code=404, detail="node not found")
+    _enforce_governed_node_read(actor, node)
     return _redact_storage_coordinates(node.as_dict())
 
 
@@ -783,14 +822,68 @@ def _redact_storage_coordinates(value: Any) -> Any:
     return value
 
 
+def _enforce_file_policy(
+    actor: ActorContext,
+    resource: str,
+    action: str,
+    resource_tenant_id: str,
+) -> None:
+    decision = evaluate_file_asset_access(actor, resource, action, resource_tenant_id)
+    if decision.effect != "allow":
+        raise HTTPException(status_code=403, detail=decision.reason)
+
+
+def _enforce_governed_node_read(actor: ActorContext, node: Any) -> None:
+    if node.kind not in {"file_asset", "distribution"}:
+        return
+    properties = node.properties if isinstance(node.properties, dict) else {}
+    tenant_id = str(
+        properties.get("tenant_id")
+        or (properties.get("file_asset") or {}).get("tenant_id")
+        or ""
+    )
+    _enforce_file_policy(actor, node.node_id, "read_file_asset", tenant_id)
+
+
+def _filter_graph_result(actor: ActorContext, store: Any, result: dict[str, Any]) -> dict[str, Any]:
+    visible_nodes: list[dict[str, Any]] = []
+    visible_ids: set[str] = set()
+    for item in result.get("nodes", []):
+        node_id = str(item.get("node_id", ""))
+        node = store.get_node(node_id)
+        try:
+            if node is not None:
+                _enforce_governed_node_read(actor, node)
+        except HTTPException as exc:
+            if exc.status_code == 403:
+                continue
+            raise
+        visible_nodes.append(_redact_storage_coordinates(item))
+        visible_ids.add(node_id)
+    return {
+        **result,
+        "nodes": visible_nodes,
+        "edges": [
+            _redact_storage_coordinates(edge)
+            for edge in result.get("edges", [])
+            if edge.get("source_id") in visible_ids and edge.get("target_id") in visible_ids
+        ],
+    }
+
+
 @app.post("/file-assets")
-def ingest_file_asset(payload: FileAssetIngestRequest) -> dict[str, Any]:
-    _authorize_graph_write(payload.actor, payload.asset_id)
+def ingest_file_asset(
+    payload: FileAssetIngestRequest,
+    actor: ActorContext = Depends(_authenticated_actor),
+) -> dict[str, Any]:
+    asset = FileAsset.model_validate(payload.model_dump()).model_copy(
+        update={"tenant_id": actor.tenant_id}
+    )
+    _enforce_file_policy(actor, asset.asset_id, "create_file_asset", asset.tenant_id)
     try:
-        asset = upsert_file_asset(
-            get_store(),
-            FileAsset.model_validate(payload.model_dump(exclude={"actor"})),
-        )
+        asset = upsert_file_asset(get_store(), asset)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return {
@@ -800,23 +893,23 @@ def ingest_file_asset(payload: FileAssetIngestRequest) -> dict[str, Any]:
     }
 
 
-def _read_file_asset(asset_id: str, actor: str):
-    _authorize_graph_read(actor, asset_id)
+def _read_file_asset(asset_id: str, actor: ActorContext):
     asset = get_file_asset(get_store(), asset_id)
     if asset is None:
         raise HTTPException(status_code=404, detail="file asset not found")
+    _enforce_file_policy(actor, asset_id, "read_file_asset", asset.tenant_id)
     return asset
 
 
 @app.get("/file-assets/{asset_id}")
 def file_asset_detail(
     asset_id: str,
-    actor: str = Query(default="anonymous"),
     include_locations: bool = Query(default=False),
+    actor: ActorContext = Depends(_authenticated_actor),
 ) -> dict[str, Any]:
     asset = _read_file_asset(asset_id, actor)
     if include_locations:
-        _authorize_graph_write(actor, asset_id)
+        _enforce_file_policy(actor, asset_id, "read_file_locations", asset.tenant_id)
     payload = {"asset_id": asset.asset_id, **asset.model_dump(mode="json")}
     return payload if include_locations else _redact_storage_coordinates(payload)
 
@@ -824,19 +917,19 @@ def file_asset_detail(
 @app.get("/file-assets/{asset_id}/jsonld")
 def file_asset_jsonld_export(
     asset_id: str,
-    actor: str = Query(default="anonymous"),
     include_locations: bool = Query(default=False),
+    actor: ActorContext = Depends(_authenticated_actor),
 ) -> dict[str, Any]:
     asset = _read_file_asset(asset_id, actor)
     if include_locations:
-        _authorize_graph_write(actor, asset_id)
+        _enforce_file_policy(actor, asset_id, "read_file_locations", asset.tenant_id)
     return file_asset_jsonld(asset, include_locations=include_locations)
 
 
 @app.get("/file-assets/{asset_id}/validate")
 def file_asset_validation(
     asset_id: str,
-    actor: str = Query(default="anonymous"),
+    actor: ActorContext = Depends(_authenticated_actor),
 ) -> dict[str, Any]:
     return validate_file_asset(_read_file_asset(asset_id, actor))
 
@@ -845,15 +938,23 @@ def file_asset_validation(
 
 
 @app.post("/graph/query")
-def graph_query(payload: GraphTraversalRequest) -> dict[str, Any]:
-    _authorize_graph_read(payload.actor, payload.start_id)
+def graph_query(
+    payload: GraphTraversalRequest,
+    actor: ActorContext = Depends(_authenticated_actor),
+) -> dict[str, Any]:
+    _enforce_graph_policy(actor, payload.start_id, "read_graph")
+    store = get_store()
+    start_node = store.get_node(payload.start_id)
+    if start_node is not None:
+        _enforce_governed_node_read(actor, start_node)
     try:
-        return get_store().traverse(
+        result = store.traverse(
             payload.start_id,
             edge_types=payload.edge_types,
             direction=payload.direction,
             max_depth=payload.max_depth,
         )
+        return _filter_graph_result(actor, store, result)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except ValueError as exc:
@@ -861,11 +962,32 @@ def graph_query(payload: GraphTraversalRequest) -> dict[str, Any]:
 
 
 @app.post("/search/semantic")
-def semantic_search(payload: SemanticSearchRequest) -> dict[str, Any]:
-    _authorize_graph_read(payload.actor, "graph")
-    results = get_store().semantic_search(
-        payload.query, kind=payload.kind, limit=payload.limit
+def semantic_search(
+    payload: SemanticSearchRequest,
+    actor: ActorContext = Depends(_authenticated_actor),
+) -> dict[str, Any]:
+    _enforce_graph_policy(actor, "graph", "read_graph")
+    store = get_store()
+    search_tenant = None if "platform-admin" in actor.roles else actor.tenant_id
+    candidates = store.semantic_search(
+        payload.query,
+        kind=payload.kind,
+        limit=payload.limit,
+        tenant_id=search_tenant,
     )
+    results: list[dict[str, Any]] = []
+    for item in candidates:
+        node = store.get_node(str(item.get("node_id", "")))
+        try:
+            if node is not None:
+                _enforce_governed_node_read(actor, node)
+        except HTTPException as exc:
+            if exc.status_code == 403:
+                continue
+            raise
+        results.append(_redact_storage_coordinates(item))
+        if len(results) >= payload.limit:
+            break
     return {"query": payload.query, "count": len(results), "results": results}
 
 

@@ -65,7 +65,7 @@ LLM 또는 규칙이 제안한 파일과 업무 개념 사이의 관계다.
 - 허용 관계: `belongsToProject`, `usesSystem`, `hasWorkPhase`, `hasArtifactType`, `hasTopic`, `wasDerivedFrom`, `previousVersion`
 - 필수 값: 대상 개념, 근거 참조(chunk SHA-256과 문자 offset), 신뢰도(0..1), 추출 방법, 검토 상태
 - 모든 LLM 주장의 초기 상태는 `proposed`다.
-- SHACL 호환 검증은 필수 필드·관계 allowlist·신뢰도 범위·근거 참조 존재를 검사한다.
+- pySHACL 실행 검증은 필수 필드·관계 allowlist·신뢰도 범위·근거 참조·offset 순서를 검사한다.
 - 주장은 그래프 탐색과 검색에 사용하되 응답에 검토 상태를 항상 노출한다.
 
 ## 저장소 어댑터
@@ -94,17 +94,17 @@ SDK를 포털의 필수 의존성으로 추가하지 않는다. 실제 클라우
 6. `contextual-orchestrator`의 `POST /v1/chat/completions`에 `response_format=json_schema`, `store=false`를 보내 의미 후보와 짧은 근거 인용을 받는다. orchestrator가 provider와 OpenAI 자격증명을 소유한다.
 7. 근거 인용이 입력 조각에 실제로 존재하는지 확인한 뒤 인용문 대신 chunk SHA-256과 문자 offset만 남긴다.
 8. 여러 조각의 후보를 `(관계, 정규화 label)` 기준으로 합치고 가장 높은 신뢰도와 그 근거 참조를 유지한다.
-9. SHACL 호환 검증을 통과한 후보만 그래프에 `proposed` assertion으로 기록한다.
+9. pySHACL 검증을 통과한 후보만 그래프에 `proposed` assertion으로 기록한다.
 10. 파일 node의 embedding text는 제목과 제안된 개념 label만 사용하고 `contextual-orchestrator`의 동기 `POST /v1/embeddings`로 벡터화한다. 원문과 근거 인용문은 저장하지 않는다.
 
 포털에는 orchestrator base URL과 model id를 KV application config로, inference token을 주입된 credential registry로 공급한다. 포털 코드가 OpenAI key나 `os.getenv()`를 읽지 않는다. HTTP transport는 Python 표준 라이브러리를 사용하고 LLM 요청에 `store: false`와 pinned model id를 포함한다. orchestrator의 동기 embedding endpoint는 기존 `/v1/batch/embeddings` 코어의 분할·provider backend·비용 원장을 재사용하고 최대 30초 동안 완료를 기다린 뒤 OpenAI 호환 응답을 반환한다. CI에서는 양쪽 HTTP 호출을 fake transport로 대체한다.
 
 ## API와 정책
 
-- `POST /file-assets`: 관리자만 검증된 파일 메타데이터와 후보 주장을 ingest한다.
+- `POST /file-assets`: 검증된 OIDC Bearer actor context의 관리자만 파일 메타데이터와 후보 주장을 ingest한다. body/query actor는 신뢰하지 않는다.
 - `GET /file-assets/{asset_id}`: 인증된 reader가 자산과 의미 관계를 조회한다.
 - `GET /file-assets/{asset_id}/jsonld`: 기본적으로 저장소 locator를 제거한 JSON-LD를 반환한다.
-- `GET /file-assets/{asset_id}/validate`: SHACL 호환 validation report를 반환한다.
+- `GET /file-assets/{asset_id}/validate`: pySHACL validation report를 반환한다.
 - 기존 `POST /graph/query`와 `POST /search/semantic`을 그대로 사용해 관계 탐색과 의미 검색을 제공한다.
 
 모든 write/read route는 기존 `policy.evaluate()` 경로를 재사용한다. 원문 조각, API key, cloud credential은 request/response, graph property, audit detail에 포함하지 않는다.

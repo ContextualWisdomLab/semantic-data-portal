@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from datetime import datetime
+from importlib.resources import files
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .graph_store import GraphStore
 
@@ -72,6 +74,8 @@ class StorageDistribution(BaseModel):
             raise ValueError("locator must be an absolute IRI")
         if parsed.query or parsed.fragment:
             raise ValueError("locator must not contain a query or fragment")
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError("locator must not contain userinfo credentials")
         return value
 
 
@@ -79,6 +83,7 @@ class SemanticAssertion(BaseModel):
     relation: AssertionRelation
     target_kind: TargetKind
     target_label: str = Field(min_length=1)
+    target_asset_id: str | None = None
     confidence: float = Field(ge=0, le=1)
     evidence_chunk_sha256: str
     evidence_start: int
@@ -86,9 +91,21 @@ class SemanticAssertion(BaseModel):
     method: str = Field(min_length=1)
     review_status: Literal["proposed", "approved", "rejected"] = "proposed"
 
+    @model_validator(mode="after")
+    def validate_file_target(self) -> "SemanticAssertion":
+        if self.target_kind == "file_asset":
+            if not self.target_asset_id or not re.fullmatch(
+                r"urn:sha256:[0-9a-f]{64}", self.target_asset_id
+            ):
+                raise ValueError("file_asset assertions require a content-addressed target_asset_id")
+        elif self.target_asset_id is not None:
+            raise ValueError("target_asset_id is only valid for file_asset assertions")
+        return self
+
 
 class FileAsset(BaseModel):
     sha256: str
+    tenant_id: str = Field(default="demo", min_length=1)
     title: str = Field(min_length=1)
     media_type: str = Field(min_length=1)
     byte_size: int = Field(ge=0)
@@ -102,7 +119,7 @@ class FileAsset(BaseModel):
 
 
 class FileAssetIngestRequest(FileAsset):
-    actor: str = Field(default="anonymous", min_length=1)
+    model_config = ConfigDict(extra="forbid")
 
 
 def _violation(path: str, message: str) -> dict[str, str]:
@@ -112,6 +129,47 @@ def _violation(path: str, message: str) -> dict[str, str]:
         "severity": "violation",
         "message": message,
     }
+
+
+def _shacl_violations(asset: FileAsset) -> list[dict[str, str]]:
+    from pyshacl import validate as shacl_validate
+    from rdflib import Graph, Namespace
+    from rdflib.namespace import RDF
+
+    resources = files("sdp").joinpath("resources")
+    data_graph = Graph().parse(
+        data=json.dumps(file_asset_jsonld(asset, include_locations=True), ensure_ascii=False),
+        format="json-ld",
+    )
+    shapes_graph = Graph().parse(
+        data=resources.joinpath("cwl-file-shapes.ttl").read_text(encoding="utf-8"),
+        format="turtle",
+    )
+    ontology_graph = Graph().parse(
+        data=resources.joinpath("cwl-file-profile.ttl").read_text(encoding="utf-8"),
+        format="turtle",
+    )
+    conforms, results_graph, _text = shacl_validate(
+        data_graph,
+        shacl_graph=shapes_graph,
+        ont_graph=ontology_graph,
+        inference="rdfs",
+        advanced=True,
+    )
+    if conforms:
+        return []
+    sh = Namespace("http://www.w3.org/ns/shacl#")
+    violations: list[dict[str, str]] = []
+    for result in results_graph.subjects(RDF.type, sh.ValidationResult):
+        path = results_graph.value(result, sh.resultPath)
+        message = results_graph.value(result, sh.resultMessage)
+        violations.append(
+            _violation(
+                str(path) if path is not None else "shacl",
+                str(message) if message is not None else "SHACL constraint violated",
+            )
+        )
+    return violations or [_violation("shacl", "SHACL graph did not conform")]
 
 
 def validate_file_asset(asset: FileAsset) -> dict[str, Any]:
@@ -144,6 +202,13 @@ def validate_file_asset(asset: FileAsset) -> dict[str, Any]:
                     f"{assertion.relation} requires target_kind={expected_kind}",
                 )
             )
+        if assertion.target_kind == "file_asset" and not assertion.target_asset_id:
+            violations.append(
+                _violation(
+                    "assertions.target_asset_id",
+                    "file relationships require a content-addressed target asset IRI",
+                )
+            )
         if not _SHA256_RE.fullmatch(assertion.evidence_chunk_sha256):
             violations.append(
                 _violation("assertions.evidence_chunk_sha256", "must be a lowercase SHA-256 hex digest")
@@ -155,9 +220,12 @@ def validate_file_asset(asset: FileAsset) -> dict[str, Any]:
                 _violation("assertions.evidence_end", "must be greater than evidence_start")
             )
 
+    violations.extend(_shacl_violations(asset))
+
     return {
         "asset_id": asset.asset_id,
         "shacl_compatible": True,
+        "shacl_engine": "pyshacl",
         "shape": "CWLFileAssetShape",
         "conforms": not violations,
         "violations": violations,
@@ -169,13 +237,26 @@ def concept_id(kind: str, label: str) -> str:
     return f"urn:cwl:{kind}:{digest}"
 
 
+def assertion_target_id(assertion: SemanticAssertion) -> str:
+    if assertion.target_kind == "file_asset":
+        if not assertion.target_asset_id:
+            raise ValueError("file assertion target is missing")
+        return assertion.target_asset_id
+    return concept_id(assertion.target_kind, assertion.target_label)
+
+
+def distribution_node_id(asset: FileAsset, distribution: StorageDistribution) -> str:
+    digest = hashlib.sha256(distribution.id.encode("utf-8")).hexdigest()[:24]
+    return f"urn:cwl:distribution:{asset.sha256}:{digest}"
+
+
 def file_asset_jsonld(asset: FileAsset, *, include_locations: bool = False) -> dict[str, Any]:
     """Export one file asset using the CWL application profile."""
 
     distributions: list[dict[str, Any]] = []
     for distribution in asset.distributions:
         item: dict[str, Any] = {
-            "@id": f"urn:cwl:distribution:{distribution.id}",
+            "@id": distribution_node_id(asset, distribution),
             "@type": "dcat:Distribution",
             "cwl:storageProvider": distribution.provider,
             "cwl:endpointId": distribution.endpoint_id,
@@ -189,19 +270,22 @@ def file_asset_jsonld(asset: FileAsset, *, include_locations: bool = False) -> d
             item["cwl:etag"] = distribution.etag
         distributions.append(item)
 
-    subjects = [
-        {
-            "@id": concept_id(assertion.target_kind, assertion.target_label),
+    subjects = []
+    for assertion in asset.assertions:
+        if assertion.target_kind == "file_asset":
+            continue
+        subject = {
+            "@id": assertion_target_id(assertion),
             "@type": "skos:Concept",
-            "skos:prefLabel": assertion.target_label,
         }
-        for assertion in asset.assertions
-    ]
+        subject["skos:prefLabel"] = assertion.target_label
+        subjects.append(subject)
     assertions = [
         {
             "@type": "cwl:SemanticAssertion",
-            "cwl:relation": f"cwl:{assertion.relation}",
-            "cwl:target": {"@id": concept_id(assertion.target_kind, assertion.target_label)},
+            "cwl:relation": {"@id": f"cwl:{assertion.relation}"},
+            "cwl:target": {"@id": assertion_target_id(assertion)},
+            "cwl:targetKind": assertion.target_kind,
             "cwl:confidence": assertion.confidence,
             "cwl:evidenceChunkSha256": assertion.evidence_chunk_sha256,
             "cwl:evidenceStart": assertion.evidence_start,
@@ -216,6 +300,7 @@ def file_asset_jsonld(asset: FileAsset, *, include_locations: bool = False) -> d
         "@id": asset.asset_id,
         "@type": ["dcat:Resource", "prov:Entity", "cwl:FileAsset"],
         "dcterms:identifier": asset.asset_id,
+        "cwl:tenantId": asset.tenant_id,
         "dcterms:title": asset.title,
         "dcterms:format": asset.media_type,
         "dcat:byteSize": asset.byte_size,
@@ -258,12 +343,28 @@ def _merge_asset(existing: FileAsset | None, incoming: FileAsset) -> FileAsset:
     distributions = {item.id: item for item in existing.distributions}
     distributions.update({item.id: item for item in incoming.distributions})
     assertions = {
-        (item.relation, item.target_kind, item.target_label.strip().casefold()): item
+        (
+            item.relation,
+            item.target_kind,
+            item.target_asset_id or item.target_label.strip().casefold(),
+        ): item
         for item in existing.assertions
     }
     for item in incoming.assertions:
-        key = (item.relation, item.target_kind, item.target_label.strip().casefold())
-        if key not in assertions or item.confidence > assertions[key].confidence:
+        key = (
+            item.relation,
+            item.target_kind,
+            item.target_asset_id or item.target_label.strip().casefold(),
+        )
+        existing_assertion = assertions.get(key)
+        if (
+            existing_assertion is None
+            or item.review_status != "proposed"
+            or (
+                existing_assertion.review_status == "proposed"
+                and item.confidence > existing_assertion.confidence
+            )
+        ):
             assertions[key] = item
     return existing.model_copy(
         update={
@@ -284,7 +385,27 @@ def upsert_file_asset(store: GraphStore, asset: FileAsset) -> FileAsset:
     if not report["conforms"]:
         messages = "; ".join(item["message"] for item in report["violations"])
         raise ValueError(f"file asset does not conform: {messages}")
-    merged = _merge_asset(get_file_asset(store, asset.asset_id), asset)
+    existing_node = store.get_node(asset.asset_id)
+    if existing_node is not None and existing_node.kind != "file_asset":
+        raise ValueError("file asset identifier is occupied by a non-file node")
+    existing = get_file_asset(store, asset.asset_id)
+    existing_tenant = (
+        existing.tenant_id
+        if existing is not None
+        else str((existing_node.properties if existing_node else {}).get("tenant_id") or "")
+    )
+    if existing_tenant and existing_tenant != asset.tenant_id:
+        raise PermissionError("file asset tenant boundary denied")
+    for assertion in asset.assertions:
+        if assertion.target_kind != "file_asset":
+            continue
+        target = store.get_node(assertion_target_id(assertion))
+        if target is not None and target.kind != "file_asset":
+            raise ValueError("file relationship target is not a file asset node")
+        target_tenant = str((target.properties if target else {}).get("tenant_id") or "")
+        if target_tenant and target_tenant != asset.tenant_id:
+            raise PermissionError("file relationship target tenant boundary denied")
+    merged = _merge_asset(existing, asset)
     embedding_text = " ".join(
         [merged.title] + [assertion.target_label for assertion in merged.assertions]
     )
@@ -294,37 +415,45 @@ def upsert_file_asset(store: GraphStore, asset: FileAsset) -> FileAsset:
         label=merged.title,
         properties={
             "profile": "CWL File Knowledge Profile 0.1",
+            "tenant_id": merged.tenant_id,
             "file_asset": merged.model_dump(mode="json"),
         },
         text=embedding_text,
     )
 
     for distribution in merged.distributions:
-        distribution_id = f"urn:cwl:distribution:{distribution.id}"
+        distribution_id = distribution_node_id(merged, distribution)
         store.upsert_node(
             distribution_id,
             "distribution",
             label=distribution.id,
-            properties=distribution.model_dump(mode="json"),
+            properties={
+                **distribution.model_dump(mode="json"),
+                "tenant_id": merged.tenant_id,
+            },
             text=f"{distribution.provider} {distribution.endpoint_id}",
         )
         store.upsert_edge("DISTRIBUTION", merged.asset_id, distribution_id)
 
     for assertion in merged.assertions:
-        target_id = concept_id(assertion.target_kind, assertion.target_label)
-        target_kind = (
-            "file_asset_reference" if assertion.target_kind == "file_asset" else assertion.target_kind
-        )
-        store.upsert_node(
-            target_id,
-            target_kind,
-            label=assertion.target_label,
-            properties={
-                "skos_pref_label": assertion.target_label,
-                "review_status": assertion.review_status,
-            },
-            text=assertion.target_label,
-        )
+        target_id = assertion_target_id(assertion)
+        target_kind = assertion.target_kind
+        if target_kind != "file_asset" or store.get_node(target_id) is None:
+            store.upsert_node(
+                target_id,
+                target_kind,
+                label=assertion.target_label,
+                properties={
+                    "skos_pref_label": assertion.target_label,
+                    "review_status": assertion.review_status,
+                    **(
+                        {"tenant_id": merged.tenant_id}
+                        if target_kind == "file_asset"
+                        else {}
+                    ),
+                },
+                text=assertion.target_label,
+            )
         store.upsert_edge(
             _EDGE_TYPES[assertion.relation],
             merged.asset_id,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
+from importlib.resources import files
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,6 +12,7 @@ import pytest
 
 from fastapi.testclient import TestClient
 from pypdf import PdfWriter
+from sdp_core import ActorContext
 
 from sdp import api as api_module
 from sdp.api import app
@@ -125,6 +127,26 @@ def test_machine_readable_profile_requires_assertion_provenance():
 
     assert "cwl:extractionMethod a owl:DatatypeProperty" in profile
     assert "sh:path cwl:extractionMethod ; sh:minCount 1" in shapes
+    assert "owl:equivalentClass" not in profile
+    assert "rdfs:subClassOf dcat:Resource" in profile
+    assert "sh:minInclusive 0" in shapes
+    assert "sh:maxInclusive 1" in shapes
+    assert "sh:lessThan cwl:evidenceEnd" in shapes
+    assert "sh:in ( \"proposed\" \"approved\" \"rejected\" )" in shapes
+
+
+def test_machine_readable_profile_is_packaged_with_the_runtime():
+    resources = files("sdp").joinpath("resources")
+
+    assert resources.joinpath("cwl-file-profile.ttl").is_file()
+    assert resources.joinpath("cwl-file-shapes.ttl").is_file()
+
+
+def test_file_asset_validation_executes_shacl_engine():
+    report = validate_file_asset(sample_asset())
+
+    assert report["conforms"] is True
+    assert report["shacl_engine"] == "pyshacl"
 
 
 @pytest.mark.parametrize(
@@ -154,6 +176,11 @@ def test_file_asset_validation_checks_provider_coordinates(provider, overrides, 
 def test_distribution_rejects_locator_query_to_avoid_secret_leak():
     with pytest.raises(ValueError, match="query or fragment"):
         sample_distribution(locator="https://objects.example/report.pdf?sig=secret")
+
+
+def test_distribution_rejects_locator_userinfo_to_avoid_secret_leak():
+    with pytest.raises(ValueError, match="userinfo"):
+        sample_distribution(locator="https://user:secret@objects.example/report.pdf")
 
 
 def test_filesystem_reader_stays_inside_root_and_reads_bytes(tmp_path):
@@ -220,7 +247,12 @@ class FakeContainer:
     def get_blob_client(self, name, **kwargs):
         assert name == "reports/a.docx"
         assert kwargs == {"version_id": "version-a"}
-        return SimpleNamespace(download_blob=lambda: SimpleNamespace(readall=lambda: b"content"))
+        def download_blob(*, offset, length):
+            assert offset == 0
+            assert length == 21
+            return SimpleNamespace(readall=lambda: b"content")
+
+        return SimpleNamespace(download_blob=download_blob)
 
 
 def test_s3_and_azure_readers_use_injected_clients():
@@ -276,6 +308,17 @@ def test_openxml_text_is_extracted_without_office_dependency(filename, member):
 
     assert document.status == "extracted"
     assert "효성중공업 VOC C-Cube" in document.text
+
+
+def test_openxml_rejects_oversized_uncompressed_member():
+    payload = BytesIO()
+    with ZipFile(payload, "w", ZIP_DEFLATED) as archive:
+        archive.writestr("word/document.xml", b"x" * (8 * 1024 * 1024 + 1))
+
+    document = extract_document_text("bomb.docx", payload.getvalue())
+
+    assert document.status == "extraction_failed"
+    assert document.error == "ValueError"
 
 
 def test_chunks_are_bounded_overlapped_and_content_addressed():
@@ -419,6 +462,7 @@ def test_orchestrator_client_uses_sync_embeddings_endpoint():
         ),
         base_url="https://orchestrator.example/",
         transport=transport,
+        embedding_dimensions=2,
     )
 
     assert client.embed(["alpha", "beta"]) == [[1.0, 0.0], [0.0, 1.0]]
@@ -426,8 +470,25 @@ def test_orchestrator_client_uses_sync_embeddings_endpoint():
     assert captured["payload"] == {
         "model": "text-embedding-3-small",
         "input": ["alpha", "beta"],
+        "dimensions": 2,
         "metadata": {"service": "semantic-data-portal"},
     }
+
+
+def test_orchestrator_client_rejects_wrong_embedding_dimension():
+    client = ContextualOrchestratorClient(
+        EphemeralCredentialRegistry(
+            {"CONTEXTUAL_ORCHESTRATOR_TOKEN": "orchestrator-token"}
+        ),
+        base_url="https://orchestrator.example",
+        embedding_dimensions=2,
+        transport=lambda *_: {
+            "data": [{"index": 0, "embedding": [1.0, 0.0, 0.0]}],
+        },
+    )
+
+    with pytest.raises(ValueError, match="dimension"):
+        client.embed(["alpha"])
 
 
 def test_graph_store_can_use_orchestrator_embedding_client():
@@ -519,23 +580,102 @@ def test_upsert_file_asset_merges_same_content_distributions_and_projects_assert
     assert "C-Cube PoC" not in json.dumps(node.properties, ensure_ascii=False)
 
 
-def sample_request(actor: str) -> dict[str, object]:
-    return {**sample_asset().model_dump(mode="json"), "actor": actor}
+def test_file_relationship_projects_content_addressed_target_id():
+    store = InMemoryGraphStore()
+    target_id = f"urn:sha256:{'c' * 64}"
+    assertion = sample_assertion(
+        relation="previousVersion",
+        target_kind="file_asset",
+        target_label="이전 VOC 보고서",
+        target_asset_id=target_id,
+    )
+
+    upsert_file_asset(store, sample_asset(assertions=[assertion]))
+
+    graph = store.traverse(sample_asset().asset_id, direction="out", max_depth=1)
+    edge = next(item for item in graph["edges"] if item["edge_type"] == "PREVIOUS_VERSION")
+    assert edge["target_id"] == target_id
+
+
+def test_file_relationship_does_not_overwrite_existing_target_asset():
+    store = InMemoryGraphStore()
+    target = sample_asset(
+        sha256="c" * 64,
+        title="원본 VOC 보고서",
+        distributions=[
+            sample_distribution(id="target-dist", locator="file:///D:/Documents/original.docx")
+        ],
+        assertions=[],
+    )
+    upsert_file_asset(store, target)
+    before = store.get_node(target.asset_id)
+    assertion = sample_assertion(
+        relation="previousVersion",
+        target_kind="file_asset",
+        target_label="이전 VOC 보고서",
+        target_asset_id=target.asset_id,
+    )
+
+    upsert_file_asset(store, sample_asset(assertions=[assertion]))
+
+    after = store.get_node(target.asset_id)
+    assert before is not None and after is not None
+    assert after.label == before.label
+    assert after.properties["file_asset"] == before.properties["file_asset"]
+
+
+def test_explicit_steward_review_supersedes_model_confidence():
+    store = InMemoryGraphStore()
+    proposed = sample_assertion(confidence=0.99, review_status="proposed")
+    approved = sample_assertion(confidence=0.60, review_status="approved")
+
+    upsert_file_asset(store, sample_asset(assertions=[proposed]))
+    merged = upsert_file_asset(store, sample_asset(assertions=[approved]))
+
+    assert merged.assertions[0].review_status == "approved"
+    assert merged.assertions[0].confidence == 0.60
+
+
+def sample_request() -> dict[str, object]:
+    return sample_asset().model_dump(mode="json")
+
+
+def auth_headers(role: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {role}-token"}
+
+
+def install_fake_oidc(monkeypatch):
+    def verify(token):
+        identity = token.removesuffix("-token")
+        tenant_id, _, role = identity.partition(":")
+        if not role:
+            tenant_id, role = "demo", tenant_id
+        roles = {
+            "admin": ["admin", "data-analyst"],
+            "platform-admin": ["platform-admin", "admin", "data-analyst"],
+            "analyst": ["data-analyst"],
+        }.get(role, ["data-analyst"])
+        return ActorContext(subject=identity, tenant_id=tenant_id, roles=roles), {}
+
+    monkeypatch.setattr(api_module.authz, "verify_oidc_jwks_token", verify)
 
 
 def test_file_asset_api_requires_policy_and_redacts_jsonld_locator(monkeypatch):
     store = InMemoryGraphStore()
     monkeypatch.setattr(api_module, "get_store", lambda: store)
+    install_fake_oidc(monkeypatch)
 
-    denied = client.post("/file-assets", json=sample_request("analyst"))
-    created = client.post("/file-assets", json=sample_request("admin"))
+    denied = client.post("/file-assets", json=sample_request(), headers=auth_headers("analyst"))
+    impersonation = client.post("/file-assets", json={**sample_request(), "actor": "admin"})
+    created = client.post("/file-assets", json=sample_request(), headers=auth_headers("admin"))
 
     assert denied.status_code == 403
+    assert impersonation.status_code == 401
     assert created.status_code == 200
     asset_id = created.json()["asset_id"]
-    detail = client.get(f"/file-assets/{asset_id}", params={"actor": "analyst"})
-    graph_node = client.get(f"/graph/nodes/{asset_id}")
-    exported = client.get(f"/file-assets/{asset_id}/jsonld", params={"actor": "analyst"})
+    detail = client.get(f"/file-assets/{asset_id}", headers=auth_headers("analyst"))
+    graph_node = client.get(f"/graph/nodes/{asset_id}", headers=auth_headers("analyst"))
+    exported = client.get(f"/file-assets/{asset_id}/jsonld", headers=auth_headers("analyst"))
     assert detail.status_code == 200
     assert "file:///" not in detail.text
     assert graph_node.status_code == 200
@@ -545,15 +685,18 @@ def test_file_asset_api_requires_policy_and_redacts_jsonld_locator(monkeypatch):
 
     location_denied = client.get(
         f"/file-assets/{asset_id}/jsonld",
-        params={"actor": "analyst", "include_locations": True},
+        params={"actor": "admin", "include_locations": True},
+        headers=auth_headers("analyst"),
     )
     location_allowed = client.get(
         f"/file-assets/{asset_id}/jsonld",
-        params={"actor": "admin", "include_locations": True},
+        params={"include_locations": True},
+        headers=auth_headers("admin"),
     )
     detail_location_allowed = client.get(
         f"/file-assets/{asset_id}",
-        params={"actor": "admin", "include_locations": True},
+        params={"include_locations": True},
+        headers=auth_headers("admin"),
     )
     assert location_denied.status_code == 403
     assert location_allowed.status_code == 200
@@ -565,12 +708,224 @@ def test_file_asset_api_requires_policy_and_redacts_jsonld_locator(monkeypatch):
 def test_file_asset_api_exposes_validation_and_404(monkeypatch):
     store = InMemoryGraphStore()
     monkeypatch.setattr(api_module, "get_store", lambda: store)
-    created = client.post("/file-assets", json=sample_request("admin"))
+    install_fake_oidc(monkeypatch)
+    created = client.post("/file-assets", json=sample_request(), headers=auth_headers("admin"))
     asset_id = created.json()["asset_id"]
 
-    report = client.get(f"/file-assets/{asset_id}/validate", params={"actor": "analyst"})
-    missing = client.get(f"/file-assets/urn:sha256:{'f' * 64}", params={"actor": "analyst"})
+    report = client.get(f"/file-assets/{asset_id}/validate", headers=auth_headers("analyst"))
+    missing = client.get(
+        f"/file-assets/urn:sha256:{'f' * 64}", headers=auth_headers("analyst")
+    )
 
     assert report.status_code == 200
     assert report.json()["conforms"] is True
     assert missing.status_code == 404
+
+
+def test_file_asset_api_enforces_tenant_ownership(monkeypatch):
+    store = InMemoryGraphStore()
+    monkeypatch.setattr(api_module, "get_store", lambda: store)
+    install_fake_oidc(monkeypatch)
+    created = client.post(
+        "/file-assets",
+        json=sample_request(),
+        headers=auth_headers("demo:admin"),
+    )
+    asset_id = created.json()["asset_id"]
+
+    denied = client.get(
+        f"/file-assets/{asset_id}",
+        headers=auth_headers("external:analyst"),
+    )
+    allowed = client.get(
+        f"/file-assets/{asset_id}",
+        headers=auth_headers("external:platform-admin"),
+    )
+
+    assert denied.status_code == 403
+    assert allowed.status_code == 200
+    assert get_file_asset(store, asset_id).tenant_id == "demo"
+
+
+def test_cross_tenant_same_sha_ingest_is_rejected_without_merging(monkeypatch):
+    store = InMemoryGraphStore()
+    monkeypatch.setattr(api_module, "get_store", lambda: store)
+    install_fake_oidc(monkeypatch)
+    first = client.post(
+        "/file-assets",
+        json=sample_request(),
+        headers=auth_headers("demo:admin"),
+    )
+    second_payload = sample_request()
+    second_payload["distributions"] = [
+        sample_distribution(
+            id="external-copy",
+            locator="file:///D:/External/report.docx",
+        ).model_dump(mode="json")
+    ]
+
+    denied = client.post(
+        "/file-assets",
+        json=second_payload,
+        headers=auth_headers("external:admin"),
+    )
+
+    assert first.status_code == 200
+    assert denied.status_code == 403
+    stored = get_file_asset(store, first.json()["asset_id"])
+    assert stored is not None
+    assert stored.tenant_id == "demo"
+    assert [distribution.id for distribution in stored.distributions] == ["dist-local"]
+
+
+def test_cross_tenant_file_relationship_target_is_rejected(monkeypatch):
+    store = InMemoryGraphStore()
+    monkeypatch.setattr(api_module, "get_store", lambda: store)
+    install_fake_oidc(monkeypatch)
+    target = sample_asset(sha256="c" * 64, assertions=[])
+    upsert_file_asset(store, target)
+    relation = sample_assertion(
+        relation="previousVersion",
+        target_kind="file_asset",
+        target_label="다른 tenant 문서",
+        target_asset_id=target.asset_id,
+    )
+    source = sample_asset(sha256="d" * 64, assertions=[relation]).model_dump(mode="json")
+
+    denied = client.post(
+        "/file-assets",
+        json=source,
+        headers=auth_headers("external:admin"),
+    )
+
+    assert denied.status_code == 403
+    assert get_file_asset(store, f"urn:sha256:{'d' * 64}") is None
+
+
+def test_graph_routes_require_oidc_filter_tenant_and_redact_locator(monkeypatch):
+    store = InMemoryGraphStore()
+    monkeypatch.setattr(api_module, "get_store", lambda: store)
+    install_fake_oidc(monkeypatch)
+    created = client.post(
+        "/file-assets",
+        json=sample_request(),
+        headers=auth_headers("demo:admin"),
+    )
+    asset_id = created.json()["asset_id"]
+
+    unauthenticated = client.post(
+        "/graph/query",
+        json={"start_id": asset_id, "actor": "analyst", "max_depth": 1},
+    )
+    cross_tenant = client.post(
+        "/graph/query",
+        json={"start_id": asset_id, "max_depth": 1},
+        headers=auth_headers("external:analyst"),
+    )
+    visible = client.post(
+        "/graph/query",
+        json={"start_id": asset_id, "max_depth": 1},
+        headers=auth_headers("demo:analyst"),
+    )
+    cross_tenant_search = client.post(
+        "/search/semantic",
+        json={"query": "효성중공업 VOC 종료보고서", "kind": "file_asset", "limit": 50},
+        headers=auth_headers("external:analyst"),
+    )
+
+    assert unauthenticated.status_code == 401
+    assert cross_tenant.status_code == 403
+    assert visible.status_code == 200
+    assert "file:///" not in visible.text
+    assert asset_id not in {
+        item["node_id"] for item in cross_tenant_search.json()["results"]
+    }
+
+
+def test_semantic_search_filters_tenant_before_limit():
+    config = SimpleNamespace(
+        embedding_dimension=2,
+        semantic_search_default_limit=5,
+        traversal_max_depth=4,
+    )
+    store = InMemoryGraphStore(config=config, embedder=lambda _text: [1.0, 0.0])
+    for index in range(501):
+        store.upsert_node(
+            f"external-{index}",
+            "file_asset",
+            properties={"tenant_id": "external"},
+            text="same score",
+        )
+    store.upsert_node(
+        "demo-file",
+        "file_asset",
+        properties={"tenant_id": "demo"},
+        text="same score",
+    )
+
+    results = store.semantic_search(
+        "same score",
+        kind="file_asset",
+        limit=1,
+        tenant_id="demo",
+    )
+
+    assert [item["node_id"] for item in results] == ["demo-file"]
+
+
+def test_generic_graph_mutation_cannot_create_governed_file_node(monkeypatch):
+    install_fake_oidc(monkeypatch)
+
+    response = client.post(
+        "/graph/nodes",
+        json={"node_id": "forged", "kind": "file_asset"},
+        headers=auth_headers("demo:admin"),
+    )
+
+    assert response.status_code == 400
+
+    reserved_id = client.post(
+        "/graph/nodes",
+        json={"node_id": f"urn:sha256:{'e' * 64}", "kind": "concept"},
+        headers=auth_headers("demo:admin"),
+    )
+    reserved_edge = client.post(
+        "/graph/edges",
+        json={
+            "edge_type": "related",
+            "source_id": "고객",
+            "target_id": f"urn:sha256:{'e' * 64}",
+        },
+        headers=auth_headers("demo:admin"),
+    )
+
+    assert reserved_id.status_code == 400
+    assert reserved_edge.status_code == 400
+
+
+def test_ontology_concept_cannot_overwrite_or_reference_file_identifier(monkeypatch):
+    store = InMemoryGraphStore()
+    monkeypatch.setattr(api_module, "get_store", lambda: store)
+    install_fake_oidc(monkeypatch)
+    asset = sample_asset()
+    upsert_file_asset(store, asset)
+
+    overwrite = client.post(
+        "/ontology/concepts",
+        json={"concept": asset.asset_id},
+        headers=auth_headers("demo:admin"),
+    )
+    reference = client.post(
+        "/ontology/concepts",
+        json={"concept": "안전한 개념", "related": [asset.asset_id]},
+        headers=auth_headers("demo:admin"),
+    )
+
+    assert overwrite.status_code == 400
+    assert reference.status_code == 400
+    node = store.get_node(asset.asset_id)
+    assert node is not None and node.kind == "file_asset"
+    assert node.properties["tenant_id"] == "demo"
+
+    with pytest.raises(ValueError, match="governed file identifiers"):
+        store.upsert_concept({"concept": asset.asset_id})

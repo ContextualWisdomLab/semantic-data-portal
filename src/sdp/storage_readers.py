@@ -225,7 +225,11 @@ class AzureBlobReader:
             if ref.distribution.version_id
             else {}
         )
-        data = self.client.get_blob_client(ref.object_key, **kwargs).download_blob().readall()
+        downloader = self.client.get_blob_client(ref.object_key, **kwargs).download_blob(
+            offset=0,
+            length=max_bytes + 1,
+        )
+        data = downloader.readall()
         if len(data) > max_bytes:
             raise ValueError("object exceeds maximum size")
         return data

@@ -39,6 +39,8 @@ _MEDIA_TYPES = {
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     ".pdf": "application/pdf",
 }
+_MAX_OPENXML_MEMBER_BYTES = 8 * 1024 * 1024
+_MAX_OPENXML_TOTAL_BYTES = 32 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -74,6 +76,37 @@ class EphemeralCredentialRegistry:
         return f"{type(self).__name__}(names={sorted(self._values)})"
 
 
+_CREDENTIAL_REGISTRY: CredentialRegistry = EphemeralCredentialRegistry({})
+
+
+def set_credential_registry(registry: CredentialRegistry) -> None:
+    """Install the trusted host provider and invalidate credential-bound state."""
+
+    global _CREDENTIAL_REGISTRY
+    _CREDENTIAL_REGISTRY = registry
+    # Imported lazily to avoid the graph_store -> document_semantics cycle.
+    from .graph_store import set_store
+
+    set_store(None)
+
+
+def get_credential_registry() -> CredentialRegistry:
+    return _CREDENTIAL_REGISTRY
+
+
+def validate_runtime_credentials(config: Any) -> None:
+    """Fail closed when governed LLM routing is configured without its token."""
+
+    if (
+        config.orchestrator_base_url
+        and not get_credential_registry().get_credential("CONTEXTUAL_ORCHESTRATOR_TOKEN")
+    ):
+        raise RuntimeError(
+            "CONTEXTUAL_ORCHESTRATOR_TOKEN is required in the runtime credential registry "
+            "when orchestrator_base_url is configured"
+        )
+
+
 def _decode_text(data: bytes) -> str:
     for encoding in ("utf-8-sig", "utf-16", "cp949"):
         try:
@@ -95,13 +128,24 @@ def _xml_text(xml: bytes) -> list[str]:
 def _openxml_text(suffix: str, data: bytes) -> str:
     roots = _OPENXML_ROOTS[suffix]
     parts: list[str] = []
+    total_uncompressed = 0
     with ZipFile(BytesIO(data)) as archive:
-        for name in sorted(archive.namelist()):
+        for info in sorted(archive.infolist(), key=lambda item: item.filename):
+            name = info.filename
             if not name.endswith(".xml") or not any(
                 name == root or name.startswith(root) for root in roots
             ):
                 continue
-            parts.extend(_xml_text(archive.read(name)))
+            if info.file_size > _MAX_OPENXML_MEMBER_BYTES:
+                raise ValueError("OpenXML member exceeds extraction limit")
+            total_uncompressed += info.file_size
+            if total_uncompressed > _MAX_OPENXML_TOTAL_BYTES:
+                raise ValueError("OpenXML package exceeds extraction limit")
+            with archive.open(info) as member:
+                xml = member.read(_MAX_OPENXML_MEMBER_BYTES + 1)
+            if len(xml) > _MAX_OPENXML_MEMBER_BYTES:
+                raise ValueError("OpenXML member exceeds extraction limit")
+            parts.extend(_xml_text(xml))
     return "\n".join(parts)
 
 
@@ -201,6 +245,10 @@ _SEMANTIC_SCHEMA = {
                         ],
                     },
                     "target_label": {"type": "string", "minLength": 1, "maxLength": 200},
+                    "target_asset_id": {
+                        "type": ["string", "null"],
+                        "pattern": "^urn:sha256:[0-9a-f]{64}$",
+                    },
                     "confidence": {"type": "number", "minimum": 0, "maximum": 1},
                     "evidence_quote": {"type": "string", "minLength": 1, "maxLength": 240},
                 },
@@ -208,6 +256,7 @@ _SEMANTIC_SCHEMA = {
                     "relation",
                     "target_kind",
                     "target_label",
+                    "target_asset_id",
                     "confidence",
                     "evidence_quote",
                 ],
@@ -249,6 +298,7 @@ class ContextualOrchestratorClient:
         transport: OrchestratorTransport = _orchestrator_http_transport,
         semantic_model: str = "gpt-5-mini-2025-08-07",
         embedding_model: str = "text-embedding-3-small",
+        embedding_dimensions: int | None = None,
         timeout: int = 60,
     ) -> None:
         parsed = urlsplit(base_url)
@@ -256,11 +306,14 @@ class ContextualOrchestratorClient:
             raise ValueError("orchestrator base URL must be absolute HTTP(S)")
         if parsed.query or parsed.fragment:
             raise ValueError("orchestrator base URL must not contain query or fragment")
+        if embedding_dimensions is not None and embedding_dimensions <= 0:
+            raise ValueError("embedding dimensions must be positive")
         self.credentials = credentials
         self.base_url = base_url.rstrip("/")
         self.transport = transport
         self.semantic_model = semantic_model
         self.embedding_model = embedding_model
+        self.embedding_dimensions = embedding_dimensions
         self.timeout = timeout
 
     def _payload(self, filename: str, chunk: TextChunk) -> dict[str, Any]:
@@ -273,6 +326,8 @@ class ContextualOrchestratorClient:
                     "content": (
                         "Extract only explicitly evidenced business semantics from the document chunk. "
                         "Return Korean labels when the source uses Korean. Do not infer facts absent from the text."
+                        " For file-to-file relations, return the explicit urn:sha256 target_asset_id; "
+                        "otherwise set target_asset_id to null."
                     ),
                 },
                 {
@@ -309,14 +364,14 @@ class ContextualOrchestratorClient:
     def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts or any(not isinstance(text, str) for text in texts):
             raise ValueError("embedding input must be a non-empty list of strings")
-        response = self._post(
-            "/v1/embeddings",
-            {
-                "model": self.embedding_model,
-                "input": texts,
-                "metadata": {"service": "semantic-data-portal"},
-            },
-        )
+        payload: dict[str, Any] = {
+            "model": self.embedding_model,
+            "input": texts,
+            "metadata": {"service": "semantic-data-portal"},
+        }
+        if self.embedding_dimensions is not None:
+            payload["dimensions"] = self.embedding_dimensions
+        response = self._post("/v1/embeddings", payload)
         data = response.get("data")
         if not isinstance(data, list) or len(data) != len(texts):
             raise ValueError("orchestrator embedding response is malformed")
@@ -327,6 +382,11 @@ class ContextualOrchestratorClient:
             vector = item.get("embedding")
             if not isinstance(vector, list) or not vector:
                 raise ValueError("orchestrator embedding vector is missing")
+            if (
+                self.embedding_dimensions is not None
+                and len(vector) != self.embedding_dimensions
+            ):
+                raise ValueError("orchestrator embedding dimension is malformed")
             try:
                 indexed[item["index"]] = [float(component) for component in vector]
             except (TypeError, ValueError) as exc:
@@ -366,6 +426,7 @@ class ContextualOrchestratorClient:
                         relation=candidate["relation"],
                         target_kind=candidate["target_kind"],
                         target_label=candidate["target_label"],
+                        target_asset_id=candidate.get("target_asset_id"),
                         confidence=candidate["confidence"],
                         evidence_chunk_sha256=chunk.sha256,
                         evidence_start=chunk.start + local_start,
@@ -377,8 +438,23 @@ class ContextualOrchestratorClient:
                 key = (
                     assertion.relation,
                     assertion.target_kind,
-                    assertion.target_label.strip().casefold(),
+                    assertion.target_asset_id or assertion.target_label.strip().casefold(),
                 )
                 if key not in merged or assertion.confidence > merged[key].confidence:
                     merged[key] = assertion
         return list(merged.values())
+
+
+def build_orchestrator_client(config: Any) -> ContextualOrchestratorClient:
+    """Build the governed client from KV config plus the injected secret registry."""
+
+    if not config.orchestrator_base_url:
+        raise ValueError("orchestrator base URL is not configured")
+    validate_runtime_credentials(config)
+    return ContextualOrchestratorClient(
+        get_credential_registry(),
+        base_url=config.orchestrator_base_url,
+        semantic_model=config.semantic_model,
+        embedding_model=config.embedding_model,
+        embedding_dimensions=config.embedding_dimension,
+    )
