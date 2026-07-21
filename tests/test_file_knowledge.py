@@ -404,6 +404,7 @@ def test_orchestrator_extractor_uses_strict_schema_and_persists_only_evidence_re
 
     assert captured["store"] is False
     assert captured["model"] == "gpt-5-mini-2025-08-07"
+    assert captured["reasoning_effort"] == "none"
     assert captured["response_format"]["type"] == "json_schema"
     assert captured["response_format"]["json_schema"]["strict"] is True
     assert captured["url"] == "https://orchestrator.example/v1/chat/completions"
@@ -426,6 +427,31 @@ def test_orchestrator_extractor_rejects_quote_not_present_in_input():
     )
 
     assert extractor.extract("meeting.docx", chunk_text("효성중공업 C-Cube PoC")) == []
+
+
+def test_orchestrator_extractor_retries_one_malformed_structured_output():
+    calls = 0
+    good_transport = fake_orchestrator_transport({})
+
+    def flaky_transport(request, timeout):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return {"choices": [{"message": {"content": "{"}}]}
+        return good_transport(request, timeout)
+
+    extractor = ContextualOrchestratorClient(
+        EphemeralCredentialRegistry(
+            {"CONTEXTUAL_ORCHESTRATOR_TOKEN": "orchestrator-token"}
+        ),
+        base_url="https://orchestrator.example",
+        transport=flaky_transport,
+    )
+
+    assertions = extractor.extract("meeting.docx", chunk_text("효성중공업 C-Cube PoC"))
+
+    assert calls == 2
+    assert len(assertions) == 1
 
 
 def test_orchestrator_extractor_fails_closed_without_credential():

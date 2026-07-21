@@ -320,6 +320,7 @@ class ContextualOrchestratorClient:
         return {
             "model": self.semantic_model,
             "store": False,
+            "reasoning_effort": "none",
             "messages": [
                 {
                     "role": "system",
@@ -398,31 +399,29 @@ class ContextualOrchestratorClient:
     def embed_one(self, text: str) -> list[float]:
         return self.embed([text])[0]
 
-    def extract(self, filename: str, chunks: list[TextChunk]) -> list[SemanticAssertion]:
-        merged: dict[tuple[str, str, str], SemanticAssertion] = {}
-        for chunk in chunks:
-            response = self._post(
-                "/v1/chat/completions", self._payload(filename, chunk)
-            )
-            try:
-                result = json.loads(_chat_completion_content(response))
-                candidates = result["assertions"]
-            except (KeyError, TypeError, json.JSONDecodeError) as exc:
-                raise ValueError("orchestrator semantic output is malformed") from exc
-            if not isinstance(candidates, list):
-                raise ValueError("orchestrator semantic output assertions must be a list")
+    def _extract_chunk(self, filename: str, chunk: TextChunk) -> list[SemanticAssertion]:
+        response = self._post("/v1/chat/completions", self._payload(filename, chunk))
+        try:
+            result = json.loads(_chat_completion_content(response))
+            candidates = result["assertions"]
+        except (KeyError, TypeError, json.JSONDecodeError) as exc:
+            raise ValueError("orchestrator semantic output is malformed") from exc
+        if not isinstance(candidates, list):
+            raise ValueError("orchestrator semantic output assertions must be a list")
 
-            for candidate in candidates:
-                if not isinstance(candidate, dict):
-                    raise ValueError("orchestrator semantic assertion must be an object")
-                quote_text = candidate.get("evidence_quote")
-                if not isinstance(quote_text, str):
-                    raise ValueError("orchestrator semantic assertion has no evidence quote")
-                local_start = chunk.text.find(quote_text)
-                if local_start < 0:
-                    continue
-                try:
-                    assertion = SemanticAssertion(
+        assertions: list[SemanticAssertion] = []
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                raise ValueError("orchestrator semantic assertion must be an object")
+            quote_text = candidate.get("evidence_quote")
+            if not isinstance(quote_text, str):
+                raise ValueError("orchestrator semantic assertion has no evidence quote")
+            local_start = chunk.text.find(quote_text)
+            if local_start < 0:
+                continue
+            try:
+                assertions.append(
+                    SemanticAssertion(
                         relation=candidate["relation"],
                         target_kind=candidate["target_kind"],
                         target_label=candidate["target_label"],
@@ -433,8 +432,24 @@ class ContextualOrchestratorClient:
                         evidence_end=chunk.start + local_start + len(quote_text),
                         method="contextual-orchestrator",
                     )
-                except (KeyError, TypeError, ValueError) as exc:
-                    raise ValueError("orchestrator semantic assertion is invalid") from exc
+                )
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError("orchestrator semantic assertion is invalid") from exc
+        return assertions
+
+    def extract(self, filename: str, chunks: list[TextChunk]) -> list[SemanticAssertion]:
+        merged: dict[tuple[str, str, str], SemanticAssertion] = {}
+        for chunk in chunks:
+            # ponytail: one retry handles nondeterministic structured-output truncation;
+            # add persistent retry telemetry only if provider instability warrants it.
+            for attempt in range(2):
+                try:
+                    assertions = self._extract_chunk(filename, chunk)
+                    break
+                except ValueError:
+                    if attempt:
+                        raise
+            for assertion in assertions:
                 key = (
                     assertion.relation,
                     assertion.target_kind,

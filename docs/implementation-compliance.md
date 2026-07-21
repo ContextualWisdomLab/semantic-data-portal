@@ -146,6 +146,7 @@
 - 운영 패키징: SHACL/OWL TTL은 `sdp/resources/*.ttl` package data로 wheel/container에 포함되고, `orchestrator_base_url` 구성 시 app lifespan은 runtime `CredentialRegistry` token이 없으면 fail-closed한다.
 - 벡터 일관성: KV `embedding_dimension`을 orchestrator `dimensions`에 전달하고 같은 orchestrator embedder를 memory/Postgres graph store의 ingest와 검색에 주입한다.
 - 파일럿: `src/sdp/file_pilot.py`가 content deduplication, 안전한 문서 추출, graph projection, 로컬 전용 manifest를 수행한다.
+- 2026-07-21 live 파일럿: `contextual-orchestrator`를 거친 OpenAI structured output으로 12개 파일을 10개 content-addressed 자산과 12개 distribution, 근거·신뢰도 포함 proposed assertion 286건으로 변환했다. 12개 모두 `extracted`, manifest의 10개 자산 모두 pySHACL conform이며 원문 조각·근거 인용문·credential marker는 0건이다. 민감한 파일명과 locator가 포함된 결과는 Git 제외 로컬 `outputs/hyosung-voc-file-index-live.json`에만 보관한다.
 - 증빙 테스트:
   - `tests/test_file_knowledge.py::test_orchestrator_extractor_uses_strict_schema_and_persists_only_evidence_reference`
   - `tests/test_file_knowledge.py::test_orchestrator_client_uses_sync_embeddings_endpoint`
