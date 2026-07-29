@@ -27,6 +27,17 @@ from sdp.domain import (
 )
 from tests.fuzz import invariants
 
+
+@pytest.fixture(autouse=True)
+def _isolate_fuzz_shared_state():
+    """Keep the process-global audit / policy-decision logs from accumulating
+    across property examples and leaking into other test modules — the same
+    isolation the Atheris harnesses now apply per iteration."""
+    invariants.reset_shared_state()
+    yield
+    invariants.reset_shared_state()
+
+
 # A generous but bounded settings profile: enough cases to explore the surface
 # without slowing the unit suite down.
 FUZZ_SETTINGS = settings(
@@ -191,3 +202,36 @@ def test_dto_parsing_only_raises_validation_error(model, payload):
         # e.g. a payload key collides with a positional-only/duplicate arg;
         # still a controlled parse failure, not a logic crash.
         pass
+
+
+# --------------------------------------------------------------------------- #
+# Regression: the nightly Atheris `fuzz` job was OOM-killed (RSS > 2 GiB) because
+# every execute_query/draft_sql call appends to unbounded module-level logs and
+# the coverage-guided run drives them millions of times. The harnesses now reset
+# that state per iteration; assert the reset actually keeps the logs bounded so
+# a future refactor that drops it fails here (fast) instead of only in nightly CI.
+# --------------------------------------------------------------------------- #
+def test_reset_shared_state_bounds_accumulators_across_a_call_loop():
+    from sdp import catalog, evidence
+
+    req = QueryExecutionRequest(
+        language="SQL",
+        user="analyst",
+        purpose="analysis",
+        dataset_ids=["crm-customer-master"],
+        query="select 1",
+        dry_run=True,
+    )
+    for _ in range(64):
+        invariants.reset_shared_state()
+        invariants.check_execute_query(req)
+
+    # With a reset per iteration only the final iteration's records survive; a
+    # single execute_query records one audit event and one policy decision.
+    assert len(catalog._AUDIT_LOG) <= 4
+    assert len(evidence._POLICY_DECISION_LOG) <= 4
+
+    # And the reset itself must fully clear both logs.
+    invariants.reset_shared_state()
+    assert catalog._AUDIT_LOG == []
+    assert evidence._POLICY_DECISION_LOG == []

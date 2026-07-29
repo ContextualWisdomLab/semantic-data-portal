@@ -19,6 +19,7 @@ with atheris.instrument_imports():
 
 
 def TestOneInput(data: bytes) -> None:
+    invariants.reset_shared_state()  # isolate each iteration: keep audit/decision logs bounded
     fdp = atheris.FuzzedDataProvider(data)
     query = fdp.ConsumeUnicodeNoSurrogates(fdp.ConsumeIntInRange(0, 200))
     tags = [

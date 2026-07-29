@@ -26,6 +26,7 @@ _DATASETS = ["crm-customer-master", "crm-event", "marketing-campaign", "missing"
 
 
 def TestOneInput(data: bytes) -> None:
+    invariants.reset_shared_state()  # isolate each iteration: keep audit/decision logs bounded
     fdp = atheris.FuzzedDataProvider(data)
     try:
         req = QueryDraftRequest(

@@ -10,11 +10,33 @@ from __future__ import annotations
 
 from typing import Any
 
-from sdp import catalog, ontology, orchestrator
+from sdp import catalog, evidence, ontology, orchestrator
 from sdp.domain import QueryDraftRequest, QueryExecutionRequest, QueryExecutionResponse
 
 # Anything the query drafter/executor must never let through unescaped.
 FORBIDDEN_KEYWORDS = orchestrator._FORBIDDEN_KEYWORDS
+
+
+def reset_shared_state() -> None:
+    """Clear the process-global in-memory accumulators the query paths append to.
+
+    Every ``orchestrator.execute_query`` call records an audit event
+    (``catalog._AUDIT_LOG``) and a policy decision (``evidence._POLICY_DECISION_LOG``
+    via ``policy.evaluate``); ``draft_sql`` records the policy decision. Those are
+    unbounded module-level lists. A coverage-guided Atheris run drives these
+    functions millions of times against that shared state, so without a
+    per-iteration reset the lists grow until libFuzzer kills the run on its RSS
+    limit — an out-of-memory that is a harness-isolation artifact, not a defect in
+    the code under test (it only reproduces at the long nightly budget, never at
+    the short PR budget). Resetting per iteration mirrors the
+    ``isolate_in_memory_app_state`` fixture the API tests already use, and keeps
+    the crash-oracle focused on input handling rather than accumulated memory.
+
+    ``list.clear()`` keeps each list's object identity, so any module that closed
+    over the original list still observes the reset.
+    """
+    catalog._AUDIT_LOG.clear()
+    evidence._POLICY_DECISION_LOG.clear()
 
 # The genuine injection-relevant contract: an emitted identifier must contain no
 # ASCII whitespace and no SQL metacharacter. (NB: fuzzing surfaced that
