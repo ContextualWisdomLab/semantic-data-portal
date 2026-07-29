@@ -347,6 +347,14 @@ def test_enterprise_production_readiness_tracks_paid_pilot_integrations():
     assert body["demo_blockers"] == []
 
 
+def test_load_jwks_rejects_non_http_scheme():
+    """A JWKS URL whose scheme is not http(s) is rejected before urlopen runs."""
+    from sdp.authz import _load_jwks_from_url
+
+    with pytest.raises(ValueError, match="unsupported SDP_OIDC_JWKS_URL scheme"):
+        _load_jwks_from_url("file:///etc/passwd")
+
+
 def test_oidc_preview_maps_claims_to_actor_context():
     response = client.post(
         "/enterprise/auth/oidc-preview",

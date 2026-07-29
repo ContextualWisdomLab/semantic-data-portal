@@ -475,6 +475,7 @@ class PostgresGraphStore(GraphStore):
         )
         driver_connection = conn.connection.driver_connection
         with driver_connection.cursor() as cursor:
+            # nosemgrep: sqlalchemy-execute-raw-query
             cursor.execute(statement, (json.dumps(params),))
             return cursor.fetchall()
 

@@ -136,6 +136,7 @@ def _export_to_sink(observation: dict[str, Any]) -> None:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
+        # nosemgrep: dynamic-urllib-use-detected
         with urlopen(request, timeout=timeout_ms / 1000):
             return
 

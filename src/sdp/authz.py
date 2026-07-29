@@ -4,6 +4,7 @@ import json
 import os
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlsplit
 from urllib.request import urlopen
 
 import jwt
@@ -113,6 +114,9 @@ def resolve_oidc_actor_context(
 
 def _load_jwks_from_url(jwks_url: str) -> dict[str, Any]:
     timeout = float(os.getenv("SDP_OIDC_JWKS_TIMEOUT_SECONDS", "2"))
+    if urlsplit(jwks_url).scheme not in {"http", "https"}:
+        raise ValueError(f"unsupported SDP_OIDC_JWKS_URL scheme: {jwks_url!r}")
+    # nosemgrep: dynamic-urllib-use-detected
     with urlopen(jwks_url, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
 
