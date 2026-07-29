@@ -142,6 +142,7 @@
 - LLM 경계: `src/sdp/document_semantics.py::ContextualOrchestratorClient`가 `/v1/chat/completions`와 `/v1/embeddings`만 호출한다. 포털에는 OpenAI/provider key가 없다.
 - provider 중립성: Synology는 filesystem 배치일 뿐 필수 구성요소가 아니며, 파일 정체성은 저장소 URL과 독립적이다.
 - 정책/API: `POST /file-assets`, `GET /file-assets/{asset_id}`, `/jsonld`, `/validate`는 검증된 OIDC Bearer actor context와 저장된 `FileAsset.tenant_id`를 중앙 policy decision에 전달한다. body/query `actor`는 권한 근거가 아니며 locator 공개는 동일 tenant의 admin 또는 platform-admin이 필요하다.
+- DiskSage pre-copy adapter: `POST /file-assets/preview/disksage`는 2 MiB/200건으로 제한된 strict v1 batch만 받아 원본 path/file name/account/object id 없이 deterministic `hasArtifactType` 제안을 반환한다. 선택 생산일은 `embedded metadata → explicit filename date → filesystem creation → modification`과 matching evidence를 강제한다. content metadata는 응답에 echo하지 않고 graph/file asset을 저장하거나 LLM을 호출하지 않으며 copy/eviction 허가도 만들지 않는다. create-file policy decision 증빙만 기록한다.
 - 그래프 격리: 같은 SHA 및 파일 관계 대상의 cross-tenant merge를 거부한다. generic graph mutation은 file/distribution node를 다룰 수 없고 graph traversal/semantic search는 OIDC tenant policy로 file node를 필터링하며 locator를 redaction한다.
 - 운영 패키징: SHACL/OWL TTL은 `sdp/resources/*.ttl` package data로 wheel/container에 포함되고, `orchestrator_base_url` 구성 시 app lifespan은 runtime `CredentialRegistry` token이 없으면 fail-closed한다.
 - 벡터 일관성: KV `embedding_dimension`을 orchestrator `dimensions`에 전달하고 같은 orchestrator embedder를 memory/Postgres graph store의 ingest와 검색에 주입한다.
@@ -152,6 +153,10 @@
   - `tests/test_file_knowledge.py::test_orchestrator_client_uses_sync_embeddings_endpoint`
   - `tests/test_file_knowledge.py::test_local_pilot_deduplicates_content_and_writes_no_raw_text`
   - `tests/test_file_knowledge.py::test_file_asset_api_requires_policy_and_redacts_jsonld_locator`
+  - `tests/test_file_knowledge.py::test_disksage_pre_copy_contract_enforces_metadata_precedence_and_evidence_binding`
+  - `tests/test_file_knowledge.py::test_disksage_pre_copy_contract_rejects_paths_and_unbounded_shape`
+  - `tests/test_file_knowledge.py::test_disksage_pre_copy_api_requires_create_policy_and_never_uses_graph_store`
+  - `tests/test_file_knowledge.py::test_disksage_pre_copy_api_redacts_validation_input_and_limits_body`
   - `tests/test_graph_engine.py::test_config_loads_from_kv_mapping`
 
 ## 8) 다음 단계 (현재 브랜치에서 미반영 권고)
