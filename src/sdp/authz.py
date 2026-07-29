@@ -113,7 +113,7 @@ def resolve_oidc_actor_context(
 
 def _load_jwks_from_url(jwks_url: str) -> dict[str, Any]:
     timeout = float(os.getenv("SDP_OIDC_JWKS_TIMEOUT_SECONDS", "2"))
-    with urlopen(jwks_url, timeout=timeout) as response:
+    with urlopen(jwks_url, timeout=timeout) as response:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected -- jwks_url is operator config (SDP_OIDC_JWKS_URL from the KV/env), never attacker-controlled; OIDC discovery requires the operator to set an https endpoint
         return json.loads(response.read().decode("utf-8"))
 
 

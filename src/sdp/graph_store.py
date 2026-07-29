@@ -475,7 +475,7 @@ class PostgresGraphStore(GraphStore):
         )
         driver_connection = conn.connection.driver_connection
         with driver_connection.cursor() as cursor:
-            cursor.execute(statement, (json.dumps(params),))
+            cursor.execute(statement, (json.dumps(params),))  # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query -- not raw-string SQL: statement is a psycopg.sql.SQL composition with graph_name/query as Literal()-escaped values and result_columns drawn from a closed allowlist map; the agtype params are bound via the %s driver parameter
             return cursor.fetchall()
 
     def upsert_node(
