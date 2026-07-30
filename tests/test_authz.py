@@ -158,7 +158,8 @@ def test_verify_oidc_jwks_token_loads_jwks_from_env_url(monkeypatch):
         return {"keys": []}
 
     monkeypatch.setattr(authz, "_load_jwks_from_url", _fake_load)
-    # No matching key -> _select_jwk raises inside the try -> wrapped ValueError.
-    hs_token = _jwt.encode({"sub": "s"}, "secret", algorithm="RS256") if False else _jwt.encode({"sub": "s"}, "secret", algorithm="HS256")
+    # Unsupported alg is rejected after the env JWKS is loaded -> wrapped ValueError,
+    # which exercises the `jwks = _load_jwks_from_url(jwks_url)` branch.
+    hs_token = _jwt.encode({"sub": "s"}, "secret", algorithm="HS256")
     with pytest.raises(ValueError):
         authz.verify_oidc_jwks_token(hs_token, issuer="iss", audience="aud")
