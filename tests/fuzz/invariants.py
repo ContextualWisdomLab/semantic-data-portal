@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sdp import catalog, ontology, orchestrator
+from sdp import catalog, evidence, ontology, orchestrator
 from sdp.domain import QueryDraftRequest, QueryExecutionRequest, QueryExecutionResponse
 
 # Anything the query drafter/executor must never let through unescaped.
@@ -114,3 +114,18 @@ def check_execute_query(req: QueryExecutionRequest) -> None:
     if resp.status == "SUCCEEDED":
         assert resp.row_count >= 0
         assert isinstance(resp.rows, list)
+
+
+def reset_accumulating_state() -> None:
+    """Truncate the in-memory append-only logs that query drafting/execution grow
+    on every call: ``catalog._AUDIT_LOG`` (via ``ingest_event``) and
+    ``evidence._POLICY_DECISION_LOG`` (via ``record_policy_decision``, reached
+    through ``policy.evaluate``). A coverage-guided harness runs the target
+    millions of times in one process, so without this reset those lists grow
+    without bound and the run OOMs (libFuzzer ``rss_limit_mb``) instead of
+    surfacing a real per-input defect. Seed data (``catalog._DATA``) is left
+    intact. Mirrors the ``isolate_in_memory_app_state`` test fixture, which
+    snapshots the same logs."""
+    catalog._AUDIT_LOG.clear()
+    catalog._SCHEMA_HISTORY.clear()
+    evidence._POLICY_DECISION_LOG.clear()

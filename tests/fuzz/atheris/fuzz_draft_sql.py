@@ -47,6 +47,9 @@ def TestOneInput(data: bytes) -> None:
     except pydantic.ValidationError:
         return  # rejected at the parse boundary — expected, not a finding
     invariants.check_draft_sql(req)
+    # draft_sql records a policy decision per call; clear the in-memory logs so a
+    # long coverage-guided run does not accumulate unbounded state and OOM.
+    invariants.reset_accumulating_state()
 
 
 def main() -> None:

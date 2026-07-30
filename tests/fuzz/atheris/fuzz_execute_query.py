@@ -49,6 +49,10 @@ def TestOneInput(data: bytes) -> None:
     except pydantic.ValidationError:
         return
     invariants.check_execute_query(req)
+    # execute_query appends an audit event and a policy decision per call; clear
+    # the in-memory logs so a long coverage-guided run does not accumulate
+    # unbounded state and OOM.
+    invariants.reset_accumulating_state()
 
 
 def main() -> None:
