@@ -23,6 +23,12 @@ for harness in "${HARNESS_DIR}"/fuzz_*.py; do
   name="$(basename "${harness}" .py)"
   target="${name#fuzz_}"
   corpus="${CORPUS_DIR}/${target}"
+  # Snapshot pre-existing reproducer files so a crash can be attributed to the
+  # target that just produced it (libFuzzer writes crash-/oom-/timeout- files
+  # into the CWD, which persist across targets within one run).
+  shopt -s nullglob
+  before=(crash-* oom-* timeout-*)
+  shopt -u nullglob
   echo "::group::fuzz ${target} (${SECONDS_PER_TARGET}s)"
   # -max_total_time bounds the run; -close_fd_mask keeps libFuzzer output tidy.
   python "${harness}" \
@@ -32,7 +38,26 @@ for harness in "${HARNESS_DIR}"/fuzz_*.py; do
   rc=$?
   echo "::endgroup::"
   if [ "${rc}" -ne 0 ]; then
-    echo "FUZZ FAILURE: ${target} exited with ${rc} (see crash artifact above)"
+    echo "FUZZ FAILURE: ${target} exited with ${rc}"
+    # Surface the reproducer in the log so the failure cause is diagnosable
+    # directly from the run (the crash-* artifact is also uploaded, but log
+    # visibility means no artifact download is needed to reproduce).
+    shopt -s nullglob
+    after=(crash-* oom-* timeout-*)
+    shopt -u nullglob
+    for repro in "${after[@]}"; do
+      is_new=1
+      for old in "${before[@]}"; do
+        [ "${repro}" = "${old}" ] && is_new=0 && break
+      done
+      [ "${is_new}" -eq 0 ] && continue
+      echo "::group::crash reproducer ${repro} (target ${target})"
+      echo "target=${target} file=${repro} bytes=$(wc -c <"${repro}") sha256=$(sha256sum "${repro}" | cut -d' ' -f1)"
+      echo "reproduce locally: base64 -d > repro.bin <<'B64' && PYTHONPATH=src:. python ${harness} repro.bin"
+      base64 "${repro}"
+      echo "B64"
+      echo "::endgroup::"
+    done
     status=1
   fi
 done
