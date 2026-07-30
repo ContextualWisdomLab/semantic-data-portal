@@ -1508,6 +1508,38 @@ def test_browse_query_rejects_table_outside_dataset_binding():
     )
 
 
+def test_browse_query_rejects_comma_joined_unauthorized_table():
+    """A comma-separated (implicit-join) table outside the dataset binding must
+    be rejected by the source-table allowlist, exactly like an explicit
+    unauthorized FROM/JOIN target. The allowlisted table for crm-event is
+    ``crm`` (source_system s3://analytics/events/crm); smuggling a second table
+    via ``FROM crm, customer`` must not pass validation."""
+    response = client.post(
+        "/browse/query",
+        json={
+            "user": "analyst",
+            "purpose": "analysis",
+            "dataset_ids": ["crm-event"],
+            "language": "SQL",
+            "query": "SELECT count(*) AS active_count FROM crm, customer",
+        },
+    )
+    assert response.status_code == 400
+    assert "unauthorized_table_reference" in response.json()["detail"]["warnings"]
+
+
+def test_validate_sql_query_flags_comma_joined_table_outside_allowlist():
+    """Unit-level guard: validate_sql_query must flag a comma-joined relation
+    that is not the allowlisted source table."""
+    from sdp.orchestrator import validate_sql_query
+
+    warnings = validate_sql_query(
+        "SELECT count(*) FROM crm, customer",
+        source_system="s3://analytics/events/crm",
+    )
+    assert "unauthorized_table_reference" in warnings
+
+
 def test_browse_query_rejects_literal_tautology_injection():
     response = client.post(
         "/browse/query",

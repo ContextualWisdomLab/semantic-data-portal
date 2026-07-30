@@ -11,6 +11,44 @@ from .domain import QueryExecutionResponse
 
 _FORBIDDEN_KEYWORDS = {"drop", "delete", "truncate", "alter", "insert", "update", "merge", "exec", "union"}
 
+# Keywords that terminate a FROM clause's relation list. Everything between a
+# ``FROM`` and the first of these is the (possibly comma-separated) table list.
+_CLAUSE_BOUNDARY = re.compile(
+    r"\b(where|group\s+by|order\s+by|having|limit|offset|window|"
+    r"union|intersect|except|fetch)\b",
+    re.IGNORECASE,
+)
+
+
+def _from_clause_tables(sql: str) -> list[str]:
+    """Return every relation named in each FROM clause of ``sql``.
+
+    Unlike a bare ``FROM <table>`` / ``JOIN <table>`` match, this also captures
+    comma-separated (implicit-join) relations such as the ``customer`` in
+    ``FROM crm, customer``, which would otherwise slip past the source-table
+    allowlist. Iterating over every ``FROM`` occurrence also covers subquery
+    FROM clauses, matching the previous scan's coverage.
+    """
+
+    tables: list[str] = []
+    for from_match in re.finditer(r"\bfrom\b", sql, re.IGNORECASE):
+        region = sql[from_match.end():]
+        boundary = _CLAUSE_BOUNDARY.search(region)
+        if boundary:
+            region = region[: boundary.start()]
+        # Split on JOIN so an ON-condition never swallows the next relation, then
+        # split each segment on commas to expose implicit-join relations.
+        for join_segment in re.split(r"\bjoin\b", region, flags=re.IGNORECASE):
+            relation_part = re.split(r"\bon\b", join_segment, maxsplit=1, flags=re.IGNORECASE)[0]
+            for candidate in relation_part.split(","):
+                stripped_candidate = candidate.strip()
+                if not stripped_candidate:
+                    continue
+                identifier = re.match(r"[A-Za-z_][\w.]*", stripped_candidate.split()[0])
+                if identifier:
+                    tables.append(identifier.group(0))
+    return tables
+
 
 def _safe_identifier(value: str) -> str:
     return "".join(ch if ch.isalnum() or ch == "_" else "_" for ch in value)
@@ -45,10 +83,7 @@ def validate_sql_query(sql: str, *, source_system: str) -> list[str]:
             warnings.append("forbidden_keyword_detected")
             break
 
-    referenced = [
-        next(value for value in match if value)
-        for match in re.findall(r"\bfrom\s+([A-Za-z_][\w.]*)|\bjoin\s+([A-Za-z_][\w.]*)", stripped, re.IGNORECASE)
-    ]
+    referenced = _from_clause_tables(stripped)
     if not referenced:
         warnings.append("missing_source_table")
         return warnings
