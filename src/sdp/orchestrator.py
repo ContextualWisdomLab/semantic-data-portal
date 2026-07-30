@@ -10,6 +10,19 @@ from .domain import QueryExecutionResponse
 
 
 _FORBIDDEN_KEYWORDS = {"drop", "delete", "truncate", "alter", "insert", "update", "merge", "exec", "union"}
+# Side-effecting / file-access functions that a SELECT can still call. Kept
+# separate from the DML keyword set because these are function names, not
+# statement verbs, and evade the read-only prefix check.
+_UNSAFE_FUNCTIONS = {
+    "pg_sleep",
+    "pg_read_file",
+    "pg_read_binary_file",
+    "pg_write_file",
+    "pg_ls_dir",
+    "lo_import",
+    "lo_export",
+    "dblink",
+}
 
 
 def _safe_identifier(value: str) -> str:
@@ -43,6 +56,17 @@ def validate_sql_query(sql: str, *, source_system: str) -> list[str]:
     for token in _FORBIDDEN_KEYWORDS:
         if re.search(rf"\b{re.escape(token)}\b", lowered):
             warnings.append("forbidden_keyword_detected")
+            break
+
+    # SELECT ... INTO is CREATE TABLE AS (a write/DDL), and volatile / file-access
+    # functions have side effects; both begin with the token "select" and so slip
+    # past the read-only prefix check above. Reject them so the documented
+    # SELECT-only guarantee holds as a real gate, not just a prefix test.
+    if re.search(r"\binto\b", lowered):
+        warnings.append("write_operation_not_allowed")
+    for unsafe in _UNSAFE_FUNCTIONS:
+        if re.search(rf"\b{re.escape(unsafe)}\b", lowered):
+            warnings.append("unsafe_function_call")
             break
 
     referenced = [
