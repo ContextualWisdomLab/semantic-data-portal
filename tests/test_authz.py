@@ -70,3 +70,95 @@ def test_load_jwks_from_url_honours_timeout_override(monkeypatch):
     monkeypatch.setattr(authz, "urlopen", _fake_urlopen)
     assert authz._load_jwks_from_url("http://localhost:8080/jwks") == {}
     assert seen["timeout"] == pytest.approx(5.0)
+
+
+# --- OIDC claim/role/JWK guard branches (security-critical error paths) ---
+
+import time
+
+import jwt as _jwt
+
+
+def test_claim_values_handles_str_list_none_and_scalar():
+    assert authz._claim_values(None) == []
+    assert authz._claim_values("one") == ["one"]
+    assert authz._claim_values(["a", 2]) == ["a", "2"]
+    assert authz._claim_values(7) == ["7"]  # non-str, non-list scalar
+
+
+def test_load_oidc_role_map_default_and_override(monkeypatch):
+    monkeypatch.delenv("SDP_OIDC_GROUP_ROLE_MAP", raising=False)
+    assert authz.load_oidc_role_map() == authz._DEFAULT_OIDC_GROUP_ROLE_MAP
+
+    monkeypatch.setenv("SDP_OIDC_GROUP_ROLE_MAP", '{"grp": ["data-analyst"]}')
+    assert authz.load_oidc_role_map() == {"grp": ["data-analyst"]}
+
+    monkeypatch.setenv("SDP_OIDC_GROUP_ROLE_MAP", "[]")
+    with pytest.raises(ValueError):
+        authz.load_oidc_role_map()
+
+
+def _valid_claims(**overrides):
+    claims = {
+        "preferred_username": "alice",
+        "tenant_id": "demo",
+        "exp": int(time.time()) + 3600,
+    }
+    claims.update(overrides)
+    return claims
+
+
+def test_validate_oidc_claim_shape_guard_branches():
+    authz.validate_oidc_claim_shape(_valid_claims())  # happy path
+    with pytest.raises(ValueError):  # missing subject
+        authz.validate_oidc_claim_shape({"tenant_id": "d", "exp": int(time.time()) + 60})
+    with pytest.raises(ValueError):  # missing tenant
+        authz.validate_oidc_claim_shape({"sub": "s", "exp": int(time.time()) + 60})
+    with pytest.raises(ValueError):  # missing exp
+        authz.validate_oidc_claim_shape({"sub": "s", "tenant_id": "d"})
+    with pytest.raises(ValueError):  # invalid exp type
+        authz.validate_oidc_claim_shape({"sub": "s", "tenant_id": "d", "exp": "soon"})
+    with pytest.raises(ValueError):  # expired
+        authz.validate_oidc_claim_shape({"sub": "s", "tenant_id": "d", "exp": 1})
+
+
+def test_select_jwk_guard_branches():
+    jwks = {"keys": [{"kid": "k1", "kty": "RSA"}]}
+    assert authz._select_jwk(jwks, "k1")["kid"] == "k1"
+    with pytest.raises(ValueError):  # missing kid
+        authz._select_jwk(jwks, None)
+    with pytest.raises(ValueError):  # keys not a list
+        authz._select_jwk({"keys": "nope"}, "k1")
+    with pytest.raises(ValueError):  # no matching kid
+        authz._select_jwk(jwks, "absent")
+
+
+def test_verify_oidc_jwks_token_config_and_alg_guards(monkeypatch):
+    monkeypatch.delenv("SDP_OIDC_ISSUER", raising=False)
+    monkeypatch.delenv("SDP_OIDC_AUDIENCE", raising=False)
+    monkeypatch.delenv("SDP_OIDC_JWKS_URL", raising=False)
+    with pytest.raises(ValueError):  # missing issuer
+        authz.verify_oidc_jwks_token("t", jwks={"keys": []})
+    with pytest.raises(ValueError):  # missing audience
+        authz.verify_oidc_jwks_token("t", issuer="iss", jwks={"keys": []})
+    with pytest.raises(ValueError):  # jwks is None and no JWKS URL configured
+        authz.verify_oidc_jwks_token("t", issuer="iss", audience="aud")
+
+    # Unsupported algorithm is rejected before signature verification.
+    hs_token = _jwt.encode({"sub": "s"}, "secret", algorithm="HS256")
+    with pytest.raises(ValueError):
+        authz.verify_oidc_jwks_token(hs_token, issuer="iss", audience="aud", jwks={"keys": []})
+
+
+def test_verify_oidc_jwks_token_loads_jwks_from_env_url(monkeypatch):
+    monkeypatch.setenv("SDP_OIDC_JWKS_URL", "https://idp.example/jwks")
+
+    def _fake_load(url):
+        assert url == "https://idp.example/jwks"
+        return {"keys": []}
+
+    monkeypatch.setattr(authz, "_load_jwks_from_url", _fake_load)
+    # No matching key -> _select_jwk raises inside the try -> wrapped ValueError.
+    hs_token = _jwt.encode({"sub": "s"}, "secret", algorithm="RS256") if False else _jwt.encode({"sub": "s"}, "secret", algorithm="HS256")
+    with pytest.raises(ValueError):
+        authz.verify_oidc_jwks_token(hs_token, issuer="iss", audience="aud")
