@@ -4,6 +4,7 @@ import json
 import os
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlparse
 from urllib.request import urlopen
 
 import jwt
@@ -112,7 +113,14 @@ def resolve_oidc_actor_context(
 
 
 def _load_jwks_from_url(jwks_url: str) -> dict[str, Any]:
+    # Restrict the operator-configured JWKS URL to network schemes so a
+    # misconfigured SDP_OIDC_JWKS_URL cannot turn urlopen into a local-file read
+    # (urllib honours file://) or another SSRF/LFI vector.
+    scheme = urlparse(jwks_url).scheme.lower()
+    if scheme not in {"https", "http"}:
+        raise ValueError(f"unsupported SDP_OIDC_JWKS_URL scheme: {scheme or 'missing'!r}")
     timeout = float(os.getenv("SDP_OIDC_JWKS_TIMEOUT_SECONDS", "2"))
+    # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected -- scheme is validated to http/https on the line above, so file:// / non-network URLs are rejected before urlopen.
     with urlopen(jwks_url, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
 

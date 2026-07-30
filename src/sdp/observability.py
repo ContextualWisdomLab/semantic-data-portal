@@ -136,6 +136,7 @@ def _export_to_sink(observation: dict[str, Any]) -> None:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
+        # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected -- this branch is only reached after the scheme is validated to http/https above; file:// is handled by the file-sink branch and every other scheme is rejected.
         with urlopen(request, timeout=timeout_ms / 1000):
             return
 

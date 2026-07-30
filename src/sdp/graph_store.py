@@ -475,6 +475,7 @@ class PostgresGraphStore(GraphStore):
         )
         driver_connection = conn.connection.driver_connection
         with driver_connection.cursor() as cursor:
+            # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query -- statement is a psycopg sql.Composed built from sql.Literal(graph_name) + sql.Literal(query) and an allowlisted result-columns fragment (rejected otherwise above); params are passed as a bound %s argument. No untrusted string concatenation.
             cursor.execute(statement, (json.dumps(params),))
             return cursor.fetchall()
 
