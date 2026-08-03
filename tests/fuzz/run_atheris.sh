@@ -40,7 +40,7 @@ for harness in "${HARNESS_DIR}"/fuzz_*.py; do
   if [ "${rc}" -ne 0 ]; then
     echo "FUZZ FAILURE: ${target} exited with ${rc}"
     # Surface the reproducer in the log so the failure cause is diagnosable
-    # directly from the run (the crash-* artifact is also uploaded, but log
+    # directly from the run (the crash artifact is also uploaded, but log
     # visibility means no artifact download is needed to reproduce).
     shopt -s nullglob
     after=(crash-* oom-* timeout-*)
@@ -53,7 +53,9 @@ for harness in "${HARNESS_DIR}"/fuzz_*.py; do
       [ "${is_new}" -eq 0 ] && continue
       echo "::group::crash reproducer ${repro} (target ${target})"
       echo "target=${target} file=${repro} bytes=$(wc -c <"${repro}") sha256=$(sha256sum "${repro}" | cut -d' ' -f1)"
-      echo "reproduce locally: base64 -d > repro.bin <<'B64' && PYTHONPATH=src:. python ${harness} repro.bin"
+      replay_pythonpath="$(printf '%q' "${REPO_ROOT}:${REPO_ROOT}/src")"
+      replay_harness="$(printf '%q' "${harness}")"
+      echo "reproduce locally: base64 -d > repro.bin <<'B64' && PYTHONPATH=${replay_pythonpath} python ${replay_harness} repro.bin"
       base64 "${repro}"
       echo "B64"
       echo "::endgroup::"
