@@ -28,15 +28,19 @@ def test_connector_secret_ref_format_and_prefix(monkeypatch: pytest.MonkeyPatch)
 def test_secret_status_reports_presence_without_exposing_value(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SDP_CONNECTOR_VAULT_PROVIDER", "env")
     ref = cred.connector_secret_ref("sql_connector", "crm-customer-master")
+    raw_secret_value = "super-secret-value"
+
     monkeypatch.delenv(ref, raising=False)
     absent = cred.connector_secret_status("sql_connector", "crm-customer-master")
+    absent_public = absent.public_dict()
     assert absent.secret_present is False
-    assert "token" not in str(absent.public_dict()).lower() or "secret_ref" in absent.public_dict()
-    monkeypatch.setenv(ref, "super-secret-value")
+    assert raw_secret_value not in str(absent_public)
+
+    monkeypatch.setenv(ref, raw_secret_value)
     present = cred.connector_secret_status("sql_connector", "crm-customer-master")
     assert present.secret_present is True
     # The raw secret value is never surfaced in the public dict.
-    assert "super-secret-value" not in str(present.public_dict())
+    assert raw_secret_value not in str(present.public_dict())
 
 
 def test_unsupported_vault_provider_raises(monkeypatch: pytest.MonkeyPatch) -> None:
