@@ -238,15 +238,20 @@ def test_patch_dataset_skips_none_collection() -> None:
 
 
 def test_patch_dataset_schema_bumps_schema_version() -> None:
-    """Patching the schema bumps schema_version (line 440)."""
-
-    class _SchemaPatch(DatasetPatchRequest):
-        schema: list | None = None
-
+    """Patching the schema through the public request model bumps schema_version."""
     before = catalog._DATA[_CRM].schema_version
     updated = catalog.patch_dataset(
         _CRM,
-        _SchemaPatch(schema=[{"name": "new_col", "datatype": "text", "nullable_ratio": 0.0, "distinct_ratio": 1.0}]),
+        DatasetPatchRequest(
+            schema=[
+                {
+                    "name": "new_col",
+                    "datatype": "text",
+                    "nullable_ratio": 0.0,
+                    "distinct_ratio": 1.0,
+                }
+            ]
+        ),
     )
     assert updated.schema_version == catalog._bump_version(before)
     assert [column.name for column in updated.schema] == ["new_col"]
