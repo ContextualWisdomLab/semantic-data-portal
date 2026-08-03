@@ -9,12 +9,21 @@ import pytest
 from sdp import authz
 
 
-def test_load_jwks_from_url_rejects_non_http_schemes():
+def test_load_jwks_from_url_rejects_non_http_schemes(monkeypatch):
     """A misconfigured non-http(s) JWKS URL must be rejected before any fetch,
     so urllib's ``file://`` support cannot be turned into local file disclosure."""
+    unexpected_calls = []
+
+    def _unexpected_urlopen(*args, **kwargs):
+        unexpected_calls.append((args, kwargs))
+        raise AssertionError("urlopen must not be called for a rejected URL scheme")
+
+    monkeypatch.setattr(authz, "urlopen", _unexpected_urlopen)
     for bad_url in ("file:///etc/passwd", "ftp://host/keys.json", "gopher://x", ""):
         with pytest.raises(ValueError):
             authz._load_jwks_from_url(bad_url)
+
+    assert unexpected_calls == []
 
 
 def test_load_jwks_from_url_fetches_over_https(monkeypatch):
@@ -39,6 +48,7 @@ def test_load_jwks_from_url_fetches_over_https(monkeypatch):
         captured["timeout"] = timeout
         return _FakeResponse()
 
+    monkeypatch.delenv("SDP_OIDC_JWKS_TIMEOUT_SECONDS", raising=False)
     monkeypatch.setattr(authz, "urlopen", _fake_urlopen)
     result = authz._load_jwks_from_url("https://idp.example/.well-known/jwks.json")
 
