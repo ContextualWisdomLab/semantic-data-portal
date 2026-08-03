@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sdp import catalog, ontology, orchestrator
+from sdp import catalog, evidence, ontology, orchestrator
 from sdp.domain import QueryDraftRequest, QueryExecutionRequest, QueryExecutionResponse
 
 # Anything the query drafter/executor must never let through unescaped.
@@ -22,6 +22,24 @@ FORBIDDEN_KEYWORDS = orchestrator._FORBIDDEN_KEYWORDS
 # Korean survive sanitisation — harmless for injection since every quoting/
 # terminator/whitespace byte is still mapped to "_", but see PR notes.)
 _SQL_METACHARACTERS = set(" \t\r\n'\";()[]{}`*/\\%+-.,=<>!&|@#?:")
+
+
+def reset_accumulating_state() -> None:
+    """Drop the in-memory audit / policy-decision logs between fuzz iterations.
+
+    ``orchestrator.execute_query`` and ``orchestrator.draft_sql`` append an
+    audit event (``catalog._AUDIT_LOG``) and a policy decision
+    (``evidence._POLICY_DECISION_LOG``) on essentially every call. A
+    coverage-guided Atheris run executes millions of iterations, so without a
+    reset those module-global lists grow without bound and libFuzzer aborts the
+    target with an out-of-memory error (an empty-input ``oom-*`` artifact, since
+    the failure is cumulative rather than a single hostile input). This mirrors
+    what the API suite's ``isolate_in_memory_app_state`` fixture does per test:
+    it keeps each fuzz iteration independent and bounds resident memory. The
+    oracle never inspects these logs, so clearing them cannot mask a finding.
+    """
+    catalog._AUDIT_LOG.clear()
+    evidence._POLICY_DECISION_LOG.clear()
 
 
 def check_safe_identifier(value: str) -> None:

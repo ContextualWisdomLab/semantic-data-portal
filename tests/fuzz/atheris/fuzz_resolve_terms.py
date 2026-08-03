@@ -17,6 +17,7 @@ with atheris.instrument_imports():
 
 
 def TestOneInput(data: bytes) -> None:
+    invariants.reset_accumulating_state()  # keep each iteration stateless (bounds RSS)
     fdp = atheris.FuzzedDataProvider(data)
     text = fdp.ConsumeUnicodeNoSurrogates(fdp.remaining_bytes())
     invariants.check_resolve_terms(text)

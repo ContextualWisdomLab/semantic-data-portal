@@ -26,6 +26,7 @@ _DATASETS = ["crm-customer-master", "crm-event", "marketing-campaign", "missing"
 
 
 def TestOneInput(data: bytes) -> None:
+    invariants.reset_accumulating_state()  # keep each iteration stateless (bounds RSS)
     fdp = atheris.FuzzedDataProvider(data)
     try:
         req = QueryDraftRequest(

@@ -19,6 +19,7 @@ with atheris.instrument_imports():
 
 
 def TestOneInput(data: bytes) -> None:
+    invariants.reset_accumulating_state()  # keep each iteration stateless (bounds RSS)
     fdp = atheris.FuzzedDataProvider(data)
     query = fdp.ConsumeUnicodeNoSurrogates(fdp.ConsumeIntInRange(0, 200))
     tags = [
