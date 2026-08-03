@@ -1546,6 +1546,19 @@ def test_validate_sql_query_blocks_writes_and_volatile_functions():
     assert "unsafe_function_call" in validate_sql_query(
         "SELECT pg_read_file(path_col) FROM crm", source_system=source
     )
+    # Family variants must be caught too: a word-boundary match on the bare
+    # name alone would let every suffixed sibling through (dblink_exec,
+    # dblink_connect_u, pg_sleep_for, pg_ls_waldir, pg_read_binary_file).
+    for family_variant_sql in (
+        "SELECT dblink_exec(conn_col, cmd_col) FROM crm",
+        "SELECT dblink_connect_u(conn_col) FROM crm",
+        "SELECT pg_sleep_for(interval_col) FROM crm",
+        "SELECT pg_ls_waldir() FROM crm",
+        "SELECT pg_read_binary_file(path_col) FROM crm",
+    ):
+        assert "unsafe_function_call" in validate_sql_query(
+            family_variant_sql, source_system=source
+        ), family_variant_sql
     # A clean read-only SELECT on the bound table stays warning-free.
     assert validate_sql_query("SELECT id FROM crm", source_system=source) == []
 
