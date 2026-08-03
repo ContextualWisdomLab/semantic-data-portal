@@ -18,6 +18,9 @@
 `ontology_concepts`, `concept_edges`(→ `graph_edges`), `dataset_nodes`, `graph_nodes`,
 `embedding_vectors`, `config_entries`, `schema_migrations`.
 
+DiskSage의 검증된 복사 이후 lineage를 위한 정규화 ERD와 pg-erd 재현 절차는
+[`docs/disksage-copy-lineage-erd.md`](docs/disksage-copy-lineage-erd.md)에 있습니다.
+
 ## 목표
 
 - 데이터 탐색: 키워드 카탈로그 검색 + 유사어/용어(ontology) 해석 + **그래프 순회** + **시맨틱 검색**
