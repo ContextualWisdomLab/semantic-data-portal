@@ -136,7 +136,10 @@ def _export_to_sink(observation: dict[str, Any]) -> None:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urlopen(request, timeout=timeout_ms / 1000):
+        # sink_url is the operator-configured SDP_LOG_SINK_URL and the scheme is
+        # validated to http/https above (file:// is handled separately), so it is
+        # not attacker-controlled and cannot be coerced into a file:// read.
+        with urlopen(request, timeout=timeout_ms / 1000):  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
             return
 
     raise ValueError(f"unsupported SDP_LOG_SINK_URL scheme: {scheme}")

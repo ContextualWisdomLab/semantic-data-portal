@@ -113,7 +113,10 @@ def resolve_oidc_actor_context(
 
 def _load_jwks_from_url(jwks_url: str) -> dict[str, Any]:
     timeout = float(os.getenv("SDP_OIDC_JWKS_TIMEOUT_SECONDS", "2"))
-    with urlopen(jwks_url, timeout=timeout) as response:
+    # jwks_url is the operator-configured OIDC JWKS endpoint (SDP_OIDC_JWKS_URL
+    # env/KV, resolved by the caller below), never request/user input, so the
+    # file:// SSRF/LFI vector this audit rule warns about is not reachable.
+    with urlopen(jwks_url, timeout=timeout) as response:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
         return json.loads(response.read().decode("utf-8"))
 
 
