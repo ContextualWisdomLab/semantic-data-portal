@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sdp import catalog, ontology, orchestrator
+from sdp import catalog, evidence, observability, ontology, orchestrator
 from sdp.domain import QueryDraftRequest, QueryExecutionRequest, QueryExecutionResponse
 
 # Anything the query drafter/executor must never let through unescaped.
@@ -22,6 +22,26 @@ FORBIDDEN_KEYWORDS = orchestrator._FORBIDDEN_KEYWORDS
 # Korean survive sanitisation — harmless for injection since every quoting/
 # terminator/whitespace byte is still mapped to "_", but see PR notes.)
 _SQL_METACHARACTERS = set(" \t\r\n'\";()[]{}`*/\\%+-.,=<>!&|@#?:")
+
+
+def reset_in_memory_state() -> None:
+    """Clear the in-memory append-only stores between fuzz iterations.
+
+    ``execute_query`` and ``draft_sql`` record a policy decision plus an audit
+    event on every call. Across a bounded-time coverage-guided run that is
+    hundreds of thousands of iterations, so the unbounded ``list`` accumulators
+    (``catalog._AUDIT_LOG``, ``evidence._POLICY_DECISION_LOG``) grew the process
+    past libFuzzer's rss limit and aborted the run with an ``oom-*`` exit — a
+    fuzz-harness state-accumulation artifact, not a logic bug in the code under
+    test. The pytest suite avoids this with an autouse isolation fixture; the
+    fuzz harnesses have none, so reset here. Only append-only growth is cleared;
+    the seeded catalog datasets (``catalog._DATA``) are left intact so the code
+    under test still has data to operate on.
+    """
+    catalog._AUDIT_LOG.clear()
+    catalog._SCHEMA_HISTORY.clear()
+    evidence._POLICY_DECISION_LOG.clear()
+    observability.reset_request_observability()
 
 
 def check_safe_identifier(value: str) -> None:
@@ -83,6 +103,7 @@ def check_draft_sql(req: QueryDraftRequest) -> None:
     """``orchestrator.draft_sql``: no crash; if a SQL string is returned it stays
     within bounds and never smuggles a forbidden keyword or SQL metacharacter in
     via a user-controlled identifier (group_by / columns)."""
+    reset_in_memory_state()  # bound append-only evidence growth across iterations
     result = orchestrator.draft_sql(req)
     assert isinstance(result, dict)
     if "query" not in result:
@@ -105,6 +126,7 @@ def check_draft_sql(req: QueryDraftRequest) -> None:
 def check_execute_query(req: QueryExecutionRequest) -> None:
     """``orchestrator.execute_query``: always returns a response; hostile SQL is
     rejected rather than marked SUCCEEDED."""
+    reset_in_memory_state()  # bound append-only evidence growth across iterations
     resp = orchestrator.execute_query(req)
     assert isinstance(resp, QueryExecutionResponse)
     assert resp.status in {"SUCCEEDED", "REJECTED", "DENIED"}
