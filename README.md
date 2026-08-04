@@ -18,6 +18,9 @@
 `ontology_concepts`, `concept_edges`(→ `graph_edges`), `dataset_nodes`, `graph_nodes`,
 `embedding_vectors`, `config_entries`, `schema_migrations`.
 
+DiskSage의 검증된 복사 이후 lineage를 위한 정규화 ERD와 pg-erd 재현 절차는
+[`docs/disksage-copy-lineage-erd.md`](docs/disksage-copy-lineage-erd.md)에 있습니다.
+
 ## 목표
 
 - 데이터 탐색: 키워드 카탈로그 검색 + 유사어/용어(ontology) 해석 + **그래프 순회** + **시맨틱 검색**
@@ -114,6 +117,7 @@ SDP_DATABASE_DSN='postgresql+psycopg://sdp_graph_app:<url-encoded-password>@loca
 ingest/validate 때 pySHACL로 실제 실행됩니다.
 
 - `POST /file-assets` — 관리자 정책을 통과한 자산·후보 주장 적재
+- `POST /file-assets/preview/disksage` — DiskSage 복사 전 후보의 비영속·경로 비노출 온톨로지 미리보기
 - `GET /file-assets/{asset_id}` — 자산과 의미 관계 조회
 - `GET /file-assets/{asset_id}/jsonld` — 기본 locator 비공개 JSON-LD
 - `GET /file-assets/{asset_id}/validate` — pySHACL 검증 리포트
@@ -138,6 +142,22 @@ registry에서만 가져옵니다. `embedding_dimension`은 `/v1/embeddings`의 
 context를 요구하고 body `actor`를 거부합니다. 일반 graph API는 governed file
 node/edge를 수정할 수 없으며, traversal/search 결과는 tenant로 필터링되고 locator는
 항상 redaction됩니다.
+
+`POST /file-assets/preview/disksage`는 `disksage.file-catalog-candidate-batch` v1만
+받습니다. 본문은 2 MiB, 후보는 200건으로 제한되며 `src`, `dst`, `filename`,
+`relative_path`, account/object id 같은 저장 위치 식별자는 계약에 존재하지 않고
+알 수 없는 필드는 거부됩니다. 생산일은
+`embedded_metadata → explicit_filename_date → filesystem_created → filesystem_modified`
+순서가 고정되어 있고, 선택된 값은 같은 날짜·source의 metadata evidence에 결합되어야
+합니다. 파일명 날짜는 embedded metadata가 없을 때만 낮은 신뢰도의 보조값으로
+허용됩니다.
+
+이 endpoint는 deterministic archive-kind→artifact-type 제안만 만들며 LLM, graph
+store, file-asset ingest를 호출하지 않습니다. 응답은 title/author/context/evidence
+값을 되돌려주지 않고 `content_sha256`와 verified distribution이 없으므로
+`persistable_as_file_asset=false`를 명시합니다. 또한 copy/eviction 허가가 아니며,
+기존 create-file 정책을 통과한 관리자만 사용할 수 있습니다. 중앙 policy decision
+증빙은 기록되지만 catalog/file asset 자체는 저장되지 않습니다.
 
 GitHub Secret에 값을 저장하는 것만으로는 런타임 주입이 되지 않습니다. 배포 호스트는
 secret manager에서 token을 읽는 `CredentialRegistry` 구현을 만든 뒤

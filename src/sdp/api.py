@@ -9,6 +9,7 @@ from typing import Any
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import ValidationError
 from sdp_core import (
     ActorContext,
     buyer_demo_activation_plan,
@@ -30,6 +31,12 @@ from .graph_models import (
     SemanticSearchRequest,
 )
 from .document_semantics import CredentialRegistry, set_credential_registry, validate_runtime_credentials
+from .disksage_catalog import (
+    MAX_DISKSAGE_CATALOG_BODY_BYTES,
+    DiskSageCatalogCandidateBatch,
+    DiskSageCatalogPreviewResponse,
+    build_disksage_catalog_preview,
+)
 from .graph_store import get_store, set_store
 from .file_ontology import (
     FileAsset,
@@ -891,6 +898,88 @@ def ingest_file_asset(
         "asset_id": asset.asset_id,
         "asset": asset.model_dump(mode="json"),
     }
+
+
+@app.post(
+    "/file-assets/preview/disksage",
+    response_model=DiskSageCatalogPreviewResponse,
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": DiskSageCatalogCandidateBatch.model_json_schema()
+                }
+            },
+        }
+    },
+)
+async def preview_disksage_file_catalog(
+    request: Request,
+    actor: ActorContext = Depends(_authenticated_actor),
+) -> DiskSageCatalogPreviewResponse:
+    """Validate a path-redacted pre-copy batch without creating file assets."""
+
+    content_type = (
+        request.headers.get("content-type", "").partition(";")[0].strip().lower()
+    )
+    if content_type != "application/json":
+        raise HTTPException(status_code=415, detail="application/json is required")
+    content_encoding = (
+        request.headers.get("content-encoding", "identity").strip().lower()
+    )
+    if content_encoding not in {"", "identity"}:
+        raise HTTPException(status_code=415, detail="content encoding is not supported")
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            declared_body_bytes = int(content_length)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="invalid Content-Length")
+        if declared_body_bytes < 0:
+            raise HTTPException(status_code=400, detail="invalid Content-Length")
+        if declared_body_bytes > MAX_DISKSAGE_CATALOG_BODY_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail="DiskSage catalog preview body exceeds the 2 MiB limit",
+            )
+
+    chunks: list[bytes] = []
+    body_bytes = 0
+    async for chunk in request.stream():
+        body_bytes += len(chunk)
+        if body_bytes > MAX_DISKSAGE_CATALOG_BODY_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail="DiskSage catalog preview body exceeds the 2 MiB limit",
+            )
+        chunks.append(chunk)
+    raw_body = b"".join(chunks)
+    try:
+        batch = DiskSageCatalogCandidateBatch.model_validate_json(raw_body)
+    except ValidationError as exc:
+        safe_errors = [
+            {
+                "loc": [str(item) for item in error["loc"]],
+                "type": error["type"],
+                "msg": "request does not satisfy the bounded DiskSage catalog contract",
+            }
+            for error in exc.errors(
+                include_url=False,
+                include_context=False,
+                include_input=False,
+            )
+        ]
+        raise HTTPException(status_code=422, detail=safe_errors)
+
+    preview = build_disksage_catalog_preview(batch)
+    _enforce_file_policy(
+        actor,
+        preview.preview_id,
+        "create_file_asset",
+        actor.tenant_id,
+    )
+    return preview
 
 
 def _read_file_asset(asset_id: str, actor: ActorContext):

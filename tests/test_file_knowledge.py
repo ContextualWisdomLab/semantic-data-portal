@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
+from datetime import datetime, timezone
 from importlib.resources import files
 from io import BytesIO
 from pathlib import Path
@@ -21,6 +22,13 @@ from sdp.document_semantics import (
     EphemeralCredentialRegistry,
     chunk_text,
     extract_document_text,
+)
+from sdp.disksage_catalog import (
+    DISKSAGE_CATALOG_SCHEMA,
+    MAX_DISKSAGE_CATALOG_BODY_BYTES,
+    PRODUCTION_TIME_PRECEDENCE,
+    DiskSageCatalogCandidateBatch,
+    build_disksage_catalog_preview,
 )
 
 from sdp.file_ontology import (
@@ -684,6 +692,247 @@ def install_fake_oidc(monkeypatch):
         return ActorContext(subject=identity, tenant_id=tenant_id, roles=roles), {}
 
     monkeypatch.setattr(api_module.authz, "verify_oidc_jwks_token", verify)
+
+
+def disksage_candidate(**overrides: object) -> dict[str, object]:
+    production_time = int(
+        datetime(2026, 1, 2, 10, 30, tzinfo=timezone.utc).timestamp() * 1000
+    )
+    values: dict[str, object] = {
+        "candidate_fingerprint": "c" * 64,
+        "review_fingerprint": "d" * 64,
+        "destination_provider": "icloud",
+        "destination_account_scope": "personal",
+        "archive_kind": "document",
+        "bytes": 4096,
+        "created_ms": production_time + 1000,
+        "modified_ms": production_time + 2000,
+        "production_time_ms": production_time,
+        "production_time_source": "embedded:ooxml:created",
+        "production_time_confidence": "high",
+        "requires_review": False,
+        "review_reasons": [],
+        "content_title": "private title",
+        "content_authors": ["private author"],
+        "content_context": ["private context"],
+        "duration_ms": None,
+        "dataset_profile": None,
+        "metadata_evidence": [
+            {
+                "field": "production-date",
+                "value": "2026-01-02",
+                "source": "embedded:ooxml:created",
+                "confidence": "high",
+            },
+            {
+                "field": "filename-date-hint",
+                "value": "2025-12-31",
+                "source": "filename:path-token",
+                "confidence": "low",
+            },
+            {
+                "field": "filesystem-created-date",
+                "value": "2026-01-02",
+                "source": "filesystem:created",
+                "confidence": "low",
+            },
+            {
+                "field": "filesystem-modified-date",
+                "value": "2026-01-02",
+                "source": "filesystem:modified",
+                "confidence": "medium",
+            },
+        ],
+        "blocked_reason": None,
+    }
+    values.update(overrides)
+    return values
+
+
+def disksage_batch(**overrides: object) -> dict[str, object]:
+    values: dict[str, object] = {
+        "schema": DISKSAGE_CATALOG_SCHEMA,
+        "version": 1,
+        "production_time_precedence": list(PRODUCTION_TIME_PRECEDENCE),
+        "generated_at_ms": 1_784_900_000_000,
+        "candidates": [disksage_candidate()],
+    }
+    values.update(overrides)
+    return values
+
+
+def test_disksage_pre_copy_preview_is_pure_and_does_not_echo_private_content():
+    batch = DiskSageCatalogCandidateBatch.model_validate(disksage_batch())
+
+    preview = build_disksage_catalog_preview(batch)
+    serialized = preview.model_dump_json()
+
+    assert preview.structural_validation == "accepted"
+    assert preview.candidate_count == 1
+    assert preview.production_source_counts["embedded_metadata"] == 1
+    assert preview.projections[0].ontology_matches[0].target_label == "Document"
+    assert preview.persisted is False
+    assert preview.llm_used is False
+    assert preview.copy_authorized is False
+    assert preview.eviction_authorized is False
+    assert preview.persistable_as_file_asset is False
+    assert preview.content_sha256_required is True
+    assert "private title" not in serialized
+    assert "private author" not in serialized
+    assert "private context" not in serialized
+
+
+def test_disksage_pre_copy_contract_enforces_metadata_precedence_and_evidence_binding():
+    filename_selected = disksage_candidate(
+        production_time_source="filename:path-token",
+        production_time_confidence="low",
+        production_time_ms=int(
+            datetime(2025, 12, 31, tzinfo=timezone.utc).timestamp() * 1000
+        ),
+        requires_review=True,
+        review_reasons=["production-date-not-from-embedded-metadata"],
+    )
+    with pytest.raises(ValueError, match="violates metadata precedence"):
+        DiskSageCatalogCandidateBatch.model_validate(
+            disksage_batch(candidates=[filename_selected])
+        )
+
+    missing_selected_evidence = disksage_candidate(metadata_evidence=[])
+    with pytest.raises(ValueError, match="bind to matching metadata evidence"):
+        DiskSageCatalogCandidateBatch.model_validate(
+            disksage_batch(candidates=[missing_selected_evidence])
+        )
+
+
+@pytest.mark.parametrize(
+    ("production_time_source", "production_time", "evidence_fields", "source_class"),
+    [
+        (
+            "filename:path-token",
+            datetime(2025, 12, 31, tzinfo=timezone.utc),
+            {
+                "filename-date-hint",
+                "filesystem-created-date",
+                "filesystem-modified-date",
+            },
+            "explicit_filename_date",
+        ),
+        (
+            "filesystem:created",
+            datetime(2026, 1, 2, tzinfo=timezone.utc),
+            {"filesystem-created-date", "filesystem-modified-date"},
+            "filesystem_created",
+        ),
+        (
+            "filesystem:modified-fallback",
+            datetime(2026, 1, 2, tzinfo=timezone.utc),
+            {"filesystem-modified-date"},
+            "filesystem_modified",
+        ),
+    ],
+)
+def test_disksage_pre_copy_contract_accepts_only_the_next_available_fallback(
+    production_time_source,
+    production_time,
+    evidence_fields,
+    source_class,
+):
+    baseline = disksage_candidate()
+    evidence = [
+        item
+        for item in baseline["metadata_evidence"]
+        if item["field"] in evidence_fields
+    ]
+    candidate = disksage_candidate(
+        production_time_source=production_time_source,
+        production_time_confidence="low",
+        production_time_ms=int(production_time.timestamp() * 1000),
+        metadata_evidence=evidence,
+        requires_review=True,
+        review_reasons=["production-date-not-from-embedded-metadata"],
+    )
+
+    batch = DiskSageCatalogCandidateBatch.model_validate(
+        disksage_batch(candidates=[candidate])
+    )
+    preview = build_disksage_catalog_preview(batch)
+
+    assert preview.projections[0].source_class == source_class
+
+
+def test_disksage_pre_copy_contract_rejects_paths_and_unbounded_shape():
+    payload = disksage_batch()
+    candidate = dict(payload["candidates"][0])
+    candidate["src"] = "/Users/example/Downloads/private-report.pdf"
+    payload["candidates"] = [candidate]
+
+    with pytest.raises(ValueError, match="Extra inputs are not permitted"):
+        DiskSageCatalogCandidateBatch.model_validate(payload)
+
+    schema = DiskSageCatalogCandidateBatch.model_json_schema()
+    candidate_schema = schema["$defs"]["DiskSageCatalogCandidate"]["properties"]
+    assert "src" not in candidate_schema
+    assert "dst" not in candidate_schema
+    assert "relative_path" not in candidate_schema
+    assert "filename" not in candidate_schema
+    assert "account_id" not in candidate_schema
+    assert "object_id" not in candidate_schema
+
+
+def test_disksage_pre_copy_api_requires_create_policy_and_never_uses_graph_store(
+    monkeypatch,
+):
+    install_fake_oidc(monkeypatch)
+
+    def fail_if_graph_store_is_used():
+        raise AssertionError("pre-copy catalog preview must not touch graph persistence")
+
+    monkeypatch.setattr(api_module, "get_store", fail_if_graph_store_is_used)
+    denied = client.post(
+        "/file-assets/preview/disksage",
+        json=disksage_batch(),
+        headers=auth_headers("analyst"),
+    )
+    accepted = client.post(
+        "/file-assets/preview/disksage",
+        json=disksage_batch(),
+        headers=auth_headers("admin"),
+    )
+
+    assert denied.status_code == 403
+    assert accepted.status_code == 200
+    assert accepted.json()["schema"] == "disksage.file-catalog-preview"
+    assert accepted.json()["persisted"] is False
+    assert accepted.json()["copy_authorized"] is False
+    assert "private title" not in accepted.text
+    assert "/Users/" not in accepted.text
+
+
+def test_disksage_pre_copy_api_redacts_validation_input_and_limits_body(monkeypatch):
+    install_fake_oidc(monkeypatch)
+    payload = disksage_batch()
+    candidate = dict(payload["candidates"][0])
+    candidate["src"] = "/Users/example/Downloads/do-not-echo.pdf"
+    payload["candidates"] = [candidate]
+
+    invalid = client.post(
+        "/file-assets/preview/disksage",
+        json=payload,
+        headers=auth_headers("admin"),
+    )
+    oversized = client.post(
+        "/file-assets/preview/disksage",
+        content=b"x" * (MAX_DISKSAGE_CATALOG_BODY_BYTES + 1),
+        headers={
+            **auth_headers("admin"),
+            "Content-Type": "application/json",
+        },
+    )
+
+    assert invalid.status_code == 422
+    assert "do-not-echo" not in invalid.text
+    assert "/Users/" not in invalid.text
+    assert oversized.status_code == 413
 
 
 def test_file_asset_api_requires_policy_and_redacts_jsonld_locator(monkeypatch):
