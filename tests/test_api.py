@@ -1559,6 +1559,25 @@ def test_validate_sql_query_blocks_writes_and_volatile_functions():
         assert "unsafe_function_call" in validate_sql_query(
             family_variant_sql, source_system=source
         ), family_variant_sql
+    # Session/server-control and large-object families: side effects reachable
+    # from a plain SELECT (session DoS, config reload, WAL control, large-object
+    # deletion/mutation) must be rejected the same way.
+    for control_sql in (
+        "SELECT pg_terminate_backend(pid_col) FROM crm",
+        "SELECT pg_cancel_backend(pid_col) FROM crm",
+        "SELECT pg_reload_conf() FROM crm",
+        "SELECT pg_switch_wal() FROM crm",
+        "SELECT pg_create_restore_point(name_col) FROM crm",
+        "SELECT pg_export_snapshot() FROM crm",
+        "SELECT lo_unlink(oid_col) FROM crm",
+        "SELECT lo_put(oid_col, 0, data_col) FROM crm",
+        "SELECT lo_truncate(fd_col, 0) FROM crm",
+        "SELECT lo_open(oid_col, 131072) FROM crm",
+        "SELECT lo_create(0) FROM crm",
+    ):
+        assert "unsafe_function_call" in validate_sql_query(
+            control_sql, source_system=source
+        ), control_sql
     # A clean read-only SELECT on the bound table stays warning-free.
     assert validate_sql_query("SELECT id FROM crm", source_system=source) == []
 

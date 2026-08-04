@@ -19,11 +19,27 @@ _FORBIDDEN_KEYWORDS = {"drop", "delete", "truncate", "alter", "insert", "update"
 # would let every suffixed variant through.
 _UNSAFE_FUNCTION_PREFIXES = (
     "dblink",
+    "lo_create",
     "lo_export",
     "lo_import",
+    "lo_open",
+    "lo_put",
+    "lo_truncate",
+    "lo_unlink",
+    "pg_cancel_",
+    "pg_create_",  # pg_create_restore_point, pg_create_*_replication_slot
+    "pg_drop_",  # pg_drop_replication_slot
+    "pg_export_snapshot",
+    "pg_import_snapshot",
     "pg_ls_",
+    "pg_promote",
     "pg_read_",
+    "pg_reload_conf",
+    "pg_rotate_logfile",
     "pg_sleep",
+    "pg_switch_",  # pg_switch_wal
+    "pg_terminate_",
+    "pg_wal_replay_",
     "pg_write_",
 )
 _UNSAFE_FUNCTION_PATTERN = re.compile(
