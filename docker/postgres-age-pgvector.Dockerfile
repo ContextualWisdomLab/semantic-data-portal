@@ -5,6 +5,9 @@
 # from source against the same server so `CREATE EXTENSION vector` works.
 FROM apache/age:release_PG16_1.6.0@sha256:16aa423d20a31aed36a3313244bf7aa00731325862f20ed584510e381f2feaed
 
+# Root only for the pgvector build below; the image drops back to USER
+# postgres at the end of this file, which the rule fails to see.
+# nosemgrep: dockerfile.security.last-user-is-root.last-user-is-root
 USER root
 
 ARG PGVECTOR_VERSION=v0.7.4

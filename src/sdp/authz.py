@@ -4,6 +4,7 @@ import json
 import os
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlparse
 from urllib.request import urlopen
 
 import jwt
@@ -112,8 +113,15 @@ def resolve_oidc_actor_context(
 
 
 def _load_jwks_from_url(jwks_url: str) -> dict[str, Any]:
+    parsed = urlparse(jwks_url)
+    if parsed.scheme != "https" and not (
+        parsed.scheme == "http" and parsed.hostname in ("127.0.0.1", "::1", "localhost")
+    ):
+        raise ValueError("SDP_OIDC_JWKS_URL must use https (plain http is allowed for loopback only)")
     timeout = float(os.getenv("SDP_OIDC_JWKS_TIMEOUT_SECONDS", "2"))
-    with urlopen(jwks_url, timeout=timeout) as response:
+    # jwks_url is operator env config (SDP_OIDC_JWKS_URL) validated as
+    # https/loopback above, never end-user input, so file:// is unreachable.
+    with urlopen(jwks_url, timeout=timeout) as response:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
         return json.loads(response.read().decode("utf-8"))
 
 

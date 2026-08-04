@@ -475,7 +475,10 @@ class PostgresGraphStore(GraphStore):
         )
         driver_connection = conn.connection.driver_connection
         with driver_connection.cursor() as cursor:
-            cursor.execute(statement, (json.dumps(params),))
+            # statement is composed exclusively from pg_sql.Literal/pg_sql.SQL
+            # constants above and user values travel only in the bound agtype
+            # parameter map — see the injection-safety docstring.
+            cursor.execute(statement, (json.dumps(params),))  # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query
             return cursor.fetchall()
 
     def upsert_node(

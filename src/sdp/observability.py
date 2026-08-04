@@ -136,7 +136,9 @@ def _export_to_sink(observation: dict[str, Any]) -> None:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urlopen(request, timeout=timeout_ms / 1000):
+        # sink_url is operator env config (SDP_LOG_SINK_URL) with the scheme
+        # allowlisted to http/https right above, so file:// is unreachable.
+        with urlopen(request, timeout=timeout_ms / 1000):  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
             return
 
     raise ValueError(f"unsupported SDP_LOG_SINK_URL scheme: {scheme}")
