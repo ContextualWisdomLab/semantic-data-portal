@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   pytest:
-    name: API integration suite
+    name: API integration suite and 100% production coverage
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -32,7 +32,9 @@ jobs:
         run: python -m pip install --disable-pip-version-check --no-cache-dir --require-hashes -r requirements-test.txt
       - name: Verify security dependency version
         run: test "$(python -c 'from importlib.metadata import version; print(version("cryptography"))')" = "50.0.0"
-      - name: Run tests
-        run: python -m pytest
+      - name: Run tests and enforce production statement and branch coverage
+        run: |
+          python -m coverage run --branch --source=sdp -m pytest
+          python -m coverage report --show-missing --fail-under=100
         env:
           PYTHONPATH: src
