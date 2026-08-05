@@ -475,6 +475,9 @@ class PostgresGraphStore(GraphStore):
         )
         driver_connection = conn.connection.driver_connection
         with driver_connection.cursor() as cursor:
+            # Psycopg composition quotes the graph name and Cypher body; all
+            # request values remain in the positional JSON parameter.
+            # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query
             cursor.execute(statement, (json.dumps(params),))
             return cursor.fetchall()
 
