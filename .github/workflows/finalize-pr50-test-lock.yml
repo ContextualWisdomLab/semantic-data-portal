@@ -41,7 +41,7 @@ jobs:
       - name: Verify immutable parent
         shell: bash --noprofile --norc -e -o pipefail {0}
         run: |
-          test "$(git rev-parse HEAD^)" = "821f7da8d00055855e872d063325f25236cd6258"
+          test "$(git rev-parse HEAD^)" = "b692b55e7eff4ca97ca5a40c89e0f926010dfe2f"
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
 
       - name: Set up Python
