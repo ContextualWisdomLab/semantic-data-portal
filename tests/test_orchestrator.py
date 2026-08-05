@@ -47,6 +47,28 @@ def test_validate_sql_query_accepts_clean_single_select() -> None:
     assert orch.validate_sql_query("SELECT customer_id FROM customer", source_system=_SRC) == []
 
 
+def test_validate_sql_query_accepts_projection_commas_in_derived_table() -> None:
+    """Projection commas inside a derived table are not relation separators."""
+
+    warnings = orch.validate_sql_query(
+        "SELECT count(*) AS c FROM (SELECT customer_id, signup_at FROM customer) t",
+        source_system=_SRC,
+    )
+
+    assert "unauthorized_table_reference" not in warnings
+
+
+def test_split_top_level_commas_preserves_nested_relations() -> None:
+    """The relation scanner splits only commas outside parenthesized regions."""
+
+    assert orch._split_top_level_commas(
+        "customer, (SELECT customer_id, signup_at FROM customer) nested"
+    ) == [
+        "customer",
+        " (SELECT customer_id, signup_at FROM customer) nested",
+    ]
+
+
 @pytest.mark.parametrize(
     "sql,expected",
     [
