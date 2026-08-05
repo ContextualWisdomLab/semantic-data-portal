@@ -4,19 +4,26 @@ on:
   push:
     branches:
       - "claude/inkspan-pr-audit-ci-q1u4uj"
+  pull_request:
+    types: [synchronize]
+    branches: [main]
 
 permissions:
   contents: write
 
 concurrency:
-  group: temporary-cryptography-lock-refresh-${{ github.ref }}
+  group: temporary-cryptography-lock-refresh-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
 
 jobs:
   refresh-locks:
     if: >-
       github.repository == 'ContextualWisdomLab/semantic-data-portal' &&
-      github.ref == 'refs/heads/claude/inkspan-pr-audit-ci-q1u4uj'
+      ((github.event_name == 'push' &&
+        github.ref == 'refs/heads/claude/inkspan-pr-audit-ci-q1u4uj') ||
+       (github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        github.event.pull_request.head.ref == 'claude/inkspan-pr-audit-ci-q1u4uj'))
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -27,7 +34,7 @@ jobs:
       - name: Checkout exact branch head
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 1
           persist-credentials: false
       - name: Set up Python
@@ -77,8 +84,8 @@ jobs:
       - name: Publish generated locks and remove materializer
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          EXPECTED_HEAD_SHA: ${{ github.sha }}
-          TARGET_BRANCH: ${{ github.ref_name }}
+          EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          TARGET_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
         shell: bash
         run: |
           rm .github/workflows/temporary-cryptography-lock-refresh.yml
