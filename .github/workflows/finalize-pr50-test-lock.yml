@@ -64,6 +64,8 @@ jobs:
           git diff --check
 
       - name: Install and verify production gates
+        id: production_gates
+        continue-on-error: true
         shell: bash --noprofile --norc -e -o pipefail {0}
         env:
           PYTHONPATH: src
@@ -74,7 +76,7 @@ jobs:
           python -m coverage report --show-missing --fail-under=100
           python -m compileall -q src tests
 
-      - name: Publish verified lock and remove temporary workflow
+      - name: Publish deterministic lock and remove temporary workflow
         env:
           PUSH_TOKEN: ${{ github.token }}
           SOURCE_BRANCH: ${{ github.event.pull_request.head.ref }}
@@ -93,3 +95,8 @@ jobs:
           git -c http.extraheader="AUTHORIZATION: basic ${auth_header}" \
             push --force-with-lease="refs/heads/${SOURCE_BRANCH}:${EXPECTED_HEAD}" \
             origin "HEAD:refs/heads/${SOURCE_BRANCH}"
+
+      - name: Preserve failing production-gate result
+        if: steps.production_gates.outcome != 'success'
+        shell: bash --noprofile --norc -e -o pipefail {0}
+        run: exit 1
