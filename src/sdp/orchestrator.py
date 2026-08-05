@@ -2,25 +2,14 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
-
 from .catalog import get_dataset, ingest_event
 from .domain import QueryDraftRequest
+from .policy import evaluate
 from .domain import QueryExecutionRequest
 from .domain import QueryExecutionResponse
-from .policy import evaluate
 
 
-_FORBIDDEN_KEYWORDS = {
-    "drop",
-    "delete",
-    "truncate",
-    "alter",
-    "insert",
-    "update",
-    "merge",
-    "exec",
-    "union",
-}
+_FORBIDDEN_KEYWORDS = {"drop", "delete", "truncate", "alter", "insert", "update", "merge", "exec", "union"}
 
 # Keywords that terminate a FROM clause's relation list. Everything between a
 # ``FROM`` and the first of these is the (possibly comma-separated) table list.
@@ -32,13 +21,10 @@ _CLAUSE_BOUNDARY = re.compile(
 
 
 def _split_top_level_commas(value: str) -> list[str]:
-    """Split ``value`` on commas that are outside parenthesized SQL regions.
+    """Split on commas outside parenthesized SQL regions.
 
-    The query-safety guard needs to expose implicit joins such as
-    ``FROM crm, customer`` without treating commas in a derived-table SELECT
-    list or function argument as relation separators. This deliberately small
-    scanner is not a SQL parser; it only preserves nested spans while the
-    surrounding allowlist logic inspects each ``FROM`` occurrence separately.
+    This exposes implicit joins without misreading projection-list or function
+    argument commas inside a derived relation as table separators.
     """
 
     segments: list[str] = []
@@ -68,28 +54,19 @@ def _from_clause_tables(sql: str) -> list[str]:
 
     tables: list[str] = []
     for from_match in re.finditer(r"\bfrom\b", sql, re.IGNORECASE):
-        region = sql[from_match.end() :]
+        region = sql[from_match.end():]
         boundary = _CLAUSE_BOUNDARY.search(region)
         if boundary:
             region = region[: boundary.start()]
         # Split on JOIN so an ON-condition never swallows the next relation, then
-        # split each segment on top-level commas to expose implicit joins without
-        # misreading projection commas inside a parenthesized derived table.
+        # split each segment on top-level commas to expose implicit-join relations.
         for join_segment in re.split(r"\bjoin\b", region, flags=re.IGNORECASE):
-            relation_part = re.split(
-                r"\bon\b",
-                join_segment,
-                maxsplit=1,
-                flags=re.IGNORECASE,
-            )[0]
+            relation_part = re.split(r"\bon\b", join_segment, maxsplit=1, flags=re.IGNORECASE)[0]
             for candidate in _split_top_level_commas(relation_part):
                 stripped_candidate = candidate.strip()
                 if not stripped_candidate or stripped_candidate.startswith("("):
                     continue
-                identifier = re.match(
-                    r"[A-Za-z_][\w.]*",
-                    stripped_candidate.split()[0],
-                )
+                identifier = re.match(r"[A-Za-z_][\w.]*", stripped_candidate.split()[0])
                 if identifier:
                     tables.append(identifier.group(0))
     return tables
@@ -134,9 +111,7 @@ def validate_sql_query(sql: str, *, source_system: str) -> list[str]:
         return warnings
 
     expected = _source_table_name(source_system).lower()
-    referenced_tables = {
-        _safe_identifier(table.rsplit(".", 1)[-1]).lower() for table in referenced
-    }
+    referenced_tables = {_safe_identifier(table.rsplit(".", 1)[-1]).lower() for table in referenced}
     if referenced_tables != {expected}:
         warnings.append("unauthorized_table_reference")
 
@@ -145,10 +120,7 @@ def validate_sql_query(sql: str, *, source_system: str) -> list[str]:
 
 def draft_sql(req: QueryDraftRequest) -> dict:
     if req.date_window_days < 1 or req.date_window_days > 365:
-        return {
-            "error": "invalid_date_window",
-            "reason": "date_window_days must be between 1 and 365",
-        }
+        return {"error": "invalid_date_window", "reason": "date_window_days must be between 1 and 365"}
 
     dataset = get_dataset(req.dataset_id)
     if not dataset:
@@ -156,26 +128,15 @@ def draft_sql(req: QueryDraftRequest) -> dict:
     if dataset.status != "published":
         return {"error": "policy_denied", "reason": "dataset is not published"}
     if not dataset.schema:
-        return {
-            "error": "missing_schema",
-            "reason": "dataset schema must be present to draft query",
-        }
+        return {"error": "missing_schema", "reason": "dataset schema must be present to draft query"}
 
-    decision = evaluate(
-        subject=req.user,
-        resource=req.dataset_id,
-        action="query",
-        purpose=req.purpose,
-    )
+    decision = evaluate(subject=req.user, resource=req.dataset_id, action="query", purpose=req.purpose)
     if decision.effect != "allow":
         return {"error": "policy_denied", "reason": decision.reason}
 
     question = req.question.strip().lower()
     if any(token in question for token in _FORBIDDEN_KEYWORDS):
-        return {
-            "error": "policy_denied",
-            "reason": "허용되지 않은 키워드가 질의에 포함되었습니다.",
-        }
+        return {"error": "policy_denied", "reason": "허용되지 않은 키워드가 질의에 포함되었습니다."}
 
     allowed_columns = {column.name for column in dataset.schema if column.datatype}
     if req.columns:
@@ -188,29 +149,18 @@ def draft_sql(req: QueryDraftRequest) -> dict:
 
     requested_columns = req.columns or ["*"]
     if req.group_by and req.group_by not in allowed_columns:
-        return {
-            "error": "invalid_group_by",
-            "reason": "요청한 그룹화 컬럼이 데이터셋에 없습니다.",
-        }
+        return {"error": "invalid_group_by", "reason": "요청한 그룹화 컬럼이 데이터셋에 없습니다."}
 
-    where_clause = (
-        f"WHERE created_at >= current_date - interval '{req.date_window_days} day'"
-    )
+    where_clause = f"WHERE created_at >= current_date - interval '{req.date_window_days} day'"
     table_name = _source_table_name(dataset.source_system)
 
     row_limit = min(req.row_limit, 2000)
     if row_limit <= 0:
-        return {
-            "error": "invalid_row_limit",
-            "reason": "row_limit must be a positive integer",
-        }
+        return {"error": "invalid_row_limit", "reason": "row_limit must be a positive integer"}
 
     timeout_ms = req.timeout_ms
     if timeout_ms < 500 or timeout_ms > 120000:
-        return {
-            "error": "invalid_timeout",
-            "reason": "timeout_ms must be between 500 and 120000",
-        }
+        return {"error": "invalid_timeout", "reason": "timeout_ms must be between 500 and 120000"}
 
     if req.group_by:
         group_identifier = _safe_identifier(req.group_by)
@@ -221,9 +171,7 @@ def draft_sql(req: QueryDraftRequest) -> dict:
         if "*" in requested_columns:
             select_fields = "count(*) AS active_customer_count"
         else:
-            select_fields = ", ".join(
-                _safe_identifier(column) for column in requested_columns
-            )
+            select_fields = ", ".join(_safe_identifier(column) for column in requested_columns)
             select_fields = f"{select_fields}, count(*) AS active_customer_count"
 
     max_rows = min(row_limit, 2000)
@@ -231,10 +179,7 @@ def draft_sql(req: QueryDraftRequest) -> dict:
         requested_columns = ["*"]
 
     estimated_cost = max(1, len(requested_columns) * row_limit // 200 + 1)
-    sql = (
-        f"SELECT {select_fields} FROM {table_name} {where_clause} "
-        f"{group_clause} LIMIT {max_rows}"
-    )
+    sql = f"SELECT {select_fields} FROM {table_name} {where_clause} {group_clause} LIMIT {max_rows}"
 
     assumptions = [
         "카탈로그에서 검증된 테이블/컬럼만 사용",
@@ -246,9 +191,7 @@ def draft_sql(req: QueryDraftRequest) -> dict:
 
     masked_pii = [col.name for col in dataset.schema if col.pii]
     if masked_pii and req.purpose == "analysis":
-        assumptions.append(
-            f"PII 컬럼({', '.join(masked_pii)})은 별도 집계/마스킹 필요"
-        )
+        assumptions.append(f"PII 컬럼({', '.join(masked_pii)})은 별도 집계/마스킹 필요")
 
     row_filter = decision.obligations.get("row_filter")
     if row_filter:
@@ -296,8 +239,7 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
             row_count=row_count,
             columns=columns or [],
             rows=rows or [],
-            execution=execution
-            or {"elapsedMs": 0, "source": "validation", "bytesScanned": 0},
+            execution=execution or {"elapsedMs": 0, "source": "validation", "bytesScanned": 0},
             warnings=warnings or [],
         )
 
@@ -309,11 +251,7 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
         decision_id: str | None = None,
         details: dict[str, object] | None = None,
     ) -> None:
-        audit_details = {
-            "purpose": req.purpose,
-            "request_id": request_id,
-            "dry_run": req.dry_run,
-        }
+        audit_details = {"purpose": req.purpose, "request_id": request_id, "dry_run": req.dry_run}
         if details:
             audit_details.update(details)
         ingest_event(
@@ -328,11 +266,7 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
 
     dataset_id = req.dataset_ids[0]
     if req.language.strip().upper() != "SQL":
-        audit(
-            dataset_id=dataset_id,
-            result="rejected",
-            reason="unsupported_language",
-        )
+        audit(dataset_id=dataset_id, result="rejected", reason="unsupported_language")
         return response(
             dataset_id=dataset_id,
             status="REJECTED",
@@ -341,11 +275,7 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
 
     lowered = req.query.lower()
     if any(token in lowered for token in _FORBIDDEN_KEYWORDS):
-        audit(
-            dataset_id=dataset_id,
-            result="rejected",
-            reason="forbidden_keyword_detected",
-        )
+        audit(dataset_id=dataset_id, result="rejected", reason="forbidden_keyword_detected")
         return response(
             dataset_id=dataset_id,
             status="REJECTED",
@@ -353,11 +283,7 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
         )
 
     if len(req.dataset_ids) > 1:
-        audit(
-            dataset_id=dataset_id,
-            result="rejected",
-            reason="cross_source_join_not_supported",
-        )
+        audit(dataset_id=dataset_id, result="rejected", reason="cross_source_join_not_supported")
         return response(
             dataset_id=dataset_id,
             status="REJECTED",
@@ -366,23 +292,14 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
 
     dataset = get_dataset(dataset_id)
     if not dataset:
-        audit(
-            dataset_id=dataset_id,
-            result="rejected",
-            reason="dataset_not_found",
-        )
+        audit(dataset_id=dataset_id, result="rejected", reason="dataset_not_found")
         return response(
             dataset_id=dataset_id,
             status="REJECTED",
             warnings=["dataset_not_found"],
         )
 
-    decision = evaluate(
-        subject=req.user,
-        resource=dataset_id,
-        action="query",
-        purpose=req.purpose,
-    )
+    decision = evaluate(subject=req.user, resource=dataset_id, action="query", purpose=req.purpose)
     if decision.effect != "allow":
         audit(
             dataset_id=dataset.id,
@@ -399,10 +316,7 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
             warnings=[decision.reason],
         )
 
-    validation_warnings = validate_sql_query(
-        req.query,
-        source_system=dataset.source_system,
-    )
+    validation_warnings = validate_sql_query(req.query, source_system=dataset.source_system)
     if validation_warnings:
         audit(
             dataset_id=dataset.id,
@@ -418,11 +332,7 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
             dataset_id=dataset.id,
             policy_decision_id=decision.decision_id,
             status="REJECTED",
-            execution={
-                "elapsedMs": 0,
-                "source": "query_safety",
-                "bytesScanned": 0,
-            },
+            execution={"elapsedMs": 0, "source": "query_safety", "bytesScanned": 0},
             warnings=validation_warnings,
         )
 
@@ -439,11 +349,7 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
         if "group by" in lowered
         else [{"result": row_count}]
     )
-    execution = {
-        "elapsedMs": 100,
-        "source": "mock-trino",
-        "bytesScanned": 1024,
-    }
+    execution = {"elapsedMs": 100, "source": "mock-trino", "bytesScanned": 1024}
     audit(
         dataset_id=dataset.id,
         result="allowed",
