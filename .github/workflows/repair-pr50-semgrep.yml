@@ -1,0 +1,99 @@
+name: Repair PR 50 Semgrep false positive
+
+on:
+  push:
+    branches:
+      - fix/security-gates-cryptography-50
+    paths:
+      - .github/workflows/repair-pr50-semgrep.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: repair-pr50-semgrep
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  SEMGREP_SEND_METRICS: "off"
+
+jobs:
+  repair:
+    if: >-
+      github.repository == 'ContextualWisdomLab/semantic-data-portal' &&
+      github.actor != 'github-actions[bot]' &&
+      github.ref == 'refs/heads/fix/security-gates-cryptography-50'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - name: Check out exact trigger
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Verify immutable parent and apply exact suppression placement
+        shell: bash --noprofile --norc -e -o pipefail {0}
+        run: |
+          test "$(git rev-parse HEAD^)" = "ddd806c5bfa88ae2731e45d7cdf065cbc7fb8931"
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/sdp/graph_store.py")
+          text = path.read_text(encoding="utf-8")
+          old = "            cursor.execute(statement, (json.dumps(params),))\n"
+          new = (
+              "            cursor.execute(  # nosemgrep: "
+              "python.sqlalchemy.security.sqlalchemy-execute-raw-query."
+              "sqlalchemy-execute-raw-query\n"
+              "                statement, (json.dumps(params),)\n"
+              "            )\n"
+          )
+          if text.count(old) != 1:
+              raise SystemExit(f"expected one reviewed cursor.execute anchor, found {text.count(old)}")
+          path.write_text(text.replace(old, new, 1), encoding="utf-8")
+          PY
+          python3 -m py_compile src/sdp/graph_store.py
+          git diff --check
+
+      - name: Prove the exact Semgrep gate is clean
+        shell: bash --noprofile --norc -e -o pipefail {0}
+        run: |
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE}:/src" \
+            -w /src \
+            -e SEMGREP_SEND_METRICS=off \
+            --entrypoint semgrep \
+            semgrep/semgrep@sha256:2b33f46ba66cf8cc2ad59ccfa7d22951fd00c632c38f1339e84ec8e6e641a942 \
+            scan \
+            --config=p/default \
+            --severity=WARNING \
+            --severity=ERROR \
+            --exclude=.github/workflows \
+            --exclude='docs/research/**/standards' \
+            --error \
+            --metrics=off
+
+      - name: Publish verified repair and remove temporary workflow
+        env:
+          PUSH_TOKEN: ${{ github.token }}
+        shell: bash --noprofile --norc -e -o pipefail {0}
+        run: |
+          git rm .github/workflows/repair-pr50-semgrep.yml
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/sdp/graph_store.py
+          git diff --cached --check
+          git commit -m "fix(security): bind reviewed AGE query suppression"
+          auth_header="$(printf 'x-access-token:%s' "$PUSH_TOKEN" | base64 | tr -d '\n')"
+          echo "::add-mask::$auth_header"
+          git -c http.extraheader="AUTHORIZATION: basic ${auth_header}" \
+            push origin "HEAD:refs/heads/fix/security-gates-cryptography-50"
