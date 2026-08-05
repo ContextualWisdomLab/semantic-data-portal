@@ -1,0 +1,50 @@
+name: Regenerate test lock
+
+on:
+  push:
+    branches:
+      - fix/security-gates-cryptography-50
+    paths:
+      - requirements-test.in
+      - requirements-test.txt
+      - pyproject.toml
+      - .github/workflows/regenerate-test-lock.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: regenerate-test-lock-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  regenerate:
+    name: Regenerate hash-pinned test lock
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: true # Required only for the isolated lock regeneration commit.
+          ref: ${{ github.sha }}
+      - name: Verify exact push head
+        env:
+          EXPECTED_HEAD_SHA: ${{ github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: "0.11.28"
+          enable-cache: false
+      - name: Compile universal test lock
+        run: >-
+          uv pip compile --generate-hashes --universal --python-version 3.12
+          requirements-test.in -o requirements-test.txt
+      - name: Commit regenerated lock when changed
+        run: |
+          if git diff --quiet -- requirements-test.txt; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add requirements-test.txt
+          git commit -m "build(deps): regenerate the test lock"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
