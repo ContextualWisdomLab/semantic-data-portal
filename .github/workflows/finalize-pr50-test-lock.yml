@@ -1,11 +1,8 @@
 name: Finalize PR 50 test lock
 
 on:
-  push:
-    branches:
-      - fix/security-gates-cryptography-50
-    paths:
-      - .github/workflows/finalize-pr50-test-lock.yml
+  pull_request:
+    types: [reopened]
 
 permissions:
   contents: write
@@ -21,8 +18,8 @@ jobs:
   finalize:
     if: >-
       github.repository == 'ContextualWisdomLab/semantic-data-portal' &&
-      github.actor != 'github-actions[bot]' &&
-      github.ref == 'refs/heads/fix/security-gates-cryptography-50'
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'fix/security-gates-cryptography-50'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -31,18 +28,18 @@ jobs:
         with:
           egress-policy: audit
 
-      - name: Check out exact trigger
+      - name: Check out exact contributor head
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 2
           persist-credentials: false
 
       - name: Verify immutable parent
         shell: bash --noprofile --norc -e -o pipefail {0}
         run: |
-          test "$(git rev-parse HEAD^)" = "b692b55e7eff4ca97ca5a40c89e0f926010dfe2f"
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD^)" = "95ff86fe020e327e9a4995c9a4017d82d60d4061"
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -75,6 +72,8 @@ jobs:
       - name: Publish verified lock and remove temporary machinery
         env:
           PUSH_TOKEN: ${{ github.token }}
+          SOURCE_BRANCH: ${{ github.event.pull_request.head.ref }}
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
         shell: bash --noprofile --norc -e -o pipefail {0}
         run: |
           rm -f \
@@ -90,4 +89,5 @@ jobs:
           auth_header="$(printf 'x-access-token:%s' "$PUSH_TOKEN" | base64 | tr -d '\n')"
           echo "::add-mask::$auth_header"
           git -c http.extraheader="AUTHORIZATION: basic ${auth_header}" \
-            push origin "HEAD:refs/heads/fix/security-gates-cryptography-50"
+            push --force-with-lease="refs/heads/${SOURCE_BRANCH}:${EXPECTED_HEAD}" \
+            origin "HEAD:refs/heads/${SOURCE_BRANCH}"
