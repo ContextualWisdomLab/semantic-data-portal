@@ -136,6 +136,8 @@ def _export_to_sink(observation: dict[str, Any]) -> None:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
+        # The parsed branch admits only HTTP(S); file sinks are handled above.
+        # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
         with urlopen(request, timeout=timeout_ms / 1000):
             return
 
