@@ -5,6 +5,7 @@ psycopg[binary]==3.3.4
 PyJWT[crypto]==2.13.0
 pydantic==2.13.4
 uvicorn==0.51.0
+# Coverage powers exact-head statement and branch enforcement.
 coverage==7.14.3
 pytest==9.1.1
 httpx==0.28.1
