@@ -4,6 +4,7 @@ import json
 import os
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlparse
 from urllib.request import urlopen
 
 import jwt
@@ -111,9 +112,33 @@ def resolve_oidc_actor_context(
     return ActorContext(subject=str(subject), tenant_id=tenant_id, roles=sorted(roles))
 
 
+def _validated_jwks_url(jwks_url: str) -> str:
+    """Return a JWKS URL only when it has an unambiguous HTTPS authority.
+
+    OIDC and OAuth authorization-server metadata require ``jwks_uri`` to use
+    HTTPS. Rejecting local-file, plaintext, credential-bearing, and fragment
+    forms before opening the resource prevents configuration injection from
+    turning token verification into a file-read or ambiguous outbound request.
+    """
+
+    parsed = urlparse(jwks_url)
+    if parsed.scheme.lower() != "https":
+        raise ValueError("OIDC JWKS URL must use HTTPS")
+    if not parsed.hostname:
+        raise ValueError("OIDC JWKS URL must include a host")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("OIDC JWKS URL must not include credentials")
+    if parsed.fragment:
+        raise ValueError("OIDC JWKS URL must not include a fragment")
+    return jwks_url
+
+
 def _load_jwks_from_url(jwks_url: str) -> dict[str, Any]:
+    secure_jwks_url = _validated_jwks_url(jwks_url)
     timeout = float(os.getenv("SDP_OIDC_JWKS_TIMEOUT_SECONDS", "2"))
-    with urlopen(jwks_url, timeout=timeout) as response:
+    # The deployment-controlled URL is restricted to an unambiguous HTTPS URL above.
+    # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
+    with urlopen(secure_jwks_url, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
