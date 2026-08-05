@@ -1,14 +1,18 @@
 name: Finalize PR 50 test lock
 
 on:
-  pull_request:
-    types: [reopened]
+  push:
+    branches:
+      - fix/security-gates-cryptography-50
+    paths:
+      - requirements-test.in
+      - .github/workflows/finalize-pr50-test-lock.yml
 
 permissions:
   contents: write
 
 concurrency:
-  group: finalize-pr50-test-lock
+  group: finalize-pr50-test-lock-${{ github.ref }}
   cancel-in-progress: false
 
 env:
@@ -18,8 +22,7 @@ jobs:
   finalize:
     if: >-
       github.repository == 'ContextualWisdomLab/semantic-data-portal' &&
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.head.ref == 'fix/security-gates-cryptography-50'
+      github.ref_name == 'fix/security-gates-cryptography-50'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -28,18 +31,16 @@ jobs:
         with:
           egress-policy: audit
 
-      - name: Check out exact contributor head
+      - name: Check out exact push head
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 2
+          ref: ${{ github.sha }}
+          fetch-depth: 1
           persist-credentials: false
 
-      - name: Verify immutable parent
+      - name: Verify exact push head
         shell: bash --noprofile --norc -e -o pipefail {0}
-        run: |
-          test "$(git rev-parse HEAD^)" = "95ff86fe020e327e9a4995c9a4017d82d60d4061"
-          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+        run: test "$(git rev-parse HEAD)" = "${{ github.sha }}"
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -57,11 +58,13 @@ jobs:
         run: |
           uv pip compile --generate-hashes --universal --python-version 3.12 \
             requirements-test.in -o requirements-test.txt
-          grep -E '^coverage==7\.14\.3([[:space:]]|\\)$' requirements-test.txt
+          grep -F 'coverage==7.14.3' requirements-test.txt
           git diff --check
 
-      - name: Install and verify the production gate
+      - name: Install and verify production gates
         shell: bash --noprofile --norc -e -o pipefail {0}
+        env:
+          PYTHONPATH: src
         run: |
           python -m pip install --disable-pip-version-check --no-cache-dir \
             --require-hashes -r requirements-test.txt
@@ -69,21 +72,18 @@ jobs:
           python -m coverage report --show-missing --fail-under=100
           python -m compileall -q src tests
 
-      - name: Publish verified lock and remove temporary machinery
+      - name: Publish verified lock and remove temporary workflow
         env:
           PUSH_TOKEN: ${{ github.token }}
-          SOURCE_BRANCH: ${{ github.event.pull_request.head.ref }}
-          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+          SOURCE_BRANCH: ${{ github.ref_name }}
+          EXPECTED_HEAD: ${{ github.sha }}
         shell: bash --noprofile --norc -e -o pipefail {0}
         run: |
-          rm -f \
-            .github/workflows/finalize-pr50-test-lock.yml \
-            .github/workflows/regenerate-test-lock.yml \
-            .github/workflows/repair-pr50-semgrep.yml
+          rm .github/workflows/finalize-pr50-test-lock.yml
           git diff --check
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
+          git add requirements-test.txt .github/workflows/finalize-pr50-test-lock.yml
           git diff --cached --quiet && exit 1
           git commit -m "build(test): restore complete coverage lock"
           auth_header="$(printf 'x-access-token:%s' "$PUSH_TOKEN" | base64 | tr -d '\n')"
