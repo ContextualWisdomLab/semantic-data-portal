@@ -2,8 +2,8 @@
 
 The OIDC verifier accepts a deployment-configured JWKS URL. These tests prove
 that local-file and plaintext HTTP transports are rejected before any resource
-is opened, while a standards-compliant HTTPS endpoint keeps the existing
-configurable timeout behavior.
+is opened, malformed or credential-bearing HTTPS URLs are refused, and a
+standards-compliant HTTPS endpoint keeps the existing configurable timeout.
 """
 
 from __future__ import annotations
@@ -55,6 +55,30 @@ def test_jwks_loader_rejects_plain_http_before_opening(monkeypatch: pytest.Monke
 
     with pytest.raises(ValueError, match="HTTPS"):
         authz._load_jwks_from_url("http://identity.example.test/.well-known/jwks.json")
+
+
+@pytest.mark.parametrize(
+    ("jwks_url", "message"),
+    [
+        ("https:///jwks.json", "host"),
+        ("https://operator:secret@identity.example.test/jwks.json", "credentials"),
+        ("https://identity.example.test/jwks.json#keys", "fragment"),
+    ],
+)
+def test_jwks_loader_rejects_ambiguous_https_urls_before_opening(
+    monkeypatch: pytest.MonkeyPatch,
+    jwks_url: str,
+    message: str,
+) -> None:
+    """Ambiguous authorities and client-side URL components fail closed."""
+
+    def unexpected_open(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("urlopen must not receive an invalid JWKS URL")
+
+    monkeypatch.setattr(authz, "urlopen", unexpected_open)
+
+    with pytest.raises(ValueError, match=message):
+        authz._load_jwks_from_url(jwks_url)
 
 
 def test_jwks_loader_reads_https_with_configured_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
