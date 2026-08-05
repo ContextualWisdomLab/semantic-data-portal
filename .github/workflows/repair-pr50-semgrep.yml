@@ -1,0 +1,119 @@
+name: Repair PR 50 Semgrep annotation
+
+on:
+  push:
+    branches:
+      - fix/security-gates-cryptography-50
+    paths:
+      - .github/workflows/repair-pr50-semgrep.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: repair-pr50-semgrep-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    if: >-
+      github.repository == 'ContextualWisdomLab/semantic-data-portal'
+      && github.actor == 'seonghobae'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout exact branch head without persisted credentials
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Move the reviewed suppression onto the flagged statement
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          source_path = Path("src/sdp/graph_store.py")
+          workflow_path = Path(".github/workflows/repair-pr50-semgrep.yml")
+          source = source_path.read_text(encoding="utf-8")
+          rule = (
+              "python.sqlalchemy.security.sqlalchemy-execute-raw-query."
+              "sqlalchemy-execute-raw-query"
+          )
+          old = (
+              "            # nosemgrep: "
+              + rule
+              + "\n"
+              + "            cursor.execute(statement, (json.dumps(params),))\n"
+          )
+          new = (
+              "            cursor.execute(statement, (json.dumps(params),))  "
+              "# nosemgrep: "
+              + rule
+              + "\n"
+          )
+          if source.count(old) != 1:
+              raise SystemExit("expected exactly one reviewed AGE suppression block")
+          source_path.write_text(source.replace(old, new), encoding="utf-8")
+          workflow_path.unlink()
+          PY
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Install hash-locked test dependencies
+        run: >-
+          python -m pip install --disable-pip-version-check --no-cache-dir
+          --require-hashes -r requirements-test.txt
+
+      - name: Verify injection, transport, syntax, and diff contracts
+        run: |
+          set -euo pipefail
+          python -m pytest -q \
+            tests/test_graph_security.py \
+            tests/test_oidc_transport_security.py
+          python -m compileall -q \
+            src/sdp/graph_store.py \
+            src/sdp/authz.py \
+            src/sdp/observability.py
+          git diff --check
+
+      - name: Re-run the exact pinned Semgrep gate
+        env:
+          SEMGREP_SEND_METRICS: off
+        run: |
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE}:/src" \
+            -w /src \
+            -e SEMGREP_SEND_METRICS=off \
+            --entrypoint semgrep \
+            semgrep/semgrep@sha256:2b33f46ba66cf8cc2ad59ccfa7d22951fd00c632c38f1339e84ec8e6e641a942 \
+            scan \
+            --config=p/default \
+            --severity=WARNING \
+            --severity=ERROR \
+            --exclude=.github/workflows \
+            --exclude='docs/research/**/standards' \
+            --error \
+            --metrics=off
+
+      - name: Publish the verified repair commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/sdp/graph_store.py .github/workflows/repair-pr50-semgrep.yml
+          git commit -m "fix(security): align AGE suppression with Semgrep"
+          auth_header="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
+          echo "::add-mask::$auth_header"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth_header}" \
+            push origin "HEAD:${GITHUB_REF_NAME}"
