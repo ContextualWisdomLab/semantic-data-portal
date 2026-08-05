@@ -1,0 +1,93 @@
+name: Finalize PR 50 test lock
+
+on:
+  push:
+    branches:
+      - fix/security-gates-cryptography-50
+    paths:
+      - .github/workflows/finalize-pr50-test-lock.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: finalize-pr50-test-lock
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  finalize:
+    if: >-
+      github.repository == 'ContextualWisdomLab/semantic-data-portal' &&
+      github.actor != 'github-actions[bot]' &&
+      github.ref == 'refs/heads/fix/security-gates-cryptography-50'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - name: Check out exact trigger
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Verify immutable parent
+        shell: bash --noprofile --norc -e -o pipefail {0}
+        run: |
+          test "$(git rev-parse HEAD^)" = "821f7da8d00055855e872d063325f25236cd6258"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Set up pinned uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: "0.11.28"
+          enable-cache: false
+
+      - name: Regenerate exact universal test lock
+        shell: bash --noprofile --norc -e -o pipefail {0}
+        run: |
+          uv pip compile --generate-hashes --universal --python-version 3.12 \
+            requirements-test.in -o requirements-test.txt
+          grep -E '^coverage==7\.14\.3([[:space:]]|\\)$' requirements-test.txt
+          git diff --check
+
+      - name: Install and verify the production gate
+        shell: bash --noprofile --norc -e -o pipefail {0}
+        run: |
+          python -m pip install --disable-pip-version-check --no-cache-dir \
+            --require-hashes -r requirements-test.txt
+          python -m coverage run --branch --source=sdp -m pytest
+          python -m coverage report --show-missing --fail-under=100
+          python -m compileall -q src tests
+
+      - name: Publish verified lock and remove temporary machinery
+        env:
+          PUSH_TOKEN: ${{ github.token }}
+        shell: bash --noprofile --norc -e -o pipefail {0}
+        run: |
+          rm -f \
+            .github/workflows/finalize-pr50-test-lock.yml \
+            .github/workflows/regenerate-test-lock.yml \
+            .github/workflows/repair-pr50-semgrep.yml
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && exit 1
+          git commit -m "build(test): restore complete coverage lock"
+          auth_header="$(printf 'x-access-token:%s' "$PUSH_TOKEN" | base64 | tr -d '\n')"
+          echo "::add-mask::$auth_header"
+          git -c http.extraheader="AUTHORIZATION: basic ${auth_header}" \
+            push origin "HEAD:refs/heads/fix/security-gates-cryptography-50"
