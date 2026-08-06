@@ -43,6 +43,9 @@ def test_validate_outbound_https_url_accepts_public_targets(raw_url: str, expect
         "https://[::1]/keys",
         "https://example.com:invalid/keys",
         "https:///missing-host",
+        "https://./keys",
+        "https://[broken",
+        "https://\ud800.example/keys",
     ],
 )
 def test_validate_outbound_https_url_rejects_unsafe_targets(raw_url: str) -> None:
@@ -95,6 +98,20 @@ def test_observability_rejects_plain_http_sink(monkeypatch: pytest.MonkeyPatch) 
 
     with pytest.raises(ValueError, match="SDP_LOG_SINK_URL must use https"):
         observability._export_to_sink({"request_id": "request-1"})
+
+
+def test_observability_sink_status_normalizes_https(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SDP_LOG_SINK_URL", " HTTPS://EXAMPLE.COM:8443/logs ")
+    monkeypatch.setenv("SDP_ALERT_WEBHOOK_URL", "https://alerts.example/hook")
+
+    assert observability._sink_status() == {
+        "configured": True,
+        "scheme": "https",
+        "target": "example.com:8443",
+        "alert_webhook_configured": True,
+    }
 
 
 def test_observability_posts_only_to_validated_https_sink(
