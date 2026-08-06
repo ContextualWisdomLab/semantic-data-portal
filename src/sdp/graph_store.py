@@ -475,7 +475,10 @@ class PostgresGraphStore(GraphStore):
         )
         driver_connection = conn.connection.driver_connection
         with driver_connection.cursor() as cursor:
-            cursor.execute(statement, (json.dumps(params),))
+            # ``statement`` is composed only from psycopg SQL/Literal objects
+            # and the closed result-column map; request data remains a bound
+            # positional driver parameter rather than SQL text.
+            cursor.execute(statement, (json.dumps(params),))  # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query
             return cursor.fetchall()
 
     def upsert_node(
