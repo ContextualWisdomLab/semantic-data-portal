@@ -10,6 +10,8 @@ import jwt
 from jwt import InvalidTokenError, PyJWK
 from sdp_core import ActorContext
 
+from .network_security import validate_outbound_https_url
+
 
 _SUBJECTS = {
     "admin": ActorContext(subject="admin", tenant_id="demo", roles=["admin", "data-analyst", "platform-admin"]),
@@ -112,8 +114,16 @@ def resolve_oidc_actor_context(
 
 
 def _load_jwks_from_url(jwks_url: str) -> dict[str, Any]:
+    """Load a JWKS document from a validated public HTTPS endpoint."""
+
     timeout = float(os.getenv("SDP_OIDC_JWKS_TIMEOUT_SECONDS", "2"))
-    with urlopen(jwks_url, timeout=timeout) as response:
+    validated_url = validate_outbound_https_url(
+        jwks_url,
+        setting_name="SDP_OIDC_JWKS_URL",
+    )
+    # The URL has passed the centralized HTTPS/public-target boundary above;
+    # production egress policy provides post-DNS enforcement.
+    with urlopen(validated_url, timeout=timeout) as response:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
         return json.loads(response.read().decode("utf-8"))
 
 
