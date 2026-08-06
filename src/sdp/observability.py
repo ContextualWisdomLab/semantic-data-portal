@@ -15,6 +15,7 @@ from sdp_core import enterprise_controls_manifest
 
 from .catalog import list_audit_events, list_datasets
 from .evidence import list_policy_decisions
+from .network_security import validate_outbound_https_url
 
 
 _REQUEST_OBSERVATIONS: deque[dict[str, Any]] = deque(maxlen=500)
@@ -100,7 +101,12 @@ def _sink_status() -> dict[str, Any]:
     if scheme == "file":
         target = str(_file_sink_path(sink_url, parsed))
     elif scheme in {"http", "https"}:
-        target = parsed.netloc
+        validated_url = validate_outbound_https_url(
+            sink_url,
+            setting_name="SDP_LOG_SINK_URL",
+        )
+        target = urlparse(validated_url).netloc
+        scheme = "https"
     else:
         target = sink_url
 
@@ -113,6 +119,8 @@ def _sink_status() -> dict[str, Any]:
 
 
 def _export_to_sink(observation: dict[str, Any]) -> None:
+    """Export one observation to a local file or validated HTTPS endpoint."""
+
     sink_url = os.getenv("SDP_LOG_SINK_URL", "").strip()
     if not sink_url:
         return
@@ -129,14 +137,20 @@ def _export_to_sink(observation: dict[str, Any]) -> None:
         return
 
     if scheme in {"http", "https"}:
+        validated_url = validate_outbound_https_url(
+            sink_url,
+            setting_name="SDP_LOG_SINK_URL",
+        )
         timeout_ms = int(os.getenv("SDP_LOG_SINK_TIMEOUT_MS", "500"))
         request = UrlRequest(
-            sink_url,
+            validated_url,
             data=payload.encode("utf-8"),
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urlopen(request, timeout=timeout_ms / 1000):
+        # The destination has passed the centralized HTTPS/public-target
+        # boundary above; production egress policy provides post-DNS enforcement.
+        with urlopen(request, timeout=timeout_ms / 1000):  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
             return
 
     raise ValueError(f"unsupported SDP_LOG_SINK_URL scheme: {scheme}")
