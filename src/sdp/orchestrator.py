@@ -10,40 +10,15 @@ from .domain import QueryExecutionResponse
 
 
 _FORBIDDEN_KEYWORDS = {"drop", "delete", "truncate", "alter", "insert", "update", "merge", "exec", "union"}
-# Side-effecting / file-access functions that a SELECT can still call. Kept
-# separate from the DML keyword set because these are function names, not
-# statement verbs, and evade the read-only prefix check. Each entry is a
-# family *prefix*, not an exact name: PostgreSQL ships whole families
-# (``dblink_exec``, ``dblink_connect_u``, ``pg_sleep_for``,
-# ``pg_ls_waldir``, ...), and a word-boundary match on the bare name alone
-# would let every suffixed variant through.
-_UNSAFE_FUNCTION_PREFIXES = (
-    "dblink",
-    "lo_create",
-    "lo_export",
-    "lo_import",
-    "lo_open",
-    "lo_put",
-    "lo_truncate",
-    "lo_unlink",
-    "pg_cancel_",
-    "pg_create_",  # pg_create_restore_point, pg_create_*_replication_slot
-    "pg_drop_",  # pg_drop_replication_slot
-    "pg_export_snapshot",
-    "pg_import_snapshot",
-    "pg_ls_",
-    "pg_promote",
-    "pg_read_",
-    "pg_reload_conf",
-    "pg_rotate_logfile",
-    "pg_sleep",
-    "pg_switch_",  # pg_switch_wal
-    "pg_terminate_",
-    "pg_wal_replay_",
-    "pg_write_",
-)
-_UNSAFE_FUNCTION_PATTERN = re.compile(
-    r"\b(?:" + "|".join(re.escape(prefix) for prefix in _UNSAFE_FUNCTION_PREFIXES) + r")\w*"
+# Function admission is deliberately positive rather than denylist-based. PostgreSQL
+# exposes many built-ins and extensions that can mutate state, consume unbounded
+# resources, access files, or affect other sessions while still appearing inside a
+# SELECT. A finite unsafe-name list therefore cannot establish a read-only boundary.
+# Keep the product surface limited to the aggregate functions required by governed
+# analytics; every other function call fails closed until reviewed and added here.
+_SAFE_READONLY_FUNCTIONS = frozenset({"avg", "count", "max", "min", "sum"})
+_FUNCTION_CALL_PATTERN = re.compile(
+    r"(?<![\w.])(?P<name>[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)*)\s*\("
 )
 
 
@@ -57,6 +32,15 @@ def _safe_request_id() -> str:
 
 def _source_table_name(source_system: str) -> str:
     return _safe_identifier(source_system.rstrip("/").rsplit("/", 1)[-1])
+
+
+def _has_unreviewed_function_call(sql: str) -> bool:
+    """Return whether SQL invokes a function outside the reviewed read-only set."""
+    for match in _FUNCTION_CALL_PATTERN.finditer(sql):
+        function_name = match.group("name").lower()
+        if "." in function_name or function_name not in _SAFE_READONLY_FUNCTIONS:
+            return True
+    return False
 
 
 def validate_sql_query(sql: str, *, source_system: str) -> list[str]:
@@ -80,13 +64,13 @@ def validate_sql_query(sql: str, *, source_system: str) -> list[str]:
             warnings.append("forbidden_keyword_detected")
             break
 
-    # SELECT ... INTO is CREATE TABLE AS (a write/DDL), and volatile / file-access
-    # functions have side effects; both begin with the token "select" and so slip
-    # past the read-only prefix check above. Reject them so the documented
-    # SELECT-only guarantee holds as a real gate, not just a prefix test.
+    # SELECT ... INTO is CREATE TABLE AS (a write/DDL). Function calls are a
+    # separate grammar boundary: only the reviewed aggregate allowlist above is
+    # accepted, so newly installed PostgreSQL extensions cannot silently expand
+    # query authority.
     if re.search(r"\binto\b", lowered):
         warnings.append("write_operation_not_allowed")
-    if _UNSAFE_FUNCTION_PATTERN.search(lowered):
+    if _has_unreviewed_function_call(stripped):
         warnings.append("unsafe_function_call")
 
     referenced = [
