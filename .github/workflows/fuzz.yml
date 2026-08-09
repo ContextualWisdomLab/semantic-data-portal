@@ -16,7 +16,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: fuzz-${{ github.event.pull_request.head.sha || github.sha }}
+  group: fuzz-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -31,8 +31,8 @@ jobs:
       - name: Verify exact pull-request head
         if: github.event_name == 'pull_request'
         env:
-          EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
+          SDP_EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: test "$(git rev-parse HEAD)" = "$SDP_EXPECTED_HEAD_SHA"
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12"
@@ -55,8 +55,8 @@ jobs:
       - name: Verify exact pull-request head
         if: github.event_name == 'pull_request'
         env:
-          EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
+          SDP_EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: test "$(git rev-parse HEAD)" = "$SDP_EXPECTED_HEAD_SHA"
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           # Atheris supports CPython <= 3.12.

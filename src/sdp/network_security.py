@@ -10,7 +10,37 @@ against DNS rebinding and infrastructure-specific private address ranges.
 from __future__ import annotations
 
 from ipaddress import ip_address
+from socket import inet_aton
+from typing import Any
 from urllib.parse import urlsplit, urlunsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
+
+
+class _RejectRedirects(HTTPRedirectHandler):
+    """Reject redirect responses before urllib can issue a follow-up request."""
+
+    def redirect_request(
+        self,
+        req: Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> None:
+        del req, fp, code, msg, headers
+        raise ValueError(f"outbound HTTPS redirect rejected: {newurl}")
+
+
+def open_url_without_redirects(
+    request: str | Request,
+    *,
+    timeout: float,
+) -> Any:
+    """Open one already-validated URL while refusing every redirect hop."""
+
+    opener = build_opener(_RejectRedirects())
+    return opener.open(request, timeout=timeout)  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected -- callers validate the initial public HTTPS URL and redirects are rejected here
 
 
 def validate_outbound_https_url(raw_url: str, *, setting_name: str) -> str:
@@ -59,22 +89,32 @@ def validate_outbound_https_url(raw_url: str, *, setting_name: str) -> str:
         raise ValueError(f"{setting_name} must include a hostname")
 
     try:
-        address = ip_address(normalized_host)
-    except ValueError:
-        try:
-            ascii_host = normalized_host.encode("idna").decode("ascii")
-        except UnicodeError as exc:
-            raise ValueError(f"{setting_name} contains an invalid hostname") from exc
-        if (
-            ascii_host == "localhost"
-            or ascii_host.endswith(".localhost")
-            or "." not in ascii_host
-        ):
-            raise ValueError(f"{setting_name} must target a public DNS hostname")
-    else:
-        if not address.is_global:
+        legacy_ipv4 = ip_address(inet_aton(normalized_host))
+    except (OSError, UnicodeError):
+        legacy_ipv4 = None
+
+    if legacy_ipv4 is not None:
+        if not legacy_ipv4.is_global:
             raise ValueError(f"{setting_name} must target a global IP address")
-        ascii_host = normalized_host
+        ascii_host = str(legacy_ipv4)
+    else:
+        try:
+            address = ip_address(normalized_host)
+        except ValueError:
+            try:
+                ascii_host = normalized_host.encode("idna").decode("ascii")
+            except UnicodeError as exc:
+                raise ValueError(f"{setting_name} contains an invalid hostname") from exc
+            if (
+                ascii_host == "localhost"
+                or ascii_host.endswith(".localhost")
+                or "." not in ascii_host
+            ):
+                raise ValueError(f"{setting_name} must target a public DNS hostname")
+        else:
+            if not address.is_global:
+                raise ValueError(f"{setting_name} must target a global IP address")
+            ascii_host = normalized_host
 
     try:
         port = parsed.port

@@ -22,8 +22,8 @@ jobs:
       - name: Verify exact pull-request head
         if: github.event_name == 'pull_request'
         env:
-          EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
+          SDP_EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: test "$(git rev-parse HEAD)" = "$SDP_EXPECTED_HEAD_SHA"
       - name: Run exact-head Semgrep gate
         env:
           SEMGREP_SEND_METRICS: off
@@ -38,7 +38,6 @@ jobs:
             --config=p/default \
             --severity=WARNING \
             --severity=ERROR \
-            --exclude=.github/workflows \
             --exclude='docs/research/**/standards' \
             --error \
             --metrics=off
@@ -53,7 +52,7 @@ jobs:
         run: test "$(python -c 'from importlib.metadata import version; print(version("cryptography"))')" = "50.0.0"
       - name: Run full test suite with branch coverage
         run: |
-          python -m coverage run --branch --source=sdp -m pytest
+          python -m coverage run --branch --source=src -m pytest
           python -m coverage report --show-missing
           python -m coverage json -o coverage.json
         env:
@@ -61,10 +60,10 @@ jobs:
       - name: Enforce 100% coverage on changed production code
         if: github.event_name == 'pull_request'
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          SDP_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          SDP_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           python tools/check_diff_coverage.py \
             --coverage-json coverage.json \
-            --base-sha "$BASE_SHA" \
-            --head-sha "$HEAD_SHA"
+            --base-sha "$SDP_BASE_SHA" \
+            --head-sha "$SDP_HEAD_SHA"

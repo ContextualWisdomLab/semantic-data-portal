@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import time
 
+import jwt as _jwt
 import pytest
 
 from sdp import authz
@@ -18,7 +20,7 @@ def test_load_jwks_from_url_rejects_non_http_schemes(monkeypatch):
         unexpected_calls.append((args, kwargs))
         raise AssertionError("urlopen must not be called for a rejected URL scheme")
 
-    monkeypatch.setattr(authz, "urlopen", _unexpected_urlopen)
+    monkeypatch.setattr(authz, "open_url_without_redirects", _unexpected_urlopen)
     for bad_url in ("file:///etc/passwd", "ftp://host/keys.json", "gopher://x", ""):
         with pytest.raises(ValueError):
             authz._load_jwks_from_url(bad_url)
@@ -47,8 +49,8 @@ def test_load_jwks_from_url_fetches_over_https(monkeypatch):
         captured["timeout"] = timeout
         return _FakeResponse()
 
-    monkeypatch.delenv("SDP_OIDC_JWKS_TIMEOUT_SECONDS", raising=False)
-    monkeypatch.setattr(authz, "urlopen", _fake_urlopen)
+    monkeypatch.setattr(authz, "get_credential", lambda _name, default: default)
+    monkeypatch.setattr(authz, "open_url_without_redirects", _fake_urlopen)
     result = authz._load_jwks_from_url("https://idp.example/.well-known/jwks.json")
 
     assert result == payload
@@ -57,8 +59,7 @@ def test_load_jwks_from_url_fetches_over_https(monkeypatch):
 
 
 def test_load_jwks_from_url_honours_timeout_override(monkeypatch):
-    """The JWKS fetch timeout is configurable via SDP_OIDC_JWKS_TIMEOUT_SECONDS."""
-    monkeypatch.setenv("SDP_OIDC_JWKS_TIMEOUT_SECONDS", "5")
+    """The JWKS timeout is loaded from the governed credential registry."""
 
     class _FakeResponse:
         def __enter__(self):
@@ -77,17 +78,14 @@ def test_load_jwks_from_url_honours_timeout_override(monkeypatch):
         seen["timeout"] = timeout
         return _FakeResponse()
 
-    monkeypatch.setattr(authz, "urlopen", _fake_urlopen)
+    monkeypatch.setattr(authz, "get_credential", lambda _name, _default: "5")
+    monkeypatch.setattr(authz, "open_url_without_redirects", _fake_urlopen)
     assert authz._load_jwks_from_url("https://idp.example/jwks") == {}
     assert seen["url"] == "https://idp.example/jwks"
     assert seen["timeout"] == pytest.approx(5.0)
 
 
 # --- OIDC claim/role/JWK guard branches (security-critical error paths) ---
-
-import time
-
-import jwt as _jwt
 
 
 def test_claim_values_handles_str_list_none_and_scalar():

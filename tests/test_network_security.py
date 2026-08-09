@@ -8,7 +8,7 @@ from urllib.request import Request
 
 import pytest
 
-from sdp import authz, observability
+from sdp import authz, network_security, observability
 from sdp.network_security import validate_outbound_https_url
 
 
@@ -38,6 +38,9 @@ def test_validate_outbound_https_url_accepts_public_targets(raw_url: str, expect
         "https://api.localhost/keys",
         "https://internal-service/keys",
         "https://127.0.0.1/keys",
+        "https://127.1/keys",
+        "https://0177.0.0.1/keys",
+        "https://0x7f.1/keys",
         "https://10.0.0.1/keys",
         "https://169.254.169.254/latest/meta-data",
         "https://[::1]/keys",
@@ -61,7 +64,7 @@ def test_load_jwks_rejects_unsafe_url_before_network(monkeypatch: pytest.MonkeyP
         called = True
         raise AssertionError("network client must not receive an unsafe URL")
 
-    monkeypatch.setattr(authz, "urlopen", fail_if_called)
+    monkeypatch.setattr(authz, "open_url_without_redirects", fail_if_called)
 
     with pytest.raises(ValueError, match="SDP_OIDC_JWKS_URL must use https"):
         authz._load_jwks_from_url("file:///etc/passwd")
@@ -86,8 +89,8 @@ def test_load_jwks_uses_normalized_https_url(monkeypatch: pytest.MonkeyPatch) ->
         captured.update(url=url, timeout=timeout)
         return Response()
 
-    monkeypatch.setattr(authz, "urlopen", fake_urlopen)
-    monkeypatch.setenv("SDP_OIDC_JWKS_TIMEOUT_SECONDS", "1.25")
+    monkeypatch.setattr(authz, "open_url_without_redirects", fake_urlopen)
+    monkeypatch.setattr(authz, "get_credential", lambda _name, default: "1.25")
 
     assert authz._load_jwks_from_url(" HTTPS://EXAMPLE.COM/jwks ") == {"keys": []}
     assert captured == {"url": "https://example.com/jwks", "timeout": 1.25}
@@ -136,8 +139,8 @@ def test_observability_posts_only_to_validated_https_sink(
         return Response()
 
     monkeypatch.setenv("SDP_LOG_SINK_URL", " HTTPS://EXAMPLE.COM:8443/logs ")
-    monkeypatch.setenv("SDP_LOG_SINK_TIMEOUT_MS", "750")
-    monkeypatch.setattr(observability, "urlopen", fake_urlopen)
+    monkeypatch.setattr(observability, "get_credential", lambda _name, default: "750")
+    monkeypatch.setattr(observability, "open_url_without_redirects", fake_urlopen)
 
     observability._export_to_sink({"request_id": "request-2"})
 
@@ -147,3 +150,48 @@ def test_observability_posts_only_to_validated_https_sink(
         "body": b'{"request_id": "request-2"}',
         "method": "POST",
     }
+
+
+def test_redirect_handler_rejects_every_follow_up_url() -> None:
+    """A validated public URL must never trigger urllib's automatic follow-up."""
+
+    handler = network_security._RejectRedirects()
+    request = Request("https://public.example/jwks")
+
+    for target in (
+        "http://127.0.0.1/internal",
+        "https://169.254.169.254/latest/meta-data",
+        "https://other-public.example/jwks",
+    ):
+        with pytest.raises(ValueError, match="redirect"):
+            handler.redirect_request(request, None, 302, "Found", {}, target)
+
+
+def test_outbound_client_installs_redirect_rejection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The production opener must contain the rejecting redirect handler."""
+
+    captured: dict[str, Any] = {}
+    response = object()
+
+    class Opener:
+        def open(self, request: str, *, timeout: float) -> object:
+            captured.update(request=request, timeout=timeout)
+            return response
+
+    def fake_build_opener(handler: Any) -> Opener:
+        captured["handler"] = handler
+        return Opener()
+
+    monkeypatch.setattr(network_security, "build_opener", fake_build_opener)
+
+    result = network_security.open_url_without_redirects(
+        "https://public.example/resource",
+        timeout=1.5,
+    )
+
+    assert result is response
+    assert isinstance(captured["handler"], network_security._RejectRedirects)
+    assert captured["request"] == "https://public.example/resource"
+    assert captured["timeout"] == 1.5
