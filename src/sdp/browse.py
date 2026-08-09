@@ -7,6 +7,7 @@ from .policy import evaluate
 
 
 def preview(dataset_id: str, user: str, purpose: str, limit: int = 100, offset: int = 0) -> Dict[str, Any]:
+    """Authorize a dataset preview request and fail closed without source execution."""
     if limit < 1:
         raise ValueError("limit must be at least 1")
     if limit > 100:
@@ -39,57 +40,26 @@ def preview(dataset_id: str, user: str, purpose: str, limit: int = 100, offset: 
         )
         raise PermissionError(decision.reason)
 
-    rows = [
-        {
-            "customer_id": "C-1001",
-            "customer_email": "alice@example.com",
-            "signup_at": "2026-01-15T00:00:00Z",
-            "event_timestamp": "2026-06-20T12:10:00Z",
-            "device_id": "dev-88",
-        },
-        {
-            "customer_id": "C-1002",
-            "customer_email": "bob@example.com",
-            "signup_at": "2026-01-20T00:00:00Z",
-            "event_timestamp": "2026-06-21T09:11:00Z",
-            "device_id": "dev-01",
-        },
-    ]
-
-    selected = rows[offset : offset + limit]
-    masked = [apply_mask(row.copy(), decision.obligations.get("masking", [])) for row in selected]
     ingest_event(
         event_type="browse.preview",
         actor=user,
         dataset_id=dataset_id,
-        decision="allowed",
-        reason="ok",
+        decision="unavailable",
+        reason="source_preview_backend_not_configured",
         decision_id=decision.decision_id,
         details={
             "purpose": purpose,
             "requested_offset": offset,
             "requested_limit": limit,
-            "returned_rows": len(masked),
             "row_filter": decision.obligations.get("row_filter"),
             "policy_decision_id": decision.decision_id,
         },
     )
-    return {
-        "dataset_id": dataset.id,
-        "policy_decision": decision.model_dump(),
-        "columns": [column.name for column in dataset.schema],
-        "rows": masked,
-        "row_count": min(limit, len(masked)),
-        "offset": offset,
-        "masking_summary": {"masked_columns": decision.obligations.get("masking", [])},
-        "has_more": offset + len(masked) < len(rows),
-        "sampling_note": "샘플 결과이며 전체 데이터 대표성을 보장하지 않습니다.",
-        "policy_decision_id": decision.decision_id,
-        "applied_row_filter": decision.obligations.get("row_filter"),
-    }
+    raise RuntimeError("source_preview_backend_not_configured")
 
 
 def apply_mask(row: Dict[str, Any], masked_columns: List[str]) -> Dict[str, Any]:
+    """Replace explicitly masked columns without changing unrelated values."""
     if not masked_columns:
         return row
     for col in masked_columns:
@@ -99,6 +69,7 @@ def apply_mask(row: Dict[str, Any], masked_columns: List[str]) -> Dict[str, Any]
 
 
 def schema(dataset_id: str, user: str, purpose: str = "analysis") -> Dict[str, Any]:
+    """Return policy-authorized catalog schema metadata for one dataset."""
     dataset = get_dataset(dataset_id)
     if not dataset:
         raise KeyError("dataset not found")
