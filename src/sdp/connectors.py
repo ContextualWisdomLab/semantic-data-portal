@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sdp_core import SourceConnector, buyer_demo_context_for_dataset, connector_registry_manifest
+from sdp_core import SourceConnector, connector_registry_manifest
 
 from .catalog import get_dataset
 from .credentials import connector_secret_status
@@ -22,17 +22,27 @@ _IMPLEMENTED_PROOF = {
     "timeout_ms": ["/browse/query", "/llm/draft-query"],
 }
 
+_PREVIEW_UNAVAILABLE = "source_preview_backend_not_configured"
+
+
+def _preview_unavailable() -> list[dict[str, Any]]:
+    """Reject source preview when no provider-backed data-plane adapter exists."""
+    raise RuntimeError(_PREVIEW_UNAVAILABLE)
+
 
 class DemoSQLConnector(SourceConnector):
+    """Catalog-only SQL source adapter retained for compatibility until execution ships."""
+
     connector_id = "sql_connector"
     source_type = "warehouse_or_rdbms"
 
     def inspect_schema(self, dataset_id: str) -> dict[str, Any]:
+        """Return persisted catalog schema without claiming a live SQL connection."""
         dataset = get_dataset(dataset_id)
         if not dataset:
             raise KeyError(dataset_id)
         if not dataset.source_system.startswith("postgresql://"):
-            raise ValueError("dataset is not backed by the demo SQL connector")
+            raise ValueError("dataset is not backed by the SQL connector contract")
         return {
             "dataset_id": dataset.id,
             "source_system": dataset.source_system,
@@ -40,22 +50,24 @@ class DemoSQLConnector(SourceConnector):
         }
 
     def preview(self, dataset_id: str, *, limit: int, offset: int) -> list[dict[str, Any]]:
-        from .browse import preview
-
-        result = preview(dataset_id, user="analyst", purpose="analysis", limit=limit, offset=offset)
-        return result["rows"]
+        """Fail closed until a PostgreSQL preview executor is configured."""
+        del dataset_id, limit, offset
+        return _preview_unavailable()
 
 
 class DemoRDFConnector(SourceConnector):
+    """Catalog-only RDF source adapter retained until a SPARQL client is implemented."""
+
     connector_id = "rdf_connector"
     source_type = "semantic_store"
 
     def inspect_schema(self, dataset_id: str) -> dict[str, Any]:
+        """Return persisted RDF catalog metadata without issuing a SPARQL request."""
         dataset = get_dataset(dataset_id)
         if not dataset:
             raise KeyError(dataset_id)
         if not dataset.source_system.startswith("sparql://"):
-            raise ValueError("dataset is not backed by the demo RDF connector")
+            raise ValueError("dataset is not backed by the RDF connector contract")
         return {
             "dataset_id": dataset.id,
             "source_system": dataset.source_system,
@@ -64,74 +76,24 @@ class DemoRDFConnector(SourceConnector):
         }
 
     def preview(self, dataset_id: str, *, limit: int, offset: int) -> list[dict[str, Any]]:
-        from .catalog import ingest_event
-        from .policy import evaluate
-
-        dataset = get_dataset(dataset_id)
-        if not dataset:
-            raise KeyError(dataset_id)
-        if not dataset.source_system.startswith("sparql://"):
-            raise ValueError("dataset is not backed by the demo RDF connector")
-
-        decision = evaluate(subject="analyst", resource=dataset_id, action="preview", purpose="analysis")
-        if decision.effect != "allow":
-            ingest_event(
-                event_type="connector.rdf.preview",
-                actor="analyst",
-                dataset_id=dataset_id,
-                decision="denied",
-                decision_id=decision.decision_id,
-                reason=decision.reason,
-                details={"policy_decision_id": decision.decision_id},
-            )
-            raise PermissionError(decision.reason)
-
-        rows = [
-            {
-                "concept_uri": "https://semantic-data-portal.local/concepts/customer",
-                "preferred_label": "고객",
-                "broader_concept": "https://semantic-data-portal.local/concepts/party",
-            },
-            {
-                "concept_uri": "https://semantic-data-portal.local/concepts/active-customer",
-                "preferred_label": "활성 고객",
-                "broader_concept": "https://semantic-data-portal.local/concepts/customer",
-            },
-            {
-                "concept_uri": "https://semantic-data-portal.local/concepts/churn",
-                "preferred_label": "이탈",
-                "broader_concept": "https://semantic-data-portal.local/concepts/customer",
-            },
-        ]
-        selected = rows[offset : offset + limit]
-        ingest_event(
-            event_type="connector.rdf.preview",
-            actor="analyst",
-            dataset_id=dataset_id,
-            decision="allowed",
-            decision_id=decision.decision_id,
-            reason="ok",
-            details={
-                "policy_decision_id": decision.decision_id,
-                "requested_offset": offset,
-                "requested_limit": limit,
-                "returned_rows": len(selected),
-                "named_graph": dataset.source_system.removeprefix("sparql://"),
-            },
-        )
-        return selected
+        """Fail closed until a SPARQL preview executor is configured."""
+        del dataset_id, limit, offset
+        return _preview_unavailable()
 
 
 class DemoFileLakeConnector(SourceConnector):
+    """Catalog-only lake source adapter retained until object-store reads are implemented."""
+
     connector_id = "file_lake_connector"
     source_type = "object_storage_or_lakehouse"
 
     def inspect_schema(self, dataset_id: str) -> dict[str, Any]:
+        """Return catalog metadata for an S3-backed dataset without fetching objects."""
         dataset = get_dataset(dataset_id)
         if not dataset:
             raise KeyError(dataset_id)
         if not dataset.source_system.startswith("s3://"):
-            raise ValueError("dataset is not backed by the demo file lake connector")
+            raise ValueError("dataset is not backed by the file-lake connector contract")
         return {
             "dataset_id": dataset.id,
             "source_system": dataset.source_system,
@@ -140,72 +102,24 @@ class DemoFileLakeConnector(SourceConnector):
         }
 
     def preview(self, dataset_id: str, *, limit: int, offset: int) -> list[dict[str, Any]]:
-        from .catalog import ingest_event
-        from .policy import evaluate
-
-        dataset = get_dataset(dataset_id)
-        if not dataset:
-            raise KeyError(dataset_id)
-        if not dataset.source_system.startswith("s3://"):
-            raise ValueError("dataset is not backed by the demo file lake connector")
-
-        decision = evaluate(subject="analyst", resource=dataset_id, action="preview", purpose="analysis")
-        if decision.effect != "allow":
-            ingest_event(
-                event_type="connector.file_lake.preview",
-                actor="analyst",
-                dataset_id=dataset_id,
-                decision="denied",
-                decision_id=decision.decision_id,
-                reason=decision.reason,
-                details={"policy_decision_id": decision.decision_id},
-            )
-            raise PermissionError(decision.reason)
-
-        rows = [
-            {
-                "event_id": "evt-1001",
-                "customer_id": "C-1001",
-                "event_timestamp": "2026-06-20T12:10:00Z",
-                "device_id": "dev-88",
-            },
-            {
-                "event_id": "evt-1002",
-                "customer_id": "C-1002",
-                "event_timestamp": "2026-06-21T09:11:00Z",
-                "device_id": "dev-01",
-            },
-        ]
-        selected = rows[offset : offset + limit]
-        ingest_event(
-            event_type="connector.file_lake.preview",
-            actor="analyst",
-            dataset_id=dataset_id,
-            decision="allowed",
-            decision_id=decision.decision_id,
-            reason="ok",
-            details={
-                "policy_decision_id": decision.decision_id,
-                "requested_offset": offset,
-                "requested_limit": limit,
-                "returned_rows": len(selected),
-                "sample_budget": limit,
-                "manifest_path": f"{dataset.source_system.rstrip('/')}/_manifest.json",
-            },
-        )
-        return selected
+        """Fail closed until an object-store preview executor is configured."""
+        del dataset_id, limit, offset
+        return _preview_unavailable()
 
 
 class DemoRESTConnector(SourceConnector):
+    """Catalog-only REST source adapter retained until governed HTTP reads are implemented."""
+
     connector_id = "rest_connector"
     source_type = "governed_api"
 
     def inspect_schema(self, dataset_id: str) -> dict[str, Any]:
+        """Return catalog metadata for an HTTP source without making a network request."""
         dataset = get_dataset(dataset_id)
         if not dataset:
             raise KeyError(dataset_id)
         if not dataset.source_system.startswith(("https://", "http://")):
-            raise ValueError("dataset is not backed by the demo REST connector")
+            raise ValueError("dataset is not backed by the REST connector contract")
         return {
             "dataset_id": dataset.id,
             "source_system": dataset.source_system,
@@ -214,49 +128,9 @@ class DemoRESTConnector(SourceConnector):
         }
 
     def preview(self, dataset_id: str, *, limit: int, offset: int) -> list[dict[str, Any]]:
-        from .catalog import ingest_event
-        from .policy import evaluate
-
-        dataset = get_dataset(dataset_id)
-        if not dataset:
-            raise KeyError(dataset_id)
-        if not dataset.source_system.startswith(("https://", "http://")):
-            raise ValueError("dataset is not backed by the demo REST connector")
-
-        decision = evaluate(subject="analyst", resource=dataset_id, action="preview", purpose="analysis")
-        if decision.effect != "allow":
-            ingest_event(
-                event_type="connector.rest.preview",
-                actor="analyst",
-                dataset_id=dataset_id,
-                decision="denied",
-                decision_id=decision.decision_id,
-                reason=decision.reason,
-                details={"policy_decision_id": decision.decision_id},
-            )
-            raise PermissionError(decision.reason)
-
-        rows = [
-            {"campaign_id": "cmp-1001", "target_segment": "active_customers", "channel": "email"},
-            {"campaign_id": "cmp-1002", "target_segment": "churn_risk", "channel": "push"},
-        ]
-        selected = rows[offset : offset + limit]
-        ingest_event(
-            event_type="connector.rest.preview",
-            actor="analyst",
-            dataset_id=dataset_id,
-            decision="allowed",
-            decision_id=decision.decision_id,
-            reason="ok",
-            details={
-                "policy_decision_id": decision.decision_id,
-                "requested_offset": offset,
-                "requested_limit": limit,
-                "returned_rows": len(selected),
-                "auth_mode": "service_account_reference",
-            },
-        )
-        return selected
+        """Fail closed until a governed HTTP preview executor is configured."""
+        del dataset_id, limit, offset
+        return _preview_unavailable()
 
 
 _SOURCE_CONNECTORS: dict[str, SourceConnector] = {
@@ -268,6 +142,7 @@ _SOURCE_CONNECTORS: dict[str, SourceConnector] = {
 
 
 def get_source_connector(connector_id: str) -> SourceConnector:
+    """Return a registered source contract or reject an unknown connector id."""
     connector = _SOURCE_CONNECTORS.get(connector_id)
     if not connector:
         raise ValueError(f"unsupported connector id: {connector_id}")
@@ -275,6 +150,7 @@ def get_source_connector(connector_id: str) -> SourceConnector:
 
 
 def connector_probe(connector_id: str, dataset_id: str) -> dict[str, Any]:
+    """Report connector control evidence without claiming unavailable data-plane reads."""
     connectors = {connector.id: connector for connector in connector_registry_manifest()}
     connector = connectors.get(connector_id)
     if not connector:
@@ -289,7 +165,7 @@ def connector_probe(connector_id: str, dataset_id: str) -> dict[str, Any]:
     adapter_status = "planned"
     if source_adapter:
         inspected_schema = source_adapter.inspect_schema(dataset_id)
-        adapter_status = "implemented"
+        adapter_status = "metadata_only"
 
     control_evidence = []
     satisfied_controls = 0
@@ -309,22 +185,22 @@ def connector_probe(connector_id: str, dataset_id: str) -> dict[str, Any]:
         satisfied_controls += int(satisfied)
         control_evidence.append(evidence_payload)
 
-    ready_for_demo = adapter_status == "implemented" and satisfied_controls == len(connector.required_controls)
+    controls_ready = satisfied_controls == len(connector.required_controls)
     return {
         "connector_id": connector.id,
         "dataset_id": dataset.id,
         "source_type": connector.source_type,
         "source_system": dataset.source_system,
-        "status": "ready_for_demo" if ready_for_demo else "contract_only",
-        "contract_methods": ["inspect_schema", "preview"],
+        "status": "metadata_only" if source_adapter and controls_ready else "contract_only",
+        "contract_methods": ["inspect_schema"],
         "adapter_status": adapter_status,
+        "data_plane_preview_available": False,
         "data_contract": {
             "schema_fields": len(inspected_schema["columns"]) if inspected_schema else len(dataset.schema),
             "sensitivity": dataset.sensitivity,
             "quality_score": dataset.quality_score,
             "freshness_score": dataset.freshness_score,
         },
-        "demo_context": buyer_demo_context_for_dataset(dataset.id),
         "control_evidence": control_evidence,
         "proof": connector.proof,
     }
