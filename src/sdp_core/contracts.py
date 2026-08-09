@@ -251,6 +251,7 @@ class DatasetPatchRequest(BaseModel):
     tags: Optional[list[str]] = None
     terms: Optional[list[str]] = None
     related_datasets: Optional[list[str]] = None
+    schema: Optional[list[ColumnMetadata]] = None
     lineage_inputs: Optional[list[str]] = None
     lineage_outputs: Optional[list[str]] = None
     mappings: Optional[list[BusinessMapping]] = None
