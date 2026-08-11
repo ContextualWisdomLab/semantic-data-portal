@@ -118,7 +118,8 @@ def resolve_oidc_actor_context(
     roles: set[str] = set()
     for group in groups:
         roles.update(mapping.get(group, []))
-    for role in _claim_values(claims.get("role")):
+    role = claims.get("role")
+    if isinstance(role, str):
         roles.update(_KEYVERSE_ROLE_MAP.get(role, []))
 
     return ActorContext(subject=str(subject), tenant_id=tenant_id, roles=sorted(roles))

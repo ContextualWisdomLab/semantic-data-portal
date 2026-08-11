@@ -149,6 +149,52 @@ def test_keyverse_claim_aliases_map_to_tenant_and_bounded_role():
     assert context.roles == ["data-analyst"]
 
 
+@pytest.mark.parametrize(
+    ("keyverse_role", "expected_roles"),
+    list(authz._KEYVERSE_ROLE_MAP.items()),
+)
+def test_keyverse_allowed_roles_map_to_bounded_application_roles(
+    keyverse_role, expected_roles
+):
+    context = authz.resolve_oidc_actor_context(
+        {
+            "sub": "keyverse-user-roles",
+            "org": "cwl-org",
+            "role": keyverse_role,
+            "exp": int(time.time()) + 3600,
+        }
+    )
+
+    assert context.roles == sorted(expected_roles)
+
+
+def test_keyverse_role_merges_with_group_derived_roles():
+    context = authz.resolve_oidc_actor_context(
+        {
+            "sub": "keyverse-user-groups",
+            "org": "cwl-org",
+            "role": "member",
+            "groups": ["sdp-security"],
+            "exp": int(time.time()) + 3600,
+        }
+    )
+
+    assert context.roles == ["data-analyst", "security"]
+
+
+def test_keyverse_role_array_does_not_combine_privileges():
+    context = authz.resolve_oidc_actor_context(
+        {
+            "sub": "keyverse-user-array-role",
+            "org": "cwl-org",
+            "role": ["member", "platform-admin"],
+            "exp": int(time.time()) + 3600,
+        }
+    )
+
+    assert context.roles == []
+
+
 def test_keyverse_unknown_role_does_not_grant_access():
     """An unrecognized signed Keyverse role cannot become an application role."""
     context = authz.resolve_oidc_actor_context(
