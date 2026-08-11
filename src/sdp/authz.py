@@ -116,13 +116,20 @@ def validate_oidc_claim_shape(claims: dict[str, Any]) -> None:
 
 
 def _tenant_claim_value(claims: dict[str, Any]) -> str:
+    """Validate all tenant aliases before selecting the first configured one."""
+    tenant_ids: list[str] = []
     for key in _TENANT_CLAIMS:
-        if key in claims and claims[key] is not None:
-            tenant_id = _single_string_claim(claims[key], key)
-            if tenant_id is None:
-                raise ValueError("missing tenant claim")
-            return tenant_id
-    raise ValueError("missing tenant claim")
+        if key not in claims:
+            continue
+        tenant_id = _single_string_claim(claims[key], key)
+        if tenant_id is None:
+            raise ValueError("missing tenant claim")
+        tenant_ids.append(tenant_id)
+    if not tenant_ids:
+        raise ValueError("missing tenant claim")
+    if len(set(tenant_ids)) != 1:
+        raise ValueError("conflicting tenant claims")
+    return tenant_ids[0]
 
 
 def resolve_oidc_actor_context(

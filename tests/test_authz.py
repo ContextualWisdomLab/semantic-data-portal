@@ -215,6 +215,33 @@ def test_keyverse_org_claim_must_be_a_non_empty_string(invalid_org):
         )
 
 
+@pytest.mark.parametrize("invalid_org", [None, [], {}, "", "  "])
+def test_keyverse_org_alias_cannot_hide_behind_tenant_id(invalid_org):
+    """Every present tenant alias is validated before alias precedence applies."""
+    with pytest.raises(ValueError):
+        authz.resolve_oidc_actor_context(
+            {
+                "sub": "keyverse-user-hidden-org",
+                "tenant_id": "cwl-org",
+                "org": invalid_org,
+                "exp": int(time.time()) + 3600,
+            }
+        )
+
+
+def test_keyverse_conflicting_tenant_aliases_fail_closed():
+    """Different signed tenant aliases cannot silently select the first value."""
+    with pytest.raises(ValueError, match=r"conflicting tenant claims"):
+        authz.resolve_oidc_actor_context(
+            {
+                "sub": "keyverse-user-conflicting-org",
+                "tenant_id": "cwl-org",
+                "org": "other-org",
+                "exp": int(time.time()) + 3600,
+            }
+        )
+
+
 def test_keyverse_unknown_role_does_not_grant_access():
     """An unrecognized signed Keyverse role cannot become an application role."""
     context = authz.resolve_oidc_actor_context(
