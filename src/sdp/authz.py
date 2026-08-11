@@ -79,6 +79,8 @@ def _single_string_claim(value: Any, claim_name: str) -> str | None:
         return None
     if not isinstance(value, str):
         raise ValueError(f"{claim_name} claim must be a string")
+    if not value.strip():
+        raise ValueError(f"{claim_name} claim must be non-empty")
     return value
 
 
@@ -100,8 +102,7 @@ def load_oidc_role_map() -> dict[str, list[str]]:
 def validate_oidc_claim_shape(claims: dict[str, Any]) -> None:
     if not any(claims.get(key) for key in _SUBJECT_CLAIMS):
         raise ValueError("missing subject claim")
-    if not any(claims.get(key) for key in _TENANT_CLAIMS):
-        raise ValueError("missing tenant claim")
+    _tenant_claim_value(claims)
     if "exp" not in claims:
         raise ValueError("missing exp claim")
 
@@ -112,6 +113,16 @@ def validate_oidc_claim_shape(claims: dict[str, Any]) -> None:
 
     if expires_at <= int(datetime.now(timezone.utc).timestamp()):
         raise ValueError("expired token claims")
+
+
+def _tenant_claim_value(claims: dict[str, Any]) -> str:
+    for key in _TENANT_CLAIMS:
+        if key in claims and claims[key] is not None:
+            tenant_id = _single_string_claim(claims[key], key)
+            if tenant_id is None:
+                raise ValueError("missing tenant claim")
+            return tenant_id
+    raise ValueError("missing tenant claim")
 
 
 def resolve_oidc_actor_context(
@@ -127,7 +138,7 @@ def resolve_oidc_actor_context(
         or claims.get("sub")
         or "anonymous"
     )
-    tenant_id = str(next((claims.get(key) for key in _TENANT_CLAIMS if claims.get(key)), ""))
+    tenant_id = _tenant_claim_value(claims)
     groups = _claim_values(claims.get("groups"))
 
     roles: set[str] = set()

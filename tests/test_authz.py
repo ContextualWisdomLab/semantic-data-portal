@@ -202,6 +202,19 @@ def test_keyverse_role_array_does_not_combine_privileges():
         )
 
 
+@pytest.mark.parametrize("invalid_org", [["cwl-org"], {"id": "cwl-org"}])
+def test_keyverse_org_claim_must_be_a_non_empty_string(invalid_org):
+    """Tenant claims with ambiguous JSON shapes must fail closed."""
+    with pytest.raises(ValueError, match=r"org claim must be a string"):
+        authz.resolve_oidc_actor_context(
+            {
+                "sub": "keyverse-user-invalid-org",
+                "org": invalid_org,
+                "exp": int(time.time()) + 3600,
+            }
+        )
+
+
 def test_keyverse_unknown_role_does_not_grant_access():
     """An unrecognized signed Keyverse role cannot become an application role."""
     context = authz.resolve_oidc_actor_context(
