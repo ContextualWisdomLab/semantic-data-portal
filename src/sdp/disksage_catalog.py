@@ -42,13 +42,18 @@ ArchiveKind = Literal[
 ]
 Confidence = Literal["high", "medium", "low", "unknown"]
 _LOCAL_PATH_RE = re.compile(
-    r"(?:^|[\s=:])(?:/Users/|/private/|/Volumes/|~/|[A-Za-z]:[\\/]|\\\\)"
+    r"(?:^|[\s=:])(?:/Users/|/home/|/private/|/Volumes/|~/|[A-Za-z]:[\\/]|\\\\)"
 )
+_FILE_URI_RE = re.compile(r"(?:^|[\s=:])file:(?://)?", re.IGNORECASE)
 
 
 def _contains_local_path(value: object) -> bool:
     if isinstance(value, str):
-        return "\x00" in value or _LOCAL_PATH_RE.search(value) is not None
+        return (
+            "\x00" in value
+            or _LOCAL_PATH_RE.search(value) is not None
+            or _FILE_URI_RE.search(value) is not None
+        )
     if isinstance(value, dict):
         return any(_contains_local_path(item) for item in value.values())
     if isinstance(value, (list, tuple)):

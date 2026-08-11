@@ -139,3 +139,16 @@ def test_disksage_catalog_rejects_absolute_path_in_metadata_value():
     response = client.post("/integrations/disksage/catalog", json=body)
 
     assert response.status_code == 422
+
+
+def test_disksage_catalog_rejects_file_uri_and_linux_home_paths():
+    for leaked_context in (
+        "source=file:///Users/private/Downloads/private.m4a",
+        "source=/home/analyst/private.m4a",
+    ):
+        body = _request()
+        body["catalog"]["candidates"][0]["content_context"] = [leaked_context]
+
+        response = client.post("/integrations/disksage/catalog", json=body)
+
+        assert response.status_code == 422
