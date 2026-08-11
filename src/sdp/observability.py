@@ -7,14 +7,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
-from urllib.request import Request as UrlRequest, urlopen
+from urllib.request import Request as UrlRequest
 from urllib.request import url2pathname
 from uuid import uuid4
 
 from sdp_core import enterprise_controls_manifest
 
 from .catalog import list_audit_events, list_datasets
+from .credentials import get_credential
 from .evidence import list_policy_decisions
+from .network_security import open_url_without_redirects, validate_outbound_https_url
 
 
 _REQUEST_OBSERVATIONS: deque[dict[str, Any]] = deque(maxlen=500)
@@ -100,7 +102,12 @@ def _sink_status() -> dict[str, Any]:
     if scheme == "file":
         target = str(_file_sink_path(sink_url, parsed))
     elif scheme in {"http", "https"}:
-        target = parsed.netloc
+        validated_url = validate_outbound_https_url(
+            sink_url,
+            setting_name="SDP_LOG_SINK_URL",
+        )
+        target = urlparse(validated_url).netloc
+        scheme = "https"
     else:
         target = sink_url
 
@@ -113,6 +120,8 @@ def _sink_status() -> dict[str, Any]:
 
 
 def _export_to_sink(observation: dict[str, Any]) -> None:
+    """Export one observation to a local file or validated HTTPS endpoint."""
+
     sink_url = os.getenv("SDP_LOG_SINK_URL", "").strip()
     if not sink_url:
         return
@@ -129,15 +138,20 @@ def _export_to_sink(observation: dict[str, Any]) -> None:
         return
 
     if scheme in {"http", "https"}:
-        timeout_ms = int(os.getenv("SDP_LOG_SINK_TIMEOUT_MS", "500"))
-        request = UrlRequest(
+        validated_url = validate_outbound_https_url(
             sink_url,
+            setting_name="SDP_LOG_SINK_URL",
+        )
+        timeout_ms = int(get_credential("SDP_LOG_SINK_TIMEOUT_MS", "500") or "500")
+        request = UrlRequest(
+            validated_url,
             data=payload.encode("utf-8"),
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected -- scheme is allow-listed to {http,https} at the guard above (file:// et al. raise below)
-        with urlopen(request, timeout=timeout_ms / 1000):
+        # The destination has passed the centralized HTTPS/public-target
+        # boundary above; production egress policy provides post-DNS enforcement.
+        with open_url_without_redirects(request, timeout=timeout_ms / 1000):
             return
 
     raise ValueError(f"unsupported SDP_LOG_SINK_URL scheme: {scheme}")

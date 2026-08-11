@@ -171,6 +171,18 @@ def get_app_config() -> AppConfig:
     return AppConfig.from_mapping({}, source="defaults")
 
 
+def get_config_entry(name: str, default: Any = None) -> Any:
+    """Read one application value from the database-backed configuration KV.
+
+    Environment variables are deliberately not a fallback here.  They are only
+    bootstrap transport for locating the KV; application settings must remain
+    governed by ``config_entries`` or an explicit safe caller default.
+    """
+
+    values = _load_from_kv_table(load_bootstrap()) or {}
+    return values.get(name, default)
+
+
 def reset_config_cache() -> None:
     """Clear cached config (used by tests that swap the KV backend)."""
 
