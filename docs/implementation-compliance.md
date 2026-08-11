@@ -72,6 +72,12 @@
 - 핵심 코드: [src/sdp/catalog.py: get_related_datasets](src/sdp/catalog.py), [get_join_candidates](src/sdp/catalog.py)
 - 증빙 테스트: `tests/test_api.py::test_join_candidate_endpoint`
 
+### LIN-001 DiskSage 파일 후보 lineage
+- 대응: `POST /integrations/disksage/catalog`
+- 핵심 코드: [src/sdp/disksage_catalog.py](src/sdp/disksage_catalog.py)
+- 증빙 테스트: `tests/test_disksage_catalog.py`
+- 경계: DiskSage의 path-free 후보 batch만 수용하고, embedded metadata를 filename 날짜보다 우선 검증한다. 파일 복사·삭제·provider 권한 변경은 수행하지 않는다.
+
 ## 2) Ontology / Terminology
 
 - ONT-001 동의어/다국어: [src/sdp/ontology.py: _build_index, search_concepts]
