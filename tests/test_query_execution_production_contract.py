@@ -48,6 +48,7 @@ def test_dry_run_validates_without_inventing_rows(monkeypatch) -> None:
     response = orchestrator.execute_query(_request(dry_run=True))
 
     assert response.status == "VALIDATED"
+    assert response.query_id == ""
     assert response.row_count == 0
     assert response.rows == []
     assert response.columns == []
@@ -68,6 +69,7 @@ def test_live_query_fails_closed_without_a_real_execution_backend(monkeypatch) -
     response = orchestrator.execute_query(_request(dry_run=False))
 
     assert response.status == "UNAVAILABLE"
+    assert response.query_id == ""
     assert response.row_count == 0
     assert response.rows == []
     assert response.columns == []

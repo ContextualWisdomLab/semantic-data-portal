@@ -1471,6 +1471,7 @@ def test_browse_query_fails_closed_without_execution_backend():
     assert body["status"] == "UNAVAILABLE"
     assert body["dataset_id"] == "crm-event"
     assert body["policy_decision_id"] is not None
+    assert body["query_id"] == ""
     assert body["row_count"] == 0
     assert body["rows"] == []
     assert body["columns"] == []

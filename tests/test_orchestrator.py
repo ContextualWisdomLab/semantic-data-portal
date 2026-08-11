@@ -130,6 +130,7 @@ def test_execute_query_dry_run_validates_with_zero_rows() -> None:
         )
     )
     assert resp.status == "VALIDATED"
+    assert resp.query_id == ""
     assert resp.row_count == 0
     assert resp.rows == []
     assert resp.columns == []

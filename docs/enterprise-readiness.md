@@ -54,7 +54,7 @@
 - `GET /catalog/datasets/{dataset_id}/semantic-validation`: dataset 단위 SHACL 호환 shape, conformance, violation path 리포트
 - `GET /catalog/datasets/{dataset_id}/lineage`: lineage evidence
 - `POST /browse/{dataset_id}/preview`: policy-before-data + audit
-- `POST /browse/query`: governed query path. 현재 demo executor는 실제 source query 전 단계에서 dataset-bound `SELECT`와 집계형 preview만 허용하고, string literal, boolean operator, comment, multi-statement, forbidden DML/DDL keyword를 거절한다.
+- `POST /browse/query`: governed query path. 정책·SQL 안전성 검증 후 dry-run은 row 없이 validation-only `VALIDATED` 증빙을 반환하고, live query는 실제 bounded execution backend가 구성·호출될 때까지 synthetic 결과를 만들지 않고 `UNAVAILABLE`로 fail closed 한다.
 - `GET /policy/decisions`: policy decision evidence inspection
 - `GET /audit/events`: audit trail
 - `GET /metrics`: minimal Prometheus-style metrics
