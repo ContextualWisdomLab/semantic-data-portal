@@ -444,6 +444,40 @@ def test_oidc_jwks_verification_maps_verified_token_without_token_leak():
     assert token not in json.dumps(body)
 
 
+def test_oidc_jwks_verification_rejects_unsupported_critical_header():
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    jwk = json.loads(RSAAlgorithm.to_jwk(private_key.public_key()))
+    jwk.update({"kid": "buyer-key-crit", "alg": "RS256", "use": "sig"})
+    token = jwt.encode(
+        {
+            "iss": "https://idp.example.com/",
+            "aud": "semantic-data-portal",
+            "email": "analyst@example.com",
+            "org": "buyer-demo",
+            "exp": int(time()) + 3600,
+        },
+        private_key,
+        algorithm="RS256",
+        headers={
+            "kid": "buyer-key-crit",
+            "crit": ["https://example.com/custom-extension"],
+        },
+    )
+
+    response = client.post(
+        "/enterprise/auth/oidc-verify",
+        json={
+            "token": token,
+            "issuer": "https://idp.example.com/",
+            "audience": "semantic-data-portal",
+            "jwks": {"keys": [jwk]},
+        },
+    )
+
+    assert response.status_code == 400
+    assert "critical JWT header" in response.json()["detail"]
+
+
 def test_oidc_jwks_verification_rejects_wrong_audience():
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     jwk = json.loads(RSAAlgorithm.to_jwk(private_key.public_key()))
