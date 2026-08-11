@@ -413,9 +413,9 @@ def test_oidc_jwks_verification_maps_verified_token_without_token_leak():
             "iss": "https://idp.example.com/",
             "aud": "semantic-data-portal",
             "email": "analyst@example.com",
-            "tenant_id": "buyer-demo",
-            "groups": ["sdp-analysts"],
-            "roles": ["sdp-platform-admins"],
+            "org": "buyer-demo",
+            "workspace": "workspace-buyer",
+            "role": "member",
             "exp": int(time()) + 3600,
         },
         private_key,
@@ -440,7 +440,7 @@ def test_oidc_jwks_verification_maps_verified_token_without_token_leak():
     assert body["actor_context"]["subject"] == "analyst@example.com"
     assert body["actor_context"]["tenant_id"] == "buyer-demo"
     assert body["actor_context"]["roles"] == ["data-analyst"]
-    assert body["ignored_role_claims"] == ["sdp-platform-admins"]
+    assert body["ignored_role_claims"] == []
     assert token not in json.dumps(body)
 
 

@@ -132,6 +132,37 @@ def test_validate_oidc_claim_shape_guard_branches():
         authz.validate_oidc_claim_shape({"sub": "s", "tenant_id": "d", "exp": 1})
 
 
+def test_keyverse_claim_aliases_map_to_tenant_and_bounded_role():
+    """Keyverse org/role claims enter the existing tenant and RBAC policy."""
+    context = authz.resolve_oidc_actor_context(
+        {
+            "sub": "keyverse-user-1",
+            "org": "cwl-org",
+            "workspace": "workspace-cwl",
+            "role": "member",
+            "exp": int(time.time()) + 3600,
+        }
+    )
+
+    assert context.subject == "keyverse-user-1"
+    assert context.tenant_id == "cwl-org"
+    assert context.roles == ["data-analyst"]
+
+
+def test_keyverse_unknown_role_does_not_grant_access():
+    """An unrecognized signed Keyverse role cannot become an application role."""
+    context = authz.resolve_oidc_actor_context(
+        {
+            "sub": "keyverse-user-2",
+            "org": "cwl-org",
+            "role": "unreviewed-admin",
+            "exp": int(time.time()) + 3600,
+        }
+    )
+
+    assert context.roles == []
+
+
 def test_select_jwk_guard_branches():
     jwks = {"keys": [{"kid": "k1", "kty": "RSA"}]}
     assert authz._select_jwk(jwks, "k1")["kid"] == "k1"

@@ -28,7 +28,17 @@ _DEFAULT_OIDC_GROUP_ROLE_MAP = {
     "sdp-security": ["security"],
 }
 
+_KEYVERSE_ROLE_MAP = {
+    "member": ["data-analyst"],
+    "data-analyst": ["data-analyst"],
+    "data-admin": ["data-admin", "data-analyst"],
+    "admin": ["admin", "data-analyst"],
+    "platform-admin": ["platform-admin", "admin", "data-analyst"],
+    "security": ["security"],
+}
+
 _SUBJECT_CLAIMS = ("preferred_username", "email", "sub")
+_TENANT_CLAIMS = ("tenant_id", "tid", "organization", "org")
 _ALLOWED_JWT_ALGORITHMS = {"RS256", "RS384", "RS512", "ES256", "ES384", "ES512"}
 
 
@@ -75,7 +85,7 @@ def load_oidc_role_map() -> dict[str, list[str]]:
 def validate_oidc_claim_shape(claims: dict[str, Any]) -> None:
     if not any(claims.get(key) for key in _SUBJECT_CLAIMS):
         raise ValueError("missing subject claim")
-    if not (claims.get("tenant_id") or claims.get("tid") or claims.get("organization")):
+    if not any(claims.get(key) for key in _TENANT_CLAIMS):
         raise ValueError("missing tenant claim")
     if "exp" not in claims:
         raise ValueError("missing exp claim")
@@ -102,12 +112,14 @@ def resolve_oidc_actor_context(
         or claims.get("sub")
         or "anonymous"
     )
-    tenant_id = str(claims.get("tenant_id") or claims.get("tid") or claims.get("organization") or "")
+    tenant_id = str(next((claims.get(key) for key in _TENANT_CLAIMS if claims.get(key)), ""))
     groups = _claim_values(claims.get("groups"))
 
     roles: set[str] = set()
     for group in groups:
         roles.update(mapping.get(group, []))
+    for role in _claim_values(claims.get("role")):
+        roles.update(_KEYVERSE_ROLE_MAP.get(role, []))
 
     return ActorContext(subject=str(subject), tenant_id=tenant_id, roles=sorted(roles))
 
