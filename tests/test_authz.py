@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import time
 
+import jwt as _jwt
 import pytest
 
 from sdp import authz
@@ -84,10 +86,6 @@ def test_load_jwks_from_url_honours_timeout_override(monkeypatch):
 
 # --- OIDC claim/role/JWK guard branches (security-critical error paths) ---
 
-import time
-
-import jwt as _jwt
-
 
 def test_claim_values_handles_str_list_none_and_scalar():
     assert authz._claim_values(None) == []
@@ -151,11 +149,19 @@ def test_keyverse_claim_aliases_map_to_tenant_and_bounded_role():
 
 @pytest.mark.parametrize(
     ("keyverse_role", "expected_roles"),
-    list(authz._KEYVERSE_ROLE_MAP.items()),
+    [
+        ("member", ["data-analyst"]),
+        ("data-analyst", ["data-analyst"]),
+        ("data-admin", ["data-admin", "data-analyst"]),
+        ("admin", ["admin", "data-analyst"]),
+        ("platform-admin", ["platform-admin", "admin", "data-analyst"]),
+        ("security", ["security"]),
+    ],
 )
 def test_keyverse_allowed_roles_map_to_bounded_application_roles(
     keyverse_role, expected_roles
 ):
+    """Every admitted Keyverse role maps to its documented bounded roles."""
     context = authz.resolve_oidc_actor_context(
         {
             "sub": "keyverse-user-roles",
@@ -169,6 +175,7 @@ def test_keyverse_allowed_roles_map_to_bounded_application_roles(
 
 
 def test_keyverse_role_merges_with_group_derived_roles():
+    """A valid singular Keyverse role may combine with an allow-listed group."""
     context = authz.resolve_oidc_actor_context(
         {
             "sub": "keyverse-user-groups",
@@ -183,16 +190,16 @@ def test_keyverse_role_merges_with_group_derived_roles():
 
 
 def test_keyverse_role_array_does_not_combine_privileges():
-    context = authz.resolve_oidc_actor_context(
-        {
-            "sub": "keyverse-user-array-role",
-            "org": "cwl-org",
-            "role": ["member", "platform-admin"],
-            "exp": int(time.time()) + 3600,
-        }
-    )
-
-    assert context.roles == []
+    """An array role claim must fail closed instead of merging authorities."""
+    with pytest.raises(ValueError, match=r"role claim must be a string"):
+        authz.resolve_oidc_actor_context(
+            {
+                "sub": "keyverse-user-array-role",
+                "org": "cwl-org",
+                "role": ["member", "platform-admin"],
+                "exp": int(time.time()) + 3600,
+            }
+        )
 
 
 def test_keyverse_unknown_role_does_not_grant_access():

@@ -67,6 +67,21 @@ def _claim_values(value: Any) -> list[str]:
     return [str(value)]
 
 
+def _single_string_claim(value: Any, claim_name: str) -> str | None:
+    """Return one optional string claim, rejecting ambiguous claim shapes.
+
+    Signed identity claims that grant application roles must have one explicit
+    string value. Accepting arrays or coercing arbitrary values could merge
+    multiple authorities or invoke surprising conversions at the authorization
+    boundary, so malformed role claims fail closed.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{claim_name} claim must be a string")
+    return value
+
+
 def oidc_role_claims(claims: dict[str, Any]) -> list[str]:
     return _claim_values(claims.get("roles"))
 
@@ -118,8 +133,8 @@ def resolve_oidc_actor_context(
     roles: set[str] = set()
     for group in groups:
         roles.update(mapping.get(group, []))
-    role = claims.get("role")
-    if isinstance(role, str):
+    role = _single_string_claim(claims.get("role"), "role")
+    if role:
         roles.update(_KEYVERSE_ROLE_MAP.get(role, []))
 
     return ActorContext(subject=str(subject), tenant_id=tenant_id, roles=sorted(roles))
