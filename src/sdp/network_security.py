@@ -105,12 +105,34 @@ def validate_outbound_https_url(raw_url: str, *, setting_name: str) -> str:
                 ascii_host = normalized_host.encode("idna").decode("ascii")
             except UnicodeError as exc:
                 raise ValueError(f"{setting_name} contains an invalid hostname") from exc
-            if (
-                ascii_host == "localhost"
-                or ascii_host.endswith(".localhost")
-                or "." not in ascii_host
-            ):
-                raise ValueError(f"{setting_name} must target a public DNS hostname")
+            try:
+                idna_ipv4 = ip_address(inet_aton(ascii_host))
+            except OSError:
+                idna_ipv4 = None
+            if idna_ipv4 is not None:
+                if not idna_ipv4.is_global:
+                    raise ValueError(
+                        f"{setting_name} must target a global IP address"
+                    ) from None
+                ascii_host = str(idna_ipv4)
+            else:
+                try:
+                    idna_address = ip_address(ascii_host)
+                except ValueError:
+                    if (
+                        ascii_host == "localhost"
+                        or ascii_host.endswith(".localhost")
+                        or "." not in ascii_host
+                    ):
+                        raise ValueError(
+                            f"{setting_name} must target a public DNS hostname"
+                        ) from None
+                else:
+                    if not idna_address.is_global:
+                        raise ValueError(
+                            f"{setting_name} must target a global IP address"
+                        ) from None
+                    ascii_host = str(idna_address)
         else:
             if not address.is_global:
                 raise ValueError(f"{setting_name} must target a global IP address")
