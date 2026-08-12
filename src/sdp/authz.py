@@ -187,6 +187,16 @@ def _select_jwk(jwks: dict[str, Any], kid: str | None) -> dict[str, Any]:
     raise ValueError("no matching jwks key")
 
 
+def _token_header_has_critical_extensions(token: str) -> bool:
+    """Detect a raw critical-header declaration without trusting its shape."""
+    try:
+        encoded_header = token.split(".", 1)[0].encode("ascii")
+        header = json.loads(jwt.utils.base64url_decode(encoded_header))
+    except (UnicodeDecodeError, UnicodeEncodeError, ValueError):
+        return False
+    return isinstance(header, dict) and "crit" in header
+
+
 def _validate_jwt_header(header: dict[str, Any]) -> None:
     """Reject critical JWT extensions because this verifier supports none."""
     if "crit" in header:
@@ -218,7 +228,7 @@ def verify_oidc_jwks_token(
         try:
             header = jwt.get_unverified_header(token)
         except InvalidTokenError as exc:
-            if "Unsupported critical extension" in str(exc):
+            if _token_header_has_critical_extensions(token):
                 raise ValueError("unsupported critical JWT header") from exc
             raise
         _validate_jwt_header(header)
