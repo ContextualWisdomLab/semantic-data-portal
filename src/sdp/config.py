@@ -149,11 +149,52 @@ def _load_from_kv_table(bootstrap: BootstrapSettings) -> Optional[Dict[str, Any]
 
     values: Dict[str, Any] = {}
     for key, raw in rows:
-        try:
-            values[key] = json.loads(raw) if isinstance(raw, str) else raw
-        except (TypeError, json.JSONDecodeError):
-            values[key] = raw
+        values[key] = _decode_config_value(raw)
     return values
+
+
+def _decode_config_value(raw: Any) -> Any:
+    """Decode one JSON-backed config value, preserving legacy raw values."""
+
+    try:
+        return json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, json.JSONDecodeError):
+        return raw
+
+
+def _load_config_entry(
+    bootstrap: BootstrapSettings,
+    name: str,
+    default: Any = None,
+) -> Any:
+    """Load exactly one config value and release its short-lived DB engine."""
+
+    if not bootstrap.has_database:
+        return default
+    try:  # imported lazily so the core app has no hard DB dependency
+        from sqlalchemy import create_engine, text
+    except Exception:  # pragma: no cover - sqlalchemy is present in graph extra
+        return default
+
+    try:
+        engine = create_engine(bootstrap.database_dsn, pool_pre_ping=True)
+        try:
+            with engine.connect() as conn:
+                row = conn.execute(
+                    text(
+                        "SELECT config_value FROM config_entries "
+                        "WHERE config_namespace = :ns AND config_key = :key"
+                    ),
+                    {"ns": bootstrap.config_namespace, "key": name},
+                ).fetchone()
+        finally:
+            engine.dispose()
+    except Exception:
+        return default
+
+    if row is None:
+        return default
+    return _decode_config_value(row[0])
 
 
 @lru_cache(maxsize=1)
@@ -179,8 +220,7 @@ def get_config_entry(name: str, default: Any = None) -> Any:
     governed by ``config_entries`` or an explicit safe caller default.
     """
 
-    values = _load_from_kv_table(load_bootstrap()) or {}
-    return values.get(name, default)
+    return _load_config_entry(load_bootstrap(), name, default)
 
 
 def reset_config_cache() -> None:
