@@ -41,6 +41,8 @@ def test_validate_outbound_https_url_accepts_public_targets(raw_url: str, expect
         "https://127.1/keys",
         "https://0177.0.0.1/keys",
         "https://0x7f.1/keys",
+        "https://１２７．０．０．１/keys",
+        "https://０x７f.１/keys",
         "https://10.0.0.1/keys",
         "https://169.254.169.254/latest/meta-data",
         "https://[::1]/keys",
