@@ -19,6 +19,8 @@ from sdp.network_security import validate_outbound_https_url
         (" HTTPS://EXAMPLE.COM:8443/jwks?tenant=demo ", "https://example.com:8443/jwks?tenant=demo"),
         ("https://bücher.example/keys", "https://xn--bcher-kva.example/keys"),
         ("https://8.8.8.8/dns-query", "https://8.8.8.8/dns-query"),
+        ("https://８．８．８．８/dns-query", "https://8.8.8.8/dns-query"),
+        ("https://０x８.８.８.８/dns-query", "https://8.8.8.8/dns-query"),
         ("https://[2001:4860:4860::8888]/dns-query", "https://[2001:4860:4860::8888]/dns-query"),
     ],
 )
