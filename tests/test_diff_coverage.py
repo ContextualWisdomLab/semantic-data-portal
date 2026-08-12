@@ -36,10 +36,25 @@ def test_changed_exclusion_cannot_claim_complete_coverage() -> None:
     assert failures == [f"{path}: excluded changed lines [1]"]
 
 
-def test_changed_sdp_core_file_without_evidence_fails() -> None:
-    """The common ``src`` root includes both sdp and sdp_core production code."""
+def test_changed_sdp_core_file_without_evidence_fails(monkeypatch) -> None:
+    """The default ``src`` diff actually discovers sdp_core production code."""
 
+    class Completed:
+        stdout = """diff --git a/src/sdp_core/contracts.py b/src/sdp_core/contracts.py
++++ b/src/sdp_core/contracts.py
+@@ -45,0 +46 @@
++changed_line = True
+"""
+
+    monkeypatch.setattr(
+        check_diff_coverage.subprocess,
+        "run",
+        lambda *args, **kwargs: Completed(),
+    )
     path = "src/sdp_core/contracts.py"
-    failures = check_diff_coverage.coverage_failures({"files": {}}, {path: {46}})
+    changes = check_diff_coverage.changed_lines("base", "head", "src")
 
-    assert failures == [f"{path}: no coverage evidence"]
+    assert changes == {path: {46}}
+    assert check_diff_coverage.coverage_failures({"files": {}}, changes) == [
+        f"{path}: no coverage evidence"
+    ]
