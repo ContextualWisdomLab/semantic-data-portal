@@ -67,3 +67,14 @@ jobs:
             --coverage-json coverage.json \
             --base-sha "$SDP_BASE_SHA" \
             --head-sha "$SDP_HEAD_SHA"
+
+  api_integration_suite:
+    name: API integration suite
+    needs: pytest
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require complete API and security suite
+        env:
+          SDP_PYTEST_RESULT: ${{ needs.pytest.result }}
+        run: test "$SDP_PYTEST_RESULT" = "success"
