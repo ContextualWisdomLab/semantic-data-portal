@@ -171,10 +171,7 @@ def _load_config_entry(
 
     if not bootstrap.has_database:
         return default
-    try:  # imported lazily so the core app has no hard DB dependency
-        from sqlalchemy import create_engine, text
-    except Exception:  # pragma: no cover - sqlalchemy is present in graph extra
-        return default
+    from sqlalchemy import create_engine, text
 
     try:
         engine = create_engine(bootstrap.database_dsn, pool_pre_ping=True)
