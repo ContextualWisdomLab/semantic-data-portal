@@ -215,6 +215,19 @@ def test_keyverse_org_claim_must_be_a_non_empty_string(invalid_org):
         )
 
 
+@pytest.mark.parametrize("invalid_org", ["", "  "])
+def test_keyverse_org_claim_must_be_non_empty(invalid_org):
+    """A standalone Keyverse org alias must reject blank tenant authority."""
+    with pytest.raises(ValueError, match=r"org claim must be non-empty"):
+        authz.resolve_oidc_actor_context(
+            {
+                "sub": "keyverse-user-blank-org",
+                "org": invalid_org,
+                "exp": int(time.time()) + 3600,
+            }
+        )
+
+
 @pytest.mark.parametrize("invalid_org", [None, [], {}, "", "  "])
 def test_keyverse_org_alias_cannot_hide_behind_tenant_id(invalid_org):
     """Every present tenant alias is validated before alias precedence applies."""
