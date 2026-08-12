@@ -151,3 +151,51 @@ def test_load_config_entry_queries_one_key_and_disposes_engine(
         "key": "SDP_LOG_SINK_TIMEOUT_MS",
     }
     assert observed["disposed"] is True
+
+
+def test_load_config_entry_none_without_database() -> None:
+    """A missing datastore keeps the caller's safe default available."""
+
+    assert cfg._load_config_entry(_bootstrap(None), "missing") is None
+
+
+def test_load_config_entry_absent_and_db_error_are_fail_soft(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Missing rows and connection failures return None and release resources."""
+
+    disposed: list[bool] = []
+
+    class EmptyResult:
+        def fetchone(self):
+            return None
+
+    class EmptyConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def execute(self, _statement, _params):
+            return EmptyResult()
+
+    class EmptyEngine:
+        def connect(self):
+            return EmptyConnection()
+
+        def dispose(self):
+            disposed.append(True)
+
+    monkeypatch.setattr("sqlalchemy.create_engine", lambda *a, **k: EmptyEngine())
+    bootstrap = _bootstrap("postgresql://localhost/sdp")
+    assert cfg._load_config_entry(bootstrap, "missing") is None
+    assert disposed == [True]
+
+    class BrokenEngine(EmptyEngine):
+        def connect(self):
+            raise RuntimeError("db unavailable")
+
+    monkeypatch.setattr("sqlalchemy.create_engine", lambda *a, **k: BrokenEngine())
+    assert cfg._load_config_entry(bootstrap, "missing") is None
+    assert disposed == [True, True]
