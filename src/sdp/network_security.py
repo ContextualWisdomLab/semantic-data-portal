@@ -106,33 +106,26 @@ def validate_outbound_https_url(raw_url: str, *, setting_name: str) -> str:
             except UnicodeError as exc:
                 raise ValueError(f"{setting_name} contains an invalid hostname") from exc
             try:
-                idna_ipv4 = ip_address(inet_aton(ascii_host))
-            except OSError:
-                idna_ipv4 = None
-            if idna_ipv4 is not None:
-                if not idna_ipv4.is_global:
+                idna_address = ip_address(ascii_host)
+            except ValueError:
+                try:
+                    idna_address = ip_address(inet_aton(ascii_host))
+                except OSError:
+                    idna_address = None
+            if idna_address is not None:
+                if not idna_address.is_global:
                     raise ValueError(
                         f"{setting_name} must target a global IP address"
                     ) from None
-                ascii_host = str(idna_ipv4)
-            else:
-                try:
-                    idna_address = ip_address(ascii_host)
-                except ValueError:
-                    if (
-                        ascii_host == "localhost"
-                        or ascii_host.endswith(".localhost")
-                        or "." not in ascii_host
-                    ):
-                        raise ValueError(
-                            f"{setting_name} must target a public DNS hostname"
-                        ) from None
-                else:
-                    if not idna_address.is_global:
-                        raise ValueError(
-                            f"{setting_name} must target a global IP address"
-                        ) from None
-                    ascii_host = str(idna_address)
+                ascii_host = str(idna_address)
+            elif (
+                ascii_host == "localhost"
+                or ascii_host.endswith(".localhost")
+                or "." not in ascii_host
+            ):
+                raise ValueError(
+                    f"{setting_name} must target a public DNS hostname"
+                ) from None
         else:
             if not address.is_global:
                 raise ValueError(f"{setting_name} must target a global IP address")
