@@ -105,3 +105,49 @@ def test_default_config_seed_returns_a_defaults_copy() -> None:
     assert seed["graph_backend"] == "auto"
     seed["graph_backend"] = "mutated"
     assert cfg.default_config_seed()["graph_backend"] == "auto"  # copy, not the shared dict
+
+
+def test_load_config_entry_queries_one_key_and_disposes_engine(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Hot-path credential reads must not scan a namespace or leak an engine."""
+
+    observed: dict[str, object] = {}
+
+    class Result:
+        def fetchone(self):
+            return ('"750"',)
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def execute(self, statement, params):
+            observed["statement"] = str(statement)
+            observed["params"] = params
+            return Result()
+
+    class Engine:
+        def connect(self):
+            return Connection()
+
+        def dispose(self):
+            observed["disposed"] = True
+
+    monkeypatch.setattr("sqlalchemy.create_engine", lambda *a, **k: Engine())
+
+    value = cfg._load_config_entry(
+        _bootstrap("postgresql://localhost/sdp"),
+        "SDP_LOG_SINK_TIMEOUT_MS",
+    )
+
+    assert value == "750"
+    assert "config_key = :key" in str(observed["statement"])
+    assert observed["params"] == {
+        "ns": "default",
+        "key": "SDP_LOG_SINK_TIMEOUT_MS",
+    }
+    assert observed["disposed"] is True
