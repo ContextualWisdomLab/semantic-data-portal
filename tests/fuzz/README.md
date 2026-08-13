@@ -47,15 +47,20 @@ PYTHONPATH=src:. FUZZ_SECONDS=60 tests/fuzz/run_atheris.sh
 PYTHONPATH=src:. python tests/fuzz/atheris/fuzz_draft_sql.py -max_total_time=30 tests/fuzz/corpus/draft_sql
 ```
 
-Seed corpora live in `corpus/<target>/`. A reproducing crash is written to a
-`crash-*` file in the working directory; re-run the harness with that file as
-its argument to replay it.
+Seed corpora live in `corpus/<target>/`. A reproducing failure is written to a
+`crash-*`, `oom-*`, or `timeout-*` file in the working directory; re-run the
+corresponding harness with that file as its argument to replay it. On failure
+the runner identifies the new reproducer across all three patterns and prints
+its base64 payload, SHA-256 digest, and replay command directly to the log, so
+the failure cause is diagnosable without downloading the artifact.
 
 ## CI
 
 `.github/workflows/fuzz.yml` runs the property tests plus a **bounded** Atheris
 job (60s/target on PRs, 300s nightly via `schedule`) so fuzzing never blows CI
-cost. A crash fails the job and uploads the `crash-*` artifact.
+cost. A crash, out-of-memory termination, or timeout fails the job, prints the
+reproducer to the run log, and uploads matching `crash-*`, `oom-*`, and
+`timeout-*` files as workflow artifacts.
 
 ## Background
 
