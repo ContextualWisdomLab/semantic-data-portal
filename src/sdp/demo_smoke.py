@@ -83,5 +83,5 @@ def main() -> int:
     return 0 if summary["ready"] else 1
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover - CLI entry, exercised only on direct execution
     raise SystemExit(main())
