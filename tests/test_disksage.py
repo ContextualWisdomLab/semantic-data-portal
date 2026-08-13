@@ -1,5 +1,7 @@
-from sdp.api import app
+import pytest
 from fastapi.testclient import TestClient
+
+from sdp.api import app
 
 
 client = TestClient(app)
@@ -63,6 +65,8 @@ def test_disksage_catalog_preview_is_path_free_and_non_mutating():
     assert body["copy_authorized"] is False
     assert body["persistable_as_file_asset"] is False
     assert body["datasets"][0]["ontology_class"] == "disksage:CloudArchiveCandidate"
+    assert body["datasets"][0]["title"] == "DiskSage document 후보"
+    assert body["datasets"][0]["description"] == "경로 비노출 cloud archive candidate preview"
     assert "metadata_evidence" not in body["datasets"][0]
 
 
@@ -71,6 +75,21 @@ def test_disksage_catalog_preview_rejects_unknown_path_fields():
     payload["candidates"][0]["relative_path"] = "secret.txt"
     response = client.post("/integrations/disksage/catalog-preview", json=payload)
     assert response.status_code == 400
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["production_time_source", "blocked_reason"],
+)
+def test_disksage_catalog_preview_rejects_path_bearing_classification_values(field: str):
+    payload = _batch()
+    if field == "production_time_source":
+        payload["candidates"][0][field] = "embedded:/Users/example/metadata"
+    else:
+        payload["candidates"][0][field] = "blocked:/Users/example/file"
+    response = client.post("/integrations/disksage/catalog-preview", json=payload)
+    assert response.status_code == 400
+    assert "/Users/example" not in response.text
 
 
 def test_disksage_file_asset_preview_alias_is_available():

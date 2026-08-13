@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import ValidationError
 from sdp_core import (
     buyer_demo_activation_plan,
     enterprise_controls_manifest,
@@ -536,8 +537,11 @@ def disksage_catalog_preview(payload: dict[str, Any]) -> dict[str, Any]:
     try:
         batch = DiskSageCatalogBatch.model_validate(payload)
         return catalog_preview(batch)
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"invalid DiskSage catalog batch: {exc}")
+    except ValidationError:
+        raise HTTPException(status_code=400, detail="invalid DiskSage catalog batch") from None
+    except Exception:
+        _logger.exception("DiskSage catalog preview failed")
+        raise HTTPException(status_code=500, detail="DiskSage catalog preview unavailable") from None
 
 
 @app.post("/catalog/datasets/{dataset_id}/publish")

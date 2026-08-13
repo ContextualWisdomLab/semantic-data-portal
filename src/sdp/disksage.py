@@ -24,6 +24,14 @@ PRODUCTION_TIME_PRECEDENCE = (
 _FINGERPRINT = r"^[0-9a-f]{64}$"
 
 
+def _path_free_token(value: str) -> bool:
+    return bool(value) and all(
+        character.isascii()
+        and (character.isalnum() or character in "._:-")
+        for character in value
+    )
+
+
 class DiskSageMetadataEvidence(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -86,6 +94,12 @@ class DiskSageCandidate(BaseModel):
         )
         if source_class is None:
             raise ValueError("unsupported production time source")
+        if self.production_time_source.startswith("embedded:") and not _path_free_token(
+            self.production_time_source.removeprefix("embedded:")
+        ):
+            raise ValueError("embedded production time source must be path-free")
+        if self.blocked_reason is not None and not _path_free_token(self.blocked_reason):
+            raise ValueError("blocked reason must be path-free")
         if source_class != "embedded_metadata" and self.production_time_confidence != "low":
             raise ValueError("non-embedded production time must be low confidence")
         expected_field, expected_source = {
@@ -135,8 +149,8 @@ def catalog_preview(batch: DiskSageCatalogBatch) -> dict[str, Any]:
         datasets.append(
             {
                 "id": f"disksage:{candidate.candidate_fingerprint}",
-                "title": f"DiskSage {candidate.archive_kind} candidate",
-                "description": "Path-free cloud archive candidate preview",
+                "title": f"DiskSage {candidate.archive_kind} 후보",
+                "description": "경로 비노출 cloud archive candidate preview",
                 "domain": "storage",
                 "source_system": "disksage",
                 "sensitivity": "private",
