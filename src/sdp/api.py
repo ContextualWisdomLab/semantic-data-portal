@@ -54,6 +54,7 @@ from .domain import (
     QueryDraftRequest,
     QueryExecutionRequest,
 )
+from .disksage import DiskSageCatalogBatch, catalog_preview
 from .enterprise_evidence import build_enterprise_evidence_pack
 from .evidence import list_policy_decisions
 from .observability import (
@@ -525,6 +526,18 @@ def create_dataset(payload: dict[str, Any]) -> dict[str, Any]:
 
     dataset = register_dataset(request, actor=actor_id, decision_id=decision.decision_id)
     return {"status": "created", "dataset": dataset.model_dump()}
+
+
+@app.post("/integrations/disksage/catalog-preview")
+@app.post("/file-assets/preview/disksage")
+def disksage_catalog_preview(payload: dict[str, Any]) -> dict[str, Any]:
+    """Validate and project DiskSage candidates; never persist or evict."""
+
+    try:
+        batch = DiskSageCatalogBatch.model_validate(payload)
+        return catalog_preview(batch)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"invalid DiskSage catalog batch: {exc}")
 
 
 @app.post("/catalog/datasets/{dataset_id}/publish")
