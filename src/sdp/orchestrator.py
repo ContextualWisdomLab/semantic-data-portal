@@ -10,6 +10,16 @@ from .domain import QueryExecutionResponse
 
 
 _FORBIDDEN_KEYWORDS = {"drop", "delete", "truncate", "alter", "insert", "update", "merge", "exec", "union"}
+# Function admission is deliberately positive rather than denylist-based. PostgreSQL
+# exposes many built-ins and extensions that can mutate state, consume unbounded
+# resources, access files, or affect other sessions while still appearing inside a
+# SELECT. A finite unsafe-name list therefore cannot establish a read-only boundary.
+# Keep the product surface limited to the aggregate functions required by governed
+# analytics; every other function call fails closed until reviewed and added here.
+_SAFE_READONLY_FUNCTIONS = frozenset({"avg", "count", "max", "min", "sum"})
+_FUNCTION_CALL_PATTERN = re.compile(
+    r"(?<![\w.])(?P<name>[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)*)\s*\("
+)
 
 
 def _safe_identifier(value: str) -> str:
@@ -22,6 +32,15 @@ def _safe_request_id() -> str:
 
 def _source_table_name(source_system: str) -> str:
     return _safe_identifier(source_system.rstrip("/").rsplit("/", 1)[-1])
+
+
+def _has_unreviewed_function_call(sql: str) -> bool:
+    """Return whether SQL invokes a function outside the reviewed read-only set."""
+    for match in _FUNCTION_CALL_PATTERN.finditer(sql):
+        function_name = match.group("name").lower()
+        if "." in function_name or function_name not in _SAFE_READONLY_FUNCTIONS:
+            return True
+    return False
 
 
 def validate_sql_query(sql: str, *, source_system: str) -> list[str]:
@@ -44,6 +63,15 @@ def validate_sql_query(sql: str, *, source_system: str) -> list[str]:
         if re.search(rf"\b{re.escape(token)}\b", lowered):
             warnings.append("forbidden_keyword_detected")
             break
+
+    # SELECT ... INTO is CREATE TABLE AS (a write/DDL). Function calls are a
+    # separate grammar boundary: only the reviewed aggregate allowlist above is
+    # accepted, so newly installed PostgreSQL extensions cannot silently expand
+    # query authority.
+    if re.search(r"\binto\b", lowered):
+        warnings.append("write_operation_not_allowed")
+    if _has_unreviewed_function_call(stripped):
+        warnings.append("unsafe_function_call")
 
     referenced = [
         next(value for value in match if value)
