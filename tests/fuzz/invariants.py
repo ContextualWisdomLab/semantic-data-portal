@@ -129,10 +129,22 @@ def check_execute_query(req: QueryExecutionRequest) -> None:
     reset_in_memory_state()  # bound append-only evidence growth across iterations
     resp = orchestrator.execute_query(req)
     assert isinstance(resp, QueryExecutionResponse)
-    assert resp.status in {"SUCCEEDED", "REJECTED", "DENIED"}
+    assert resp.status in {
+        "SUCCEEDED",
+        "REJECTED",
+        "DENIED",
+        "VALIDATED",
+        "UNAVAILABLE",
+    }
     lowered = req.query.lower()
     if any(tok in lowered for tok in FORBIDDEN_KEYWORDS):
         assert resp.status == "REJECTED", "forbidden keyword was not rejected"
     if resp.status == "SUCCEEDED":
         assert resp.row_count >= 0
         assert isinstance(resp.rows, list)
+    if resp.status in {"VALIDATED", "UNAVAILABLE"}:
+        assert resp.row_count == 0
+        assert resp.rows == []
+        assert resp.columns == []
+        assert resp.execution["elapsedMs"] == 0
+        assert resp.execution["bytesScanned"] == 0

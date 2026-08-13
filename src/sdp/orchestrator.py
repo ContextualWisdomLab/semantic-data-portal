@@ -159,6 +159,7 @@ def draft_sql(req: QueryDraftRequest) -> dict:
 
 
 def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
+    """Validate governed SQL and fail closed until a real execution backend exists."""
     request_id = _safe_request_id()
 
     def response(
@@ -280,39 +281,31 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
         )
 
     if req.dry_run:
-        row_count = 0
-    else:
-        row_count = min(2000, dataset.profile.get("row_count", 1000))
+        audit(
+            dataset_id=dataset.id,
+            result="validated",
+            reason="query_validated",
+            decision_id=decision.decision_id,
+            details={"policy_decision_id": decision.decision_id},
+        )
+        return response(
+            dataset_id=dataset.id,
+            policy_decision_id=decision.decision_id,
+            status="VALIDATED",
+            execution={"elapsedMs": 0, "source": "validation", "bytesScanned": 0},
+        )
 
-    now = datetime.now(timezone.utc).isoformat()
-    query_id = f"qry-{now.replace(':', '')}"
-    columns = ["week", "active_count"] if "group by" in lowered else ["result"]
-    rows = (
-        [{"week": now[:10], "active_count": 1}]
-        if "group by" in lowered
-        else [{"result": row_count}]
-    )
-    execution = {"elapsedMs": 100, "source": "mock-trino", "bytesScanned": 1024}
     audit(
         dataset_id=dataset.id,
-        result="allowed",
-        reason="ok",
+        result="unavailable",
+        reason="query_execution_backend_not_configured",
         decision_id=decision.decision_id,
-        details={
-            "policy_decision_id": decision.decision_id,
-            "query_id": query_id,
-            "row_count": row_count,
-            "bytes_scanned": execution["bytesScanned"],
-        },
+        details={"policy_decision_id": decision.decision_id},
     )
     return response(
         dataset_id=dataset.id,
-        query_id=query_id,
         policy_decision_id=decision.decision_id,
-        status="SUCCEEDED",
-        row_count=row_count,
-        columns=columns,
-        rows=rows,
-        execution=execution,
-        warnings=["mock_execution_no_real_data"],
+        status="UNAVAILABLE",
+        execution={"elapsedMs": 0, "source": "unavailable", "bytesScanned": 0},
+        warnings=["query_execution_backend_not_configured"],
     )

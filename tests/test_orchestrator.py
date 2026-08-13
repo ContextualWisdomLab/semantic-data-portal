@@ -119,7 +119,7 @@ def test_draft_sql_default_builds_count_query() -> None:
 # --- execute_query dry-run path ------------------------------------------
 
 
-def test_execute_query_dry_run_succeeds_with_zero_rows() -> None:
+def test_execute_query_dry_run_validates_with_zero_rows() -> None:
     resp = orch.execute_query(
         QueryExecutionRequest(
             dataset_ids=[_CRM],
@@ -129,5 +129,13 @@ def test_execute_query_dry_run_succeeds_with_zero_rows() -> None:
             dry_run=True,
         )
     )
-    assert resp.status == "SUCCEEDED"
+    assert resp.status == "VALIDATED"
+    assert resp.query_id == ""
     assert resp.row_count == 0
+    assert resp.rows == []
+    assert resp.columns == []
+    assert resp.execution == {
+        "elapsedMs": 0,
+        "source": "validation",
+        "bytesScanned": 0,
+    }

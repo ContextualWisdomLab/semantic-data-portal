@@ -1454,7 +1454,7 @@ def test_ontology_patch_workflow():
     assert review.json()["status"] == "approved"
 
 
-def test_browse_query_success():
+def test_browse_query_fails_closed_without_execution_backend():
     response = client.post(
         "/browse/query",
         json={
@@ -1468,16 +1468,27 @@ def test_browse_query_success():
     )
     assert response.status_code == 200
     body = response.json()
-    assert body["status"] == "SUCCEEDED"
+    assert body["status"] == "UNAVAILABLE"
     assert body["dataset_id"] == "crm-event"
     assert body["policy_decision_id"] is not None
+    assert body["query_id"] == ""
+    assert body["row_count"] == 0
+    assert body["rows"] == []
+    assert body["columns"] == []
+    assert body["execution"] == {
+        "elapsedMs": 0,
+        "source": "unavailable",
+        "bytesScanned": 0,
+    }
+    assert body["warnings"] == ["query_execution_backend_not_configured"]
+    assert "mock" not in str(body).lower()
     assert "request_id" in body
 
     events = client.get("/audit/events", params={"resource": "crm-event"})
     assert events.status_code == 200
     assert any(
         event["action"] == "browse.query"
-        and event["result"] == "allowed"
+        and event["result"] == "unavailable"
         and event["decision_id"] == body["policy_decision_id"]
         and event["details"].get("request_id") == body["request_id"]
         for event in events.json()
