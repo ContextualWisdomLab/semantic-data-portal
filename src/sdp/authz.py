@@ -4,6 +4,7 @@ import json
 import os
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlsplit
 from urllib.request import urlopen
 
 import jwt
@@ -111,8 +112,19 @@ def resolve_oidc_actor_context(
     return ActorContext(subject=str(subject), tenant_id=tenant_id, roles=sorted(roles))
 
 
+_ALLOWED_JWKS_SCHEMES = frozenset({"https", "http"})
+
+
 def _load_jwks_from_url(jwks_url: str) -> dict[str, Any]:
+    # Restrict the JWKS fetch to HTTP(S). urllib honours file:// (and other
+    # schemes), so without this guard a misconfigured SDP_OIDC_JWKS_URL such as
+    # "file:///etc/passwd" would turn an operator misconfiguration into local
+    # file disclosure.
+    scheme = urlsplit(jwks_url).scheme.lower()
+    if scheme not in _ALLOWED_JWKS_SCHEMES:
+        raise ValueError("OIDC JWKS URL must use the http or https scheme")
     timeout = float(os.getenv("SDP_OIDC_JWKS_TIMEOUT_SECONDS", "2"))
+    # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected -- scheme is allow-listed to http(s) above; JWKS URL is operator config, not request input
     with urlopen(jwks_url, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
 
