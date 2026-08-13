@@ -136,8 +136,8 @@ def _export_to_sink(observation: dict[str, Any]) -> None:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        # This branch excludes urllib's local file handlers before the request is built.
-        with urlopen(request, timeout=timeout_ms / 1000):  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
+        # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected -- scheme is allow-listed to {http,https} at the guard above (file:// et al. raise below)
+        with urlopen(request, timeout=timeout_ms / 1000):
             return
 
     raise ValueError(f"unsupported SDP_LOG_SINK_URL scheme: {scheme}")

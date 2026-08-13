@@ -447,7 +447,7 @@ def test_oidc_jwks_verification_maps_verified_token_without_token_leak():
 
 
 def test_oidc_jwks_loader_rejects_non_https_url():
-    with pytest.raises(ValueError, match="HTTPS"):
+    with pytest.raises(ValueError, match="http or https scheme"):
         app_authz._load_jwks_from_url("file:///etc/passwd")
 
 
