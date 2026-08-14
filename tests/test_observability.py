@@ -107,7 +107,8 @@ def test_export_to_sink_http_post_is_invoked(monkeypatch: pytest.MonkeyPatch) ->
         captured["body"] = request.data
         return _FakeResp()
 
-    monkeypatch.setattr(obs, "urlopen", _fake_urlopen)
+    monkeypatch.setattr(obs, "get_credential", lambda _name, default: default)
+    monkeypatch.setattr(obs, "open_url_without_redirects", _fake_urlopen)
     obs._export_to_sink({"event": "http_request", "route": "/parse"})
     assert captured["url"] == "https://sink.example/ingest"
     assert b"http_request" in captured["body"]

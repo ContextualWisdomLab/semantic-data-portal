@@ -4,6 +4,8 @@ import os
 import re
 from dataclasses import dataclass
 
+from .config import get_config_entry
+
 
 def _slug(value: str) -> str:
     return re.sub(r"[^A-Z0-9]+", "_", value.upper()).strip("_")
@@ -12,6 +14,13 @@ def _slug(value: str) -> str:
 def connector_secret_ref(connector_id: str, dataset_id: str) -> str:
     prefix = os.getenv("SDP_CONNECTOR_SECRET_REF_PREFIX", "SDP_CONNECTOR_SECRET_")
     return f"{prefix}{_slug(connector_id)}_{_slug(dataset_id)}_TOKEN"
+
+
+def get_credential(name: str, default: str | None = None) -> str | None:
+    """Return a named value from the governed database-backed KV registry."""
+
+    value = get_config_entry(name, default)
+    return None if value is None else str(value)
 
 
 @dataclass(frozen=True)
