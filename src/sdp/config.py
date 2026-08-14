@@ -171,7 +171,10 @@ def _load_config_entry(
 
     if not bootstrap.has_database:
         return default
-    from sqlalchemy import create_engine, text
+    try:  # imported lazily so core-only installations keep their safe default
+        from sqlalchemy import create_engine, text
+    except ImportError:
+        return default
 
     try:
         engine = create_engine(bootstrap.database_dsn, pool_pre_ping=True)

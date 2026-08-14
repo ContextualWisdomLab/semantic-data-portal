@@ -9,6 +9,7 @@ fallback), and the fail-soft behavior when the database is unreachable.
 
 from __future__ import annotations
 
+import builtins
 from pathlib import Path
 import sys
 
@@ -157,6 +158,30 @@ def test_load_config_entry_none_without_database() -> None:
     """A missing datastore keeps the caller's safe default available."""
 
     assert cfg._load_config_entry(_bootstrap(None), "missing") is None
+
+
+def test_load_config_entry_uses_default_without_optional_sqlalchemy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Core-only installs must keep the configured fallback when graph extras are absent."""
+
+    real_import = builtins.__import__
+
+    def import_without_sqlalchemy(name, *args, **kwargs):
+        if name == "sqlalchemy":
+            raise ImportError("optional graph dependency is not installed")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", import_without_sqlalchemy)
+
+    assert (
+        cfg._load_config_entry(
+            _bootstrap("postgresql://localhost/sdp"),
+            "missing",
+            "safe-default",
+        )
+        == "safe-default"
+    )
 
 
 def test_load_config_entry_absent_and_db_error_are_fail_soft(

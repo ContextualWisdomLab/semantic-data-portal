@@ -37,3 +37,19 @@ def test_readonly_gate_rejects_unreviewed_function_calls(query: str) -> None:
 def test_readonly_gate_accepts_reviewed_aggregate_functions(query: str) -> None:
     """Reviewed aggregate functions remain available for ordinary analytics."""
     assert validate_sql_query(query, source_system="crm") == []
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "SELECT left_value + right_value FROM crm",
+        "SELECT left_value::custom_type FROM crm",
+        "SELECT (SELECT count(*) FROM crm) FROM crm",
+        "SELECT count(*) OVER () FROM crm",
+        "SELECT ARRAY[left_value] FROM crm",
+    ],
+)
+def test_readonly_gate_rejects_non_allowlisted_select_expressions(query: str) -> None:
+    """Operators, casts, subqueries, windows, and arrays must fail closed."""
+    warnings = validate_sql_query(query, source_system="crm")
+    assert "unsafe_select_expression" in warnings

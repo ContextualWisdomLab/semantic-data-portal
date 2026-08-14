@@ -20,6 +20,25 @@ _SAFE_READONLY_FUNCTIONS = frozenset({"avg", "count", "max", "min", "sum"})
 _FUNCTION_CALL_PATTERN = re.compile(
     r"(?<![\w.])(?P<name>[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)*)\s*\("
 )
+_SQL_IDENTIFIER = r"[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)?"
+_SELECT_EXPRESSION = rf"""
+    (?:
+        \*
+        | {_SQL_IDENTIFIER}
+        | (?:avg|count|max|min|sum)\s*\(
+            \s*(?:\*|(?:distinct\s+)?{_SQL_IDENTIFIER})\s*
+          \)
+    )
+    (?:\s+as\s+[A-Za-z_][\w]*)?
+"""
+_SELECT_LIST_PATTERN = re.compile(
+    rf"^\s*{_SELECT_EXPRESSION}(?:\s*,\s*{_SELECT_EXPRESSION})*\s*$",
+    re.IGNORECASE | re.VERBOSE,
+)
+_SELECT_CLAUSE_PATTERN = re.compile(
+    r"^\s*select\s+(?P<select_list>.*?)\s+from\b",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 def _safe_identifier(value: str) -> str:
@@ -41,6 +60,21 @@ def _has_unreviewed_function_call(sql: str) -> bool:
         if "." in function_name or function_name not in _SAFE_READONLY_FUNCTIONS:
             return True
     return False
+
+
+def _has_unsafe_select_expression(sql: str) -> bool:
+    """Return whether the SELECT list exceeds the reviewed analytics grammar.
+
+    The product currently needs identifiers, ``*``, and a small aggregate
+    allowlist. Keeping that grammar explicit prevents operators, casts,
+    subqueries, window clauses, and constructors from silently expanding SQL
+    authority.
+    """
+
+    match = _SELECT_CLAUSE_PATTERN.search(sql)
+    if match is None:
+        return False
+    return _SELECT_LIST_PATTERN.fullmatch(match.group("select_list")) is None
 
 
 def validate_sql_query(sql: str, *, source_system: str) -> list[str]:
@@ -72,6 +106,8 @@ def validate_sql_query(sql: str, *, source_system: str) -> list[str]:
         warnings.append("write_operation_not_allowed")
     if _has_unreviewed_function_call(stripped):
         warnings.append("unsafe_function_call")
+    if _has_unsafe_select_expression(stripped):
+        warnings.append("unsafe_select_expression")
 
     referenced = [
         next(value for value in match if value)
