@@ -20,25 +20,130 @@ _SAFE_READONLY_FUNCTIONS = frozenset({"avg", "count", "max", "min", "sum"})
 _FUNCTION_CALL_PATTERN = re.compile(
     r"(?<![\w.])(?P<name>[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)*)\s*\("
 )
-_SQL_IDENTIFIER = r"[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)?"
-_SELECT_EXPRESSION = rf"""
-    (?:
-        \*
-        | {_SQL_IDENTIFIER}
-        | (?:avg|count|max|min|sum)\s*\(
-            \s*(?:\*|(?:distinct\s+)?{_SQL_IDENTIFIER})\s*
-          \)
-    )
-    (?:\s+as\s+[A-Za-z_][\w]*)?
-"""
-_SELECT_LIST_PATTERN = re.compile(
-    rf"^\s*{_SELECT_EXPRESSION}(?:\s*,\s*{_SELECT_EXPRESSION})*\s*$",
-    re.IGNORECASE | re.VERBOSE,
+_SQL_TOKEN_PATTERN = re.compile(
+    r"\s*(?:(?P<identifier>[A-Za-z_][\w]*)|(?P<number>[0-9]+)|(?P<punctuation>[(),.*]))"
 )
-_SELECT_CLAUSE_PATTERN = re.compile(
-    r"^\s*select\s+(?P<select_list>.*?)\s+from\b",
-    re.IGNORECASE | re.DOTALL,
-)
+_SQL_IDENTIFIER_TOKEN_PATTERN = re.compile(r"[A-Za-z_][\w]*")
+_MAX_QUERY_ROWS = 2000
+
+
+def _tokenize_reviewed_select(sql: str) -> list[str] | None:
+    """Tokenize only the punctuation and words understood by the safe grammar.
+
+    Returning ``None`` for any unrecognized character makes casts, operators,
+    string delimiters, array syntax, and comments fail closed before parsing.
+    The pattern is fixed rather than assembled from query content.
+    """
+
+    tokens: list[str] = []
+    position = 0
+    while position < len(sql):
+        match = _SQL_TOKEN_PATTERN.match(sql, position)
+        if match is None:
+            return None
+        tokens.append(next(value for value in match.groups() if value is not None))
+        position = match.end()
+    return tokens
+
+
+class _ReviewedSelectParser:
+    """Parse the product's deliberately small, read-only analytics grammar."""
+
+    def __init__(self, tokens: list[str]) -> None:
+        self._tokens = tokens
+        self._position = 0
+
+    def _peek(self) -> str | None:
+        """Return the current token without consuming it."""
+        if self._position == len(self._tokens):
+            return None
+        return self._tokens[self._position]
+
+    def _accept(self, expected: str) -> bool:
+        """Consume one case-insensitive keyword or punctuation token."""
+        token = self._peek()
+        if token is None or token.lower() != expected:
+            return False
+        self._position += 1
+        return True
+
+    def _identifier(self) -> bool:
+        """Consume a bare or once-qualified SQL identifier."""
+        token = self._peek()
+        if token is None or _SQL_IDENTIFIER_TOKEN_PATTERN.fullmatch(token) is None:
+            return False
+        self._position += 1
+        if self._accept("."):
+            token = self._peek()
+            if token is None or _SQL_IDENTIFIER_TOKEN_PATTERN.fullmatch(token) is None:
+                return False
+            self._position += 1
+        return True
+
+    def _projection(self) -> bool:
+        """Consume an identifier, wildcard, or reviewed aggregate projection."""
+        if self._accept("*"):
+            return True
+
+        token = self._peek()
+        if token is not None and token.lower() in _SAFE_READONLY_FUNCTIONS:
+            self._position += 1
+            if not self._accept("("):
+                return False
+            self._accept("distinct")
+            if not self._accept("*") and not self._identifier():
+                return False
+            if not self._accept(")"):
+                return False
+        elif not self._identifier():
+            return False
+
+        if self._accept("as") and not self._identifier():
+            return False
+        return True
+
+    def _identifier_list(self, *, allow_direction: bool = False) -> bool:
+        """Consume one or more identifiers, optionally with sort directions."""
+        if not self._identifier():
+            return False
+        if allow_direction:
+            token = self._peek()
+            if token is not None and token.lower() in {"asc", "desc"}:
+                self._position += 1
+        while self._accept(","):
+            if not self._identifier():
+                return False
+            if allow_direction:
+                token = self._peek()
+                if token is not None and token.lower() in {"asc", "desc"}:
+                    self._position += 1
+        return True
+
+    def parse(self) -> bool:
+        """Return whether all tokens form one complete reviewed SELECT."""
+        if not self._accept("select") or not self._projection():
+            return False
+        while self._accept(","):
+            if not self._projection():
+                return False
+        if not self._accept("from") or not self._identifier():
+            return False
+        if self._accept("as") and not self._identifier():
+            return False
+        if self._accept("group"):
+            if not self._accept("by") or not self._identifier_list():
+                return False
+        if self._accept("order"):
+            if not self._accept("by") or not self._identifier_list(allow_direction=True):
+                return False
+        if self._accept("limit"):
+            token = self._peek()
+            if token is None or not token.isdecimal():
+                return False
+            self._position += 1
+            if not 1 <= int(token) <= _MAX_QUERY_ROWS:
+                return False
+        return self._position == len(self._tokens)
 
 
 def _safe_identifier(value: str) -> str:
@@ -63,18 +168,16 @@ def _has_unreviewed_function_call(sql: str) -> bool:
 
 
 def _has_unsafe_select_expression(sql: str) -> bool:
-    """Return whether the SELECT list exceeds the reviewed analytics grammar.
+    """Return whether the complete statement exceeds the reviewed SQL grammar.
 
     The product currently needs identifiers, ``*``, and a small aggregate
-    allowlist. Keeping that grammar explicit prevents operators, casts,
-    subqueries, window clauses, and constructors from silently expanding SQL
-    authority.
+    allowlist, with optional grouping, sorting, and a bounded row limit. Parsing
+    the full statement prevents unsupported syntax in trailing clauses or
+    derived tables from silently expanding SQL authority.
     """
 
-    match = _SELECT_CLAUSE_PATTERN.search(sql)
-    if match is None:
-        return False
-    return _SELECT_LIST_PATTERN.fullmatch(match.group("select_list")) is None
+    tokens = _tokenize_reviewed_select(sql)
+    return tokens is None or not _ReviewedSelectParser(tokens).parse()
 
 
 def validate_sql_query(sql: str, *, source_system: str) -> list[str]:

@@ -166,9 +166,11 @@ def test_load_config_entry_uses_default_without_optional_sqlalchemy(
     """Core-only installs must keep the configured fallback when graph extras are absent."""
 
     real_import = builtins.__import__
+    attempted_imports: list[str] = []
 
     def import_without_sqlalchemy(name, *args, **kwargs):
         if name == "sqlalchemy":
+            attempted_imports.append(name)
             raise ImportError("optional graph dependency is not installed")
         return real_import(name, *args, **kwargs)
 
@@ -182,6 +184,7 @@ def test_load_config_entry_uses_default_without_optional_sqlalchemy(
         )
         == "safe-default"
     )
+    assert attempted_imports == ["sqlalchemy"]
 
 
 def test_load_config_entry_absent_and_db_error_are_fail_soft(
