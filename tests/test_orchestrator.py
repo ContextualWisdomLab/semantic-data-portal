@@ -69,6 +69,23 @@ def test_split_top_level_commas_preserves_nested_relations() -> None:
     ]
 
 
+def test_validate_sql_query_flags_table_smuggled_past_nested_where() -> None:
+    """A derived table's own WHERE must not truncate the outer relation list.
+
+    Regression for a clause-boundary scan that wasn't parenthesis-depth-aware:
+    the nested ``WHERE`` inside the derived table used to end the *outer*
+    FROM-clause scan before the comma-joined ``customer`` after it was ever
+    seen, letting an unauthorized table slip past the allowlist.
+    """
+
+    warnings = orch.validate_sql_query(
+        "SELECT * FROM (SELECT customer_id FROM customer WHERE customer_id > 0) t, other_table",
+        source_system=_SRC,
+    )
+
+    assert "unauthorized_table_reference" in warnings
+
+
 @pytest.mark.parametrize(
     "sql,expected",
     [

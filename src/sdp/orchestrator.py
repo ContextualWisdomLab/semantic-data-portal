@@ -13,11 +13,45 @@ _FORBIDDEN_KEYWORDS = {"drop", "delete", "truncate", "alter", "insert", "update"
 
 # Keywords that terminate a FROM clause's relation list. Everything between a
 # ``FROM`` and the first of these is the (possibly comma-separated) table list.
-_CLAUSE_BOUNDARY = re.compile(
+_CLAUSE_BOUNDARY_PATTERN = (
     r"\b(where|group\s+by|order\s+by|having|limit|offset|window|"
-    r"union|intersect|except|fetch)\b",
-    re.IGNORECASE,
+    r"union|intersect|except|fetch)\b"
 )
+
+
+def _finditer_top_level(value: str, pattern: str, flags: int = 0):
+    """Yield ``pattern`` matches in ``value`` that occur outside parentheses.
+
+    A nested subquery's own ``WHERE``/``JOIN``/``ON`` (or its comma-separated
+    projection list) must never be mistaken for a top-level clause boundary or
+    relation separator -- doing so truncates the outer relation list and lets a
+    smuggled table slip past the allowlist. Depth tracking is scoped to a single
+    scan, so callers must pass balanced-paren substrings (guaranteed here since
+    each stops at a boundary found at depth zero).
+    """
+
+    combined = re.compile(rf"[()]|(?:{pattern})", flags)
+    depth = 0
+    for match in combined.finditer(value):
+        token = match.group(0)
+        if token == "(":
+            depth += 1
+        elif token == ")":
+            depth = max(0, depth - 1)
+        elif depth == 0:
+            yield match
+
+
+def _split_top_level(value: str, pattern: str, flags: int = 0) -> list[str]:
+    """Split ``value`` on ``pattern`` occurrences that occur outside parentheses."""
+
+    segments: list[str] = []
+    cursor = 0
+    for match in _finditer_top_level(value, pattern, flags):
+        segments.append(value[cursor : match.start()])
+        cursor = match.end()
+    segments.append(value[cursor:])
+    return segments
 
 
 def _split_top_level_commas(value: str) -> list[str]:
@@ -27,19 +61,7 @@ def _split_top_level_commas(value: str) -> list[str]:
     argument commas inside a derived relation as table separators.
     """
 
-    segments: list[str] = []
-    segment_start = 0
-    parenthesis_depth = 0
-    for index, character in enumerate(value):
-        if character == "(":
-            parenthesis_depth += 1
-        elif character == ")":
-            parenthesis_depth = max(0, parenthesis_depth - 1)
-        elif character == "," and parenthesis_depth == 0:
-            segments.append(value[segment_start:index])
-            segment_start = index + 1
-    segments.append(value[segment_start:])
-    return segments
+    return _split_top_level(value, ",")
 
 
 def _from_clause_tables(sql: str) -> list[str]:
@@ -49,19 +71,24 @@ def _from_clause_tables(sql: str) -> list[str]:
     comma-separated (implicit-join) relations such as the ``customer`` in
     ``FROM crm, customer``, which would otherwise slip past the source-table
     allowlist. Iterating over every ``FROM`` occurrence also covers subquery
-    FROM clauses, matching the previous scan's coverage.
+    FROM clauses, matching the previous scan's coverage. Clause-boundary and
+    JOIN/ON splitting are scoped to top-level (depth-zero) parentheses so a
+    derived table's own WHERE/JOIN/ON never truncates the outer relation list.
     """
 
     tables: list[str] = []
     for from_match in re.finditer(r"\bfrom\b", sql, re.IGNORECASE):
         region = sql[from_match.end():]
-        boundary = _CLAUSE_BOUNDARY.search(region)
+        boundary = next(
+            _finditer_top_level(region, _CLAUSE_BOUNDARY_PATTERN, re.IGNORECASE), None
+        )
         if boundary:
             region = region[: boundary.start()]
-        # Split on JOIN so an ON-condition never swallows the next relation, then
-        # split each segment on top-level commas to expose implicit-join relations.
-        for join_segment in re.split(r"\bjoin\b", region, flags=re.IGNORECASE):
-            relation_part = re.split(r"\bon\b", join_segment, maxsplit=1, flags=re.IGNORECASE)[0]
+        # Split on top-level JOIN so a nested subquery's own JOIN/ON never
+        # swallows the next outer relation, then split each segment on
+        # top-level commas to expose implicit-join relations.
+        for join_segment in _split_top_level(region, r"\bjoin\b", re.IGNORECASE):
+            relation_part = _split_top_level(join_segment, r"\bon\b", re.IGNORECASE)[0]
             for candidate in _split_top_level_commas(relation_part):
                 stripped_candidate = candidate.strip()
                 if not stripped_candidate or stripped_candidate.startswith("("):
