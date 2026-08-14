@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -25,7 +26,7 @@ def _seed_datasets() -> List[Dataset]:
 _DATA = {dataset.id: dataset for dataset in _seed_datasets()}
 for _dataset in _DATA.values():
     _dataset.recompute_scores()
-_AUDIT_LOG: list[AuditEvent] = []
+_AUDIT_LOG: deque[AuditEvent] = deque(maxlen=1000)
 _SCHEMA_HISTORY: dict[str, list[dict[str, Any]]] = {}
 
 

@@ -18,6 +18,9 @@
 `ontology_concepts`, `concept_edges`(→ `graph_edges`), `dataset_nodes`, `graph_nodes`,
 `embedding_vectors`, `config_entries`, `schema_migrations`.
 
+DiskSage의 검증된 복사 이후 lineage를 위한 정규화 ERD와 pg-erd 재현 절차는
+[`docs/disksage-copy-lineage-erd.md`](docs/disksage-copy-lineage-erd.md)에 있습니다.
+
 ## 목표
 
 - 데이터 탐색: 키워드 카탈로그 검색 + 유사어/용어(ontology) 해석 + **그래프 순회** + **시맨틱 검색**
@@ -105,6 +108,78 @@ SDP_DATABASE_DSN='postgresql+psycopg://sdp_graph_app:<url-encoded-password>@loca
 - `GET  /ontology/term/{term}/graph` — 개념 그래프 (그래프 스토어 백엔드)
 - `POST /search/semantic` — pgvector KNN 시맨틱 검색 (kind 필터)
 
+### 파일 지식 온톨로지
+
+`CWL File Knowledge Profile 0.1`은 파일 내용의 SHA-256 정체성과 물리 저장 위치를
+분리합니다. 같은 bytes가 로컬/Synology 동기화 폴더, S3, S3 호환 저장소, Azure Blob에
+복제되어도 하나의 `FileAsset`과 여러 DCAT `Distribution`으로 표현됩니다. 기계 판독
+프로파일과 shape는 `ontology/cwl-file-profile.ttl`, `ontology/cwl-file-shapes.ttl`에 있으며,
+ingest/validate 때 pySHACL로 실제 실행됩니다.
+
+- `POST /file-assets` — 관리자 정책을 통과한 자산·후보 주장 적재
+- `POST /file-assets/preview/disksage` — DiskSage 복사 전 후보의 비영속·경로 비노출 온톨로지 미리보기
+- `GET /file-assets/{asset_id}` — 자산과 의미 관계 조회
+- `GET /file-assets/{asset_id}/jsonld` — 기본 locator 비공개 JSON-LD
+- `GET /file-assets/{asset_id}/validate` — pySHACL 검증 리포트
+- 지원 reader: `filesystem`(로컬/UNC/Synology 포함), `s3`, `s3_compatible`, `azure_blob`
+- 지원 본문 추출: TXT/Markdown/CSV/JSON/XML, DOCX/PPTX/XLSX, PDF
+
+파일 의미 추출과 embedding은 OpenAI를 직접 호출하지 않고
+[`ContextualWisdomLab/contextual-orchestrator`](https://github.com/ContextualWisdomLab/contextual-orchestrator)만
+사용합니다. 의미 추출은 `/v1/chat/completions`, embedding은 orchestrator에 추가된 동기
+`/v1/embeddings`를 사용합니다. `orchestrator_base_url`, `semantic_model`,
+`embedding_model`은 `config_entries` KV 설정이고, inference token은 주입된 credential
+registry에서만 가져옵니다. `embedding_dimension`은 `/v1/embeddings`의 `dimensions`로
+전달되어 pgvector 차원과 일치해야 합니다. 운영 graph store도 같은 orchestrator client의
+`embed_one`을 ingest와 검색에 주입합니다. OpenAI/provider key는 포털에 두지 않습니다.
+
+`/file-assets/*`는 요청 본문이나 query의 `actor`를 신뢰하지 않습니다. 검증된 OIDC Bearer
+토큰에서 subject/role/tenant를 도출합니다. `FileAsset.tenant_id`와 중앙 policy decision을
+대조해 tenant 경계를 적용하며, locator 포함 응답은 같은 tenant의 `admin` 또는
+`platform-admin`만 요청할 수 있습니다. 같은 SHA-256이나 파일 관계 대상이 다른 tenant에
+이미 속하면 ingest를 거부해 distribution/assertion을 섞지 않습니다. `/graph/nodes`,
+`/graph/edges`, `/graph/query`, `/search/semantic`, `/ontology/concepts`도 동일한 Bearer
+context를 요구하고 body `actor`를 거부합니다. 일반 graph API는 governed file
+node/edge를 수정할 수 없으며, traversal/search 결과는 tenant로 필터링되고 locator는
+항상 redaction됩니다.
+
+`POST /file-assets/preview/disksage`는 `disksage.file-catalog-candidate-batch` v1만
+받습니다. 본문은 2 MiB, 후보는 200건으로 제한되며 `src`, `dst`, `filename`,
+`relative_path`, account/object id 같은 저장 위치 식별자는 계약에 존재하지 않고
+알 수 없는 필드는 거부됩니다. 생산일은
+`embedded_metadata → explicit_filename_date → filesystem_created → filesystem_modified`
+순서가 고정되어 있고, 선택된 값은 같은 날짜·source의 metadata evidence에 결합되어야
+합니다. 파일명 날짜는 embedded metadata가 없을 때만 낮은 신뢰도의 보조값으로
+허용됩니다.
+
+이 endpoint는 deterministic archive-kind→artifact-type 제안만 만들며 LLM, graph
+store, file-asset ingest를 호출하지 않습니다. 응답은 title/author/context/evidence
+값을 되돌려주지 않고 `content_sha256`와 verified distribution이 없으므로
+`persistable_as_file_asset=false`를 명시합니다. 또한 copy/eviction 허가가 아니며,
+기존 create-file 정책을 통과한 관리자만 사용할 수 있습니다. 중앙 policy decision
+증빙은 기록되지만 catalog/file asset 자체는 저장되지 않습니다.
+
+GitHub Secret에 값을 저장하는 것만으로는 런타임 주입이 되지 않습니다. 배포 호스트는
+secret manager에서 token을 읽는 `CredentialRegistry` 구현을 만든 뒤
+`sdp.api.create_app(registry)`로 ASGI 앱을 구성해야 합니다. KV에
+`orchestrator_base_url`이 있는데 `CONTEXTUAL_ORCHESTRATOR_TOKEN`이 주입되지 않으면
+lifespan/startup이 fail-closed하며, registry 교체 시 credential을 캡처한 graph store도
+폐기·재생성됩니다. TTL profile/shape는 `sdp/resources/*.ttl` package data로 배포되므로
+wheel과 공식 컨테이너에서도 pySHACL 검증이 동일하게 동작합니다.
+
+읽기 전용 로컬 파일럿은 다음처럼 실행합니다. `--no-llm`은 파일 이동·삭제나 네트워크
+호출 없이 중복·추출 상태만 확인합니다.
+
+```powershell
+$env:PYTHONPATH='src'
+py -m sdp.file_pilot --root '<approved-read-only-root>' --output '<local-gitignored-manifest.json>' --name-regex '효성중공업|중공업VOC' --max-files 12 --no-llm
+```
+
+LLM을 사용할 때는 `--orchestrator-url`을 주거나 KV의 `orchestrator_base_url`을 사용하며,
+inference token은 숨김 prompt로만 입력합니다. manifest에는 원문 조각·근거 인용문·API
+응답·credential을 저장하지 않습니다. 실제 파일명과 locator가 들어가므로 출력은 로컬의
+Git 제외 경로에만 보관합니다.
+
 ### Catalog / governance / enterprise (기존)
 
 - `GET /health`
@@ -154,6 +229,7 @@ PYTHONPATH=src python -m sdp.demo_smoke
 | Browse/Query | `src/sdp/browse.py`, `/browse/*` |
 | Policy Service | `src/sdp/policy.py`, `/policy/decision` |
 | LLM Orchestrator | `src/sdp/orchestrator.py`, `/llm/*` |
+| File Knowledge Profile | `src/sdp/file_ontology.py`, `src/sdp/storage_readers.py`, `src/sdp/document_semantics.py`, `src/sdp/file_pilot.py`, `/file-assets/*` |
 | JSON-LD Export | `/catalog/datasets/{id}/jsonld` |
 | Enterprise Core Contracts | `src/sdp_core/contracts.py`, `src/sdp_core/readiness.py`, `src/sdp_core/demo_seed.py`, `src/sdp_core/enterprise.py`, `src/sdp_core/rbac.py`, `src/sdp/enterprise_evidence.py`, `src/sdp/semantic_validation.py`, `src/sdp/steward_review.py`, `src/sdp/observability.py`, `/enterprise/*` |
 

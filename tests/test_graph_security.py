@@ -20,11 +20,15 @@ nothing) live in ``tests/test_integration_age.py``.
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
+from sdp_core import ActorContext
 
+from sdp import api as api_module
 from sdp import config as config_module
+from sdp import document_semantics
 from sdp import graph_store as gs
 from sdp.api import app
 from sdp.config import AppConfig, override_app_config
@@ -36,6 +40,18 @@ from sdp.graph_store import (
 )
 
 client = TestClient(app)
+ADMIN_HEADERS = {"Authorization": "Bearer admin-token"}
+ANALYST_HEADERS = {"Authorization": "Bearer analyst-token"}
+
+
+@pytest.fixture(autouse=True)
+def fake_graph_oidc(monkeypatch):
+    def verify(token):
+        role = token.removesuffix("-token")
+        roles = ["admin", "data-analyst"] if role == "admin" else ["data-analyst"]
+        return ActorContext(subject=role, tenant_id="demo", roles=roles), {}
+
+    monkeypatch.setattr(api_module.authz, "verify_oidc_jwks_token", verify)
 
 # The exact stacked-SQL breakout payload proven in the adversarial review: it
 # tries to close the ``$$`` dollar-quote body, terminate the cypher(), and run a
@@ -262,7 +278,8 @@ def test_in_memory_traverse_rejects_bad_edge_type():
 def test_graph_edge_endpoint_rejects_bad_label():
     resp = client.post(
         "/graph/edges",
-        json={"edge_type": "bad-type", "source_id": "svc-A", "target_id": "고객", "actor": "admin"},
+        json={"edge_type": "bad-type", "source_id": "svc-A", "target_id": "고객"},
+        headers=ADMIN_HEADERS,
     )
     assert resp.status_code == 400
 
@@ -276,20 +293,17 @@ def test_traversal_request_has_no_raw_cypher_field():
     assert "cypher" not in GraphTraversalRequest.model_fields
 
 
-def test_raw_cypher_in_body_is_ignored_not_executed():
-    # An attacker-supplied ``cypher`` key is silently dropped (extra field), and
-    # the safe parameterized traversal runs instead.
+def test_raw_cypher_in_body_is_rejected():
     resp = client.post(
         "/graph/query",
         json={
             "start_id": "고객",
             "max_depth": 1,
-            "actor": "analyst",
             "cypher": "MATCH (n) DETACH DELETE n RETURN n",
         },
+        headers=ANALYST_HEADERS,
     )
-    assert resp.status_code == 200
-    assert resp.json()["nodes"]
+    assert resp.status_code == 422
 
 
 # --- authz on graph endpoints -------------------------------------------------
@@ -300,13 +314,14 @@ def test_graph_node_write_refused_for_anonymous():
         "/graph/nodes",
         json={"node_id": "unauth-node", "kind": "service"},
     )
-    assert resp.status_code == 403
+    assert resp.status_code == 401
 
 
 def test_graph_node_write_refused_for_non_admin_reader():
     resp = client.post(
         "/graph/nodes",
-        json={"node_id": "unauth-node", "kind": "service", "actor": "analyst"},
+        json={"node_id": "unauth-node", "kind": "service"},
+        headers=ANALYST_HEADERS,
     )
     assert resp.status_code == 403
 
@@ -316,28 +331,29 @@ def test_graph_edge_write_refused_for_anonymous():
         "/graph/edges",
         json={"edge_type": "related", "source_id": "a", "target_id": "b"},
     )
-    assert resp.status_code == 403
+    assert resp.status_code == 401
 
 
 def test_concept_write_refused_for_anonymous():
     resp = client.post("/ontology/concepts", json={"concept": "무단개념"})
-    assert resp.status_code == 403
+    assert resp.status_code == 401
 
 
 def test_graph_query_refused_for_anonymous():
     resp = client.post("/graph/query", json={"start_id": "고객", "max_depth": 1})
-    assert resp.status_code == 403
+    assert resp.status_code == 401
 
 
 def test_semantic_search_refused_for_anonymous():
     resp = client.post("/search/semantic", json={"query": "고객"})
-    assert resp.status_code == 403
+    assert resp.status_code == 401
 
 
 def test_graph_write_allowed_for_admin():
     resp = client.post(
         "/graph/nodes",
-        json={"node_id": "authz-node", "kind": "service", "actor": "admin"},
+        json={"node_id": "authz-node", "kind": "service"},
+        headers=ADMIN_HEADERS,
     )
     assert resp.status_code == 200
 
@@ -356,6 +372,42 @@ def test_build_store_auto_without_dsn_uses_memory(monkeypatch):
         gs, "load_bootstrap", lambda: config_module.BootstrapSettings(None, "default", "test")
     )
     assert isinstance(build_store(), InMemoryGraphStore)
+
+
+def test_build_store_injects_configured_orchestrator_embedder(monkeypatch):
+    embedded = []
+    config = override_app_config(
+        graph_backend="memory",
+        orchestrator_base_url="https://orchestrator.example",
+        embedding_dimension=2,
+    )
+    monkeypatch.setattr(gs, "get_app_config", lambda: config)
+    monkeypatch.setattr(
+        document_semantics,
+        "build_orchestrator_client",
+        lambda configured: SimpleNamespace(
+            embed_one=lambda text: embedded.append(text) or [1.0, 0.0]
+        ),
+    )
+
+    store = build_store()
+    store.upsert_node("voc", "file_asset", text="효성중공업 VOC")
+
+    assert store.dimension == 2
+    assert embedded == ["효성중공업 VOC"]
+
+
+def test_configured_orchestrator_fails_closed_without_runtime_credential(monkeypatch):
+    config = override_app_config(
+        graph_backend="memory",
+        orchestrator_base_url="https://orchestrator.example",
+    )
+    document_semantics.set_credential_registry(
+        document_semantics.EphemeralCredentialRegistry({})
+    )
+
+    with pytest.raises(RuntimeError, match="CONTEXTUAL_ORCHESTRATOR_TOKEN"):
+        document_semantics.validate_runtime_credentials(config)
 
 
 def test_build_store_postgres_without_dsn_fails_loud(monkeypatch):
