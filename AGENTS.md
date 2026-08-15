@@ -64,14 +64,14 @@ Claude, Codex, Cursor, opencode, …). This repo is a Python / FastAPI MVP
   email/PIM that DOM-decomposes emails/files into a persisted knowledge graph).
   Each component is a **standalone program that must ALSO work as a git
   submodule** — grown separately and together:
-  - `waf-ids-ai-soc` — WAF / IDS / AI SOC / LB / APIM
+  - `wardnet` — WAF / IDS / AI SOC / LB / APIM
   - `clearfolio` — document viewer
   - `pg-erd-cloud` — ERD tool
   - `contextual-orchestrator` — LLM cost/perf/upstream-LB gateway (beyond LiteLLM)
   - `codec-carver` — STT / omni-modal speech-video codec
   - `fast-mlsirm` — LLM-as-a-Judge calibration + evaluation-item quality (uses
     aFIPC FIPC + kaefa item-fit)
-  - `feelanet-adfs` — passwordless SSO (OIDC/SCIM/ADFS/LDAP/FIDO2/OAuth2.1,
+  - `keyverse` — passwordless SSO (OIDC/SCIM/ADFS/LDAP/FIDO2/OAuth2.1,
     eliminate passwords)
   - `newsdom-api` — PDF→DOM sidecar
   - `semantic-data-portal` — upper ontology / catalog / governance plane with its
