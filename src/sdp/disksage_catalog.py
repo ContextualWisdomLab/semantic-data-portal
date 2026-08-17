@@ -49,15 +49,18 @@ _URL_RE = re.compile(
     re.IGNORECASE,
 )
 _FILE_URI_RE = re.compile(r"file:(?://)?", re.IGNORECASE)
-_ABSOLUTE_POSIX_RE = re.compile(r"(?<![A-Za-z0-9])/[^/\s]")
+# Require a path character, whitespace, or end-of-string after `/` so a lone
+# root (`/`, `source=/ `) is rejected without treating `https://host/path`
+# leftovers as local paths after URL stripping.
+_ABSOLUTE_POSIX_RE = re.compile(r"(?<![A-Za-z0-9])/(?:[^/\s]|\s|$)")
 _HOME_OR_WINDOWS_RE = re.compile(r"(?:~/|[A-Za-z]:[\\/]|\\\\)")
 
 
 def _contains_local_path(value: object) -> bool:
     """Return True when *value* embeds a local path, file URI, or NUL byte.
 
-    Absolute POSIX tokens (`/etc`, `/tmp`, `/var`, `/Users`, and so on) are
-    rejected after any non-alphanumeric boundary, including `;` and `|`.
+    Absolute POSIX tokens (`/etc`, `/tmp`, `/`, and so on) are rejected after
+    any non-alphanumeric boundary, including `;`, `|`, and a trailing root.
     Nested dicts and sequences are scanned so leaked paths cannot hide in
     metadata evidence or context lists.
     """

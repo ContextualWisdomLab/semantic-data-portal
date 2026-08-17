@@ -182,6 +182,8 @@ def test_disksage_catalog_rejects_punctuation_delimited_posix_paths():
         "a,/tmp/leaked.m4a",
         "recording;/etc/sdp/secret.json",
         "recording|/tmp/disksage-preview.m4a",
+        "/",
+        "source=/ ",
     ):
         body = _request()
         body["catalog"]["candidates"][0]["content_context"] = [leaked_context]
@@ -214,6 +216,8 @@ def test_contains_local_path_rejects_any_absolute_posix_token():
     assert _contains_local_path("cache[/tmp/disksage-preview.m4a]")
     assert _contains_local_path("recording;/etc/sdp/secret.json")
     assert _contains_local_path("recording|/tmp/disksage-preview.m4a")
+    assert _contains_local_path("/")
+    assert _contains_local_path("source=/ ")
     assert _contains_local_path({"nested": ["/opt/sdp/config.json"]})
     assert _contains_local_path(("/tmp/leaked.m4a",))
     assert _contains_local_path("label\x00/hidden")
