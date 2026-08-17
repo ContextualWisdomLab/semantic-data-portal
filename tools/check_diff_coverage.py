@@ -35,14 +35,20 @@ def _validated_git_object(value: str, *, argument: str) -> str:
 
 
 def _validated_source_root(value: str) -> str:
-    """Accept only a relative in-repo path that cannot be parsed as an option."""
+    """Accept only a relative in-repo path that cannot be parsed as an option.
+
+    Empty values, Git pathspec magic, and glob characters are rejected so a
+    caller cannot shrink or expand the coverage scope through ``git diff``.
+    """
 
     path = Path(value)
     if (
-        path.is_absolute()
+        not value.strip()
+        or path.is_absolute()
         or value.startswith("-")
         or value.startswith(":")
         or ".." in path.parts
+        or any(character in value for character in "*?[]\\")
     ):
         raise ValueError("source_root must be a relative repository path")
     return value
@@ -51,8 +57,11 @@ def _validated_source_root(value: str) -> str:
 def changed_lines(base_sha: str, head_sha: str, source_root: str) -> dict[str, set[int]]:
     """Return added or modified line numbers grouped by production file.
 
-    Git is invoked with an argument vector and ``shell=False``. File names from
-    the diff are parsed as text only; they are never interpolated into a shell.
+    Git is invoked with an argument vector and ``shell=False``. ``--literal-pathspecs``
+    and ``--default-prefix`` keep the pathspec and ``a/`` ``b/`` prefixes stable
+    even when repository Git config would otherwise hide changed files. File
+    names from the diff are parsed as text only; they are never interpolated
+    into a shell.
     """
 
     base = _validated_git_object(base_sha, argument="base_sha")
@@ -60,7 +69,9 @@ def changed_lines(base_sha: str, head_sha: str, source_root: str) -> dict[str, s
     completed = subprocess.run(
         [
             "git",
+            "--literal-pathspecs",
             "diff",
+            "--default-prefix",
             "--unified=0",
             "--no-ext-diff",
             f"{base}...{head}",

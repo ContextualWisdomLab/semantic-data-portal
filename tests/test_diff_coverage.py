@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -63,9 +64,16 @@ def test_changed_sdp_core_file_without_evidence_fails(monkeypatch) -> None:
     changes = check_diff_coverage.changed_lines(_BASE_SHA, _HEAD_SHA, "src")
 
     assert observed["shell"] is False
-    assert observed["args"][:4] == ["git", "diff", "--unified=0", "--no-ext-diff"]
-    assert observed["args"][4] == f"{_BASE_SHA}...{_HEAD_SHA}"
-    assert observed["args"][5:] == ["--", "src"]
+    assert observed["args"][:6] == [
+        "git",
+        "--literal-pathspecs",
+        "diff",
+        "--default-prefix",
+        "--unified=0",
+        "--no-ext-diff",
+    ]
+    assert observed["args"][6] == f"{_BASE_SHA}...{_HEAD_SHA}"
+    assert observed["args"][7:] == ["--", "src"]
 
     assert changes == {path: {46}}
     assert check_diff_coverage.coverage_failures({"files": {}}, changes) == [
@@ -82,7 +90,7 @@ def test_changed_lines_rejects_non_sha_git_arguments() -> None:
 
 @pytest.mark.parametrize(
     "source_root",
-    ["../etc", ":(top)", ":(exclude)src"],
+    ["../etc", ":(top)", ":(exclude)src", "*", "?", "src/*.py", "", " "],
 )
 def test_changed_lines_rejects_unsafe_source_root(source_root: str) -> None:
     """A source root must stay a relative in-repo path, not a git pathspec."""
@@ -115,3 +123,42 @@ def test_changed_lines_treats_malicious_filenames_as_text_only(monkeypatch) -> N
     assert all(isinstance(item, str) for item in observed["args"])
     assert "; touch /tmp/exploit ;.py" in changes
     assert changes["; touch /tmp/exploit ;.py"] == {2}
+
+
+def _commit_probe_repo(repo: Path, contents: str, message: str) -> str:
+    """Write the probe file, commit it, and return the resulting lowercase SHA."""
+
+    target = repo / "src" / "sdp" / "coverage_probe.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(contents, encoding="utf-8")
+    subprocess.run(["git", "add", "src/sdp/coverage_probe.py"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", message], cwd=repo, check=True)
+    return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+
+
+def test_changed_lines_collects_files_when_git_prefixes_are_customized(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hostile ``diff.noprefix`` / prefix config must not hide changed files.
+
+    The parser only accepts ``+++ b/`` paths. Without ``--default-prefix``, a
+    repository that sets ``diff.noprefix`` or custom prefixes would collect no
+    changed lines and the 100% coverage gate would pass vacuously.
+    """
+
+    repo = tmp_path / "probe-repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "ci@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "coverage-gate"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "commit.gpgsign", "false"], cwd=repo, check=True)
+    base = _commit_probe_repo(repo, "value = 1\n", "base")
+    head = _commit_probe_repo(repo, "value = 2\nchanged = True\n", "head")
+    subprocess.run(["git", "config", "diff.noprefix", "true"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "diff.srcPrefix", "old/"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "diff.dstPrefix", "new/"], cwd=repo, check=True)
+
+    monkeypatch.chdir(repo)
+    changes = check_diff_coverage.changed_lines(base, head, "src")
+
+    assert changes["src/sdp/coverage_probe.py"] == {1, 2}
