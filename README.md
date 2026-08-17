@@ -137,6 +137,8 @@ SDP_DATABASE_DSN='postgresql+psycopg://sdp_graph_app:<url-encoded-password>@loca
 - `POST /enterprise/auth/oidc-preview`
 - `POST /enterprise/auth/oidc-verify`
 - `GET /enterprise/connectors/{connector_id}/probe`
+- `POST /integrations/disksage/catalog-preview` — DiskSage 후보 카탈로그 미리보기 (경로 비노출, 비영속)
+- `POST /file-assets/preview/disksage` — 동일 DiskSage 미리보기 alias
 
 ## 테스트
 
@@ -156,6 +158,7 @@ PYTHONPATH=src python -m sdp.demo_smoke
 | LLM Orchestrator | `src/sdp/orchestrator.py`, `/llm/*` |
 | JSON-LD Export | `/catalog/datasets/{id}/jsonld` |
 | Enterprise Core Contracts | `src/sdp_core/contracts.py`, `src/sdp_core/readiness.py`, `src/sdp_core/demo_seed.py`, `src/sdp_core/enterprise.py`, `src/sdp_core/rbac.py`, `src/sdp/enterprise_evidence.py`, `src/sdp/semantic_validation.py`, `src/sdp/steward_review.py`, `src/sdp/observability.py`, `/enterprise/*` |
+| DiskSage catalog preview | `src/sdp/disksage.py`, `/integrations/disksage/catalog-preview`, `/file-assets/preview/disksage` |
 
 `src/sdp_core/demo_seed.py`는 buyer demo domain, SQL/RDF/file/API seed dataset, analyst/governance question을 catalog seed, `/enterprise/demo-plan`, connector probe가 함께 쓰는 단일 계약으로 둡니다.
 `src/sdp/semantic_validation.py`는 현재 metadata gate와 approved mapping을 SHACL 호환 리포트 형태로 노출해 `/enterprise/shacl-validation`과 smoke readiness가 같은 validation pass rate를 쓰게 합니다.

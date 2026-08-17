@@ -1,7 +1,8 @@
 """Path-free DiskSage catalog preview contract.
 
 The portal may enrich a candidate for semantic search, but this boundary never
-registers a dataset or authorizes a local eviction.
+registers a dataset or authorizes a local eviction. Preview responses emit
+closed production-time classes and code-shaped blocked reasons only.
 """
 
 from __future__ import annotations
@@ -32,6 +33,8 @@ _PRODUCTION_TIME_SOURCE_CODES = {
 
 
 def _production_time_source_class(source: str) -> str | None:
+    """Return a closed precedence class, or None when the wire code is open."""
+
     if source in _PRODUCTION_TIME_SOURCE_CODES:
         return _PRODUCTION_TIME_SOURCE_CODES[source]
     if source.startswith("embedded:") and _CLOSED_CODE.fullmatch(source):
@@ -40,10 +43,14 @@ def _production_time_source_class(source: str) -> str | None:
 
 
 def _is_closed_code(value: str) -> bool:
+    """Return True when value is a lowercase hyphen/colon classification code."""
+
     return bool(_CLOSED_CODE.fullmatch(value))
 
 
 class DiskSageMetadataEvidence(BaseModel):
+    """Single path-free metadata evidence row supplied by DiskSage."""
+
     model_config = ConfigDict(extra="forbid")
 
     field: str = Field(min_length=1, max_length=128)
@@ -53,6 +60,8 @@ class DiskSageMetadataEvidence(BaseModel):
 
 
 class DiskSageCandidate(BaseModel):
+    """One path-free archive candidate accepted at the catalog preview boundary."""
+
     model_config = ConfigDict(extra="forbid")
 
     candidate_fingerprint: str = Field(pattern=_FINGERPRINT)
@@ -86,6 +95,8 @@ class DiskSageCandidate(BaseModel):
 
     @model_validator(mode="after")
     def validate_review_state(self) -> "DiskSageCandidate":
+        """Reject inconsistent review, open codes, confidence, and evidence rows."""
+
         if self.requires_review != bool(self.review_reasons):
             raise ValueError("requires_review must match review_reasons")
         if any(not value or len(value) > 256 for value in self.review_reasons):
@@ -121,6 +132,8 @@ class DiskSageCandidate(BaseModel):
 
 
 class DiskSageCatalogBatch(BaseModel):
+    """Validated DiskSage candidate batch accepted for catalog preview only."""
+
     model_config = ConfigDict(extra="forbid")
 
     schema: Literal[DISKSAGE_SCHEMA]
@@ -131,6 +144,8 @@ class DiskSageCatalogBatch(BaseModel):
 
     @model_validator(mode="after")
     def validate_batch(self) -> "DiskSageCatalogBatch":
+        """Reject unknown precedence tuples and duplicate candidate fingerprints."""
+
         if self.production_time_precedence != PRODUCTION_TIME_PRECEDENCE:
             raise ValueError("production time precedence mismatch")
         fingerprints = [candidate.candidate_fingerprint for candidate in self.candidates]
