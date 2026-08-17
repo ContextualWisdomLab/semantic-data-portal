@@ -154,6 +154,70 @@ def _safe_identifier(value: str) -> str:
     return "".join(ch if ch.isalnum() or ch == "_" else "_" for ch in value)
 
 
+def _reviewed_identifier(value: str) -> str:
+    """Accept only a complete SQL identifier after sanitization."""
+
+    if _SQL_IDENTIFIER_TOKEN_PATTERN.fullmatch(value) is None:
+        raise ValueError("identifier is not a reviewed SQL name")
+    return value
+
+
+def _reviewed_bound_int(value: int, *, minimum: int, maximum: int) -> str:
+    """Accept only a non-boolean integer inside a closed numeric bound."""
+
+    if type(value) is not int or not minimum <= value <= maximum:
+        raise ValueError("numeric SQL slot is outside the reviewed bound")
+    return format(value, "d")
+
+
+def _render_reviewed_draft_sql(
+    *,
+    table_name: str,
+    date_window_days: int,
+    max_rows: int,
+    select_columns: list[str],
+    group_by: str | None,
+) -> str:
+    """Join a fixed SELECT from reviewed identifier and integer tokens only.
+
+    Date windows are emitted as ``current_date - N`` so a user-controlled
+    number never enters a SQL string literal. Identifiers are already
+    sanitized by the caller and re-checked here before they are joined.
+    """
+
+    table = _reviewed_identifier(table_name)
+    days = _reviewed_bound_int(date_window_days, minimum=1, maximum=365)
+    limit = _reviewed_bound_int(max_rows, minimum=1, maximum=_MAX_QUERY_ROWS)
+    count_projection = ["count(*)", "AS", "active_customer_count"]
+    group_tokens: list[str] = []
+    if group_by is not None:
+        group_identifier = _reviewed_identifier(group_by)
+        select_tokens = [group_identifier + ",", *count_projection]
+        group_tokens = ["GROUP", "BY", group_identifier]
+    elif select_columns == ["*"]:
+        select_tokens = list(count_projection)
+    else:
+        column_tokens = [_reviewed_identifier(column) for column in select_columns]
+        select_tokens = [", ".join(column_tokens) + ",", *count_projection]
+    return " ".join(
+        [
+            "SELECT",
+            *select_tokens,
+            "FROM",
+            table,
+            "WHERE",
+            "created_at",
+            ">=",
+            "current_date",
+            "-",
+            days,
+            *group_tokens,
+            "LIMIT",
+            limit,
+        ]
+    )
+
+
 def _safe_request_id() -> str:
     """Return a unique request identifier derived from the current timestamp."""
 
@@ -273,8 +337,12 @@ def draft_sql(req: QueryDraftRequest) -> dict:
     if req.group_by and req.group_by not in allowed_columns:
         return {"error": "invalid_group_by", "reason": "요청한 그룹화 컬럼이 데이터셋에 없습니다."}
 
-    where_clause = f"WHERE created_at >= current_date - interval '{req.date_window_days} day'"
     table_name = _source_table_name(dataset.source_system)
+    if _SQL_IDENTIFIER_TOKEN_PATTERN.fullmatch(table_name) is None:
+        return {
+            "error": "invalid_source_table",
+            "reason": "source table must be a reviewed SQL identifier",
+        }
 
     row_limit = min(req.row_limit, 2000)
     if row_limit <= 0:
@@ -284,24 +352,31 @@ def draft_sql(req: QueryDraftRequest) -> dict:
     if timeout_ms < 500 or timeout_ms > 120000:
         return {"error": "invalid_timeout", "reason": "timeout_ms must be between 500 and 120000"}
 
-    if req.group_by:
-        group_identifier = _safe_identifier(req.group_by)
-        group_clause = f"GROUP BY {group_identifier}"
-        select_fields = f"{group_identifier}, count(*) AS active_customer_count"
-    else:
-        group_clause = ""
-        if "*" in requested_columns:
-            select_fields = "count(*) AS active_customer_count"
-        else:
-            select_fields = ", ".join(_safe_identifier(column) for column in requested_columns)
-            select_fields = f"{select_fields}, count(*) AS active_customer_count"
-
-    max_rows = min(row_limit, 2000)
     if "*" in requested_columns and len(requested_columns) > 1:
         requested_columns = ["*"]
 
+    group_identifier = _safe_identifier(req.group_by) if req.group_by else None
+    select_identifiers = (
+        []
+        if "*" in requested_columns
+        else [_safe_identifier(column) for column in requested_columns]
+    )
+    max_rows = min(row_limit, 2000)
+    try:
+        sql = _render_reviewed_draft_sql(
+            table_name=table_name,
+            date_window_days=req.date_window_days,
+            max_rows=max_rows,
+            select_columns=["*"] if "*" in requested_columns else select_identifiers,
+            group_by=group_identifier,
+        )
+    except ValueError:
+        return {
+            "error": "invalid_sql_identifier",
+            "reason": "reviewed SQL slots must be identifiers or bounded integers",
+        }
+
     estimated_cost = max(1, len(requested_columns) * row_limit // 200 + 1)
-    sql = f"SELECT {select_fields} FROM {table_name} {where_clause} {group_clause} LIMIT {max_rows}"
 
     assumptions = [
         "카탈로그에서 검증된 테이블/컬럼만 사용",
