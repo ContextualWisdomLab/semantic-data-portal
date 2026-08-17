@@ -170,6 +170,28 @@ def test_render_reviewed_draft_sql_rejects_unreviewed_slots(kwargs) -> None:
         orch._render_reviewed_draft_sql(**kwargs)
 
 
+def test_drafted_sql_is_rejected_by_execute_query_not_sent_to_a_driver() -> None:
+    """A token-joined draft is review text; execute_query still fail-closes."""
+
+    drafted = _draft(date_window_days=7, row_limit=25)["query"]
+    assert "'" not in drafted
+    assert '"' not in drafted
+    resp = orch.execute_query(
+        QueryExecutionRequest(
+            dataset_ids=[_CRM],
+            query=drafted,
+            user="admin",
+            purpose="analysis",
+            dry_run=False,
+        )
+    )
+    assert resp.status == "REJECTED"
+    assert "unsafe_select_expression" in resp.warnings
+    assert resp.execution == {"elapsedMs": 0, "source": "query_safety", "bytesScanned": 0}
+    assert resp.rows == []
+    assert resp.columns == []
+
+
 # --- execute_query dry-run path ------------------------------------------
 
 

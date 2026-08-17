@@ -30,6 +30,10 @@ GREEN head `8d6facbcd3a05c8a21fbf4453408e732dff3a8cd` replaced the open-ended un
 
 This lexical gate is an application safety boundary, not a substitute for database authority. When a real PostgreSQL execution backend is enabled, the connection role should still use least privilege, an explicit read-only transaction where compatible with the execution design, bounded statement timeouts, and no unnecessary sequence, large-object, extension, file, or administrative privileges. PostgreSQL documents transaction access mode separately; a read-only transaction prevents ordinary non-temporary-table writes, while product authorization and function admission remain independent controls.
 
+`draft_sql()` joins a fixed SELECT from reviewed identifier tokens and bounded integers. Date windows are emitted as `current_date - N`, never as a quoted `interval 'N day'` literal. That draft string is steward-review text. `execute_query()` still parses the complete reviewed grammar and never sends SQL to a database driver; a draft that contains comparison or arithmetic operators is rejected, and a live request without a backend returns `UNAVAILABLE`.
+
+`draft_sql()`는 검토된 식별자와 제한된 정수만으로 SELECT 초안을 조립한다. 조회 기간은 인용된 `interval` 리터럴이 아니라 `current_date - N`이다. 이 문자열은 steward 검토용이며, `execute_query()`는 데이터베이스 드라이버로 보내지 않는다.
+
 The current product execution path is validation-only rather than mock-backed. A dry run returns `VALIDATED` after policy and SQL validation. A non-dry-run request returns `UNAVAILABLE` when no execution backend is configured; it never returns synthetic rows. Therefore this change proves fail-closed application admission semantics, not production PostgreSQL privilege isolation or end-to-end database non-interference. Those require a live restricted-role integration test before a real query engine is enabled.
 
 현재 제품 경로는 mock 결과를 만들지 않는 validation-only 경계다. dry run은 정책과 SQL 검증 후 `VALIDATED`를 반환하고, 실행 backend가 없는 실제 실행 요청은 합성 행 없이 `UNAVAILABLE`을 반환한다. 실제 PostgreSQL 권한 격리와 비간섭은 제한된 역할을 사용하는 live integration test가 추가되어야 입증된다.
