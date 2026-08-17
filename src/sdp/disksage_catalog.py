@@ -41,30 +41,34 @@ ArchiveKind = Literal[
     "incomplete-download",
 ]
 Confidence = Literal["high", "medium", "low", "unknown"]
-# Any absolute POSIX token (`/etc/...`, `/tmp/...`, `/var/...`, `/Users/...`),
-# plus home shortcuts, Windows drive letters, and UNC prefixes.  Detect after
-# start, whitespace, assignment, or punctuation so `recording (/etc/...)`
-# cannot bypass a prefix-only or `=`/`:`-only delimiter list.
-_PATH_TOKEN_PREFIX = r"(?:^|[\s=:({\[\"',])"
-_LOCAL_PATH_RE = re.compile(
-    _PATH_TOKEN_PREFIX + r"(?:/[^/\s]+|~/|[A-Za-z]:[\\/]|\\\\)"
+# Reject absolute local-path tokens without a delimiter allowlist.  http(s)
+# URLs are stripped first so ``https://example.com/path`` is not treated as
+# ``/path``.  ``file:`` URIs are rejected before that strip.
+_URL_RE = re.compile(
+    r"[a-zA-Z][a-zA-Z0-9+.-]*://[^/\s]+(?:/[A-Za-z0-9._~%+-]*)*",
+    re.IGNORECASE,
 )
-_FILE_URI_RE = re.compile(_PATH_TOKEN_PREFIX + r"file:(?://)?", re.IGNORECASE)
+_FILE_URI_RE = re.compile(r"file:(?://)?", re.IGNORECASE)
+_ABSOLUTE_POSIX_RE = re.compile(r"(?<![A-Za-z0-9])/[^/\s]")
+_HOME_OR_WINDOWS_RE = re.compile(r"(?:~/|[A-Za-z]:[\\/]|\\\\)")
 
 
 def _contains_local_path(value: object) -> bool:
     """Return True when *value* embeds a local path, file URI, or NUL byte.
 
-    Absolute POSIX path tokens are rejected regardless of prefix (`/etc`,
-    `/tmp`, `/var`, `/Users`, and so on).  Nested dicts and sequences are
-    scanned so leaked paths cannot hide in metadata evidence or context lists.
+    Absolute POSIX tokens (`/etc`, `/tmp`, `/var`, `/Users`, and so on) are
+    rejected after any non-alphanumeric boundary, including `;` and `|`.
+    Nested dicts and sequences are scanned so leaked paths cannot hide in
+    metadata evidence or context lists.
     """
 
     if isinstance(value, str):
+        if "\x00" in value or _FILE_URI_RE.search(value) is not None:
+            return True
+        stripped = _URL_RE.sub(" ", value)
         return (
-            "\x00" in value
-            or _LOCAL_PATH_RE.search(value) is not None
-            or _FILE_URI_RE.search(value) is not None
+            _ABSOLUTE_POSIX_RE.search(stripped) is not None
+            or _HOME_OR_WINDOWS_RE.search(stripped) is not None
         )
     if isinstance(value, dict):
         return any(_contains_local_path(item) for item in value.values())

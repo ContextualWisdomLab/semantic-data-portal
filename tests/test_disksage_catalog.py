@@ -171,7 +171,7 @@ def test_disksage_catalog_rejects_generic_absolute_posix_paths():
 
 
 def test_disksage_catalog_rejects_punctuation_delimited_posix_paths():
-    """Absolute POSIX tokens after (, [, {, quotes, or commas must not persist."""
+    """Absolute POSIX tokens after any non-alnum boundary must not persist."""
 
     for leaked_context in (
         "recording (/etc/sdp/secret.json)",
@@ -180,6 +180,8 @@ def test_disksage_catalog_rejects_punctuation_delimited_posix_paths():
         'hint,"/opt/sdp/config.json"',
         "hint,'/opt/sdp/config.json'",
         "a,/tmp/leaked.m4a",
+        "recording;/etc/sdp/secret.json",
+        "recording|/tmp/disksage-preview.m4a",
     ):
         body = _request()
         body["catalog"]["candidates"][0]["content_context"] = [leaked_context]
@@ -210,6 +212,8 @@ def test_contains_local_path_rejects_any_absolute_posix_token():
     assert _contains_local_path("source=/var/lib/sdp/secret.json")
     assert _contains_local_path("recording (/etc/sdp/secret.json)")
     assert _contains_local_path("cache[/tmp/disksage-preview.m4a]")
+    assert _contains_local_path("recording;/etc/sdp/secret.json")
+    assert _contains_local_path("recording|/tmp/disksage-preview.m4a")
     assert _contains_local_path({"nested": ["/opt/sdp/config.json"]})
     assert _contains_local_path(("/tmp/leaked.m4a",))
     assert _contains_local_path("label\x00/hidden")
