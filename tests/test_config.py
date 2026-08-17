@@ -227,3 +227,46 @@ def test_load_config_entry_absent_and_db_error_are_fail_soft(
     monkeypatch.setattr("sqlalchemy.create_engine", lambda *a, **k: BrokenEngine())
     assert cfg._load_config_entry(bootstrap, "missing") is None
     assert disposed == [True, True]
+
+
+def test_get_config_entry_uses_bounded_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Repeated credential reads must reuse the cached single-key result."""
+
+    created: list[str] = []
+
+    class Result:
+        def fetchone(self):
+            return ('"750"',)
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def execute(self, _statement, _params):
+            return Result()
+
+    class Engine:
+        def connect(self):
+            return Connection()
+
+        def dispose(self):
+            return None
+
+    def create_engine(*_a, **_k):
+        created.append("engine")
+        return Engine()
+
+    monkeypatch.setenv("SDP_DATABASE_DSN", "postgresql://localhost/sdp")
+    cfg.reset_config_cache()
+    monkeypatch.setattr("sqlalchemy.create_engine", create_engine)
+
+    first = cfg.get_config_entry("SDP_LOG_SINK_TIMEOUT_MS")
+    second = cfg.get_config_entry("SDP_LOG_SINK_TIMEOUT_MS")
+
+    assert first == "750"
+    assert second == "750"
+    assert created == ["engine"]
+    cfg.reset_config_cache()

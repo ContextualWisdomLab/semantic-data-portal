@@ -50,6 +50,8 @@ class _ReviewedSelectParser:
     """Parse the product's deliberately small, read-only analytics grammar."""
 
     def __init__(self, tokens: list[str]) -> None:
+        """Start a parser at the first token of one reviewed statement."""
+
         self._tokens = tokens
         self._position = 0
 
@@ -147,14 +149,20 @@ class _ReviewedSelectParser:
 
 
 def _safe_identifier(value: str) -> str:
+    """Replace non-identifier characters so generated SQL stays quoted-safe."""
+
     return "".join(ch if ch.isalnum() or ch == "_" else "_" for ch in value)
 
 
 def _safe_request_id() -> str:
+    """Return a unique request identifier derived from the current timestamp."""
+
     return "req-" + str(datetime.now(timezone.utc).timestamp()).replace(".", "")
 
 
 def _source_table_name(source_system: str) -> str:
+    """Derive the allowlisted table name from a dataset source-system path."""
+
     return _safe_identifier(source_system.rstrip("/").rsplit("/", 1)[-1])
 
 
@@ -181,6 +189,8 @@ def _has_unsafe_select_expression(sql: str) -> bool:
 
 
 def validate_sql_query(sql: str, *, source_system: str) -> list[str]:
+    """Return safety warnings for one user-supplied SQL statement."""
+
     stripped = sql.strip()
     lowered = stripped.lower()
     warnings: list[str] = []
@@ -229,6 +239,8 @@ def validate_sql_query(sql: str, *, source_system: str) -> list[str]:
 
 
 def draft_sql(req: QueryDraftRequest) -> dict:
+    """Draft a policy-checked, read-only analytics query for one dataset."""
+
     if req.date_window_days < 1 or req.date_window_days > 365:
         return {"error": "invalid_date_window", "reason": "date_window_days must be between 1 and 365"}
 
@@ -341,6 +353,8 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
         execution: dict[str, object] | None = None,
         warnings: list[str] | None = None,
     ) -> QueryExecutionResponse:
+        """Build one execution response with the shared request identifier."""
+
         return QueryExecutionResponse(
             request_id=request_id,
             dataset_id=dataset_id,
@@ -362,6 +376,8 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
         decision_id: str | None = None,
         details: dict[str, object] | None = None,
     ) -> None:
+        """Record a browse.query audit event for this execution attempt."""
+
         audit_details = {"purpose": req.purpose, "request_id": request_id, "dry_run": req.dry_run}
         if details:
             audit_details.update(details)

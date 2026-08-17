@@ -41,6 +41,8 @@ class GraphNode:
     properties: Dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> Dict[str, Any]:
+        """Return the JSON-serializable node fields."""
+
         return {
             "node_id": self.node_id,
             "kind": self.kind,
@@ -57,6 +59,8 @@ class GraphEdge:
     properties: Dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> Dict[str, Any]:
+        """Return the JSON-serializable edge fields."""
+
         return {
             "edge_type": self.edge_type,
             "source_id": self.source_id,
@@ -66,6 +70,8 @@ class GraphEdge:
 
 
 def _normalize(value: str) -> str:
+    """Normalize a concept or alias for case-insensitive lookup."""
+
     return value.strip().replace("_", " ").lower()
 
 
@@ -193,6 +199,8 @@ class GraphStore(ABC):
 
 class InMemoryGraphStore(GraphStore):
     def __init__(self, config: Optional[AppConfig] = None) -> None:
+        """Initialize the standalone in-memory graph and embedding indexes."""
+
         self._config = config or get_app_config()
         self.dimension = self._config.embedding_dimension
         self._nodes: Dict[str, GraphNode] = {}
@@ -212,6 +220,8 @@ class InMemoryGraphStore(GraphStore):
         properties: Optional[Dict[str, Any]] = None,
         text: Optional[str] = None,
     ) -> GraphNode:
+        """Insert or replace one in-memory node and refresh its embedding."""
+
         node = GraphNode(
             node_id=node_id,
             kind=kind,
@@ -231,6 +241,8 @@ class InMemoryGraphStore(GraphStore):
         *,
         properties: Optional[Dict[str, Any]] = None,
     ) -> GraphEdge:
+        """Insert or update one in-memory edge after validating its type."""
+
         # Reject non-identifier relationship types for parity with the AGE
         # backend (where the type occupies a cypher identifier position).
         _relationship_label(edge_type)
@@ -247,6 +259,8 @@ class InMemoryGraphStore(GraphStore):
         return edge
 
     def upsert_concept(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Store one ontology concept and mirror it into the in-memory graph."""
+
         concept = payload["concept"].strip()
         record = {
             "concept": concept,
@@ -291,12 +305,18 @@ class InMemoryGraphStore(GraphStore):
     # reads -------------------------------------------------------------------
 
     def get_node(self, node_id: str) -> Optional[GraphNode]:
+        """Return one in-memory node or ``None`` when it is absent."""
+
         return self._nodes.get(node_id)
 
     def _canonical_concept(self, term: str) -> str:
+        """Resolve an alias or multilingual label to the stored concept key."""
+
         return self._alias_to_concept.get(_normalize(term), term)
 
     def concept_graph(self, term: str) -> Dict[str, Any]:
+        """Return the concept neighborhood for one term or alias."""
+
         canonical = self._canonical_concept(term)
         record = self._concepts.get(canonical)
         if not record:
@@ -328,6 +348,8 @@ class InMemoryGraphStore(GraphStore):
         direction: str = "both",
         max_depth: int = 2,
     ) -> Dict[str, Any]:
+        """Walk in-memory edges from ``start_id`` up to ``max_depth`` hops."""
+
         if start_id not in self._nodes:
             raise KeyError(f"node not found: {start_id}")
         if edge_types:
@@ -374,6 +396,8 @@ class InMemoryGraphStore(GraphStore):
     def semantic_search(
         self, query: str, *, kind: Optional[str] = None, limit: int = 5
     ) -> List[Dict[str, Any]]:
+        """Return the closest in-memory nodes for one embedding query."""
+
         query_vec = embed_text(query, self.dimension)
         scored: List[Dict[str, Any]] = []
         for node_id, vector in self._embeddings.items():
@@ -393,6 +417,8 @@ class InMemoryGraphStore(GraphStore):
         return scored[:limit]
 
     def readiness(self) -> Dict[str, Any]:
+        """Report that the in-memory backend is always ready."""
+
         return {
             "ready": True,
             "backend": "in_memory",
@@ -403,6 +429,8 @@ class InMemoryGraphStore(GraphStore):
         }
 
     def stats(self) -> Dict[str, int]:
+        """Return in-memory node, edge, concept, and embedding counts."""
+
         return {
             "nodes": len(self._nodes),
             "edges": len(self._edges),
@@ -415,6 +443,8 @@ class InMemoryGraphStore(GraphStore):
 
 
 def _vector_literal(vector: List[float]) -> str:
+    """Format a float vector as a pgvector literal."""
+
     return "[" + ",".join(f"{component:.8f}" for component in vector) + "]"
 
 
@@ -422,6 +452,8 @@ class PostgresGraphStore(GraphStore):
     """Backend on Postgres with Apache AGE (openCypher) and pgvector (KNN)."""
 
     def __init__(self, dsn: str, config: Optional[AppConfig] = None) -> None:
+        """Open a SQLAlchemy engine for the configured Postgres+AGE DSN."""
+
         from sqlalchemy import create_engine
 
         self._config = config or get_app_config()
@@ -433,6 +465,8 @@ class PostgresGraphStore(GraphStore):
     # connection first. Called inside an already-open transaction/connection so
     # it does not trigger a conflicting begin().
     def _prepare(self, conn) -> None:
+        """Load Apache AGE and pin the connection search_path to ag_catalog."""
+
         from sqlalchemy import text
 
         conn.execute(text("LOAD 'age'"))
@@ -490,6 +524,8 @@ class PostgresGraphStore(GraphStore):
         properties: Optional[Dict[str, Any]] = None,
         text: Optional[str] = None,
     ) -> GraphNode:
+        """Insert or replace one Postgres/AGE node and its embedding."""
+
         from sqlalchemy import text as sql
 
         label = label or node_id
@@ -533,6 +569,8 @@ class PostgresGraphStore(GraphStore):
         *,
         properties: Optional[Dict[str, Any]] = None,
     ) -> GraphEdge:
+        """Insert or update one Postgres/AGE edge after validating its type."""
+
         from sqlalchemy import text as sql
 
         props = dict(properties or {})
@@ -564,6 +602,8 @@ class PostgresGraphStore(GraphStore):
         return GraphEdge(edge_type, source_id, target_id, props)
 
     def upsert_concept(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Store one ontology concept and mirror it into the Postgres graph."""
+
         from sqlalchemy import text as sql
 
         concept = payload["concept"].strip()
@@ -621,6 +661,8 @@ class PostgresGraphStore(GraphStore):
         return record
 
     def get_node(self, node_id: str) -> Optional[GraphNode]:
+        """Return one persisted node or ``None`` when it is absent."""
+
         from sqlalchemy import text as sql
 
         with self._engine.connect() as conn:
@@ -637,6 +679,8 @@ class PostgresGraphStore(GraphStore):
         return GraphNode(row[0], row[1], row[2], props)
 
     def concept_graph(self, term: str) -> Dict[str, Any]:
+        """Return the persisted concept neighborhood for one term or alias."""
+
         from sqlalchemy import text as sql
 
         with self._engine.connect() as conn:
@@ -653,6 +697,8 @@ class PostgresGraphStore(GraphStore):
                 return {"canonical": term, "not_found": True, "aliases": []}
 
             def _as_list(value: Any) -> List[str]:
+                """Decode a JSON list column into a Python list of strings."""
+
                 if isinstance(value, list):
                     return value
                 return json.loads(value or "[]")
@@ -685,6 +731,8 @@ class PostgresGraphStore(GraphStore):
         direction: str = "both",
         max_depth: int = 2,
     ) -> Dict[str, Any]:
+        """Walk AGE edges from ``start_id`` up to a clamped hop depth."""
+
         # Parity with the in-memory backend: an unknown start node is a 404.
         if self.get_node(start_id) is None:
             raise KeyError(f"node not found: {start_id}")
@@ -715,6 +763,8 @@ class PostgresGraphStore(GraphStore):
             )
 
         def _clean(value: Any) -> str:
+            """Strip AGE agtype quoting from one returned scalar."""
+
             return str(value).strip('"') if value is not None else ""
 
         nodes = [{"node_id": _clean(r[0]), "kind": _clean(r[1]), "label": _clean(r[2])} for r in rows]
@@ -726,6 +776,8 @@ class PostgresGraphStore(GraphStore):
         return {"start_id": start_id, "backend": "postgres_age", "nodes": nodes, "edges": edges}
 
     def _edges_within(self, node_ids: Iterable[str], edge_types: Optional[List[str]]) -> List[Dict[str, Any]]:
+        """Return persisted edges whose endpoints are both in ``node_ids``."""
+
         from sqlalchemy import text as sql
 
         ids = list(node_ids)
@@ -752,6 +804,8 @@ class PostgresGraphStore(GraphStore):
     def semantic_search(
         self, query: str, *, kind: Optional[str] = None, limit: int = 5
     ) -> List[Dict[str, Any]]:
+        """Return the closest persisted nodes for one pgvector query."""
+
         from sqlalchemy import text as sql
 
         vector = _vector_literal(embed_text(query, self.dimension))
@@ -779,6 +833,8 @@ class PostgresGraphStore(GraphStore):
         ]
 
     def readiness(self) -> Dict[str, Any]:
+        """Probe Postgres, Apache AGE, and pgvector availability."""
+
         from sqlalchemy import text as sql
 
         status = {
@@ -808,6 +864,8 @@ class PostgresGraphStore(GraphStore):
         return status
 
     def stats(self) -> Dict[str, int]:
+        """Return persisted node, edge, concept, and embedding counts."""
+
         from sqlalchemy import text as sql
 
         with self._engine.connect() as conn:
@@ -872,6 +930,8 @@ def build_store() -> GraphStore:
 
 
 def get_store() -> GraphStore:
+    """Return the process-wide graph store, constructing it on first use."""
+
     global _STORE
     if _STORE is None:
         _STORE = build_store()

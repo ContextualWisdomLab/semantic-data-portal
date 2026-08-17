@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 _HUNK_PATTERN = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+_GIT_OBJECT_SHA = re.compile(r"^[0-9a-f]{40}$")
 
 # Exclusions are exceptional governance decisions, not a per-file escape hatch.
 # Keep the allowlist explicit and line-scoped; it is intentionally empty until
@@ -25,22 +26,46 @@ _HUNK_PATTERN = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 _APPROVED_CHANGED_EXCLUSIONS: dict[str, frozenset[int]] = {}
 
 
-def changed_lines(base_sha: str, head_sha: str, source_root: str) -> dict[str, set[int]]:
-    """Return added or modified line numbers grouped by production file."""
+def _validated_git_object(value: str, *, argument: str) -> str:
+    """Accept only a complete lowercase SHA so git never sees option text."""
 
+    if _GIT_OBJECT_SHA.fullmatch(value) is None:
+        raise ValueError(f"{argument} must be a 40-character lowercase git SHA")
+    return value
+
+
+def _validated_source_root(value: str) -> str:
+    """Accept only a relative in-repo path that cannot be parsed as an option."""
+
+    path = Path(value)
+    if path.is_absolute() or value.startswith("-") or ".." in path.parts:
+        raise ValueError("source_root must be a relative repository path")
+    return value
+
+
+def changed_lines(base_sha: str, head_sha: str, source_root: str) -> dict[str, set[int]]:
+    """Return added or modified line numbers grouped by production file.
+
+    Git is invoked with an argument vector and ``shell=False``. File names from
+    the diff are parsed as text only; they are never interpolated into a shell.
+    """
+
+    base = _validated_git_object(base_sha, argument="base_sha")
+    head = _validated_git_object(head_sha, argument="head_sha")
     completed = subprocess.run(
         [
             "git",
             "diff",
             "--unified=0",
             "--no-ext-diff",
-            f"{base_sha}...{head_sha}",
+            f"{base}...{head}",
             "--",
-            source_root,
+            _validated_source_root(source_root),
         ],
         check=True,
         capture_output=True,
         text=True,
+        shell=False,
     )
     result: dict[str, set[int]] = {}
     current_path: str | None = None

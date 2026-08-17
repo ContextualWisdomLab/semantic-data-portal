@@ -4,9 +4,29 @@ from types import SimpleNamespace
 
 import pytest
 
-from sdp.domain import QueryExecutionRequest
+from sdp.domain import QueryExecutionRequest, QueryExecutionResponse
 from sdp import orchestrator
 from sdp.orchestrator import validate_sql_query
+
+
+def _execute_query(monkeypatch, query: str) -> QueryExecutionResponse:
+    """Run execute_query against a published CRM dataset with policy allow."""
+
+    dataset = SimpleNamespace(id="dataset_one", source_system="crm")
+    decision = SimpleNamespace(effect="allow", decision_id="decision_one", reason="ok")
+    monkeypatch.setattr(orchestrator, "get_dataset", lambda _dataset_id: dataset)
+    monkeypatch.setattr(orchestrator, "evaluate", lambda **_kwargs: decision)
+    monkeypatch.setattr(orchestrator, "ingest_event", lambda **_kwargs: None)
+    return orchestrator.execute_query(
+        QueryExecutionRequest(
+            language="SQL",
+            user="analyst_one",
+            purpose="analysis",
+            dataset_ids=["dataset_one"],
+            query=query,
+            dry_run=False,
+        )
+    )
 
 
 @pytest.mark.parametrize(
@@ -70,10 +90,19 @@ def test_readonly_gate_accepts_reviewed_aggregate_functions(query: str) -> None:
         "SELECT id FROM crm LIMIT 2001",
     ],
 )
-def test_readonly_gate_rejects_non_allowlisted_select_expressions(query: str) -> None:
+def test_readonly_gate_rejects_non_allowlisted_select_expressions(
+    monkeypatch, query: str
+) -> None:
     """Operators, casts, subqueries, windows, and arrays must fail closed."""
     warnings = validate_sql_query(query, source_system="crm")
     assert "unsafe_select_expression" in warnings
+
+    response = _execute_query(monkeypatch, query)
+    assert response.status == "REJECTED"
+    assert response.execution["source"] == "query_safety"
+    assert "unsafe_select_expression" in response.warnings
+    assert response.rows == []
+    assert response.columns == []
 
 
 @pytest.mark.parametrize(
@@ -84,10 +113,19 @@ def test_readonly_gate_rejects_non_allowlisted_select_expressions(query: str) ->
         "SELECT id FROM crm WHERE id IN (SELECT id FROM crm)",
     ],
 )
-def test_readonly_gate_rejects_unsafe_syntax_outside_projection(query: str) -> None:
+def test_readonly_gate_rejects_unsafe_syntax_outside_projection(
+    monkeypatch, query: str
+) -> None:
     """Casts, derived tables, and nested queries must fail closed in every clause."""
     warnings = validate_sql_query(query, source_system="crm")
     assert "unsafe_select_expression" in warnings
+
+    response = _execute_query(monkeypatch, query)
+    assert response.status == "REJECTED"
+    assert response.execution["source"] == "query_safety"
+    assert "unsafe_select_expression" in response.warnings
+    assert response.rows == []
+    assert response.columns == []
 
 
 def test_readonly_gate_accepts_complete_reviewed_analytics_grammar() -> None:
@@ -113,21 +151,9 @@ def test_readonly_gate_accepts_group_and_sort_lists_without_directions() -> None
 
 def test_execute_query_rejects_unsafe_sql_at_execution_boundary(monkeypatch) -> None:
     """Unsafe syntax must never pass the production execution boundary."""
-    dataset = SimpleNamespace(id="dataset_one", source_system="crm")
-    decision = SimpleNamespace(effect="allow", decision_id="decision_one", reason="ok")
-    monkeypatch.setattr(orchestrator, "get_dataset", lambda _dataset_id: dataset)
-    monkeypatch.setattr(orchestrator, "evaluate", lambda **_kwargs: decision)
-    monkeypatch.setattr(orchestrator, "ingest_event", lambda **_kwargs: None)
-
-    response = orchestrator.execute_query(
-        QueryExecutionRequest(
-            language="SQL",
-            user="analyst_one",
-            purpose="analysis",
-            dataset_ids=["dataset_one"],
-            query="SELECT id FROM crm ORDER BY id::unreviewed_type",
-            dry_run=False,
-        )
+    response = _execute_query(
+        monkeypatch,
+        "SELECT id FROM crm ORDER BY id::unreviewed_type",
     )
 
     assert response.status == "REJECTED"

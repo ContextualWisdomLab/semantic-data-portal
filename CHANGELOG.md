@@ -11,3 +11,5 @@ All notable changes to Semantic Data Portal are documented in this file.
 ### Security
 
 - Query policy and SQL safety validation remain authoritative before either validation-only or unavailable responses; no dataset profile value is reclassified as executed query output.
+- The changed-production coverage gate now validates git object names and source roots, then invokes `git diff` with an argument vector and `shell=False`, so diff path text cannot be treated as a shell command.
+- `get_config_entry()` caches a bounded number of single-key KV reads so credential lookups do not open a new engine on every observability export.

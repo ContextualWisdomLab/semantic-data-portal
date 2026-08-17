@@ -24,10 +24,14 @@ _EXPORT_ERRORS: deque[dict[str, Any]] = deque(maxlen=50)
 
 
 def request_id_header() -> str:
+    """Return the inbound request-id header name used by this process."""
+
     return os.getenv("SDP_REQUEST_ID_HEADER", "X-Request-Id")
 
 
 def _header_value(headers: Any, name: str, default: str | None = None) -> str | None:
+    """Read one header value with case-insensitive fallback."""
+
     if not headers:
         return default
 
@@ -47,10 +51,14 @@ def _header_value(headers: Any, name: str, default: str | None = None) -> str | 
 
 
 def request_id_from_headers(headers: Any) -> str:
+    """Return the inbound request id or mint a local correlation identifier."""
+
     return _header_value(headers, request_id_header()) or f"sdp-{uuid4().hex}"
 
 
 def _file_sink_path(sink_url: str, parsed: Any) -> Path:
+    """Resolve a ``file:`` sink URL to a local filesystem path."""
+
     if parsed.netloc and not parsed.path:
         return Path(url2pathname(parsed.netloc))
 
@@ -71,6 +79,8 @@ def build_request_observation(
     headers: Any,
     request_id: str,
 ) -> dict[str, Any]:
+    """Build the structured request observation recorded for one HTTP call."""
+
     evidence_header = _header_value(headers, "X-SDP-Evidence-Ids", "")
     evidence_ids = [item.strip() for item in evidence_header.split(",") if item.strip()] if evidence_header else []
     return {
@@ -87,6 +97,8 @@ def build_request_observation(
 
 
 def _sink_status() -> dict[str, Any]:
+    """Describe the configured observation sink without exposing secrets."""
+
     sink_url = os.getenv("SDP_LOG_SINK_URL", "").strip()
     alert_webhook_url = os.getenv("SDP_ALERT_WEBHOOK_URL", "").strip()
     if not sink_url:
@@ -158,6 +170,8 @@ def _export_to_sink(observation: dict[str, Any]) -> None:
 
 
 def record_observability_export_error(error: dict[str, Any] | str) -> None:
+    """Append one sink-export failure to the in-process error buffer."""
+
     if isinstance(error, str):
         payload = {"timestamp": datetime.now(timezone.utc).isoformat(), "message": error}
     else:
@@ -167,6 +181,8 @@ def record_observability_export_error(error: dict[str, Any] | str) -> None:
 
 
 def record_request_observation(observation: dict[str, Any], *, export: bool = True) -> None:
+    """Store one request observation and optionally export it to the sink."""
+
     _REQUEST_OBSERVATIONS.append(dict(observation))
     if not export:
         return
@@ -177,19 +193,27 @@ def record_request_observation(observation: dict[str, Any], *, export: bool = Tr
 
 
 def list_request_observations(limit: int = 100) -> list[dict[str, Any]]:
+    """Return the newest request observations from the in-process buffer."""
+
     return list(_REQUEST_OBSERVATIONS)[-limit:]
 
 
 def list_observability_export_errors(limit: int = 50) -> list[dict[str, Any]]:
+    """Return the newest sink-export errors from the in-process buffer."""
+
     return list(_EXPORT_ERRORS)[-limit:]
 
 
 def reset_request_observability() -> None:
+    """Clear in-process observation and export-error buffers for tests."""
+
     _REQUEST_OBSERVATIONS.clear()
     _EXPORT_ERRORS.clear()
 
 
 def build_observability_manifest() -> dict[str, Any]:
+    """Assemble the enterprise observability evidence payload."""
+
     datasets = list_datasets()
     audit_events = list_audit_events(limit=500)
     policy_decisions = list_policy_decisions(limit=500)
@@ -249,6 +273,8 @@ def build_observability_manifest() -> dict[str, Any]:
 
 
 def prometheus_metrics_text() -> str:
+    """Render the current observability gauges as Prometheus text."""
+
     manifest = build_observability_manifest()
     metrics = manifest["metrics"]
     lines = [

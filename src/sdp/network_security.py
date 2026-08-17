@@ -28,6 +28,8 @@ class _RejectRedirects(HTTPRedirectHandler):
         headers: Any,
         newurl: str,
     ) -> None:
+        """Reject the follow-up URL instead of letting urllib request it."""
+
         del req, fp, code, msg, headers
         raise ValueError(f"outbound HTTPS redirect rejected: {newurl}")
 

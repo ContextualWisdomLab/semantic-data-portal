@@ -64,6 +64,8 @@ class BootstrapSettings:
 
     @property
     def has_database(self) -> bool:
+        """Return whether bootstrap transport includes a database DSN."""
+
         return bool(self.database_dsn)
 
 
@@ -102,6 +104,8 @@ class AppConfig:
 
     @classmethod
     def from_mapping(cls, values: Dict[str, Any], *, source: str) -> "AppConfig":
+        """Build an AppConfig from bundled defaults plus a mapping of overrides."""
+
         merged = dict(_DEFAULT_CONFIG)
         merged.update({k: v for k, v in values.items() if v is not None})
         backend = str(merged["graph_backend"]).lower()
@@ -212,12 +216,16 @@ def get_app_config() -> AppConfig:
     return AppConfig.from_mapping({}, source="defaults")
 
 
+@lru_cache(maxsize=32)
 def get_config_entry(name: str, default: Any = None) -> Any:
     """Read one application value from the database-backed configuration KV.
 
     Environment variables are deliberately not a fallback here.  They are only
     bootstrap transport for locating the KV; application settings must remain
     governed by ``config_entries`` or an explicit safe caller default.
+
+    Results are bounded-cached so ``get_credential()`` does not open a new
+    engine or re-query the same key on every observability export.
     """
 
     return _load_config_entry(load_bootstrap(), name, default)
@@ -228,6 +236,7 @@ def reset_config_cache() -> None:
 
     load_bootstrap.cache_clear()
     get_app_config.cache_clear()
+    get_config_entry.cache_clear()
 
 
 def default_config_seed() -> Dict[str, Any]:
