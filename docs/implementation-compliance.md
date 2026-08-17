@@ -76,7 +76,7 @@
 - 대응: `POST /integrations/disksage/catalog`
 - 핵심 코드: [src/sdp/disksage_catalog.py](src/sdp/disksage_catalog.py)
 - 증빙 테스트: `tests/test_disksage_catalog.py`
-- 경계: DiskSage의 path-free 후보 batch만 수용하고, embedded metadata를 filename 날짜보다 우선 검증한다. 파일 복사·삭제·provider 권한 변경은 수행하지 않는다.
+- 경계: DiskSage의 path-free 후보 batch만 수용하고, embedded metadata를 filename 날짜보다 우선 검증한다. 절대 POSIX 경로 토큰(`/etc/...`, `/tmp/...` 포함)과 file URI는 거부한다. 파일 복사·삭제·provider 권한 변경은 수행하지 않는다.
 
 ## 2) Ontology / Terminology
 

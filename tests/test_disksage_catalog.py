@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from fastapi.testclient import TestClient
 
 from sdp.api import app
+from sdp.disksage_catalog import _contains_local_path
 
 
 client = TestClient(app)
@@ -152,3 +153,46 @@ def test_disksage_catalog_rejects_file_uri_and_linux_home_paths():
         response = client.post("/integrations/disksage/catalog", json=body)
 
         assert response.status_code == 422
+
+
+def test_disksage_catalog_rejects_generic_absolute_posix_paths():
+    """Generic absolute POSIX tokens such as /etc and /tmp must not persist."""
+
+    for leaked_context in (
+        "source=/etc/sdp/secret.json",
+        "source=/tmp/disksage-preview.m4a",
+    ):
+        body = _request()
+        body["catalog"]["candidates"][0]["content_context"] = [leaked_context]
+
+        response = client.post("/integrations/disksage/catalog", json=body)
+
+        assert response.status_code == 422
+
+
+def test_disksage_catalog_allows_https_context_without_local_path():
+    """HTTPS URLs must not be treated as absolute POSIX path tokens."""
+
+    body = _request(_candidate("d" * 64))
+    body["catalog"]["candidates"][0]["content_context"] = [
+        "docs=https://example.com/disksage/catalog"
+    ]
+
+    response = client.post("/integrations/disksage/catalog", json=body)
+
+    assert response.status_code == 200
+
+
+def test_contains_local_path_rejects_any_absolute_posix_token():
+    """Scan strings, nested containers, and NUL; ignore non-path scalars."""
+
+    assert _contains_local_path("source=/etc/sdp/secret.json")
+    assert _contains_local_path("source=/tmp/disksage-preview.m4a")
+    assert _contains_local_path("source=/var/lib/sdp/secret.json")
+    assert _contains_local_path({"nested": ["/opt/sdp/config.json"]})
+    assert _contains_local_path(("/tmp/leaked.m4a",))
+    assert _contains_local_path("label\x00/hidden")
+    assert not _contains_local_path("docs=https://example.com/etc/passwd")
+    assert not _contains_local_path("download-agent=Bandizip")
+    assert not _contains_local_path(1765324800000)
+    assert not _contains_local_path(None)

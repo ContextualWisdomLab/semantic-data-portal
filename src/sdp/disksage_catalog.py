@@ -41,13 +41,23 @@ ArchiveKind = Literal[
     "incomplete-download",
 ]
 Confidence = Literal["high", "medium", "low", "unknown"]
+# Any absolute POSIX token (`/etc/...`, `/tmp/...`, `/var/...`, `/Users/...`),
+# plus home shortcuts, Windows drive letters, and UNC prefixes.  A selected
+# prefix list is not enough: generic absolute paths must not reach the graph.
 _LOCAL_PATH_RE = re.compile(
-    r"(?:^|[\s=:])(?:/Users/|/home/|/private/|/Volumes/|~/|[A-Za-z]:[\\/]|\\\\)"
+    r"(?:^|[\s=:])(?:/[^/\s]+|~/|[A-Za-z]:[\\/]|\\\\)"
 )
 _FILE_URI_RE = re.compile(r"(?:^|[\s=:])file:(?://)?", re.IGNORECASE)
 
 
 def _contains_local_path(value: object) -> bool:
+    """Return True when *value* embeds a local path, file URI, or NUL byte.
+
+    Absolute POSIX path tokens are rejected regardless of prefix (`/etc`,
+    `/tmp`, `/var`, `/Users`, and so on).  Nested dicts and sequences are
+    scanned so leaked paths cannot hide in metadata evidence or context lists.
+    """
+
     if isinstance(value, str):
         return (
             "\x00" in value
