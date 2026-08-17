@@ -38,7 +38,12 @@ def _validated_source_root(value: str) -> str:
     """Accept only a relative in-repo path that cannot be parsed as an option."""
 
     path = Path(value)
-    if path.is_absolute() or value.startswith("-") or ".." in path.parts:
+    if (
+        path.is_absolute()
+        or value.startswith("-")
+        or value.startswith(":")
+        or ".." in path.parts
+    ):
         raise ValueError("source_root must be a relative repository path")
     return value
 

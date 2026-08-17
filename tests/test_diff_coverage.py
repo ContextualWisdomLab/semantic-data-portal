@@ -80,11 +80,15 @@ def test_changed_lines_rejects_non_sha_git_arguments() -> None:
         check_diff_coverage.changed_lines("--output=/tmp/evil", _HEAD_SHA, "src")
 
 
-def test_changed_lines_rejects_unsafe_source_root() -> None:
-    """A source root must stay a relative in-repo path."""
+@pytest.mark.parametrize(
+    "source_root",
+    ["../etc", ":(top)", ":(exclude)src"],
+)
+def test_changed_lines_rejects_unsafe_source_root(source_root: str) -> None:
+    """A source root must stay a relative in-repo path, not a git pathspec."""
 
     with pytest.raises(ValueError, match="relative repository path"):
-        check_diff_coverage.changed_lines(_BASE_SHA, _HEAD_SHA, "../etc")
+        check_diff_coverage.changed_lines(_BASE_SHA, _HEAD_SHA, source_root)
 
 
 def test_changed_lines_treats_malicious_filenames_as_text_only(monkeypatch) -> None:
