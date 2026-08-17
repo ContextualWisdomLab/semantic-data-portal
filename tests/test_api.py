@@ -1540,6 +1540,26 @@ def test_validate_sql_query_flags_comma_joined_table_outside_allowlist():
     assert "unauthorized_table_reference" in warnings
 
 
+def test_browse_query_rejects_parenthesized_join_unauthorized_table():
+    """A parenthesized joined table has no inner FROM, so skipping ``(``-prefixed
+    candidates used to hide ``customer``/``secrets`` behind allowlisted ``crm``."""
+    response = client.post(
+        "/browse/query",
+        json={
+            "user": "analyst",
+            "purpose": "analysis",
+            "dataset_ids": ["crm-event"],
+            "language": "SQL",
+            "query": (
+                "SELECT count(*) AS active_count FROM crm, "
+                "(customer JOIN secrets ON crm.id = customer.id) j"
+            ),
+        },
+    )
+    assert response.status_code == 400
+    assert "unauthorized_table_reference" in response.json()["detail"]["warnings"]
+
+
 def test_browse_query_rejects_literal_tautology_injection():
     response = client.post(
         "/browse/query",
