@@ -97,6 +97,9 @@ SDP_DATABASE_DSN='postgresql+psycopg://sdp_graph_app:<url-encoded-password>@loca
 - `POST /graph/nodes` — 노드 업스트림 푸시
 - `POST /graph/edges` — 엣지 업스트림 푸시
 - `POST /ontology/concepts` — 온톨로지 개념 업스트림 푸시
+- `POST /integrations/disksage/catalog` — DiskSage의
+  `disksage.file-catalog-candidate-batch` v1을 path-free 파일 후보 lineage로
+  그래프에 적재 (admin actor 필요)
 - `GET  /graph/nodes/{node_id}`
 - `GET  /graph/stats`
 
@@ -160,6 +163,12 @@ PYTHONPATH=src python -m sdp.demo_smoke
 `src/sdp_core/demo_seed.py`는 buyer demo domain, SQL/RDF/file/API seed dataset, analyst/governance question을 catalog seed, `/enterprise/demo-plan`, connector probe가 함께 쓰는 단일 계약으로 둡니다.
 `src/sdp/semantic_validation.py`는 현재 metadata gate와 approved mapping을 SHACL 호환 리포트 형태로 노출해 `/enterprise/shacl-validation`과 smoke readiness가 같은 validation pass rate를 쓰게 합니다.
 `src/sdp/steward_review.py`는 SHACL 호환 validation report와 ontology patch queue를 `/enterprise/steward-review`에 모아 buyer handoff 전 검토 대기열을 확인하게 합니다.
+
+`src/sdp/disksage_catalog.py`는 DiskSage가 생산 시점의 증거를
+`embedded_metadata → explicit_filename_date → filesystem_created → filesystem_modified`
+순서로 선택했다는 불변식을 다시 검증합니다. 입력에는 로컬 경로가 허용되지 않으며,
+파일 복사·삭제·클라우드 권한 부여를 수행하지 않고 `file_candidate`와
+`catalog_batch` graph node 및 `cataloged_in` edge만 upsert합니다.
 
 ## 요구사항 대응 증적
 

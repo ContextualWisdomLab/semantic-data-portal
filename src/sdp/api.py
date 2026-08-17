@@ -54,6 +54,7 @@ from .domain import (
     QueryDraftRequest,
     QueryExecutionRequest,
 )
+from .disksage_catalog import DiskSageCatalogRequest, ingest_catalog_batch
 from .enterprise_evidence import build_enterprise_evidence_pack
 from .evidence import list_policy_decisions
 from .observability import (
@@ -747,6 +748,19 @@ def ingest_graph_edge(payload: GraphEdgeRequest) -> dict[str, Any]:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return {"status": "upserted", "edge": edge.as_dict()}
+
+
+@app.post("/integrations/disksage/catalog")
+def ingest_disksage_catalog(payload: DiskSageCatalogRequest) -> dict[str, Any]:
+    """Ingest DiskSage's path-free metadata catalog into the graph.
+
+    This endpoint never reads a local path, copies a file, or authorizes source
+    eviction.  It only accepts the versioned semantic-catalog contract and
+    requires the same admin graph-write policy as the lower-level ingestion API.
+    """
+
+    _authorize_graph_write(payload.actor, "disksage:catalog")
+    return ingest_catalog_batch(get_store(), payload.catalog)
 
 
 @app.get("/graph/nodes/{node_id}")
