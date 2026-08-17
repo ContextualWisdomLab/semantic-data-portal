@@ -70,10 +70,10 @@ def _claim_values(value: Any) -> list[str]:
 def _single_string_claim(value: Any, claim_name: str) -> str | None:
     """Return one optional string claim, rejecting ambiguous claim shapes.
 
-    Signed identity claims that grant application roles must have one explicit
-    string value. Accepting arrays or coercing arbitrary values could merge
-    multiple authorities or invoke surprising conversions at the authorization
-    boundary, so malformed role claims fail closed.
+    Signed identity claims that select a subject, tenant, or application role
+    must have one explicit string value. Accepting arrays or coercing arbitrary
+    JSON types could invent an ActorContext identity or merge authorities, so
+    malformed claims fail closed.
     """
     if value is None:
         return None
@@ -100,8 +100,8 @@ def load_oidc_role_map() -> dict[str, list[str]]:
 
 
 def validate_oidc_claim_shape(claims: dict[str, Any]) -> None:
-    if not any(claims.get(key) for key in _SUBJECT_CLAIMS):
-        raise ValueError("missing subject claim")
+    """Reject tokens that lack a usable subject, tenant, or unexpired exp claim."""
+    _subject_claim_value(claims)
     _tenant_claim_value(claims)
     if "exp" not in claims:
         raise ValueError("missing exp claim")
@@ -113,6 +113,23 @@ def validate_oidc_claim_shape(claims: dict[str, Any]) -> None:
 
     if expires_at <= int(datetime.now(timezone.utc).timestamp()):
         raise ValueError("expired token claims")
+
+
+def _subject_claim_value(claims: dict[str, Any]) -> str:
+    """Select the first valid subject alias and reject malformed present values.
+
+    Subject aliases are a precedence list (preferred_username, email, sub). A
+    missing or JSON-null alias may fall through, but a present non-string or
+    blank value is fail-closed so a coerced JSON type cannot become
+    ActorContext.subject.
+    """
+    for key in _SUBJECT_CLAIMS:
+        if key not in claims:
+            continue
+        subject = _single_string_claim(claims[key], key)
+        if subject is not None:
+            return subject
+    raise ValueError("missing subject claim")
 
 
 def _tenant_claim_value(claims: dict[str, Any]) -> str:
@@ -137,14 +154,10 @@ def resolve_oidc_actor_context(
     *,
     role_map: dict[str, list[str]] | None = None,
 ) -> ActorContext:
+    """Map verified OIDC claims to ActorContext after fail-closed claim-shape checks."""
     validate_oidc_claim_shape(claims)
     mapping = role_map or load_oidc_role_map()
-    subject = (
-        claims.get("preferred_username")
-        or claims.get("email")
-        or claims.get("sub")
-        or "anonymous"
-    )
+    subject = _subject_claim_value(claims)
     tenant_id = _tenant_claim_value(claims)
     groups = _claim_values(claims.get("groups"))
 
@@ -155,7 +168,7 @@ def resolve_oidc_actor_context(
     if role:
         roles.update(_KEYVERSE_ROLE_MAP.get(role, []))
 
-    return ActorContext(subject=str(subject), tenant_id=tenant_id, roles=sorted(roles))
+    return ActorContext(subject=subject, tenant_id=tenant_id, roles=sorted(roles))
 
 
 _ALLOWED_JWKS_SCHEMES = frozenset({"https", "http"})
@@ -187,14 +200,14 @@ def _select_jwk(jwks: dict[str, Any], kid: str | None) -> dict[str, Any]:
     raise ValueError("no matching jwks key")
 
 
-def _token_header_has_critical_extensions(token: str) -> bool:
-    """Detect a raw critical-header declaration without trusting its shape."""
+def _decode_unverified_jwt_header(token: str) -> dict[str, Any] | None:
+    """Decode a JWT header without invoking PyJWT critical-extension checks."""
     try:
         encoded_header = token.split(".", 1)[0].encode("ascii")
         header = json.loads(jwt.utils.base64url_decode(encoded_header))
     except (UnicodeDecodeError, UnicodeEncodeError, ValueError):
-        return False
-    return isinstance(header, dict) and "crit" in header
+        return None
+    return header if isinstance(header, dict) else None
 
 
 def _validate_jwt_header(header: dict[str, Any]) -> None:
@@ -211,6 +224,7 @@ def verify_oidc_jwks_token(
     jwks: dict[str, Any] | None = None,
     role_map: dict[str, list[str]] | None = None,
 ) -> tuple[ActorContext, dict[str, Any]]:
+    """Verify a signed OIDC JWT and map fail-closed claims to ActorContext."""
     expected_issuer = issuer or os.getenv("SDP_OIDC_ISSUER")
     expected_audience = audience or os.getenv("SDP_OIDC_AUDIENCE")
     jwks_url = os.getenv("SDP_OIDC_JWKS_URL")
@@ -225,12 +239,10 @@ def verify_oidc_jwks_token(
         jwks = _load_jwks_from_url(jwks_url)
 
     try:
-        try:
-            header = jwt.get_unverified_header(token)
-        except InvalidTokenError as exc:
-            if _token_header_has_critical_extensions(token):
-                raise ValueError("unsupported critical JWT header") from exc
-            raise
+        decoded_header = _decode_unverified_jwt_header(token)
+        if decoded_header is not None:
+            _validate_jwt_header(decoded_header)
+        header = jwt.get_unverified_header(token)
         _validate_jwt_header(header)
         alg = header.get("alg")
         if alg not in _ALLOWED_JWT_ALGORITHMS:

@@ -369,6 +369,25 @@ def test_oidc_preview_maps_claims_to_actor_context():
     assert body["actor_context"]["roles"] == ["data-analyst"]
 
 
+def test_oidc_preview_rejects_non_string_subject_claim():
+    """OIDC preview must fail closed when preferred_username is a non-string."""
+    response = client.post(
+        "/enterprise/auth/oidc-preview",
+        json={
+            "claims": {
+                "preferred_username": 123,
+                "email": "analyst@example.com",
+                "tenant_id": "demo",
+                "groups": ["sdp-analysts"],
+                "exp": int(time()) + 3600,
+            }
+        },
+    )
+
+    assert response.status_code == 400
+    assert "preferred_username claim must be a string" in response.json()["detail"]
+
+
 def test_oidc_preview_rejects_unverified_claim_shape():
     response = client.post(
         "/enterprise/auth/oidc-preview",

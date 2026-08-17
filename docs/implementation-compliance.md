@@ -119,7 +119,7 @@
 
 - `GET /enterprise/readiness`: 20억 원 valuation target, package/submodule decision, storage/connector capability, enterprise gates, Figma Code Connect disabled artifact.
 - `GET /enterprise/production-readiness`: demo release와 paid pilot readiness를 분리하고, Postgres evidence store, OIDC JWKS verification, connector credential vault, request observability export의 환경변수·acceptance criteria·blocker를 노출한다. Postgres evidence store, OIDC JWKS verification, request observability export, connector credential vault가 구현되어 남은 paid-pilot blocker는 0개다.
-- `POST /enterprise/auth/oidc-verify`: issuer/audience/expiry/JWKS 서명 검증 후 group allow-list와 Keyverse `org`/`role` mapping으로 `ActorContext`를 생성하고 raw token은 응답에 포함하지 않는다.
+- `POST /enterprise/auth/oidc-verify`: issuer/audience/expiry/JWKS 서명 검증 후 group allow-list와 Keyverse `org`/`role` mapping으로 `ActorContext`를 생성하고 raw token은 응답에 포함하지 않는다. `preferred_username`/`email`/`sub`는 비어 있지 않은 문자열만 허용하며, 숫자·배열·공백 subject claim은 fail-closed로 거부한다. JWT `crit` 실패는 PyJWT 예외 문구를 분류하지 않고 하나의 application error로 매핑한다.
 - `GET /enterprise/evidence-pack`: metadata validation, SHACL-compatible validation, steward queue, ontology mapping coverage, policy/audit counts, controls, KPI ids, proof endpoints.
 - `GET /enterprise/console`: buyer/operator가 evidence, KPI, controls, connector 상태를 브라우저에서 확인하는 no-build-dependency UI.
 - 증빙 테스트:
@@ -130,6 +130,9 @@
   - `tests/test_api.py::test_enterprise_rest_connector_probe_uses_vault_reference_without_secret_leak`
   - `tests/test_api.py::test_oidc_jwks_verification_maps_verified_token_without_token_leak`
   - `tests/test_api.py::test_oidc_jwks_verification_rejects_wrong_audience`
+  - `tests/test_api.py::test_oidc_preview_rejects_non_string_subject_claim`
+  - `tests/test_authz.py::test_subject_claim_rejects_non_string_or_blank_values`
+  - `tests/test_authz.py::test_numeric_sub_claim_cannot_impersonate_string_subject`
   - `tests/test_api.py::test_enterprise_console_renders_operator_surface`
   - `tests/test_api.py::test_enterprise_demo_smoke_summary_is_ready`
 

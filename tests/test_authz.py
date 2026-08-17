@@ -130,6 +130,76 @@ def test_validate_oidc_claim_shape_guard_branches():
         authz.validate_oidc_claim_shape({"sub": "s", "tenant_id": "d", "exp": 1})
 
 
+@pytest.mark.parametrize(
+    ("subject_claims", "expected_subject"),
+    [
+        ({"preferred_username": "alice"}, "alice"),
+        ({"email": "alice@example.com"}, "alice@example.com"),
+        ({"sub": "subject-1"}, "subject-1"),
+        (
+            {"preferred_username": None, "email": "alice@example.com", "sub": "subject-1"},
+            "alice@example.com",
+        ),
+        ({"preferred_username": None, "email": None, "sub": "subject-1"}, "subject-1"),
+    ],
+)
+def test_subject_claim_uses_first_non_empty_string_alias(subject_claims, expected_subject):
+    """A missing or JSON-null subject alias may fall through to the next string."""
+    context = authz.resolve_oidc_actor_context(
+        {
+            "org": "cwl-org",
+            "exp": int(time.time()) + 3600,
+            **subject_claims,
+        }
+    )
+
+    assert context.subject == expected_subject
+
+
+@pytest.mark.parametrize(
+    "invalid_subject",
+    [123, True, ["alice"], {"id": "alice"}, "", "  "],
+)
+def test_subject_claim_rejects_non_string_or_blank_values(invalid_subject):
+    """A present subject alias cannot be coerced into ActorContext.subject."""
+    with pytest.raises(ValueError, match=r"(must be a string|must be non-empty)"):
+        authz.resolve_oidc_actor_context(
+            {
+                "preferred_username": invalid_subject,
+                "email": "alice@example.com",
+                "sub": "subject-1",
+                "org": "cwl-org",
+                "exp": int(time.time()) + 3600,
+            }
+        )
+
+
+def test_numeric_sub_claim_cannot_impersonate_string_subject():
+    """A signed numeric sub must not become the string identity '123'."""
+    with pytest.raises(ValueError, match=r"sub claim must be a string"):
+        authz.resolve_oidc_actor_context(
+            {
+                "sub": 123,
+                "org": "cwl-org",
+                "exp": int(time.time()) + 3600,
+            }
+        )
+
+
+def test_all_null_subject_aliases_are_missing():
+    """JSON-null subject aliases do not invent an anonymous ActorContext."""
+    with pytest.raises(ValueError, match=r"missing subject claim"):
+        authz.resolve_oidc_actor_context(
+            {
+                "preferred_username": None,
+                "email": None,
+                "sub": None,
+                "org": "cwl-org",
+                "exp": int(time.time()) + 3600,
+            }
+        )
+
+
 def test_keyverse_claim_aliases_map_to_tenant_and_bounded_role():
     """Keyverse org/role claims enter the existing tenant and RBAC policy."""
     context = authz.resolve_oidc_actor_context(
@@ -267,6 +337,34 @@ def test_keyverse_unknown_role_does_not_grant_access():
     )
 
     assert context.roles == []
+
+
+def test_decode_unverified_jwt_header_rejects_unusable_segments():
+    """Header decoding stays local and never classifies PyJWT exception text."""
+    valid = _jwt.encode({"sub": "s"}, "secret", algorithm="HS256")
+    header = authz._decode_unverified_jwt_header(valid)
+    assert isinstance(header, dict)
+    assert header.get("alg") == "HS256"
+
+    assert authz._decode_unverified_jwt_header("not-ascii-\u2603.payload.sig") is None
+    assert authz._decode_unverified_jwt_header("@@@.payload.sig") is None
+    invalid_utf8 = _jwt.utils.base64url_encode(b"\xff\xfe").decode()
+    assert authz._decode_unverified_jwt_header(f"{invalid_utf8}.payload.sig") is None
+    array_header = _jwt.utils.base64url_encode(b"[1,2]").decode()
+    assert authz._decode_unverified_jwt_header(f"{array_header}.payload.sig") is None
+
+
+def test_critical_jwt_header_failures_share_one_application_error():
+    """Malformed and unsupported crit values map to the same application error."""
+    authz._validate_jwt_header({"alg": "RS256"})
+    for header in (
+        {"alg": "RS256", "crit": ["https://example.com/custom-extension"]},
+        {"alg": "RS256", "crit": "not-an-array"},
+        {"alg": "RS256", "crit": [1]},
+        {"alg": "RS256", "crit": []},
+    ):
+        with pytest.raises(ValueError, match=r"^unsupported critical JWT header$"):
+            authz._validate_jwt_header(header)
 
 
 def test_select_jwk_guard_branches():
