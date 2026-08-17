@@ -52,11 +52,24 @@ def test_header_value_attributeerror_fallback_returns_default() -> None:
 # --- _file_sink_path -----------------------------------------------------
 
 
-def test_file_sink_path_netloc_only_and_with_path() -> None:
-    netloc_only = obs._file_sink_path("file://logs", urlparse("file://logs"))
-    assert netloc_only == Path("logs")
-    with_netloc_path = obs._file_sink_path("file://host/var/log", urlparse("file://host/var/log"))
-    assert str(with_netloc_path).startswith("//host/")
+def test_file_sink_path_accepts_local_and_dot_relative_paths() -> None:
+    assert obs._file_sink_path("file:///var/log/sdp.jsonl", urlparse("file:///var/log/sdp.jsonl")) == Path(
+        "/var/log/sdp.jsonl"
+    )
+    assert obs._file_sink_path(
+        "file://.local/sdp-requests.jsonl",
+        urlparse("file://.local/sdp-requests.jsonl"),
+    ) == Path(".local/sdp-requests.jsonl")
+    assert obs._file_sink_path("file://.local", urlparse("file://.local")) == Path(".local")
+
+
+@pytest.mark.parametrize(
+    "sink_url",
+    ["file://host/share", "file://logs", "file://localhost/var/log", "file://127.0.0.1/tmp"],
+)
+def test_file_sink_path_rejects_remote_authorities(sink_url: str) -> None:
+    with pytest.raises(ValueError, match="local paths"):
+        obs._file_sink_path(sink_url, urlparse(sink_url))
 
 
 # --- _sink_status --------------------------------------------------------
@@ -77,6 +90,15 @@ def test_sink_status_http_and_other_scheme(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setenv("SDP_LOG_SINK_URL", "tcp://opaque-target")
     other = obs._sink_status()
     assert other["scheme"] == "tcp" and other["target"] == "tcp://opaque-target"
+
+
+def test_sink_status_rejects_remote_file_authority(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SDP_LOG_SINK_URL", "file://host/share")
+    status = obs._sink_status()
+    assert status["configured"] is True
+    assert status["scheme"] == "file"
+    assert status["target"] == "rejected_remote_file_authority"
+    assert "host" not in status["target"]
 
 
 # --- _export_to_sink -----------------------------------------------------
@@ -117,6 +139,12 @@ def test_export_to_sink_http_post_is_invoked(monkeypatch: pytest.MonkeyPatch) ->
 def test_export_to_sink_rejects_unsupported_scheme(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SDP_LOG_SINK_URL", "ftp://sink.example/ingest")
     with pytest.raises(ValueError):
+        obs._export_to_sink({"event": "http_request"})
+
+
+def test_export_to_sink_rejects_remote_file_authority(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SDP_LOG_SINK_URL", "file://host/share")
+    with pytest.raises(ValueError, match="local paths"):
         obs._export_to_sink({"event": "http_request"})
 
 

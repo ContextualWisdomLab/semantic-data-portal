@@ -11,6 +11,10 @@ a security boundary. Remote OpenID Connect JSON Web Key Set (JWKS) retrieval
 and remote observability delivery accept only normalized HTTPS URLs that target
 a public DNS name or a global IP literal. Explicit local observability files
 remain a separate `file` transport and never enter the HTTP client path.
+`file:` sinks accept only local paths: empty authorities and the documented
+leading-dot relative form such as `file://.local/sdp-requests.jsonl`. A
+hostname or IP authority is rejected so it cannot become a UNC or remote
+share path.
 
 This is a fail-closed policy. OAuth 2.0 authorization-server metadata requires
 the `jwks_uri` value to use HTTPS, and OpenID Connect Discovery publishes the

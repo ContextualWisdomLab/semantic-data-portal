@@ -57,16 +57,25 @@ def request_id_from_headers(headers: Any) -> str:
 
 
 def _file_sink_path(sink_url: str, parsed: Any) -> Path:
-    """Resolve a ``file:`` sink URL to a local filesystem path."""
+    """Resolve a local ``file:`` sink URL. Remote authorities are rejected.
 
-    if parsed.netloc and not parsed.path:
-        return Path(url2pathname(parsed.netloc))
+    Empty authorities stay local absolute or relative paths. A leading-dot
+    authority such as ``file://.local/sdp-requests.jsonl`` is the documented
+    in-repo relative file transport. Any other authority would become a UNC
+    or host path and bypass the HTTPS egress boundary.
+    """
+
+    netloc = parsed.netloc or ""
+    if netloc and not netloc.startswith("."):
+        raise ValueError("file sink URLs must be local paths")
+    if netloc and not parsed.path:
+        return Path(url2pathname(netloc))
 
     raw_path = url2pathname(parsed.path or sink_url)
     if os.name == "nt" and len(raw_path) >= 3 and raw_path[0] in {"\\", "/"} and raw_path[2] == ":":
         raw_path = raw_path[1:]
-    if parsed.netloc:
-        raw_path = f"//{parsed.netloc}{raw_path}"
+    if netloc:
+        raw_path = f"{netloc}{raw_path}"
     return Path(raw_path)
 
 
@@ -112,7 +121,10 @@ def _sink_status() -> dict[str, Any]:
     parsed = urlparse(sink_url)
     scheme = parsed.scheme or "file"
     if scheme == "file":
-        target = str(_file_sink_path(sink_url, parsed))
+        try:
+            target = str(_file_sink_path(sink_url, parsed))
+        except ValueError:
+            target = "rejected_remote_file_authority"
     elif scheme in {"http", "https"}:
         validated_url = validate_outbound_https_url(
             sink_url,
