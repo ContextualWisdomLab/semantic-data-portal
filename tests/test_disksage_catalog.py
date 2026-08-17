@@ -170,6 +170,25 @@ def test_disksage_catalog_rejects_generic_absolute_posix_paths():
         assert response.status_code == 422
 
 
+def test_disksage_catalog_rejects_punctuation_delimited_posix_paths():
+    """Absolute POSIX tokens after (, [, {, quotes, or commas must not persist."""
+
+    for leaked_context in (
+        "recording (/etc/sdp/secret.json)",
+        "cache[/tmp/disksage-preview.m4a]",
+        "notes{/var/lib/sdp/secret.json}",
+        'hint,"/opt/sdp/config.json"',
+        "hint,'/opt/sdp/config.json'",
+        "a,/tmp/leaked.m4a",
+    ):
+        body = _request()
+        body["catalog"]["candidates"][0]["content_context"] = [leaked_context]
+
+        response = client.post("/integrations/disksage/catalog", json=body)
+
+        assert response.status_code == 422
+
+
 def test_disksage_catalog_allows_https_context_without_local_path():
     """HTTPS URLs must not be treated as absolute POSIX path tokens."""
 
@@ -189,6 +208,8 @@ def test_contains_local_path_rejects_any_absolute_posix_token():
     assert _contains_local_path("source=/etc/sdp/secret.json")
     assert _contains_local_path("source=/tmp/disksage-preview.m4a")
     assert _contains_local_path("source=/var/lib/sdp/secret.json")
+    assert _contains_local_path("recording (/etc/sdp/secret.json)")
+    assert _contains_local_path("cache[/tmp/disksage-preview.m4a]")
     assert _contains_local_path({"nested": ["/opt/sdp/config.json"]})
     assert _contains_local_path(("/tmp/leaked.m4a",))
     assert _contains_local_path("label\x00/hidden")

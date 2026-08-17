@@ -42,12 +42,14 @@ ArchiveKind = Literal[
 ]
 Confidence = Literal["high", "medium", "low", "unknown"]
 # Any absolute POSIX token (`/etc/...`, `/tmp/...`, `/var/...`, `/Users/...`),
-# plus home shortcuts, Windows drive letters, and UNC prefixes.  A selected
-# prefix list is not enough: generic absolute paths must not reach the graph.
+# plus home shortcuts, Windows drive letters, and UNC prefixes.  Detect after
+# start, whitespace, assignment, or punctuation so `recording (/etc/...)`
+# cannot bypass a prefix-only or `=`/`:`-only delimiter list.
+_PATH_TOKEN_PREFIX = r"(?:^|[\s=:({\[\"',])"
 _LOCAL_PATH_RE = re.compile(
-    r"(?:^|[\s=:])(?:/[^/\s]+|~/|[A-Za-z]:[\\/]|\\\\)"
+    _PATH_TOKEN_PREFIX + r"(?:/[^/\s]+|~/|[A-Za-z]:[\\/]|\\\\)"
 )
-_FILE_URI_RE = re.compile(r"(?:^|[\s=:])file:(?://)?", re.IGNORECASE)
+_FILE_URI_RE = re.compile(_PATH_TOKEN_PREFIX + r"file:(?://)?", re.IGNORECASE)
 
 
 def _contains_local_path(value: object) -> bool:
