@@ -78,18 +78,33 @@ def test_disksage_catalog_preview_rejects_unknown_path_fields():
 
 
 @pytest.mark.parametrize(
-    "field",
-    ["production_time_source", "blocked_reason"],
+    ("field", "value"),
+    [
+        ("production_time_source", "embedded:/Users/example/metadata"),
+        ("production_time_source", "embedded:Users.alice.secret.txt"),
+        ("blocked_reason", "blocked:/Users/example/file"),
+        ("blocked_reason", "Users.alice.secret.txt"),
+    ],
 )
-def test_disksage_catalog_preview_rejects_path_bearing_classification_values(field: str):
+def test_disksage_catalog_preview_rejects_path_bearing_classification_values(
+    field: str, value: str
+):
     payload = _batch()
-    if field == "production_time_source":
-        payload["candidates"][0][field] = "embedded:/Users/example/metadata"
-    else:
-        payload["candidates"][0][field] = "blocked:/Users/example/file"
+    payload["candidates"][0][field] = value
     response = client.post("/integrations/disksage/catalog-preview", json=payload)
     assert response.status_code == 400
     assert "/Users/example" not in response.text
+    assert "Users.alice" not in response.text
+
+
+def test_disksage_catalog_preview_returns_closed_production_time_and_blocked_codes():
+    payload = _batch()
+    payload["candidates"][0]["blocked_reason"] = "policy-denied"
+    response = client.post("/integrations/disksage/catalog-preview", json=payload)
+    assert response.status_code == 200
+    dataset = response.json()["datasets"][0]
+    assert dataset["production_time_source"] == "embedded_metadata"
+    assert dataset["blocked_reason"] == "policy-denied"
 
 
 def test_disksage_file_asset_preview_alias_is_available():

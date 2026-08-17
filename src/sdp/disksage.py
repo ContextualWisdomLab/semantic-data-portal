@@ -6,6 +6,7 @@ registers a dataset or authorizes a local eviction.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Any, Literal
 
@@ -22,14 +23,24 @@ PRODUCTION_TIME_PRECEDENCE = (
     "filesystem_modified",
 )
 _FINGERPRINT = r"^[0-9a-f]{64}$"
+_CLOSED_CODE = re.compile(r"^[a-z0-9]+(?:[:\-][a-z0-9]+)*$")
+_PRODUCTION_TIME_SOURCE_CODES = {
+    "filename:path-token": "explicit_filename_date",
+    "filesystem:created": "filesystem_created",
+    "filesystem:modified-fallback": "filesystem_modified",
+}
 
 
-def _path_free_token(value: str) -> bool:
-    return bool(value) and all(
-        character.isascii()
-        and (character.isalnum() or character in "._:-")
-        for character in value
-    )
+def _production_time_source_class(source: str) -> str | None:
+    if source in _PRODUCTION_TIME_SOURCE_CODES:
+        return _PRODUCTION_TIME_SOURCE_CODES[source]
+    if source.startswith("embedded:") and _CLOSED_CODE.fullmatch(source):
+        return "embedded_metadata"
+    return None
+
+
+def _is_closed_code(value: str) -> bool:
+    return bool(_CLOSED_CODE.fullmatch(value))
 
 
 class DiskSageMetadataEvidence(BaseModel):
@@ -83,23 +94,11 @@ class DiskSageCandidate(BaseModel):
             raise ValueError("content author out of bounds")
         if any(not value or len(value) > 1024 for value in self.content_context):
             raise ValueError("content context out of bounds")
-        source_class = (
-            "embedded_metadata"
-            if self.production_time_source.startswith("embedded:")
-            else {
-                "filename:path-token": "explicit_filename_date",
-                "filesystem:created": "filesystem_created",
-                "filesystem:modified-fallback": "filesystem_modified",
-            }.get(self.production_time_source)
-        )
+        source_class = _production_time_source_class(self.production_time_source)
         if source_class is None:
             raise ValueError("unsupported production time source")
-        if self.production_time_source.startswith("embedded:") and not _path_free_token(
-            self.production_time_source.removeprefix("embedded:")
-        ):
-            raise ValueError("embedded production time source must be path-free")
-        if self.blocked_reason is not None and not _path_free_token(self.blocked_reason):
-            raise ValueError("blocked reason must be path-free")
+        if self.blocked_reason is not None and not _is_closed_code(self.blocked_reason):
+            raise ValueError("blocked reason must be a closed code")
         if source_class != "embedded_metadata" and self.production_time_confidence != "low":
             raise ValueError("non-embedded production time must be low confidence")
         expected_field, expected_source = {
@@ -159,7 +158,9 @@ def catalog_preview(batch: DiskSageCatalogBatch) -> dict[str, Any]:
                 "account_scope": candidate.destination_account_scope,
                 "bytes": candidate.bytes,
                 "production_time_ms": candidate.production_time_ms,
-                "production_time_source": candidate.production_time_source,
+                "production_time_source": _production_time_source_class(
+                    candidate.production_time_source
+                ),
                 "production_time_confidence": candidate.production_time_confidence,
                 "content_metadata_present": bool(
                     candidate.content_title
