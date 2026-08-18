@@ -107,6 +107,7 @@ def catalog_plane_sqlite_ddl() -> str:
     rewritten = (
         sql_text.replace("SET search_path = public;", "")
         .replace("TIMESTAMPTZ", "TEXT")
+        .replace("DEFAULT now()", "DEFAULT CURRENT_TIMESTAMP")
     )
     statements: list[str] = []
     buffer: list[str] = []
