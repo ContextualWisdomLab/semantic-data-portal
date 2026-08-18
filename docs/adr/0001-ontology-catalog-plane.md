@@ -38,9 +38,13 @@ Keyverse remains the identity provider; SDP only consumes the OIDC subject and
    commons REST pointer. SDP does not compute item scores.
 7. Cite OWL, RDF, and PROV as vocabulary references only. Deep doctoring stays
    with CWL Researcher.
-8. When Keyverse JWKS is configured (`SDP_OIDC_ISSUER` + audience + JWKS URL),
-   `X-CWL-Oidc-Subject` is rejected. Demo/CI without JWKS may use the existing
-   actor map. Production must send a Bearer token.
+8. `Authorization: Bearer <Keyverse access token>` is the production identity
+   path. Raw `X-CWL-Oidc-Subject` authentication is disabled by default even
+   when JWKS coordinates are absent. A local demo or CI environment may opt in
+   only by setting `SDP_ALLOW_UNVERIFIED_SUBJECT_HEADER=true`; the code still
+   rejects that header whenever Keyverse JWKS is configured. Externally
+   reachable gateways must strip caller-supplied subject headers, and a paid
+   pilot must not enable the demo flag.
 
 ## Standards cited (APA 7th)
 
@@ -64,3 +68,5 @@ https://www.w3.org/TR/rdf11-concepts/
 - In-memory is the CI / pytest default. When ``SDP_DATABASE_DSN`` is set the
   plane reads and writes the 0002 tables so a paid-pilot restart keeps
   glossary and catalog rows. This plane does not use Apache AGE or pgvector.
+- Test fixtures must opt into the demo subject-header path explicitly; deleting
+  the opt-in exercises the same fail-closed behavior as an external deployment.
