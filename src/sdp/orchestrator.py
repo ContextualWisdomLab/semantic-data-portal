@@ -11,6 +11,178 @@ from .domain import QueryExecutionResponse
 
 _FORBIDDEN_KEYWORDS = {"drop", "delete", "truncate", "alter", "insert", "update", "merge", "exec", "union"}
 
+# Keywords that terminate a FROM clause's relation list. Everything between a
+# ``FROM`` and the first of these is the (possibly comma-separated) table list.
+_CLAUSE_BOUNDARY_PATTERN = (
+    r"\b(where|group\s+by|order\s+by|having|limit|offset|window|"
+    r"union|intersect|except|fetch)\b"
+)
+_SUBQUERY_HEAD = re.compile(r"^(select|with)\b", re.IGNORECASE)
+_RELATION_PREFIXES = frozenset({"lateral", "only"})
+
+
+def _finditer_top_level(value: str, pattern: str, flags: int = 0):
+    """Yield ``pattern`` matches in ``value`` that occur outside parentheses.
+
+    A nested subquery's own ``WHERE``/``JOIN``/``ON`` (or its comma-separated
+    projection list) must never be mistaken for a top-level clause boundary or
+    relation separator -- doing so truncates the outer relation list and lets a
+    smuggled table slip past the allowlist. Depth tracking is scoped to a single
+    scan, so callers must pass balanced-paren substrings (guaranteed here since
+    each stops at a boundary found at depth zero).
+    """
+
+    combined = re.compile(rf"[()]|(?:{pattern})", flags)
+    depth = 0
+    for match in combined.finditer(value):
+        token = match.group(0)
+        if token == "(":
+            depth += 1
+        elif token == ")":
+            depth = max(0, depth - 1)
+        elif depth == 0:
+            yield match
+
+
+def _split_top_level(value: str, pattern: str, flags: int = 0) -> list[str]:
+    """Split ``value`` on ``pattern`` occurrences that occur outside parentheses."""
+
+    segments: list[str] = []
+    cursor = 0
+    for match in _finditer_top_level(value, pattern, flags):
+        segments.append(value[cursor : match.start()])
+        cursor = match.end()
+    segments.append(value[cursor:])
+    return segments
+
+
+def _split_top_level_commas(value: str) -> list[str]:
+    """Split on commas outside parenthesized SQL regions.
+
+    This exposes implicit joins without misreading projection-list or function
+    argument commas inside a derived relation as table separators.
+    """
+
+    return _split_top_level(value, ",")
+
+
+def _parentheses_balanced(value: str) -> bool:
+    """Return True when ``value`` has matched parentheses.
+
+    An unclosed ``(`` keeps later commas and JOIN keywords at depth > 0, so
+    the relation scanner would otherwise omit a trailing unauthorized table.
+    Fail closed: unbalanced SQL cannot be proven allowlist-safe.
+    """
+
+    depth = 0
+    for char in value:
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth < 0:
+                return False
+    return depth == 0
+
+
+def _split_outer_paren_group(value: str) -> tuple[str, str] | None:
+    """Split a ``(...)rest`` candidate into ``(inside, rest)``.
+
+    Returns None when the opening parenthesis is never closed so callers can
+    fail closed instead of dropping the unread remainder of the relation list.
+    """
+
+    if not value.startswith("("):
+        return None
+    depth = 0
+    for index, char in enumerate(value):
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return value[1:index], value[index + 1 :]
+    return None
+
+
+def _strip_relation_prefixes(value: str) -> str:
+    """Drop leading LATERAL/ONLY so the following relation is inspected."""
+
+    tokens = value.split()
+    index = 0
+    while index < len(tokens) and tokens[index].lower() in _RELATION_PREFIXES:
+        index += 1
+    return " ".join(tokens[index:])
+
+
+def _append_relation_identifier(candidate: str, tables: list[str]) -> None:
+    """Append the first identifier token of ``candidate`` when present."""
+
+    identifier = re.match(r"[A-Za-z_][\w.]*", candidate.split()[0])
+    if identifier:
+        tables.append(identifier.group(0))
+
+
+def _collect_relation_candidate(candidate: str, tables: list[str]) -> None:
+    """Collect tables from one comma/JOIN candidate, including parenthesized joins.
+
+    ``(SELECT ...) alias`` is skipped here because the outer FROM-keyword scan
+    already walks the subquery. ``(t1 JOIN t2 ON ...) alias`` has no inner
+    FROM, so skipping every ``(``-prefixed candidate omitted those relations
+    and let an allowlisted outer table hide an unauthorized joined table.
+    """
+
+    stripped = _strip_relation_prefixes(candidate.strip())
+    if not stripped:
+        return
+    if stripped.startswith("("):
+        split = _split_outer_paren_group(stripped)
+        if split is None:
+            return
+        inside, _alias = split
+        inner = inside.strip()
+        if not inner or _SUBQUERY_HEAD.match(inner):
+            return
+        _collect_relations_from_region(inner, tables)
+        return
+    _append_relation_identifier(stripped, tables)
+
+
+def _collect_relations_from_region(region: str, tables: list[str]) -> None:
+    """Collect relation identifiers from one FROM or parenthesized-join region."""
+
+    for join_segment in _split_top_level(region, r"\bjoin\b", re.IGNORECASE):
+        relation_part = _split_top_level(join_segment, r"\bon\b", re.IGNORECASE)[0]
+        for candidate in _split_top_level_commas(relation_part):
+            _collect_relation_candidate(candidate, tables)
+
+
+def _from_clause_tables(sql: str) -> list[str]:
+    """Return every relation named in each FROM clause of ``sql``.
+
+    Unlike a bare ``FROM <table>`` / ``JOIN <table>`` match, this also captures
+    comma-separated (implicit-join) relations such as the ``customer`` in
+    ``FROM crm, customer``, which would otherwise slip past the source-table
+    allowlist. Iterating over every ``FROM`` occurrence also covers subquery
+    FROM clauses, matching the previous scan's coverage. Clause-boundary and
+    JOIN/ON splitting are scoped to top-level (depth-zero) parentheses so a
+    derived table's own WHERE/JOIN/ON never truncates the outer relation list.
+    Parenthesized joined tables (``(t1 JOIN t2 ON ...)``) are unwrapped and
+    scanned with the same JOIN/comma walker; SELECT/WITH subqueries stay
+    skipped here because their inner FROM is already visited.
+    """
+
+    tables: list[str] = []
+    for from_match in re.finditer(r"\bfrom\b", sql, re.IGNORECASE):
+        region = sql[from_match.end():]
+        boundary = next(
+            _finditer_top_level(region, _CLAUSE_BOUNDARY_PATTERN, re.IGNORECASE), None
+        )
+        if boundary:
+            region = region[: boundary.start()]
+        _collect_relations_from_region(region, tables)
+    return tables
+
 
 def _safe_identifier(value: str) -> str:
     return "".join(ch if ch.isalnum() or ch == "_" else "_" for ch in value)
@@ -25,6 +197,14 @@ def _source_table_name(source_system: str) -> str:
 
 
 def validate_sql_query(sql: str, *, source_system: str) -> list[str]:
+    """Return fail-closed safety warnings for a governed SQL query.
+
+    Every relation in every FROM/JOIN list — comma joins, OUTER joins, nested
+    subqueries, and parenthesized joined tables — must equal the dataset's
+    bound source table. Unbalanced parentheses cannot be proven safe and are
+    rejected as ``unauthorized_table_reference``.
+    """
+
     stripped = sql.strip()
     lowered = stripped.lower()
     warnings: list[str] = []
@@ -39,23 +219,22 @@ def validate_sql_query(sql: str, *, source_system: str) -> list[str]:
         warnings.append("literal_values_not_allowed")
     if re.search(r"\b(and|or)\b", lowered):
         warnings.append("boolean_operator_not_allowed")
+    if not _parentheses_balanced(stripped):
+        warnings.append("unauthorized_table_reference")
 
     for token in _FORBIDDEN_KEYWORDS:
         if re.search(rf"\b{re.escape(token)}\b", lowered):
             warnings.append("forbidden_keyword_detected")
             break
 
-    referenced = [
-        next(value for value in match if value)
-        for match in re.findall(r"\bfrom\s+([A-Za-z_][\w.]*)|\bjoin\s+([A-Za-z_][\w.]*)", stripped, re.IGNORECASE)
-    ]
+    referenced = _from_clause_tables(stripped)
     if not referenced:
         warnings.append("missing_source_table")
         return warnings
 
     expected = _source_table_name(source_system).lower()
     referenced_tables = {_safe_identifier(table.rsplit(".", 1)[-1]).lower() for table in referenced}
-    if referenced_tables != {expected}:
+    if referenced_tables != {expected} and "unauthorized_table_reference" not in warnings:
         warnings.append("unauthorized_table_reference")
 
     return warnings

@@ -1,5 +1,6 @@
 # Runtime pins mirror [project.dependencies] and the dev extra in
 # pyproject.toml; keep them in sync when bumping versions there.
+cryptography==50.0.0
 fastapi==0.139.0
 psycopg[binary]==3.3.4
 PyJWT[crypto]==2.13.0

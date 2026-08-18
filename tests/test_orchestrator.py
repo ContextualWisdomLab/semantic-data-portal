@@ -47,6 +47,153 @@ def test_validate_sql_query_accepts_clean_single_select() -> None:
     assert orch.validate_sql_query("SELECT customer_id FROM customer", source_system=_SRC) == []
 
 
+def test_validate_sql_query_accepts_projection_commas_in_derived_table() -> None:
+    """Projection commas inside a derived table are not relation separators."""
+
+    warnings = orch.validate_sql_query(
+        "SELECT count(*) AS c FROM (SELECT customer_id, signup_at FROM customer) t",
+        source_system=_SRC,
+    )
+
+    assert "unauthorized_table_reference" not in warnings
+
+
+def test_split_top_level_commas_preserves_nested_relations() -> None:
+    """The relation scanner splits only commas outside parenthesized regions."""
+
+    assert orch._split_top_level_commas(
+        "customer, (SELECT customer_id, signup_at FROM customer) nested"
+    ) == [
+        "customer",
+        " (SELECT customer_id, signup_at FROM customer) nested",
+    ]
+
+
+def test_validate_sql_query_flags_table_smuggled_past_nested_where() -> None:
+    """A derived table's own WHERE must not truncate the outer relation list.
+
+    Regression for a clause-boundary scan that wasn't parenthesis-depth-aware:
+    the nested ``WHERE`` inside the derived table used to end the *outer*
+    FROM-clause scan before the comma-joined ``customer`` after it was ever
+    seen, letting an unauthorized table slip past the allowlist.
+    """
+
+    warnings = orch.validate_sql_query(
+        "SELECT * FROM (SELECT customer_id FROM customer WHERE customer_id > 0) t, other_table",
+        source_system=_SRC,
+    )
+
+    assert "unauthorized_table_reference" in warnings
+
+
+def test_validate_sql_query_flags_coderabbit_nested_where_outer_relation() -> None:
+    """Exact current-head PoC: nested WHERE must not hide the outer comma join.
+
+    ``SELECT * FROM (SELECT customer_id FROM crm WHERE customer_id > 0) t, customer``
+    with allowlisted ``crm`` must still see the trailing ``customer``.
+    """
+
+    warnings = orch.validate_sql_query(
+        "SELECT * FROM (SELECT customer_id FROM crm WHERE customer_id > 0) t, customer",
+        source_system="s3://analytics/events/crm",
+    )
+
+    assert "unauthorized_table_reference" in warnings
+    assert set(orch._from_clause_tables(
+        "SELECT * FROM (SELECT customer_id FROM crm WHERE customer_id > 0) t, customer"
+    )) >= {"crm", "customer"}
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT * FROM crm, (customer JOIN secrets ON crm.id = customer.id) j",
+        "SELECT * FROM crm LEFT JOIN (customer JOIN secrets ON customer.id = secrets.id) j ON crm.id = j.id",
+        "SELECT * FROM ((customer JOIN secrets ON customer.id = secrets.id)) j",
+        "SELECT * FROM crm, LATERAL (SELECT * FROM customer) s",
+        "SELECT * FROM crm LEFT OUTER JOIN customer ON crm.id = customer.id",
+        "SELECT * FROM crm RIGHT OUTER JOIN customer ON crm.id = customer.id",
+        "SELECT * FROM crm FULL OUTER JOIN customer ON crm.id = customer.id",
+        "SELECT * FROM crm CROSS JOIN customer",
+        "SELECT * FROM crm NATURAL JOIN customer",
+        "SELECT * FROM crm, customer",
+        "SELECT * FROM (SELECT * FROM customer) t",
+        "SELECT * FROM (SELECT * FROM crm JOIN extra ON crm.id = extra.id WHERE x > 0) t, customer",
+        "SELECT * FROM other_table, (SELECT customer_id FROM crm WHERE customer_id > 0) t",
+        "SELECT * FROM (SELECT a FROM customer) leak1, (SELECT b FROM secrets) leak2, crm",
+        "SELECT * FROM crm WHERE EXISTS (SELECT * FROM customer)",
+        "SELECT * FROM analytics.customer",
+        "SELECT * FROM (SELECT * FROM crm WHERE x > 0 t, customer",
+    ],
+)
+def test_validate_sql_query_rejects_adversarial_unauthorized_relations(sql: str) -> None:
+    """Nested / CTE-adjacent / parenthesized / OUTER / comma smuggles fail closed."""
+
+    warnings = orch.validate_sql_query(sql, source_system="s3://analytics/events/crm")
+
+    assert "unauthorized_table_reference" in warnings
+
+
+@pytest.mark.parametrize(
+    "sql,expected",
+    [
+        ("WITH x AS (SELECT * FROM customer) SELECT * FROM crm", "only_select_allowed"),
+        ("WITH x AS (SELECT * FROM crm) SELECT * FROM crm", "only_select_allowed"),
+    ],
+)
+def test_validate_sql_query_rejects_cte_wrapper(sql: str, expected: str) -> None:
+    """CTEs are not SELECT-leading and must stay rejected even when tables match."""
+
+    warnings = orch.validate_sql_query(sql, source_system="s3://analytics/events/crm")
+
+    assert expected in warnings
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT customer_id FROM customer",
+        "SELECT count(*) AS c FROM (SELECT customer_id, signup_at FROM customer) t",
+        "SELECT * FROM (SELECT customer_id FROM customer WHERE customer_id > 0) t",
+        "SELECT * FROM (customer JOIN customer ON customer.id = customer.id) j",
+        "SELECT * FROM customer, (SELECT customer_id FROM customer WHERE customer_id > 0) t",
+        "SELECT * FROM customer LEFT JOIN (SELECT customer_id FROM customer) t ON customer.id = t.customer_id",
+        "SELECT * FROM customer, LATERAL (SELECT customer_id FROM customer) s",
+        "SELECT * FROM ONLY customer",
+    ],
+)
+def test_validate_sql_query_preserves_allowlisted_shapes(sql: str) -> None:
+    """Legitimate single-source SQL, including derived tables and paren joins, stays allowed."""
+
+    assert orch.validate_sql_query(sql, source_system=_SRC) == []
+
+
+def test_parentheses_balanced_and_outer_group_split() -> None:
+    """Paren helpers fail closed on unclosed groups and unwrap one layer."""
+
+    assert orch._parentheses_balanced("SELECT * FROM (SELECT a FROM crm) t")
+    assert not orch._parentheses_balanced("SELECT * FROM (SELECT a FROM crm")
+    assert not orch._parentheses_balanced("SELECT * FROM crm)")
+    assert orch._split_outer_paren_group("(customer JOIN secrets ON x = y) j") == (
+        "customer JOIN secrets ON x = y",
+        " j",
+    )
+    assert orch._split_outer_paren_group("(SELECT a FROM crm") is None
+    assert orch._split_outer_paren_group("customer") is None
+
+
+def test_collect_relations_from_parenthesized_join() -> None:
+    """Parenthesized joined tables contribute both sides to the allowlist set."""
+
+    tables: list[str] = []
+    orch._collect_relations_from_region(
+        "crm, (customer JOIN secrets ON crm.id = customer.id) j",
+        tables,
+    )
+
+    assert tables == ["crm", "customer", "secrets"]
+
+
 @pytest.mark.parametrize(
     "sql,expected",
     [
