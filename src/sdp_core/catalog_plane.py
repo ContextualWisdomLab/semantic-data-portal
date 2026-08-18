@@ -7,30 +7,14 @@ register GRC policies. Document-KG identifiers are opaque foreign references.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Literal, get_args
 from uuid import uuid4
 
 from pydantic import BaseModel, Field, field_validator
 
 
-OBJECT_KINDS = ("glossary_term", "catalog_dataset", "concept_asset")
-OBJECT_STATUSES = ("draft", "published", "deprecated")
-BINDING_ROLES = ("preferred", "related", "broader", "narrower")
-SOURCE_SYSTEMS = ("naruon", "disksage", "commons")
-SOURCE_OBJECT_KINDS = (
-    "content_node",
-    "project_graph_object",
-    "catalog_batch_ref",
-    "file_candidate",
-)
-SCORE_SYSTEMS = ("tepp", "commons")
-ACCESS_PURPOSES = (
-    "catalog_browse",
-    "glossary_stewardship",
-    "ontology_query",
-    "document_kg_alignment",
-)
 ObjectKind = Literal["glossary_term", "catalog_dataset", "concept_asset"]
 ObjectStatus = Literal["draft", "published", "deprecated"]
 BindingRole = Literal["preferred", "related", "broader", "narrower"]
@@ -48,6 +32,14 @@ AccessPurpose = Literal[
     "ontology_query",
     "document_kg_alignment",
 ]
+OBJECT_KINDS = get_args(ObjectKind)
+OBJECT_STATUSES = get_args(ObjectStatus)
+BINDING_ROLES = get_args(BindingRole)
+SOURCE_SYSTEMS = get_args(SourceSystem)
+SOURCE_OBJECT_KINDS = get_args(SourceObjectKind)
+SCORE_SYSTEMS = get_args(ScoreSystem)
+ACCESS_PURPOSES = get_args(AccessPurpose)
+_OPAQUE_ID_RE = r"^[A-Za-z0-9._:-]+$"
 
 
 def _reject_local_path(value: str, field_name: str) -> str:
@@ -71,8 +63,7 @@ def _reject_local_path(value: str, field_name: str) -> str:
         If the value looks like a local path or ``file:`` URI.
     """
 
-    lowered = value.strip().lower()
-    if "file:" in lowered or "\\" in value or value.startswith("/") or "/home/" in lowered:
+    if re.fullmatch(_OPAQUE_ID_RE, value) is None:
         raise ValueError(f"{field_name} must be an opaque document-KG id, not a filesystem path")
     return value
 
@@ -109,8 +100,8 @@ class DocumentKgLinkDraft(BaseModel):
 
         if value is None:
             return value
-        if not value.startswith(("https://", "http://")):
-            raise ValueError("provenance_uri must be an http(s) citation")
+        if not value.startswith("https://"):
+            raise ValueError("provenance_uri must be an https citation")
         return value
 
 
@@ -132,8 +123,8 @@ class ScoreReferenceDraft(BaseModel):
     def score_endpoint_is_http(cls, value: str) -> str:
         """Scores are consumed over REST; local files are rejected."""
 
-        if not value.startswith(("https://", "http://")):
-            raise ValueError("score_endpoint must be an http(s) TEPP/commons URL")
+        if not value.startswith("https://"):
+            raise ValueError("score_endpoint must be an https TEPP/commons URL")
         return value
 
 
@@ -259,6 +250,7 @@ class PlaneEnvelope(BaseModel):
     tenant_reference: str
     access_purpose: str
     pii_handling: str = "usable_purpose_limited_no_masking"
+    policy_decision_id: str | None = None
     customer_next_action: str
     catalog_object: CatalogObjectRecord | None = None
     catalog_objects: list[CatalogObjectRecord] = Field(default_factory=list)

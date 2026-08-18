@@ -28,12 +28,19 @@ Keyverse remains the identity provider; SDP only consumes the OIDC subject and
    `document_kg_links`, `concept_object_bindings`, `commons_score_references`,
    `object_stewards`). Repeating groups are rows, not JSON blobs.
 4. Keep steward display names usable. Access is purpose-limited
-   (`X-CWL-Access-Purpose`); the plane does not mask PII and does not create a
-   local GRC policy registry.
-5. If a psychometric or commons score is needed, store only an http(s) TEPP or
+   (`X-CWL-Access-Purpose`). The plane reuses existing `policy.evaluate()`
+   (create/search) and records `policy_decision_id`; it does not add a local
+   GRC policy registry and does not mask PII.
+5. Plane contracts live in `sdp_core.catalog_plane` (not `contracts.py`) so the
+   library layer stays split: demo Dataset contracts vs tenant-bound plane
+   objects.
+6. If a psychometric or commons score is needed, store only an https TEPP or
    commons REST pointer. SDP does not compute item scores.
-6. Cite OWL, RDF, and PROV as vocabulary references only. Deep doctoring stays
+7. Cite OWL, RDF, and PROV as vocabulary references only. Deep doctoring stays
    with CWL Researcher.
+8. When Keyverse JWKS is configured (`SDP_OIDC_ISSUER` + audience + JWKS URL),
+   `X-CWL-Oidc-Subject` is rejected. Demo/CI without JWKS may use the existing
+   actor map. Production must send a Bearer token.
 
 ## Standards cited (APA 7th)
 

@@ -91,6 +91,7 @@ def test_buyer_can_create_list_get_and_query_catalog_object():
     assert body["status"] == "created"
     assert body["tenant_reference"] == "demo"
     assert body["pii_handling"] == "usable_purpose_limited_no_masking"
+    assert body["policy_decision_id"]
     assert body["catalog_object"]["steward"]["steward_display_name"] == "Mina Park"
     assert "***" not in created.text
     assert "cn_buyer_active_customer_2026" in created.text
@@ -264,6 +265,57 @@ def test_plane_attaches_document_kg_link_and_concept_after_create():
     assert bound.status_code == 200
     assert bound.json()["catalog_object"]["concept_bindings"][0]["concept_key"] == "매출"
 
+    duplicate = client.post(
+        f"/plane/catalog-objects/{catalog_object_id}/document-kg-links",
+        json={
+            "source_system": "disksage",
+            "source_object_kind": "catalog_batch_ref",
+            "source_object_id": "disksage:batch:preview-ref-not-ingest",
+            "provenance_uri": "https://www.w3.org/TR/prov-o/",
+        },
+        headers=_headers(purpose="document_kg_alignment"),
+    )
+    assert duplicate.status_code == 400
+
+
+def test_plane_rejects_relative_path_and_http_provenance():
+    """Relative paths and cleartext provenance URLs are rejected."""
+
+    path_payload = _create_payload(
+        document_kg_links=[
+            {
+                "source_system": "naruon",
+                "source_object_kind": "content_node",
+                "source_object_id": "../etc/passwd",
+                "provenance_uri": "https://www.w3.org/TR/prov-o/",
+            }
+        ]
+    )
+    assert client.post("/plane/catalog-objects", json=path_payload, headers=_headers()).status_code == 422
+
+    http_payload = _create_payload(
+        document_kg_links=[
+            {
+                "source_system": "naruon",
+                "source_object_kind": "content_node",
+                "source_object_id": "cn_ok",
+                "provenance_uri": "http://www.w3.org/TR/prov-o/",
+            }
+        ]
+    )
+    assert client.post("/plane/catalog-objects", json=http_payload, headers=_headers()).status_code == 422
+
+
+def test_plane_rejects_subject_header_when_jwks_is_configured(monkeypatch):
+    """A self-asserted admin header is not auth once Keyverse JWKS is configured."""
+
+    monkeypatch.setenv("SDP_OIDC_ISSUER", "https://idp.example.com/")
+    monkeypatch.setenv("SDP_OIDC_AUDIENCE", "semantic-data-portal")
+    monkeypatch.setenv("SDP_OIDC_JWKS_URL", "https://idp.example.com/jwks")
+    response = client.get("/plane/catalog-objects", headers=_headers(subject="admin", purpose="catalog_browse"))
+    assert response.status_code == 401
+    assert response.json()["detail"]["error"] == "oidc_subject_header_rejected"
+
 
 def test_bind_keyverse_tenant_rejects_unknown_purpose():
     """Purpose limitation is enforced before any catalog row is touched."""
@@ -287,7 +339,7 @@ def test_plane_oidc_bearer_matches_tenant_claim(monkeypatch):
         {
             "iss": "https://idp.example.com/",
             "aud": "semantic-data-portal",
-            "email": "steward@example.com",
+            "email": "admin",
             "tenant_id": "demo",
             "groups": ["sdp-admins"],
             "exp": int(time()) + 3600,
@@ -317,7 +369,7 @@ def test_plane_oidc_bearer_matches_tenant_claim(monkeypatch):
         },
     )
     assert matched.status_code == 200, matched.text
-    assert matched.json()["catalog_object"]["created_by_subject"] == "steward@example.com"
+    assert matched.json()["catalog_object"]["created_by_subject"] == "admin"
 
     mismatched = client.get(
         "/plane/catalog-objects",

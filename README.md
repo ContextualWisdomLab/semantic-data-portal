@@ -108,9 +108,11 @@ SDP_DATABASE_DSN='postgresql+psycopg://sdp_graph_app:<url-encoded-password>@loca
 ### Ontology/catalog plane (문서 KG 위 카탈로그 평면, issue #13)
 
 Keyverse OIDC subject + `X-CWL-Tenant-Reference` + `X-CWL-Access-Purpose`가 모두
-있어야 하며, tenant가 불일치하면 fail-closed(401/403)입니다. 문서 본문·DiskSage
-ingest/preview·TEPP 채점은 하지 않고, naruon `content_node` 등 **opaque 참조**만
-저장합니다. Steward 표시 이름은 purpose-limited로 그대로 노출되며 마스킹하지 않습니다.
+있어야 하며, tenant가 불일치하면 fail-closed(401/403)입니다. JWKS가 구성된
+환경에서는 `Authorization: Bearer`만 허용하고 `X-CWL-Oidc-Subject`는 거부합니다.
+지원하지 않는 purpose는 400입니다. 문서 본문·DiskSage ingest/preview·TEPP 채점은
+하지 않고, naruon `content_node` 등 **opaque 참조**만 저장합니다. Steward 표시
+이름은 purpose-limited로 그대로 노출되며 마스킹하지 않습니다.
 
 - `POST /plane/catalog-objects` — glossary term / catalog dataset / concept asset 등록
 - `GET  /plane/catalog-objects` — 동일 tenant 목록

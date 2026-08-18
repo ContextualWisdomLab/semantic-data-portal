@@ -20,6 +20,7 @@ from sdp_core.catalog_plane import (
     CatalogObjectCreateRequest,
     ConceptBindingDraft,
     DocumentKgLinkDraft,
+    ObjectKind,
     PlaneActor,
 )
 
@@ -735,7 +736,7 @@ def plane_create_catalog_object(payload: CatalogObjectCreateRequest, request: Re
 @app.get("/plane/catalog-objects")
 def plane_list_catalog_objects(
     request: Request,
-    object_kind: str | None = Query(default=None),
+    object_kind: ObjectKind | None = Query(default=None),
 ) -> dict[str, Any]:
     """List catalog-plane objects visible to the bound Keyverse tenant."""
 

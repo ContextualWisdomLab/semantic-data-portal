@@ -8,6 +8,7 @@ read or written.
 
 from __future__ import annotations
 
+import os
 from typing import Mapping
 
 from sdp_core.catalog_plane import ACCESS_PURPOSES, AccessPurpose, PlaneActor
@@ -54,7 +55,8 @@ class TenantBindingError(Exception):
         message:
             Operator-readable reason string.
         status_code:
-            401 for missing identity, 403 for mismatch or unknown purpose.
+            401 for missing identity, 400 for an unsupported purpose, 403 for
+            a tenant mismatch.
         error_code:
             Stable machine-readable code for clients.
         customer_next_action:
@@ -131,9 +133,35 @@ def _actor_from_bearer(authorization: str) -> tuple[str, str, list[str]]:
     return context.subject, context.tenant_id, list(context.roles)
 
 
-def _actor_from_subject_header(subject: str) -> tuple[str, str, list[str]]:
-    """Resolve a Keyverse-verified subject through the existing actor map."""
+def _oidc_verification_required() -> bool:
+    """Return whether the existing JWKS verifier is configured.
 
+    Issuer, audience, and JWKS URL are the same transport coordinates already
+    used by :func:`verify_oidc_jwks_token`. When they are present, the plane
+    rejects ``X-CWL-Oidc-Subject`` so a client cannot self-assert ``admin``.
+    """
+
+    return bool(
+        os.getenv("SDP_OIDC_ISSUER")
+        and os.getenv("SDP_OIDC_AUDIENCE")
+        and os.getenv("SDP_OIDC_JWKS_URL")
+    )
+
+
+def _actor_from_subject_header(subject: str) -> tuple[str, str, list[str]]:
+    """Resolve a demo-map subject only when JWKS verification is not configured."""
+
+    if _oidc_verification_required():
+        raise TenantBindingError(
+            "X-CWL-Oidc-Subject is not accepted when Keyverse JWKS is configured",
+            status_code=401,
+            error_code="oidc_subject_header_rejected",
+            customer_next_action=(
+                "Send Authorization: Bearer <Keyverse access token>. "
+                "SDP consumes the verified OIDC subject and does not treat a "
+                "raw subject header as authentication when JWKS is configured."
+            ),
+        )
     context = resolve_actor_context(subject)
     if not context.tenant_id or not context.roles:
         raise TenantBindingError(
@@ -151,7 +179,9 @@ def bind_keyverse_tenant(headers: Mapping[str, str]) -> PlaneActor:
     Identity sources, in order:
 
     1. ``Authorization: Bearer`` — verified with the existing JWKS helper.
-    2. ``X-CWL-Oidc-Subject`` — subject already verified by a Keyverse gateway.
+    2. ``X-CWL-Oidc-Subject`` — demo/CI actor map only, and only when JWKS
+       verification is **not** configured. Production with Keyverse JWKS must
+       send a Bearer token.
 
     The ``X-CWL-Tenant-Reference`` header must match the OIDC tenant claim.
     Platform-admin is not a cross-tenant escape hatch on this plane.

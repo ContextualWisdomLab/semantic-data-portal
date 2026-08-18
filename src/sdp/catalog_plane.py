@@ -9,6 +9,7 @@ scores, or keep a local GRC policy registry.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from threading import RLock
 from uuid import uuid4
 
 from sdp_core.catalog_plane import (
@@ -26,14 +27,33 @@ from sdp_core.catalog_plane import (
     ScoreReferenceRecord,
 )
 
+from .policy import evaluate
+
 
 _CATALOG_OBJECTS: dict[str, CatalogObjectRecord] = {}
+_STORE_LOCK = RLock()
 
 
 def reset_catalog_plane() -> None:
     """Clear in-memory plane state so tests do not leak across cases."""
 
-    _CATALOG_OBJECTS.clear()
+    with _STORE_LOCK:
+        _CATALOG_OBJECTS.clear()
+
+
+def snapshot_catalog_plane() -> dict[str, CatalogObjectRecord]:
+    """Copy current plane rows for test isolation."""
+
+    with _STORE_LOCK:
+        return {key: value.model_copy(deep=True) for key, value in _CATALOG_OBJECTS.items()}
+
+
+def restore_catalog_plane(snapshot: dict[str, CatalogObjectRecord]) -> None:
+    """Replace plane rows with a previously captured snapshot."""
+
+    with _STORE_LOCK:
+        _CATALOG_OBJECTS.clear()
+        _CATALOG_OBJECTS.update(snapshot)
 
 
 def _now() -> datetime:
@@ -53,22 +73,22 @@ def _next_action_for_object(record: CatalogObjectRecord) -> str:
 
     if not record.document_kg_links:
         return (
-            f"POST /plane/catalog-objects/{record.catalog_object_id}/document-kg-links "
-            "with a naruon content_node or project_graph_object id so this "
-            "glossary/catalog object can resolve document-KG identity. Do not "
-            "upload the document here — naruon already holds it."
+            f"다음으로 POST /plane/catalog-objects/{record.catalog_object_id}/document-kg-links "
+            "에 naruon content_node 또는 project_graph_object id를 보내 "
+            "이 glossary/catalog 객체가 document KG identity를 해석하게 하세요. "
+            "문서는 여기에 올리지 마세요 — naruon이 이미 보유합니다."
         )
     if not record.concept_bindings:
         return (
-            f"POST /plane/catalog-objects/{record.catalog_object_id}/concept-bindings "
-            "to attach an ontology concept key, then GET /plane/query?q="
-            f"{record.object_slug} to confirm buyers can find it by term."
+            f"다음으로 POST /plane/catalog-objects/{record.catalog_object_id}/concept-bindings "
+            "로 ontology concept key를 붙인 뒤 GET /plane/query?q="
+            f"{record.object_slug} 로 용어 검색이 되는지 확인하세요."
         )
     return (
-        f"Share GET /plane/catalog-objects/{record.catalog_object_id} with the "
-        "same X-CWL-Tenant-Reference so analysts can browse this object, or "
-        f"GET /plane/query?q={record.object_slug} to search aliases and "
-        "document-KG links in this tenant."
+        f"같은 X-CWL-Tenant-Reference로 GET /plane/catalog-objects/{record.catalog_object_id} "
+        "를 분석가와 공유하거나, "
+        f"GET /plane/query?q={record.object_slug} 로 alias와 document-KG link를 "
+        "이 tenant에서 검색하세요."
     )
 
 
@@ -88,8 +108,8 @@ def _envelope(
         action = _next_action_for_object(record)
     if action is None:
         action = (
-            "POST /plane/catalog-objects to register a glossary term or catalog "
-            "dataset above the document KG, using the same X-CWL-Tenant-Reference."
+            "같은 X-CWL-Tenant-Reference로 POST /plane/catalog-objects 를 호출해 "
+            "document KG 위의 glossary term 또는 catalog dataset을 등록하세요."
         )
     return PlaneEnvelope(
         status=status,
@@ -102,18 +122,41 @@ def _envelope(
     )
 
 
-def _require_mutate(actor: PlaneActor) -> None:
-    """Refuse writes unless the bound actor has an admin role."""
+def _govern(actor: PlaneActor, *, mutate: bool) -> str:
+    """Reuse the existing policy helper without adding a GRC registry or masking.
 
-    if not actor.can_mutate():
+    Create uses ``action=create`` (admin). List/get/query use ``action=search``
+    with resource ``catalog`` so ``evaluate`` never looks up a Dataset id.
+    Steward names stay in the envelope unmasked.
+    """
+
+    if mutate and not actor.can_mutate():
         raise PermissionError("catalog-plane writes require an admin Keyverse role")
-
-
-def _require_read(actor: PlaneActor) -> None:
-    """Refuse reads unless the bound actor has a reader role."""
-
-    if not actor.can_read():
+    if not mutate and not actor.can_read():
         raise PermissionError("catalog-plane reads require a Keyverse reader role")
+    decision = evaluate(
+        subject=actor.subject,
+        resource="plane" if mutate else "catalog",
+        action="create" if mutate else "search",
+        purpose=actor.access_purpose,
+    )
+    if decision.effect != "allow":
+        raise PermissionError(decision.reason)
+    return decision.decision_id
+
+
+def _assert_unique_children(request: CatalogObjectCreateRequest) -> None:
+    """Reject duplicate alias/link/binding keys that SQL UNIQUE would refuse."""
+
+    alias_keys = [(row.alias_text, row.alias_language) for row in request.aliases]
+    if len(alias_keys) != len(set(alias_keys)):
+        raise ValueError("duplicate object alias in this catalog object")
+    link_keys = [(row.source_system, row.source_object_id) for row in request.document_kg_links]
+    if len(link_keys) != len(set(link_keys)):
+        raise ValueError("duplicate document-KG link in this catalog object")
+    binding_keys = [(row.concept_key, row.binding_role) for row in request.concept_bindings]
+    if len(binding_keys) != len(set(binding_keys)):
+        raise ValueError("duplicate concept binding in this catalog object")
 
 
 def create_catalog_object(actor: PlaneActor, request: CatalogObjectCreateRequest) -> PlaneEnvelope:
@@ -139,86 +182,90 @@ def create_catalog_object(actor: PlaneActor, request: CatalogObjectCreateRequest
         When the slug already exists in the tenant.
     """
 
-    _require_mutate(actor)
-    for existing in _CATALOG_OBJECTS.values():
-        if (
-            existing.tenant_reference == actor.tenant_reference
-            and existing.object_slug == request.object_slug
-        ):
-            raise ValueError("object_slug already exists in this tenant")
+    decision_id = _govern(actor, mutate=True)
+    _assert_unique_children(request)
+    with _STORE_LOCK:
+        for existing in _CATALOG_OBJECTS.values():
+            if (
+                existing.tenant_reference == actor.tenant_reference
+                and existing.object_slug == request.object_slug
+            ):
+                raise ValueError("object_slug already exists in this tenant")
 
-    catalog_object_id = CatalogObjectRecord.new_id()
-    recorded_at = _now()
-    record = CatalogObjectRecord(
-        catalog_object_id=catalog_object_id,
-        tenant_reference=actor.tenant_reference,
-        object_kind=request.object_kind,
-        object_slug=request.object_slug,
-        display_title=request.display_title,
-        object_status=request.object_status,
-        created_by_subject=actor.subject,
-        created_at=recorded_at,
-        updated_at=recorded_at,
-        definition=ObjectDefinitionRecord(
-            definition_id=_child_id(),
+        catalog_object_id = CatalogObjectRecord.new_id()
+        recorded_at = _now()
+        record = CatalogObjectRecord(
             catalog_object_id=catalog_object_id,
-            definition_text=request.definition_text,
-            preferred_language=request.preferred_language,
-            definition_status="current",
-            recorded_at=recorded_at,
-        ),
-        steward=ObjectStewardRecord(
-            steward_record_id=_child_id(),
-            catalog_object_id=catalog_object_id,
-            steward_subject=actor.subject,
-            steward_display_name=request.steward_display_name,
-            recorded_at=recorded_at,
-        ),
-        aliases=[
-            ObjectAliasRecord(
-                alias_id=_child_id(),
+            tenant_reference=actor.tenant_reference,
+            object_kind=request.object_kind,
+            object_slug=request.object_slug,
+            display_title=request.display_title,
+            object_status=request.object_status,
+            created_by_subject=actor.subject,
+            created_at=recorded_at,
+            updated_at=recorded_at,
+            definition=ObjectDefinitionRecord(
+                definition_id=_child_id(),
                 catalog_object_id=catalog_object_id,
-                alias_text=alias.alias_text,
-                alias_language=alias.alias_language,
-            )
-            for alias in request.aliases
-        ],
-        document_kg_links=[
-            DocumentKgLinkRecord(
-                document_kg_link_id=_child_id(),
-                catalog_object_id=catalog_object_id,
-                source_system=link.source_system,
-                source_object_kind=link.source_object_kind,
-                source_object_id=link.source_object_id,
-                provenance_uri=link.provenance_uri,
-                link_status="active",
+                definition_text=request.definition_text,
+                preferred_language=request.preferred_language,
+                definition_status="current",
                 recorded_at=recorded_at,
-            )
-            for link in request.document_kg_links
-        ],
-        concept_bindings=[
-            ConceptBindingRecord(
-                binding_id=_child_id(),
+            ),
+            steward=ObjectStewardRecord(
+                steward_record_id=_child_id(),
                 catalog_object_id=catalog_object_id,
-                concept_key=binding.concept_key,
-                binding_role=binding.binding_role,
+                steward_subject=actor.subject,
+                steward_display_name=request.steward_display_name,
                 recorded_at=recorded_at,
-            )
-            for binding in request.concept_bindings
-        ],
-        score_references=[
-            ScoreReferenceRecord(
-                score_reference_id=_child_id(),
-                catalog_object_id=catalog_object_id,
-                score_system=reference.score_system,
-                score_endpoint=reference.score_endpoint,
-                recorded_at=recorded_at,
-            )
-            for reference in request.score_references
-        ],
-    )
-    _CATALOG_OBJECTS[catalog_object_id] = record
-    return _envelope(actor=actor, status="created", record=record)
+            ),
+            aliases=[
+                ObjectAliasRecord(
+                    alias_id=_child_id(),
+                    catalog_object_id=catalog_object_id,
+                    alias_text=alias.alias_text,
+                    alias_language=alias.alias_language,
+                )
+                for alias in request.aliases
+            ],
+            document_kg_links=[
+                DocumentKgLinkRecord(
+                    document_kg_link_id=_child_id(),
+                    catalog_object_id=catalog_object_id,
+                    source_system=link.source_system,
+                    source_object_kind=link.source_object_kind,
+                    source_object_id=link.source_object_id,
+                    provenance_uri=link.provenance_uri,
+                    link_status="active",
+                    recorded_at=recorded_at,
+                )
+                for link in request.document_kg_links
+            ],
+            concept_bindings=[
+                ConceptBindingRecord(
+                    binding_id=_child_id(),
+                    catalog_object_id=catalog_object_id,
+                    concept_key=binding.concept_key,
+                    binding_role=binding.binding_role,
+                    recorded_at=recorded_at,
+                )
+                for binding in request.concept_bindings
+            ],
+            score_references=[
+                ScoreReferenceRecord(
+                    score_reference_id=_child_id(),
+                    catalog_object_id=catalog_object_id,
+                    score_system=reference.score_system,
+                    score_endpoint=reference.score_endpoint,
+                    recorded_at=recorded_at,
+                )
+                for reference in request.score_references
+            ],
+        )
+        _CATALOG_OBJECTS[catalog_object_id] = record
+    envelope = _envelope(actor=actor, status="created", record=record)
+    envelope.policy_decision_id = decision_id
+    return envelope
 
 
 def list_catalog_objects(
@@ -228,41 +275,48 @@ def list_catalog_objects(
 ) -> PlaneEnvelope:
     """List catalog objects visible to the bound tenant only."""
 
-    _require_read(actor)
-    items = [
-        record
-        for record in _CATALOG_OBJECTS.values()
-        if record.tenant_reference == actor.tenant_reference
-        and (object_kind is None or record.object_kind == object_kind)
-    ]
+    decision_id = _govern(actor, mutate=False)
+    with _STORE_LOCK:
+        items = [
+            record
+            for record in _CATALOG_OBJECTS.values()
+            if record.tenant_reference == actor.tenant_reference
+            and (object_kind is None or record.object_kind == object_kind)
+        ]
     items.sort(key=lambda row: row.display_title)
     next_action = (
-        "Open GET /plane/catalog-objects/{catalog_object_id} for the object a "
-        "steward should govern, or POST /plane/catalog-objects to register a "
-        "new glossary term above the document KG."
+        "다음으로 GET /plane/catalog-objects/{catalog_object_id} 로 steward가 "
+        "다룰 객체를 열거나, POST /plane/catalog-objects 로 document KG 위의 "
+        "glossary term을 등록하세요."
         if items
         else (
-            "No catalog objects exist for this tenant yet. POST "
-            "/plane/catalog-objects as an admin to register the first glossary "
-            "term or catalog dataset above the document KG."
+            "이 tenant에는 catalog object가 없습니다. admin으로 "
+            "POST /plane/catalog-objects 를 호출해 첫 glossary term 또는 "
+            "catalog dataset을 등록하세요."
         )
     )
-    return _envelope(
+    envelope = _envelope(
         actor=actor,
         status="listed",
         records=items,
         customer_next_action=next_action,
     )
+    envelope.policy_decision_id = decision_id
+    return envelope
 
 
 def get_catalog_object(actor: PlaneActor, catalog_object_id: str) -> PlaneEnvelope:
     """Return one catalog object if it belongs to the bound tenant."""
 
-    _require_read(actor)
-    record = _CATALOG_OBJECTS.get(catalog_object_id)
-    if record is None or record.tenant_reference != actor.tenant_reference:
-        raise KeyError("catalog object not found in this tenant")
-    return _envelope(actor=actor, status="retrieved", record=record)
+    decision_id = _govern(actor, mutate=False)
+    with _STORE_LOCK:
+        record = _CATALOG_OBJECTS.get(catalog_object_id)
+        if record is None or record.tenant_reference != actor.tenant_reference:
+            raise KeyError("catalog object not found in this tenant")
+        record = record.model_copy(deep=True)
+    envelope = _envelope(actor=actor, status="retrieved", record=record)
+    envelope.policy_decision_id = decision_id
+    return envelope
 
 
 def attach_document_kg_link(
@@ -275,33 +329,41 @@ def attach_document_kg_link(
 ) -> PlaneEnvelope:
     """Attach an opaque document-KG reference to an existing catalog object."""
 
-    _require_mutate(actor)
-    envelope = get_catalog_object(actor, catalog_object_id)
-    record = envelope.catalog_object
-    if record is None:  # pragma: no cover - get_catalog_object always sets it
-        raise KeyError("catalog object not found in this tenant")
-
+    decision_id = _govern(actor, mutate=True)
     draft = DocumentKgLinkDraft(
         source_system=source_system,  # type: ignore[arg-type]
         source_object_kind=source_object_kind,  # type: ignore[arg-type]
         source_object_id=source_object_id,
         provenance_uri=provenance_uri,
     )
-    recorded_at = _now()
-    record.document_kg_links.append(
-        DocumentKgLinkRecord(
-            document_kg_link_id=_child_id(),
-            catalog_object_id=record.catalog_object_id,
-            source_system=draft.source_system,
-            source_object_kind=draft.source_object_kind,
-            source_object_id=draft.source_object_id,
-            provenance_uri=draft.provenance_uri,
-            link_status="active",
-            recorded_at=recorded_at,
+    with _STORE_LOCK:
+        record = _CATALOG_OBJECTS.get(catalog_object_id)
+        if record is None or record.tenant_reference != actor.tenant_reference:
+            raise KeyError("catalog object not found in this tenant")
+        if any(
+            link.source_system == draft.source_system
+            and link.source_object_id == draft.source_object_id
+            for link in record.document_kg_links
+        ):
+            raise ValueError("duplicate document-KG link in this catalog object")
+        recorded_at = _now()
+        record.document_kg_links.append(
+            DocumentKgLinkRecord(
+                document_kg_link_id=_child_id(),
+                catalog_object_id=record.catalog_object_id,
+                source_system=draft.source_system,
+                source_object_kind=draft.source_object_kind,
+                source_object_id=draft.source_object_id,
+                provenance_uri=draft.provenance_uri,
+                link_status="active",
+                recorded_at=recorded_at,
+            )
         )
-    )
-    record.updated_at = recorded_at
-    return _envelope(actor=actor, status="linked", record=record)
+        record.updated_at = recorded_at
+        snapshot = record.model_copy(deep=True)
+    envelope = _envelope(actor=actor, status="linked", record=snapshot)
+    envelope.policy_decision_id = decision_id
+    return envelope
 
 
 def attach_concept_binding(
@@ -312,64 +374,73 @@ def attach_concept_binding(
 ) -> PlaneEnvelope:
     """Attach an ontology concept key to an existing catalog object."""
 
-    _require_mutate(actor)
-    envelope = get_catalog_object(actor, catalog_object_id)
-    record = envelope.catalog_object
-    if record is None:  # pragma: no cover
-        raise KeyError("catalog object not found in this tenant")
-
+    decision_id = _govern(actor, mutate=True)
     draft = ConceptBindingDraft(concept_key=concept_key, binding_role=binding_role)  # type: ignore[arg-type]
-    recorded_at = _now()
-    record.concept_bindings.append(
-        ConceptBindingRecord(
-            binding_id=_child_id(),
-            catalog_object_id=record.catalog_object_id,
-            concept_key=draft.concept_key,
-            binding_role=draft.binding_role,
-            recorded_at=recorded_at,
+    with _STORE_LOCK:
+        record = _CATALOG_OBJECTS.get(catalog_object_id)
+        if record is None or record.tenant_reference != actor.tenant_reference:
+            raise KeyError("catalog object not found in this tenant")
+        if any(
+            binding.concept_key == draft.concept_key and binding.binding_role == draft.binding_role
+            for binding in record.concept_bindings
+        ):
+            raise ValueError("duplicate concept binding in this catalog object")
+        recorded_at = _now()
+        record.concept_bindings.append(
+            ConceptBindingRecord(
+                binding_id=_child_id(),
+                catalog_object_id=record.catalog_object_id,
+                concept_key=draft.concept_key,
+                binding_role=draft.binding_role,
+                recorded_at=recorded_at,
+            )
         )
-    )
-    record.updated_at = recorded_at
-    return _envelope(actor=actor, status="bound", record=record)
+        record.updated_at = recorded_at
+        snapshot = record.model_copy(deep=True)
+    envelope = _envelope(actor=actor, status="bound", record=snapshot)
+    envelope.policy_decision_id = decision_id
+    return envelope
 
 
 def query_catalog_objects(actor: PlaneActor, query: str) -> PlaneEnvelope:
     """Search title, slug, aliases, concept keys, and document-KG ids in-tenant."""
 
-    _require_read(actor)
+    decision_id = _govern(actor, mutate=False)
     needle = query.strip().lower()
     if not needle:
         raise ValueError("query text is required")
 
     matches: list[CatalogObjectRecord] = []
-    for record in _CATALOG_OBJECTS.values():
-        if record.tenant_reference != actor.tenant_reference:
-            continue
-        haystacks = [
-            record.display_title,
-            record.object_slug,
-            record.definition.definition_text,
-            record.steward.steward_display_name,
-            *[alias.alias_text for alias in record.aliases],
-            *[binding.concept_key for binding in record.concept_bindings],
-            *[link.source_object_id for link in record.document_kg_links],
-        ]
-        if any(needle in value.lower() for value in haystacks):
-            matches.append(record)
+    with _STORE_LOCK:
+        for record in _CATALOG_OBJECTS.values():
+            if record.tenant_reference != actor.tenant_reference:
+                continue
+            haystacks = [
+                record.display_title,
+                record.object_slug,
+                record.definition.definition_text,
+                record.steward.steward_display_name,
+                *[alias.alias_text for alias in record.aliases],
+                *[binding.concept_key for binding in record.concept_bindings],
+                *[link.source_object_id for link in record.document_kg_links],
+            ]
+            if any(needle in value.lower() for value in haystacks):
+                matches.append(record.model_copy(deep=True))
     matches.sort(key=lambda row: row.display_title)
     next_action = (
-        "Open GET /plane/catalog-objects/{catalog_object_id} for the match a "
-        "buyer should govern, then attach a missing document-KG link if the "
-        "term still has no naruon content_node."
+        "다음으로 GET /plane/catalog-objects/{catalog_object_id} 로 매칭된 객체를 "
+        "열고, naruon content_node가 없으면 document-KG link를 추가하세요."
         if matches
         else (
-            "No tenant-local match. Confirm the Keyverse tenant header, then "
-            "POST /plane/catalog-objects to register the missing glossary term."
+            "이 tenant에서 일치하는 객체가 없습니다. X-CWL-Tenant-Reference를 "
+            "확인한 뒤 POST /plane/catalog-objects 로 glossary term을 등록하세요."
         )
     )
-    return _envelope(
+    envelope = _envelope(
         actor=actor,
         status="queried",
         records=matches,
         customer_next_action=next_action,
     )
+    envelope.policy_decision_id = decision_id
+    return envelope
