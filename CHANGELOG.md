@@ -14,3 +14,10 @@
 - Catalog/ontology plane persistence: in-memory remains the CI default;
   `SDP_DATABASE_DSN` reads and writes the 0002 tables so a paid-pilot restart
   keeps glossary/catalog rows.
+
+### Security
+
+- Disabled raw `X-CWL-Oidc-Subject` authentication by default. Local demo and CI
+  must explicitly set `SDP_ALLOW_UNVERIFIED_SUBJECT_HEADER=true`; production and
+  paid-pilot deployments use verified Keyverse Bearer JWTs, and JWKS-configured
+  deployments reject the raw header even when the demo flag is present.
