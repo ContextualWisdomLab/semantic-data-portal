@@ -1,9 +1,10 @@
 """Fail-closed Keyverse tenant binding for the ontology/catalog plane.
 
-SDP consumes an already-issued Keyverse OIDC subject and the
+SDP consumes an already-issued Keyverse OIDC identity and the
 ``X-CWL-Tenant-Reference`` header. It does not provision tenants, an IdP, or
 SCIM. Missing or mismatched identity is rejected before any catalog object is
-read or written.
+read or written. A raw ``X-CWL-Oidc-Subject`` value is disabled by default and
+is available only for an explicitly opted-in local demo or CI environment.
 """
 
 from __future__ import annotations
@@ -18,12 +19,14 @@ from .authz import resolve_actor_context, verify_oidc_jwks_token
 TENANT_HEADER = "X-CWL-Tenant-Reference"
 SUBJECT_HEADER = "X-CWL-Oidc-Subject"
 PURPOSE_HEADER = "X-CWL-Access-Purpose"
+UNVERIFIED_SUBJECT_HEADER_ENV = "SDP_ALLOW_UNVERIFIED_SUBJECT_HEADER"
 
 _MISSING_IDENTITY_NEXT_ACTION = (
-    "Supply a Keyverse OIDC subject (Authorization: Bearer <jwt> or "
-    f"{SUBJECT_HEADER}) together with {TENANT_HEADER} and {PURPOSE_HEADER}. "
-    "Both identity values must name the same tenant. SDP will not create a "
-    "tenant, IdP, or SCIM record for you."
+    "Send Authorization: Bearer <Keyverse access token> together with "
+    f"{TENANT_HEADER} and {PURPOSE_HEADER}. Both identity values must name "
+    "the same tenant. For local demo or CI only, an operator may explicitly "
+    f"set {UNVERIFIED_SUBJECT_HEADER_ENV}=true before using {SUBJECT_HEADER}. "
+    "SDP will not create a tenant, IdP, or SCIM record for you."
 )
 _MISMATCH_NEXT_ACTION = (
     f"Correct {TENANT_HEADER} so it matches the Keyverse OIDC tenant claim, "
@@ -125,9 +128,9 @@ def _actor_from_bearer(authorization: str) -> tuple[str, str, list[str]]:
             status_code=401,
             error_code="oidc_token_rejected",
             customer_next_action=(
-                "Present a current Keyverse access token, or send "
-                f"{SUBJECT_HEADER} from a Keyverse gateway that already "
-                "verified the subject. SDP does not operate an IdP."
+                "Present a current Keyverse access token using "
+                "Authorization: Bearer <token>. SDP consumes the verified "
+                "OIDC subject and does not operate an IdP."
             ),
         ) from exc
     return context.subject, context.tenant_id, list(context.roles)
@@ -148,18 +151,29 @@ def _oidc_verification_required() -> bool:
     )
 
 
-def _actor_from_subject_header(subject: str) -> tuple[str, str, list[str]]:
-    """Resolve a demo-map subject only when JWKS verification is not configured."""
+def _unverified_subject_header_allowed() -> bool:
+    """Return whether a local demo or CI explicitly enabled the raw header.
 
-    if _oidc_verification_required():
+    Only the exact case-insensitive value ``true`` opts in. The secure default
+    is disabled, including when the variable is missing, blank, or misspelled.
+    """
+
+    return os.getenv(UNVERIFIED_SUBJECT_HEADER_ENV, "").strip().lower() == "true"
+
+
+def _actor_from_subject_header(subject: str) -> tuple[str, str, list[str]]:
+    """Resolve a demo-map subject only behind the explicit local opt-in."""
+
+    if _oidc_verification_required() or not _unverified_subject_header_allowed():
         raise TenantBindingError(
-            "X-CWL-Oidc-Subject is not accepted when Keyverse JWKS is configured",
+            "X-CWL-Oidc-Subject is disabled without explicit demo/CI opt-in",
             status_code=401,
             error_code="oidc_subject_header_rejected",
             customer_next_action=(
-                "Send Authorization: Bearer <Keyverse access token>. "
-                "SDP consumes the verified OIDC subject and does not treat a "
-                "raw subject header as authentication when JWKS is configured."
+                "Send Authorization: Bearer <Keyverse access token>. For a "
+                "local demo or CI environment only, an operator may set "
+                f"{UNVERIFIED_SUBJECT_HEADER_ENV}=true; never expose that "
+                "configuration on an externally reachable deployment."
             ),
         )
     context = resolve_actor_context(subject)
@@ -179,9 +193,9 @@ def bind_keyverse_tenant(headers: Mapping[str, str]) -> PlaneActor:
     Identity sources, in order:
 
     1. ``Authorization: Bearer`` — verified with the existing JWKS helper.
-    2. ``X-CWL-Oidc-Subject`` — demo/CI actor map only, and only when JWKS
-       verification is **not** configured. Production with Keyverse JWKS must
-       send a Bearer token.
+    2. ``X-CWL-Oidc-Subject`` — disabled by default; available only when
+       ``SDP_ALLOW_UNVERIFIED_SUBJECT_HEADER=true`` and JWKS verification is
+       not configured. This path is restricted to a local demo or CI.
 
     The ``X-CWL-Tenant-Reference`` header must match the OIDC tenant claim.
     Platform-admin is not a cross-tenant escape hatch on this plane.
@@ -199,7 +213,7 @@ def bind_keyverse_tenant(headers: Mapping[str, str]) -> PlaneActor:
     Raises
     ------
     TenantBindingError
-        On missing, malformed, or mismatched identity.
+        On missing, malformed, untrusted, or mismatched identity.
     """
 
     tenant_reference = _header(headers, TENANT_HEADER)
