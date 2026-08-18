@@ -59,3 +59,24 @@ def test_render_sql_substitutes_configured_embedding_dimension():
 def test_embedding_dimension_reads_config_default():
     runner = _load_runner()
     assert runner._embedding_dimension() == 128
+
+
+def test_catalog_plane_migration_defines_3nf_snake_case_objects():
+    """The ontology/catalog plane tables are 2+ word snake_case and 3NF."""
+
+    sql = (MIGRATIONS_DIR / "0002_ontology_catalog_plane.sql").read_text(encoding="utf-8")
+    for obj in [
+        "catalog_objects",
+        "object_definitions",
+        "object_aliases",
+        "document_kg_links",
+        "concept_object_bindings",
+        "commons_score_references",
+        "object_stewards",
+    ]:
+        assert obj in sql, f"expected object {obj} in catalog-plane migration"
+        assert " " not in obj
+        assert "_" in obj
+    assert "UNIQUE (tenant_reference, object_slug)" in sql
+    assert "JSONB" not in sql
+    assert "0002_ontology_catalog_plane" in sql

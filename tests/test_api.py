@@ -10,6 +10,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from jwt.algorithms import RSAAlgorithm
 
 import sdp.catalog as app_catalog
+import sdp.catalog_plane as app_catalog_plane
 import sdp.domain as app_domain
 import sdp.evidence as app_evidence
 import sdp.observability as app_observability
@@ -32,6 +33,7 @@ def isolate_in_memory_app_state():
     request_observations = app_observability.list_request_observations()
     export_errors = app_observability.list_observability_export_errors()
     yield
+    app_catalog_plane.reset_catalog_plane()
     app_catalog._DATA.clear()
     app_catalog._DATA.update(data)
     app_catalog._AUDIT_LOG[:] = audit_log

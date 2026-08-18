@@ -1,5 +1,11 @@
 """Core contracts for Semantic Data Portal."""
 
+from .catalog_plane import (
+    CatalogObjectCreateRequest,
+    CatalogObjectRecord,
+    PlaneActor,
+    PlaneEnvelope,
+)
 from .contracts import (
     ActorContext,
     AuditEvent,
@@ -48,6 +54,10 @@ from .stores import PostgresEvidenceStore, SQLiteEvidenceStore
 
 __all__ = [
     "ActorContext",
+    "CatalogObjectCreateRequest",
+    "CatalogObjectRecord",
+    "PlaneActor",
+    "PlaneEnvelope",
     "AuditEvent",
     "BusinessMapping",
     "BuyerDemoDatasetSummary",

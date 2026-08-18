@@ -105,6 +105,24 @@ SDP_DATABASE_DSN='postgresql+psycopg://sdp_graph_app:<url-encoded-password>@loca
 - `GET  /ontology/term/{term}/graph` — 개념 그래프 (그래프 스토어 백엔드)
 - `POST /search/semantic` — pgvector KNN 시맨틱 검색 (kind 필터)
 
+### Ontology/catalog plane (문서 KG 위 카탈로그 평면, issue #13)
+
+Keyverse OIDC subject + `X-CWL-Tenant-Reference` + `X-CWL-Access-Purpose`가 모두
+있어야 하며, tenant가 불일치하면 fail-closed(401/403)입니다. 문서 본문·DiskSage
+ingest/preview·TEPP 채점은 하지 않고, naruon `content_node` 등 **opaque 참조**만
+저장합니다. Steward 표시 이름은 purpose-limited로 그대로 노출되며 마스킹하지 않습니다.
+
+- `POST /plane/catalog-objects` — glossary term / catalog dataset / concept asset 등록
+- `GET  /plane/catalog-objects` — 동일 tenant 목록
+- `GET  /plane/catalog-objects/{catalog_object_id}` — 단건 조회
+- `POST /plane/catalog-objects/{catalog_object_id}/document-kg-links` — 문서 KG 참조 연결
+- `POST /plane/catalog-objects/{catalog_object_id}/concept-bindings` — 온톨로지 개념 연결
+- `GET  /plane/query?q=...` — title/alias/concept/document-KG id 검색
+
+필수 헤더: `X-CWL-Oidc-Subject` 또는 `Authorization: Bearer`, `X-CWL-Tenant-Reference`,
+`X-CWL-Access-Purpose` (`catalog_browse` | `glossary_stewardship` | `ontology_query` |
+`document_kg_alignment`).
+
 ### Catalog / governance / enterprise (기존)
 
 - `GET /health`
@@ -150,6 +168,7 @@ PYTHONPATH=src python -m sdp.demo_smoke
 | PRD/TRD 항목 | 구현 |
 |---|---|
 | Catalog Service | `src/sdp/catalog.py`, `/catalog/*` |
+| Ontology / catalog plane (above doc KG) | `src/sdp/catalog_plane.py`, `src/sdp/tenant_binding.py`, `/plane/*` |
 | Ontology / Terminology | `src/sdp/ontology.py`, `/ontology/*` |
 | Browse/Query | `src/sdp/browse.py`, `/browse/*` |
 | Policy Service | `src/sdp/policy.py`, `/policy/decision` |
