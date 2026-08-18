@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import tomllib
 from pathlib import Path
 
 
@@ -13,16 +14,45 @@ LOCK_FILES = (
     ROOT / "requirements-test.txt",
 )
 CRYPTOGRAPHY_PIN = "cryptography==50.0.0"
+# GHSA-g6cj-pr64-35w5: cryptography>=44.0.0,<50.0.0
+_AFFECTED_CRYPTOGRAPHY_PIN = re.compile(r"^cryptography\s*==\s*(?:4[4-9])\.", re.IGNORECASE)
+
+
+def _cryptography_requirement_lines(path: Path) -> list[str]:
+    """Return non-comment cryptography requirement lines from a text file."""
+
+    lines: list[str] = []
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        candidate = stripped.strip(",").strip('"').strip("'")
+        if candidate.lower().startswith("cryptography"):
+            lines.append(candidate)
+    return lines
 
 
 def test_runtime_metadata_pins_patched_cryptography_release() -> None:
     """Project metadata keeps CVE-2026-69247 outside the resolver graph."""
 
-    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    test_input = (ROOT / "requirements-test.in").read_text(encoding="utf-8")
+    with (ROOT / "pyproject.toml").open("rb") as handle:
+        dependencies = tomllib.load(handle).get("project", {}).get("dependencies", [])
 
-    assert f'"{CRYPTOGRAPHY_PIN}"' in pyproject
-    assert re.search(rf"(?m)^{re.escape(CRYPTOGRAPHY_PIN)}$", test_input)
+    runtime_pins = [
+        item.split(";", 1)[0].strip()
+        for item in dependencies
+        if item.split(";", 1)[0].strip().lower().startswith("cryptography")
+    ]
+    assert runtime_pins == [CRYPTOGRAPHY_PIN]
+    assert not any(_AFFECTED_CRYPTOGRAPHY_PIN.match(item) for item in runtime_pins)
+
+    pyproject_pins = _cryptography_requirement_lines(ROOT / "pyproject.toml")
+    assert CRYPTOGRAPHY_PIN in pyproject_pins
+    assert not any(_AFFECTED_CRYPTOGRAPHY_PIN.match(item) for item in pyproject_pins)
+
+    test_input_pins = _cryptography_requirement_lines(ROOT / "requirements-test.in")
+    assert test_input_pins == [CRYPTOGRAPHY_PIN]
+    assert not any(_AFFECTED_CRYPTOGRAPHY_PIN.match(item) for item in test_input_pins)
 
 
 def test_every_installable_lock_uses_patched_cryptography_release() -> None:
