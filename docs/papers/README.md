@@ -1,65 +1,52 @@
-# Reference papers — graph + vector semantic retrieval
+# Reference papers — attachment and license notes
 
-Academic grounding for the Semantic Data Portal graph engine (ontology-driven
-retrieval over a property graph combined with vector similarity search). Only
-papers under a redistribution-permitting license are attached as PDFs; the rest
-are cited with a link + summary, respecting copyright.
+APA 7th 서지와 검증 로그는 **[../REFERENCES.md](../REFERENCES.md)** 가
+원천입니다. 여기에는 재배포 가능한 PDF 첨부와 저작권 메모만 둡니다.
+새 PDF를 이 브랜치에서 첨부하지 않습니다.
+
+Academic grounding for the catalog’s graph + vector retrieval. Only papers
+under a redistribution-permitting license are attached as PDFs; the rest
+are cite + link, respecting copyright.
 
 ---
 
 ## 1. GraphRAG — attached (CC BY 4.0)
 
-> Darren Edge, Ha Trinh, Newman Cheng, Joshua Bradley, Alex Chao, Apurva Mody,
-> Steven Truitt, Dasha Metropolitansky, Robert Osazuwa Ness, Jonathan Larson.
-> **"From Local to Global: A Graph RAG Approach to Query-Focused
-> Summarization."** arXiv:2404.16130, 2024.
+APA: Edge et al. (2024). See REFERENCES.md.
 
-- Link: https://arxiv.org/abs/2404.16130
-- License: **Creative Commons Attribution 4.0 International (CC BY 4.0)** —
-  redistributable with attribution. PDF included: [`graphrag-edge-2024-ccby.pdf`](./graphrag-edge-2024-ccby.pdf)
-- Why it's relevant: motivates building an **entity/concept knowledge graph**
-  and traversing it (community/neighbourhood structure) rather than relying on
-  flat vector search alone. SDP mirrors this: concepts/datasets/columns are
-  graph nodes with `broader/narrower/related/mapping/lineage` edges (Apache
-  AGE, openCypher) that back `/graph/query` and `/ontology/term/{t}/graph`.
+- Abstract page: https://arxiv.org/abs/2404.16130
+- arXiv DOI (opened): https://doi.org/10.48550/arXiv.2404.16130
+- License: Creative Commons Attribution 4.0 International (CC BY 4.0) —
+  redistributable with attribution. PDF included:
+  [`graphrag-edge-2024-ccby.pdf`](./graphrag-edge-2024-ccby.pdf)
+- Why it is listed: motivates an entity/concept graph rather than flat
+  vector search alone. This catalog stores concepts/datasets/columns as
+  graph nodes with broader/narrower/related/mapping/lineage edges.
 
 ## 2. Unifying LLMs and Knowledge Graphs — cite + link only
 
-> Shirui Pan, Linhao Luo, Yufei Wang, Chen Chen, Jiapu Wang, Xindong Wu.
-> **"Unifying Large Language Models and Knowledge Graphs: A Roadmap."**
-> IEEE Transactions on Knowledge and Data Engineering (TKDE), 2024.
-> arXiv:2306.08302.
+APA: Pan et al. (2024), *IEEE Transactions on Knowledge and Data
+Engineering*. See REFERENCES.md.
 
-- Link: https://arxiv.org/abs/2306.08302
-- License: arXiv.org perpetual non-exclusive license (redistribution of the PDF
-  is not granted) → **not attached**; cited here per copyright rules.
-- Why it's relevant: frames KG-enhanced retrieval and the synergy between
-  structured graphs (interpretability, explicit relations) and learned
-  representations. SDP keeps the ontology as an explicit, auditable property
-  graph while layering pgvector embeddings for meaning-based recall.
+- Journal DOI (Crossref work record opened):
+  https://doi.org/10.1109/TKDE.2024.3352100
+- arXiv abs (opened): https://arxiv.org/abs/2306.08302
+- License: publisher / arXiv terms do not grant PDF redistribution here →
+  **not attached**.
+- Why it is listed: frames structured graphs (explicit relations,
+  interpretability) beside learned representations.
 
 ## 3. HybridRAG — cite + link only
 
-> Bhaskarjit Sarmah, Benika Hall, Rohan Rao, Sunil Patel, Stefano Pasquali,
-> Dhagash Mehta. **"HybridRAG: Integrating Knowledge Graphs and Vector
-> Retrieval Augmented Generation for Efficient Information Extraction."**
-> arXiv:2408.04948, 2024.
+APA: Sarmah et al. (2024). See REFERENCES.md.
 
-- Link: https://arxiv.org/abs/2408.04948
-- License: arXiv.org perpetual non-exclusive license → **not attached**; cited
-  here per copyright rules.
-- Why it's relevant: shows a hybrid of knowledge-graph retrieval and vector
-  retrieval beating either alone. This is exactly SDP's architecture: **Apache
-  AGE** graph traversal for structured relations + **pgvector** KNN for
-  semantic ("찾아주는") recall, co-located in one Postgres datastore.
+- Abstract page: https://arxiv.org/abs/2408.04948
+- arXiv DOI (opened): https://doi.org/10.48550/arXiv.2408.04948
+- License: arXiv perpetual non-exclusive license → **not attached**.
+- Why it is listed: reports hybrid knowledge-graph + vector retrieval
+  outperforming either alone. This catalog’s optional Postgres backend
+  colocates AGE traversal and pgvector KNN.
 
----
-
-### How these map to the implementation
-
-| Paper idea | SDP component |
-| --- | --- |
-| Entity/concept knowledge graph | `graph_nodes` / `graph_edges` / `ontology_concepts` (AGE `semantic_graph`) |
-| Graph traversal for retrieval | `POST /graph/query`, `GET /ontology/term/{t}/graph` (openCypher) |
-| Vector similarity retrieval | `embedding_vectors` (pgvector), `POST /search/semantic` |
-| Hybrid graph + vector | single Postgres instance running AGE **and** pgvector |
+These notes do not claim the service reimplements the papers. Draft
+citations remain draft until a human/researcher re-verifies
+REFERENCES.md.
