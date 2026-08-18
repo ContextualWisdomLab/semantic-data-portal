@@ -4,12 +4,13 @@ import json
 import os
 from datetime import datetime, timezone
 from typing import Any
-from urllib.parse import urlsplit
-from urllib.request import urlopen
 
 import jwt
 from jwt import InvalidTokenError, PyJWK
 from sdp_core import ActorContext
+
+from .credentials import get_credential
+from .network_security import open_url_without_redirects, validate_outbound_https_url
 
 
 _SUBJECTS = {
@@ -33,21 +34,29 @@ _ALLOWED_JWT_ALGORITHMS = {"RS256", "RS384", "RS512", "ES256", "ES384", "ES512"}
 
 
 def resolve_actor_context(subject: str) -> ActorContext:
+    """Return the demo actor context for a known subject, or an empty tenant."""
+
     key = subject.strip().lower()
     return _SUBJECTS.get(key, ActorContext(subject=subject, tenant_id="", roles=[]))
 
 
 def has_role(subject: str, *roles: str) -> bool:
+    """Return whether the subject holds at least one of the named roles."""
+
     context = resolve_actor_context(subject)
     return bool(set(roles).intersection(context.roles))
 
 
 def can_access_tenant(subject: str, tenant_id: str) -> bool:
+    """Return whether the subject may read resources in the named tenant."""
+
     context = resolve_actor_context(subject)
     return "platform-admin" in context.roles or context.tenant_id == tenant_id
 
 
 def _claim_values(value: Any) -> list[str]:
+    """Normalize a JWT claim into a list of string values."""
+
     if value is None:
         return []
     if isinstance(value, str):
@@ -58,10 +67,14 @@ def _claim_values(value: Any) -> list[str]:
 
 
 def oidc_role_claims(claims: dict[str, Any]) -> list[str]:
+    """Return the raw role claim values from an OIDC token payload."""
+
     return _claim_values(claims.get("roles"))
 
 
 def load_oidc_role_map() -> dict[str, list[str]]:
+    """Load the group-to-role map from bootstrap transport or bundled defaults."""
+
     raw = os.getenv("SDP_OIDC_GROUP_ROLE_MAP")
     if not raw:
         return _DEFAULT_OIDC_GROUP_ROLE_MAP
@@ -73,6 +86,8 @@ def load_oidc_role_map() -> dict[str, list[str]]:
 
 
 def validate_oidc_claim_shape(claims: dict[str, Any]) -> None:
+    """Reject token claims that omit subject, tenant, or a valid expiry."""
+
     if not any(claims.get(key) for key in _SUBJECT_CLAIMS):
         raise ValueError("missing subject claim")
     if not (claims.get("tenant_id") or claims.get("tid") or claims.get("organization")):
@@ -94,6 +109,8 @@ def resolve_oidc_actor_context(
     *,
     role_map: dict[str, list[str]] | None = None,
 ) -> ActorContext:
+    """Map validated OIDC claims onto the portal actor context."""
+
     validate_oidc_claim_shape(claims)
     mapping = role_map or load_oidc_role_map()
     subject = (
@@ -112,24 +129,23 @@ def resolve_oidc_actor_context(
     return ActorContext(subject=str(subject), tenant_id=tenant_id, roles=sorted(roles))
 
 
-_ALLOWED_JWKS_SCHEMES = frozenset({"https", "http"})
-
-
 def _load_jwks_from_url(jwks_url: str) -> dict[str, Any]:
-    # Restrict the JWKS fetch to HTTP(S). urllib honours file:// (and other
-    # schemes), so without this guard a misconfigured SDP_OIDC_JWKS_URL such as
-    # "file:///etc/passwd" would turn an operator misconfiguration into local
-    # file disclosure.
-    scheme = urlsplit(jwks_url).scheme.lower()
-    if scheme not in _ALLOWED_JWKS_SCHEMES:
-        raise ValueError("OIDC JWKS URL must use the http or https scheme")
-    timeout = float(os.getenv("SDP_OIDC_JWKS_TIMEOUT_SECONDS", "2"))
-    # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected -- scheme is allow-listed to http(s) above; JWKS URL is operator config, not request input
-    with urlopen(jwks_url, timeout=timeout) as response:
+    """Load a JWKS document from a validated public HTTPS endpoint."""
+
+    timeout = float(get_credential("SDP_OIDC_JWKS_TIMEOUT_SECONDS", "2") or "2")
+    validated_url = validate_outbound_https_url(
+        jwks_url,
+        setting_name="SDP_OIDC_JWKS_URL",
+    )
+    # The URL has passed the centralized HTTPS/public-target boundary above;
+    # production egress policy provides post-DNS enforcement.
+    with open_url_without_redirects(validated_url, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
 def _select_jwk(jwks: dict[str, Any], kid: str | None) -> dict[str, Any]:
+    """Return the JWKS key matching ``kid`` or raise ``ValueError``."""
+
     if not kid:
         raise ValueError("missing token kid")
     keys = jwks.get("keys")
@@ -149,6 +165,8 @@ def verify_oidc_jwks_token(
     jwks: dict[str, Any] | None = None,
     role_map: dict[str, list[str]] | None = None,
 ) -> tuple[ActorContext, dict[str, Any]]:
+    """Verify a JWKS-signed OIDC token and return the actor plus claims."""
+
     expected_issuer = issuer or os.getenv("SDP_OIDC_ISSUER")
     expected_audience = audience or os.getenv("SDP_OIDC_AUDIENCE")
     jwks_url = os.getenv("SDP_OIDC_JWKS_URL")

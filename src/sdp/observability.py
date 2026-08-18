@@ -7,14 +7,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
-from urllib.request import Request as UrlRequest, urlopen
+from urllib.request import Request as UrlRequest
 from urllib.request import url2pathname
 from uuid import uuid4
 
 from sdp_core import enterprise_controls_manifest
 
 from .catalog import list_audit_events, list_datasets
+from .credentials import get_credential
 from .evidence import list_policy_decisions
+from .network_security import open_url_without_redirects, validate_outbound_https_url
 
 
 _REQUEST_OBSERVATIONS: deque[dict[str, Any]] = deque(maxlen=500)
@@ -22,10 +24,14 @@ _EXPORT_ERRORS: deque[dict[str, Any]] = deque(maxlen=50)
 
 
 def request_id_header() -> str:
+    """Return the inbound request-id header name used by this process."""
+
     return os.getenv("SDP_REQUEST_ID_HEADER", "X-Request-Id")
 
 
 def _header_value(headers: Any, name: str, default: str | None = None) -> str | None:
+    """Read one header value with case-insensitive fallback."""
+
     if not headers:
         return default
 
@@ -45,18 +51,31 @@ def _header_value(headers: Any, name: str, default: str | None = None) -> str | 
 
 
 def request_id_from_headers(headers: Any) -> str:
+    """Return the inbound request id or mint a local correlation identifier."""
+
     return _header_value(headers, request_id_header()) or f"sdp-{uuid4().hex}"
 
 
 def _file_sink_path(sink_url: str, parsed: Any) -> Path:
-    if parsed.netloc and not parsed.path:
-        return Path(url2pathname(parsed.netloc))
+    """Resolve a local ``file:`` sink URL. Remote authorities are rejected.
+
+    Empty authorities stay local absolute or relative paths. A leading-dot
+    authority such as ``file://.local/sdp-requests.jsonl`` is the documented
+    in-repo relative file transport. Any other authority would become a UNC
+    or host path and bypass the HTTPS egress boundary.
+    """
+
+    netloc = parsed.netloc or ""
+    if netloc and not netloc.startswith("."):
+        raise ValueError("file sink URLs must be local paths")
+    if netloc and not parsed.path:
+        return Path(url2pathname(netloc))
 
     raw_path = url2pathname(parsed.path or sink_url)
     if os.name == "nt" and len(raw_path) >= 3 and raw_path[0] in {"\\", "/"} and raw_path[2] == ":":
         raw_path = raw_path[1:]
-    if parsed.netloc:
-        raw_path = f"//{parsed.netloc}{raw_path}"
+    if netloc:
+        raw_path = f"{netloc}{raw_path}"
     return Path(raw_path)
 
 
@@ -69,6 +88,8 @@ def build_request_observation(
     headers: Any,
     request_id: str,
 ) -> dict[str, Any]:
+    """Build the structured request observation recorded for one HTTP call."""
+
     evidence_header = _header_value(headers, "X-SDP-Evidence-Ids", "")
     evidence_ids = [item.strip() for item in evidence_header.split(",") if item.strip()] if evidence_header else []
     return {
@@ -85,6 +106,8 @@ def build_request_observation(
 
 
 def _sink_status() -> dict[str, Any]:
+    """Describe the configured observation sink without exposing secrets."""
+
     sink_url = os.getenv("SDP_LOG_SINK_URL", "").strip()
     alert_webhook_url = os.getenv("SDP_ALERT_WEBHOOK_URL", "").strip()
     if not sink_url:
@@ -98,9 +121,17 @@ def _sink_status() -> dict[str, Any]:
     parsed = urlparse(sink_url)
     scheme = parsed.scheme or "file"
     if scheme == "file":
-        target = str(_file_sink_path(sink_url, parsed))
+        try:
+            target = str(_file_sink_path(sink_url, parsed))
+        except ValueError:
+            target = "rejected_remote_file_authority"
     elif scheme in {"http", "https"}:
-        target = parsed.netloc
+        validated_url = validate_outbound_https_url(
+            sink_url,
+            setting_name="SDP_LOG_SINK_URL",
+        )
+        target = urlparse(validated_url).netloc
+        scheme = "https"
     else:
         target = sink_url
 
@@ -113,6 +144,8 @@ def _sink_status() -> dict[str, Any]:
 
 
 def _export_to_sink(observation: dict[str, Any]) -> None:
+    """Export one observation to a local file or validated HTTPS endpoint."""
+
     sink_url = os.getenv("SDP_LOG_SINK_URL", "").strip()
     if not sink_url:
         return
@@ -129,21 +162,28 @@ def _export_to_sink(observation: dict[str, Any]) -> None:
         return
 
     if scheme in {"http", "https"}:
-        timeout_ms = int(os.getenv("SDP_LOG_SINK_TIMEOUT_MS", "500"))
-        request = UrlRequest(
+        validated_url = validate_outbound_https_url(
             sink_url,
+            setting_name="SDP_LOG_SINK_URL",
+        )
+        timeout_ms = int(get_credential("SDP_LOG_SINK_TIMEOUT_MS", "500") or "500")
+        request = UrlRequest(
+            validated_url,
             data=payload.encode("utf-8"),
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected -- scheme is allow-listed to {http,https} at the guard above (file:// et al. raise below)
-        with urlopen(request, timeout=timeout_ms / 1000):
+        # The destination has passed the centralized HTTPS/public-target
+        # boundary above; production egress policy provides post-DNS enforcement.
+        with open_url_without_redirects(request, timeout=timeout_ms / 1000):
             return
 
     raise ValueError(f"unsupported SDP_LOG_SINK_URL scheme: {scheme}")
 
 
 def record_observability_export_error(error: dict[str, Any] | str) -> None:
+    """Append one sink-export failure to the in-process error buffer."""
+
     if isinstance(error, str):
         payload = {"timestamp": datetime.now(timezone.utc).isoformat(), "message": error}
     else:
@@ -153,6 +193,8 @@ def record_observability_export_error(error: dict[str, Any] | str) -> None:
 
 
 def record_request_observation(observation: dict[str, Any], *, export: bool = True) -> None:
+    """Store one request observation and optionally export it to the sink."""
+
     _REQUEST_OBSERVATIONS.append(dict(observation))
     if not export:
         return
@@ -163,19 +205,27 @@ def record_request_observation(observation: dict[str, Any], *, export: bool = Tr
 
 
 def list_request_observations(limit: int = 100) -> list[dict[str, Any]]:
+    """Return the newest request observations from the in-process buffer."""
+
     return list(_REQUEST_OBSERVATIONS)[-limit:]
 
 
 def list_observability_export_errors(limit: int = 50) -> list[dict[str, Any]]:
+    """Return the newest sink-export errors from the in-process buffer."""
+
     return list(_EXPORT_ERRORS)[-limit:]
 
 
 def reset_request_observability() -> None:
+    """Clear in-process observation and export-error buffers for tests."""
+
     _REQUEST_OBSERVATIONS.clear()
     _EXPORT_ERRORS.clear()
 
 
 def build_observability_manifest() -> dict[str, Any]:
+    """Assemble the enterprise observability evidence payload."""
+
     datasets = list_datasets()
     audit_events = list_audit_events(limit=500)
     policy_decisions = list_policy_decisions(limit=500)
@@ -235,6 +285,8 @@ def build_observability_manifest() -> dict[str, Any]:
 
 
 def prometheus_metrics_text() -> str:
+    """Render the current observability gauges as Prometheus text."""
+
     manifest = build_observability_manifest()
     metrics = manifest["metrics"]
     lines = [

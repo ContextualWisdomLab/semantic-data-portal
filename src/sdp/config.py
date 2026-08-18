@@ -64,6 +64,8 @@ class BootstrapSettings:
 
     @property
     def has_database(self) -> bool:
+        """Return whether bootstrap transport includes a database DSN."""
+
         return bool(self.database_dsn)
 
 
@@ -102,6 +104,8 @@ class AppConfig:
 
     @classmethod
     def from_mapping(cls, values: Dict[str, Any], *, source: str) -> "AppConfig":
+        """Build an AppConfig from bundled defaults plus a mapping of overrides."""
+
         merged = dict(_DEFAULT_CONFIG)
         merged.update({k: v for k, v in values.items() if v is not None})
         backend = str(merged["graph_backend"]).lower()
@@ -149,11 +153,52 @@ def _load_from_kv_table(bootstrap: BootstrapSettings) -> Optional[Dict[str, Any]
 
     values: Dict[str, Any] = {}
     for key, raw in rows:
-        try:
-            values[key] = json.loads(raw) if isinstance(raw, str) else raw
-        except (TypeError, json.JSONDecodeError):
-            values[key] = raw
+        values[key] = _decode_config_value(raw)
     return values
+
+
+def _decode_config_value(raw: Any) -> Any:
+    """Decode one JSON-backed config value, preserving legacy raw values."""
+
+    try:
+        return json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, json.JSONDecodeError):
+        return raw
+
+
+def _load_config_entry(
+    bootstrap: BootstrapSettings,
+    name: str,
+    default: Any = None,
+) -> Any:
+    """Load exactly one config value and release its short-lived DB engine."""
+
+    if not bootstrap.has_database:
+        return default
+    try:  # imported lazily so core-only installations keep their safe default
+        from sqlalchemy import create_engine, text
+    except ImportError:
+        return default
+
+    try:
+        engine = create_engine(bootstrap.database_dsn, pool_pre_ping=True)
+        try:
+            with engine.connect() as conn:
+                row = conn.execute(
+                    text(
+                        "SELECT config_value FROM config_entries "
+                        "WHERE config_namespace = :ns AND config_key = :key"
+                    ),
+                    {"ns": bootstrap.config_namespace, "key": name},
+                ).fetchone()
+        finally:
+            engine.dispose()
+    except Exception:
+        return default
+
+    if row is None:
+        return default
+    return _decode_config_value(row[0])
 
 
 @lru_cache(maxsize=1)
@@ -171,11 +216,27 @@ def get_app_config() -> AppConfig:
     return AppConfig.from_mapping({}, source="defaults")
 
 
+@lru_cache(maxsize=32)
+def get_config_entry(name: str, default: Any = None) -> Any:
+    """Read one application value from the database-backed configuration KV.
+
+    Environment variables are deliberately not a fallback here.  They are only
+    bootstrap transport for locating the KV; application settings must remain
+    governed by ``config_entries`` or an explicit safe caller default.
+
+    Results are bounded-cached so ``get_credential()`` does not open a new
+    engine or re-query the same key on every observability export.
+    """
+
+    return _load_config_entry(load_bootstrap(), name, default)
+
+
 def reset_config_cache() -> None:
     """Clear cached config (used by tests that swap the KV backend)."""
 
     load_bootstrap.cache_clear()
     get_app_config.cache_clear()
+    get_config_entry.cache_clear()
 
 
 def default_config_seed() -> Dict[str, Any]:

@@ -4,14 +4,27 @@ import os
 import re
 from dataclasses import dataclass
 
+from .config import get_config_entry
+
 
 def _slug(value: str) -> str:
+    """Normalize an identifier into an uppercase underscore-separated token."""
+
     return re.sub(r"[^A-Z0-9]+", "_", value.upper()).strip("_")
 
 
 def connector_secret_ref(connector_id: str, dataset_id: str) -> str:
+    """Return the env-ref name used to check connector secret presence."""
+
     prefix = os.getenv("SDP_CONNECTOR_SECRET_REF_PREFIX", "SDP_CONNECTOR_SECRET_")
     return f"{prefix}{_slug(connector_id)}_{_slug(dataset_id)}_TOKEN"
+
+
+def get_credential(name: str, default: str | None = None) -> str | None:
+    """Return a named value from the governed database-backed KV registry."""
+
+    value = get_config_entry(name, default)
+    return None if value is None else str(value)
 
 
 @dataclass(frozen=True)
@@ -22,6 +35,8 @@ class ConnectorSecretStatus:
     timeout_ms: int
 
     def public_dict(self) -> dict[str, object]:
+        """Return the non-secret connector status fields safe to expose."""
+
         return {
             "vault_provider": self.provider,
             "secret_ref": self.secret_ref,
@@ -31,6 +46,8 @@ class ConnectorSecretStatus:
 
 
 def connector_secret_status(connector_id: str, dataset_id: str) -> ConnectorSecretStatus:
+    """Report whether a connector secret ref is present without exposing it."""
+
     provider = os.getenv("SDP_CONNECTOR_VAULT_PROVIDER", "env")
     if provider != "env":
         raise ValueError(f"unsupported connector vault provider: {provider}")

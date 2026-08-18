@@ -1454,7 +1454,7 @@ def test_ontology_patch_workflow():
     assert review.json()["status"] == "approved"
 
 
-def test_browse_query_success():
+def test_browse_query_fails_closed_without_execution_backend():
     response = client.post(
         "/browse/query",
         json={
@@ -1468,16 +1468,27 @@ def test_browse_query_success():
     )
     assert response.status_code == 200
     body = response.json()
-    assert body["status"] == "SUCCEEDED"
+    assert body["status"] == "UNAVAILABLE"
     assert body["dataset_id"] == "crm-event"
     assert body["policy_decision_id"] is not None
+    assert body["query_id"] == ""
+    assert body["row_count"] == 0
+    assert body["rows"] == []
+    assert body["columns"] == []
+    assert body["execution"] == {
+        "elapsedMs": 0,
+        "source": "unavailable",
+        "bytesScanned": 0,
+    }
+    assert body["warnings"] == ["query_execution_backend_not_configured"]
+    assert "mock" not in str(body).lower()
     assert "request_id" in body
 
     events = client.get("/audit/events", params={"resource": "crm-event"})
     assert events.status_code == 200
     assert any(
         event["action"] == "browse.query"
-        and event["result"] == "allowed"
+        and event["result"] == "unavailable"
         and event["decision_id"] == body["policy_decision_id"]
         and event["details"].get("request_id") == body["request_id"]
         for event in events.json()
@@ -1506,6 +1517,72 @@ def test_browse_query_rejects_table_outside_dataset_binding():
         and event["reason"] == "query_safety_validation_failed"
         for event in events.json()
     )
+
+
+def test_browse_query_rejects_select_into_write():
+    # SELECT ... INTO is CREATE TABLE AS -- a write that begins with "select",
+    # so the read-only prefix check alone let it reach a 200/SUCCEEDED before.
+    response = client.post(
+        "/browse/query",
+        json={
+            "user": "analyst",
+            "purpose": "analysis",
+            "dataset_ids": ["crm-event"],
+            "language": "SQL",
+            "query": "SELECT * INTO exfil FROM crm",
+        },
+    )
+    assert response.status_code == 400
+    assert "write_operation_not_allowed" in response.json()["detail"]["warnings"]
+
+
+def test_validate_sql_query_blocks_writes_and_volatile_functions():
+    from sdp.orchestrator import validate_sql_query
+
+    source = "s3://analytics/events/crm"  # -> allowlisted table "crm"
+    assert "write_operation_not_allowed" in validate_sql_query(
+        "SELECT * INTO exfil FROM crm", source_system=source
+    )
+    assert "unsafe_function_call" in validate_sql_query(
+        "SELECT pg_sleep(10) FROM crm", source_system=source
+    )
+    assert "unsafe_function_call" in validate_sql_query(
+        "SELECT pg_read_file(path_col) FROM crm", source_system=source
+    )
+    # Family variants must be caught too: a word-boundary match on the bare
+    # name alone would let every suffixed sibling through (dblink_exec,
+    # dblink_connect_u, pg_sleep_for, pg_ls_waldir, pg_read_binary_file).
+    for family_variant_sql in (
+        "SELECT dblink_exec(conn_col, cmd_col) FROM crm",
+        "SELECT dblink_connect_u(conn_col) FROM crm",
+        "SELECT pg_sleep_for(interval_col) FROM crm",
+        "SELECT pg_ls_waldir() FROM crm",
+        "SELECT pg_read_binary_file(path_col) FROM crm",
+    ):
+        assert "unsafe_function_call" in validate_sql_query(
+            family_variant_sql, source_system=source
+        ), family_variant_sql
+    # Session/server-control and large-object families: side effects reachable
+    # from a plain SELECT (session DoS, config reload, WAL control, large-object
+    # deletion/mutation) must be rejected the same way.
+    for control_sql in (
+        "SELECT pg_terminate_backend(pid_col) FROM crm",
+        "SELECT pg_cancel_backend(pid_col) FROM crm",
+        "SELECT pg_reload_conf() FROM crm",
+        "SELECT pg_switch_wal() FROM crm",
+        "SELECT pg_create_restore_point(name_col) FROM crm",
+        "SELECT pg_export_snapshot() FROM crm",
+        "SELECT lo_unlink(oid_col) FROM crm",
+        "SELECT lo_put(oid_col, 0, data_col) FROM crm",
+        "SELECT lo_truncate(fd_col, 0) FROM crm",
+        "SELECT lo_open(oid_col, 131072) FROM crm",
+        "SELECT lo_create(0) FROM crm",
+    ):
+        assert "unsafe_function_call" in validate_sql_query(
+            control_sql, source_system=source
+        ), control_sql
+    # A clean read-only SELECT on the bound table stays warning-free.
+    assert validate_sql_query("SELECT id FROM crm", source_system=source) == []
 
 
 def test_browse_query_rejects_literal_tautology_injection():

@@ -10,21 +10,251 @@ from .domain import QueryExecutionResponse
 
 
 _FORBIDDEN_KEYWORDS = {"drop", "delete", "truncate", "alter", "insert", "update", "merge", "exec", "union"}
+# Function admission is deliberately positive rather than denylist-based. PostgreSQL
+# exposes many built-ins and extensions that can mutate state, consume unbounded
+# resources, access files, or affect other sessions while still appearing inside a
+# SELECT. A finite unsafe-name list therefore cannot establish a read-only boundary.
+# Keep the product surface limited to the aggregate functions required by governed
+# analytics; every other function call fails closed until reviewed and added here.
+_SAFE_READONLY_FUNCTIONS = frozenset({"avg", "count", "max", "min", "sum"})
+_FUNCTION_CALL_PATTERN = re.compile(
+    r"(?<![\w.])(?P<name>[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)*)\s*\("
+)
+_SQL_TOKEN_PATTERN = re.compile(
+    r"\s*(?:(?P<identifier>[A-Za-z_][\w]*)|(?P<number>[0-9]+)|(?P<punctuation>[(),.*]))"
+)
+_SQL_IDENTIFIER_TOKEN_PATTERN = re.compile(r"[A-Za-z_][\w]*")
+_MAX_QUERY_ROWS = 2000
+
+
+def _tokenize_reviewed_select(sql: str) -> list[str] | None:
+    """Tokenize only the punctuation and words understood by the safe grammar.
+
+    Returning ``None`` for any unrecognized character makes casts, operators,
+    string delimiters, array syntax, and comments fail closed before parsing.
+    The pattern is fixed rather than assembled from query content.
+    """
+
+    tokens: list[str] = []
+    position = 0
+    while position < len(sql):
+        match = _SQL_TOKEN_PATTERN.match(sql, position)
+        if match is None:
+            return None
+        tokens.append(next(value for value in match.groups() if value is not None))
+        position = match.end()
+    return tokens
+
+
+class _ReviewedSelectParser:
+    """Parse the product's deliberately small, read-only analytics grammar."""
+
+    def __init__(self, tokens: list[str]) -> None:
+        """Start a parser at the first token of one reviewed statement."""
+
+        self._tokens = tokens
+        self._position = 0
+
+    def _peek(self) -> str | None:
+        """Return the current token without consuming it."""
+        if self._position == len(self._tokens):
+            return None
+        return self._tokens[self._position]
+
+    def _accept(self, expected: str) -> bool:
+        """Consume one case-insensitive keyword or punctuation token."""
+        token = self._peek()
+        if token is None or token.lower() != expected:
+            return False
+        self._position += 1
+        return True
+
+    def _identifier(self) -> bool:
+        """Consume a bare or once-qualified SQL identifier."""
+        token = self._peek()
+        if token is None or _SQL_IDENTIFIER_TOKEN_PATTERN.fullmatch(token) is None:
+            return False
+        self._position += 1
+        if self._accept("."):
+            token = self._peek()
+            if token is None or _SQL_IDENTIFIER_TOKEN_PATTERN.fullmatch(token) is None:
+                return False
+            self._position += 1
+        return True
+
+    def _projection(self) -> bool:
+        """Consume an identifier, wildcard, or reviewed aggregate projection."""
+        if self._accept("*"):
+            return True
+
+        token = self._peek()
+        if token is not None and token.lower() in _SAFE_READONLY_FUNCTIONS:
+            self._position += 1
+            if not self._accept("("):
+                return False
+            self._accept("distinct")
+            if not self._accept("*") and not self._identifier():
+                return False
+            if not self._accept(")"):
+                return False
+        elif not self._identifier():
+            return False
+
+        if self._accept("as") and not self._identifier():
+            return False
+        return True
+
+    def _identifier_list(self, *, allow_direction: bool = False) -> bool:
+        """Consume one or more identifiers, optionally with sort directions."""
+        if not self._identifier():
+            return False
+        if allow_direction:
+            token = self._peek()
+            if token is not None and token.lower() in {"asc", "desc"}:
+                self._position += 1
+        while self._accept(","):
+            if not self._identifier():
+                return False
+            if allow_direction:
+                token = self._peek()
+                if token is not None and token.lower() in {"asc", "desc"}:
+                    self._position += 1
+        return True
+
+    def parse(self) -> bool:
+        """Return whether all tokens form one complete reviewed SELECT."""
+        if not self._accept("select") or not self._projection():
+            return False
+        while self._accept(","):
+            if not self._projection():
+                return False
+        if not self._accept("from") or not self._identifier():
+            return False
+        if self._accept("as") and not self._identifier():
+            return False
+        if self._accept("group"):
+            if not self._accept("by") or not self._identifier_list():
+                return False
+        if self._accept("order"):
+            if not self._accept("by") or not self._identifier_list(allow_direction=True):
+                return False
+        if self._accept("limit"):
+            token = self._peek()
+            if token is None or not token.isdecimal():
+                return False
+            self._position += 1
+            if not 1 <= int(token) <= _MAX_QUERY_ROWS:
+                return False
+        return self._position == len(self._tokens)
 
 
 def _safe_identifier(value: str) -> str:
+    """Replace non-identifier characters so generated SQL stays quoted-safe."""
+
     return "".join(ch if ch.isalnum() or ch == "_" else "_" for ch in value)
 
 
+def _reviewed_identifier(value: str) -> str:
+    """Accept only a complete SQL identifier after sanitization."""
+
+    if _SQL_IDENTIFIER_TOKEN_PATTERN.fullmatch(value) is None:
+        raise ValueError("identifier is not a reviewed SQL name")
+    return value
+
+
+def _reviewed_bound_int(value: int, *, minimum: int, maximum: int) -> str:
+    """Accept only a non-boolean integer inside a closed numeric bound."""
+
+    if type(value) is not int or not minimum <= value <= maximum:
+        raise ValueError("numeric SQL slot is outside the reviewed bound")
+    return format(value, "d")
+
+
+def _render_reviewed_draft_sql(
+    *,
+    table_name: str,
+    date_window_days: int,
+    max_rows: int,
+    select_columns: list[str],
+    group_by: str | None,
+) -> str:
+    """Join a fixed SELECT from reviewed identifier and integer tokens only.
+
+    Date windows are emitted as ``current_date - N`` so a user-controlled
+    number never enters a SQL string literal. Identifiers are already
+    sanitized by the caller and re-checked here before they are joined.
+    """
+
+    table = _reviewed_identifier(table_name)
+    days = _reviewed_bound_int(date_window_days, minimum=1, maximum=365)
+    limit = _reviewed_bound_int(max_rows, minimum=1, maximum=_MAX_QUERY_ROWS)
+    count_projection = ["count(*)", "AS", "active_customer_count"]
+    group_tokens: list[str] = []
+    if group_by is not None:
+        group_identifier = _reviewed_identifier(group_by)
+        select_tokens = [group_identifier + ",", *count_projection]
+        group_tokens = ["GROUP", "BY", group_identifier]
+    elif select_columns == ["*"]:
+        select_tokens = list(count_projection)
+    else:
+        column_tokens = [_reviewed_identifier(column) for column in select_columns]
+        select_tokens = [", ".join(column_tokens) + ",", *count_projection]
+    return " ".join(
+        [
+            "SELECT",
+            *select_tokens,
+            "FROM",
+            table,
+            "WHERE",
+            "created_at",
+            ">=",
+            "current_date",
+            "-",
+            days,
+            *group_tokens,
+            "LIMIT",
+            limit,
+        ]
+    )
+
+
 def _safe_request_id() -> str:
+    """Return a unique request identifier derived from the current timestamp."""
+
     return "req-" + str(datetime.now(timezone.utc).timestamp()).replace(".", "")
 
 
 def _source_table_name(source_system: str) -> str:
+    """Derive the allowlisted table name from a dataset source-system path."""
+
     return _safe_identifier(source_system.rstrip("/").rsplit("/", 1)[-1])
 
 
+def _has_unreviewed_function_call(sql: str) -> bool:
+    """Return whether SQL invokes a function outside the reviewed read-only set."""
+    for match in _FUNCTION_CALL_PATTERN.finditer(sql):
+        function_name = match.group("name").lower()
+        if "." in function_name or function_name not in _SAFE_READONLY_FUNCTIONS:
+            return True
+    return False
+
+
+def _has_unsafe_select_expression(sql: str) -> bool:
+    """Return whether the complete statement exceeds the reviewed SQL grammar.
+
+    The product currently needs identifiers, ``*``, and a small aggregate
+    allowlist, with optional grouping, sorting, and a bounded row limit. Parsing
+    the full statement prevents unsupported syntax in trailing clauses or
+    derived tables from silently expanding SQL authority.
+    """
+
+    tokens = _tokenize_reviewed_select(sql)
+    return tokens is None or not _ReviewedSelectParser(tokens).parse()
+
+
 def validate_sql_query(sql: str, *, source_system: str) -> list[str]:
+    """Return safety warnings for one user-supplied SQL statement."""
+
     stripped = sql.strip()
     lowered = stripped.lower()
     warnings: list[str] = []
@@ -45,6 +275,17 @@ def validate_sql_query(sql: str, *, source_system: str) -> list[str]:
             warnings.append("forbidden_keyword_detected")
             break
 
+    # SELECT ... INTO is CREATE TABLE AS (a write/DDL). Function calls are a
+    # separate grammar boundary: only the reviewed aggregate allowlist above is
+    # accepted, so newly installed PostgreSQL extensions cannot silently expand
+    # query authority.
+    if re.search(r"\binto\b", lowered):
+        warnings.append("write_operation_not_allowed")
+    if _has_unreviewed_function_call(stripped):
+        warnings.append("unsafe_function_call")
+    if _has_unsafe_select_expression(stripped):
+        warnings.append("unsafe_select_expression")
+
     referenced = [
         next(value for value in match if value)
         for match in re.findall(r"\bfrom\s+([A-Za-z_][\w.]*)|\bjoin\s+([A-Za-z_][\w.]*)", stripped, re.IGNORECASE)
@@ -62,6 +303,8 @@ def validate_sql_query(sql: str, *, source_system: str) -> list[str]:
 
 
 def draft_sql(req: QueryDraftRequest) -> dict:
+    """Draft a policy-checked, read-only analytics query for one dataset."""
+
     if req.date_window_days < 1 or req.date_window_days > 365:
         return {"error": "invalid_date_window", "reason": "date_window_days must be between 1 and 365"}
 
@@ -94,8 +337,12 @@ def draft_sql(req: QueryDraftRequest) -> dict:
     if req.group_by and req.group_by not in allowed_columns:
         return {"error": "invalid_group_by", "reason": "요청한 그룹화 컬럼이 데이터셋에 없습니다."}
 
-    where_clause = f"WHERE created_at >= current_date - interval '{req.date_window_days} day'"
     table_name = _source_table_name(dataset.source_system)
+    if _SQL_IDENTIFIER_TOKEN_PATTERN.fullmatch(table_name) is None:
+        return {
+            "error": "invalid_source_table",
+            "reason": "source table must be a reviewed SQL identifier",
+        }
 
     row_limit = min(req.row_limit, 2000)
     if row_limit <= 0:
@@ -105,24 +352,31 @@ def draft_sql(req: QueryDraftRequest) -> dict:
     if timeout_ms < 500 or timeout_ms > 120000:
         return {"error": "invalid_timeout", "reason": "timeout_ms must be between 500 and 120000"}
 
-    if req.group_by:
-        group_identifier = _safe_identifier(req.group_by)
-        group_clause = f"GROUP BY {group_identifier}"
-        select_fields = f"{group_identifier}, count(*) AS active_customer_count"
-    else:
-        group_clause = ""
-        if "*" in requested_columns:
-            select_fields = "count(*) AS active_customer_count"
-        else:
-            select_fields = ", ".join(_safe_identifier(column) for column in requested_columns)
-            select_fields = f"{select_fields}, count(*) AS active_customer_count"
-
-    max_rows = min(row_limit, 2000)
     if "*" in requested_columns and len(requested_columns) > 1:
         requested_columns = ["*"]
 
+    group_identifier = _safe_identifier(req.group_by) if req.group_by else None
+    select_identifiers = (
+        []
+        if "*" in requested_columns
+        else [_safe_identifier(column) for column in requested_columns]
+    )
+    max_rows = min(row_limit, 2000)
+    try:
+        sql = _render_reviewed_draft_sql(
+            table_name=table_name,
+            date_window_days=req.date_window_days,
+            max_rows=max_rows,
+            select_columns=["*"] if "*" in requested_columns else select_identifiers,
+            group_by=group_identifier,
+        )
+    except ValueError:
+        return {
+            "error": "invalid_sql_identifier",
+            "reason": "reviewed SQL slots must be identifiers or bounded integers",
+        }
+
     estimated_cost = max(1, len(requested_columns) * row_limit // 200 + 1)
-    sql = f"SELECT {select_fields} FROM {table_name} {where_clause} {group_clause} LIMIT {max_rows}"
 
     assumptions = [
         "카탈로그에서 검증된 테이블/컬럼만 사용",
@@ -159,6 +413,7 @@ def draft_sql(req: QueryDraftRequest) -> dict:
 
 
 def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
+    """Validate governed SQL and fail closed until a real execution backend exists."""
     request_id = _safe_request_id()
 
     def response(
@@ -173,6 +428,8 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
         execution: dict[str, object] | None = None,
         warnings: list[str] | None = None,
     ) -> QueryExecutionResponse:
+        """Build one execution response with the shared request identifier."""
+
         return QueryExecutionResponse(
             request_id=request_id,
             dataset_id=dataset_id,
@@ -194,6 +451,8 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
         decision_id: str | None = None,
         details: dict[str, object] | None = None,
     ) -> None:
+        """Record a browse.query audit event for this execution attempt."""
+
         audit_details = {"purpose": req.purpose, "request_id": request_id, "dry_run": req.dry_run}
         if details:
             audit_details.update(details)
@@ -280,39 +539,31 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
         )
 
     if req.dry_run:
-        row_count = 0
-    else:
-        row_count = min(2000, dataset.profile.get("row_count", 1000))
+        audit(
+            dataset_id=dataset.id,
+            result="validated",
+            reason="query_validated",
+            decision_id=decision.decision_id,
+            details={"policy_decision_id": decision.decision_id},
+        )
+        return response(
+            dataset_id=dataset.id,
+            policy_decision_id=decision.decision_id,
+            status="VALIDATED",
+            execution={"elapsedMs": 0, "source": "validation", "bytesScanned": 0},
+        )
 
-    now = datetime.now(timezone.utc).isoformat()
-    query_id = f"qry-{now.replace(':', '')}"
-    columns = ["week", "active_count"] if "group by" in lowered else ["result"]
-    rows = (
-        [{"week": now[:10], "active_count": 1}]
-        if "group by" in lowered
-        else [{"result": row_count}]
-    )
-    execution = {"elapsedMs": 100, "source": "mock-trino", "bytesScanned": 1024}
     audit(
         dataset_id=dataset.id,
-        result="allowed",
-        reason="ok",
+        result="unavailable",
+        reason="query_execution_backend_not_configured",
         decision_id=decision.decision_id,
-        details={
-            "policy_decision_id": decision.decision_id,
-            "query_id": query_id,
-            "row_count": row_count,
-            "bytes_scanned": execution["bytesScanned"],
-        },
+        details={"policy_decision_id": decision.decision_id},
     )
     return response(
         dataset_id=dataset.id,
-        query_id=query_id,
         policy_decision_id=decision.decision_id,
-        status="SUCCEEDED",
-        row_count=row_count,
-        columns=columns,
-        rows=rows,
-        execution=execution,
-        warnings=["mock_execution_no_real_data"],
+        status="UNAVAILABLE",
+        execution={"elapsedMs": 0, "source": "unavailable", "bytesScanned": 0},
+        warnings=["query_execution_backend_not_configured"],
     )

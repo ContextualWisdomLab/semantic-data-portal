@@ -9,6 +9,7 @@ fallback), and the fail-soft behavior when the database is unreachable.
 
 from __future__ import annotations
 
+import builtins
 from pathlib import Path
 import sys
 
@@ -105,3 +106,167 @@ def test_default_config_seed_returns_a_defaults_copy() -> None:
     assert seed["graph_backend"] == "auto"
     seed["graph_backend"] = "mutated"
     assert cfg.default_config_seed()["graph_backend"] == "auto"  # copy, not the shared dict
+
+
+def test_load_config_entry_queries_one_key_and_disposes_engine(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Hot-path credential reads must not scan a namespace or leak an engine."""
+
+    observed: dict[str, object] = {}
+
+    class Result:
+        def fetchone(self):
+            return ('"750"',)
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def execute(self, statement, params):
+            observed["statement"] = str(statement)
+            observed["params"] = params
+            return Result()
+
+    class Engine:
+        def connect(self):
+            return Connection()
+
+        def dispose(self):
+            observed["disposed"] = True
+
+    monkeypatch.setattr("sqlalchemy.create_engine", lambda *a, **k: Engine())
+
+    value = cfg._load_config_entry(
+        _bootstrap("postgresql://localhost/sdp"),
+        "SDP_LOG_SINK_TIMEOUT_MS",
+    )
+
+    assert value == "750"
+    assert "config_key = :key" in str(observed["statement"])
+    assert observed["params"] == {
+        "ns": "default",
+        "key": "SDP_LOG_SINK_TIMEOUT_MS",
+    }
+    assert observed["disposed"] is True
+
+
+def test_load_config_entry_none_without_database() -> None:
+    """A missing datastore keeps the caller's safe default available."""
+
+    assert cfg._load_config_entry(_bootstrap(None), "missing") is None
+
+
+def test_load_config_entry_uses_default_without_optional_sqlalchemy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Core-only installs must keep the configured fallback when graph extras are absent."""
+
+    real_import = builtins.__import__
+    attempted_imports: list[str] = []
+
+    def import_without_sqlalchemy(name, *args, **kwargs):
+        if name == "sqlalchemy":
+            attempted_imports.append(name)
+            raise ImportError("optional graph dependency is not installed")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", import_without_sqlalchemy)
+
+    assert (
+        cfg._load_config_entry(
+            _bootstrap("postgresql://localhost/sdp"),
+            "missing",
+            "safe-default",
+        )
+        == "safe-default"
+    )
+    assert attempted_imports == ["sqlalchemy"]
+
+
+def test_load_config_entry_absent_and_db_error_are_fail_soft(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Missing rows and connection failures return None and release resources."""
+
+    disposed: list[bool] = []
+
+    class EmptyResult:
+        def fetchone(self):
+            return None
+
+    class EmptyConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def execute(self, _statement, _params):
+            return EmptyResult()
+
+    class EmptyEngine:
+        def connect(self):
+            return EmptyConnection()
+
+        def dispose(self):
+            disposed.append(True)
+
+    monkeypatch.setattr("sqlalchemy.create_engine", lambda *a, **k: EmptyEngine())
+    bootstrap = _bootstrap("postgresql://localhost/sdp")
+    assert cfg._load_config_entry(bootstrap, "missing") is None
+    assert disposed == [True]
+
+    class BrokenEngine(EmptyEngine):
+        def connect(self):
+            raise RuntimeError("db unavailable")
+
+    monkeypatch.setattr("sqlalchemy.create_engine", lambda *a, **k: BrokenEngine())
+    assert cfg._load_config_entry(bootstrap, "missing") is None
+    assert disposed == [True, True]
+
+
+def test_get_config_entry_uses_bounded_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Repeated credential reads must reuse the cached single-key result."""
+
+    created: list[str] = []
+
+    class Result:
+        def fetchone(self):
+            return ('"750"',)
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def execute(self, _statement, _params):
+            return Result()
+
+    class Engine:
+        def connect(self):
+            return Connection()
+
+        def dispose(self):
+            return None
+
+    def create_engine(*_a, **_k):
+        created.append("engine")
+        return Engine()
+
+    monkeypatch.setenv("SDP_DATABASE_DSN", "postgresql://localhost/sdp")
+    cfg.reset_config_cache()
+    monkeypatch.setattr("sqlalchemy.create_engine", create_engine)
+
+    first = cfg.get_config_entry("SDP_LOG_SINK_TIMEOUT_MS")
+    second = cfg.get_config_entry("SDP_LOG_SINK_TIMEOUT_MS")
+
+    assert first == "750"
+    assert second == "750"
+    assert created == ["engine"]
+    cfg.reset_config_cache()
