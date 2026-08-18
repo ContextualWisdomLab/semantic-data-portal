@@ -46,7 +46,7 @@ PYTHONPATH=src uvicorn sdp.api:app --reload
 `SDP_SQLITE_PATH=.local/sdp-evidence.sqlite3`를 지정하면 production credential 없이도 같은 evidence store protocol을 로컬 SQLite fallback으로 검증할 수 있습니다. `SDP_DATABASE_URL`이 있으면 Postgres가 SQLite보다 우선합니다.
 `SDP_LOG_SINK_URL=file://.local/sdp-requests.jsonl`과 `SDP_REQUEST_ID_HEADER=X-Request-Id`를 지정하면 request id, tenant, actor, route, status, latency, evidence ids만 body 없이 request observation log로 기록됩니다.
 REST connector secret은 `SDP_CONNECTOR_SECRET_REF_PREFIX=SDP_CONNECTOR_SECRET_` 기준의 env secret reference로 조회합니다. 예: `SDP_CONNECTOR_SECRET_REST_CONNECTOR_MARKETING_CAMPAIGN_TOKEN` 값은 presence만 검증하며 API 응답에는 노출하지 않습니다.
-OIDC token verification은 `SDP_OIDC_ISSUER`, `SDP_OIDC_AUDIENCE`, `SDP_OIDC_JWKS_URL`, `SDP_OIDC_GROUP_ROLE_MAP`를 사용합니다.
+OIDC token verification은 `SDP_OIDC_ISSUER`, `SDP_OIDC_AUDIENCE`, `SDP_OIDC_JWKS_URL`, `SDP_OIDC_GROUP_ROLE_MAP`를 사용합니다. Raw `X-CWL-Oidc-Subject` 인증은 기본적으로 거부되며, 외부에 노출되지 않은 local demo 또는 CI에서만 `SDP_ALLOW_UNVERIFIED_SUBJECT_HEADER=true`로 명시적으로 opt-in할 수 있습니다. Paid pilot과 production에서는 이 flag를 사용하지 말고 Keyverse Bearer JWT를 검증해야 합니다.
 
 Docker 기반 로컬 데모는 다음 명령으로 실행합니다.
 
@@ -107,14 +107,17 @@ SDP_DATABASE_DSN='postgresql+psycopg://sdp_graph_app:<url-encoded-password>@loca
 
 ### Ontology/catalog plane (문서 KG 위 카탈로그 평면, issue #13)
 
-Keyverse OIDC subject + `X-CWL-Tenant-Reference` + `X-CWL-Access-Purpose`가 모두
-있어야 하며, tenant가 불일치하면 fail-closed(401/403)입니다. JWKS가 구성된
-환경에서는 `Authorization: Bearer`만 허용하고 `X-CWL-Oidc-Subject`는 거부합니다.
-지원하지 않는 purpose는 400입니다. 문서 본문·DiskSage ingest/preview·TEPP 채점은
-하지 않고, naruon `content_node` 등 **opaque 참조**만 저장합니다. Steward 표시
-이름은 purpose-limited로 그대로 노출되며 마스킹하지 않습니다.
-CI/pytest 기본은 in-memory이고, `SDP_DATABASE_DSN`이 있으면 `0002` 3NF
-테이블에 저장되어 재시작 후에도 glossary/catalog row가 유지됩니다.
+Keyverse identity + `X-CWL-Tenant-Reference` + `X-CWL-Access-Purpose`가 모두
+있어야 하며, tenant가 불일치하면 fail-closed(401/403)입니다. 기본 identity 경로는
+`Authorization: Bearer <Keyverse access token>`입니다. Raw `X-CWL-Oidc-Subject`는
+JWKS 설정 여부와 무관하게 기본적으로 거부되며, 외부에 노출되지 않은 local demo/CI에서만
+`SDP_ALLOW_UNVERIFIED_SUBJECT_HEADER=true`로 opt-in할 수 있습니다. JWKS가 구성된
+환경에서는 이 flag가 있어도 raw subject header가 거부됩니다. 지원하지 않는 purpose는
+400입니다. 문서 본문·DiskSage ingest/preview·TEPP 채점은 하지 않고, naruon
+`content_node` 등 **opaque 참조**만 저장합니다. Steward 표시 이름은 purpose-limited로
+그대로 노출되며 마스킹하지 않습니다. CI/pytest 기본은 in-memory이고,
+`SDP_DATABASE_DSN`이 있으면 `0002` 3NF 테이블에 저장되어 재시작 후에도
+glossary/catalog row가 유지됩니다.
 
 - `POST /plane/catalog-objects` — glossary term / catalog dataset / concept asset 등록
 - `GET  /plane/catalog-objects` — 동일 tenant 목록
@@ -123,9 +126,10 @@ CI/pytest 기본은 in-memory이고, `SDP_DATABASE_DSN`이 있으면 `0002` 3NF
 - `POST /plane/catalog-objects/{catalog_object_id}/concept-bindings` — 온톨로지 개념 연결
 - `GET  /plane/query?q=...` — title/alias/concept/document-KG id 검색
 
-필수 헤더: `X-CWL-Oidc-Subject` 또는 `Authorization: Bearer`, `X-CWL-Tenant-Reference`,
-`X-CWL-Access-Purpose` (`catalog_browse` | `glossary_stewardship` | `ontology_query` |
-`document_kg_alignment`).
+Production 필수 헤더: `Authorization: Bearer <Keyverse access token>`,
+`X-CWL-Tenant-Reference`, `X-CWL-Access-Purpose` (`catalog_browse` |
+`glossary_stewardship` | `ontology_query` | `document_kg_alignment`). Local demo/CI의
+명시적 opt-in에서만 Bearer 대신 `X-CWL-Oidc-Subject`를 사용할 수 있습니다.
 
 ### Catalog / governance / enterprise (기존)
 
