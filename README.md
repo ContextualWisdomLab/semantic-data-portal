@@ -113,6 +113,8 @@ Keyverse OIDC subject + `X-CWL-Tenant-Reference` + `X-CWL-Access-Purpose`가 모
 지원하지 않는 purpose는 400입니다. 문서 본문·DiskSage ingest/preview·TEPP 채점은
 하지 않고, naruon `content_node` 등 **opaque 참조**만 저장합니다. Steward 표시
 이름은 purpose-limited로 그대로 노출되며 마스킹하지 않습니다.
+CI/pytest 기본은 in-memory이고, `SDP_DATABASE_DSN`이 있으면 `0002` 3NF
+테이블에 저장되어 재시작 후에도 glossary/catalog row가 유지됩니다.
 
 - `POST /plane/catalog-objects` — glossary term / catalog dataset / concept asset 등록
 - `GET  /plane/catalog-objects` — 동일 tenant 목록
@@ -170,7 +172,7 @@ PYTHONPATH=src python -m sdp.demo_smoke
 | PRD/TRD 항목 | 구현 |
 |---|---|
 | Catalog Service | `src/sdp/catalog.py`, `/catalog/*` |
-| Ontology / catalog plane (above doc KG) | `src/sdp/catalog_plane.py`, `src/sdp/tenant_binding.py`, `/plane/*` |
+| Ontology / catalog plane (above doc KG) | `src/sdp/catalog_plane.py`, `src/sdp/catalog_plane_store.py`, `src/sdp/tenant_binding.py`, `/plane/*` (in-memory CI default; `SDP_DATABASE_DSN` → 0002) |
 | Ontology / Terminology | `src/sdp/ontology.py`, `/ontology/*` |
 | Browse/Query | `src/sdp/browse.py`, `/browse/*` |
 | Policy Service | `src/sdp/policy.py`, `/policy/decision` |

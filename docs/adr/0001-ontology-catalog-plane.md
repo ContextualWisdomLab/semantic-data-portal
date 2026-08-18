@@ -61,3 +61,6 @@ https://www.w3.org/TR/rdf11-concepts/
   IRT scoring remain outside this repository.
 - Postgres AGE + pgvector remain the graph engine under the plane; the new
   tables are the relational catalog identity layer above that engine.
+- In-memory is the CI / pytest default. When ``SDP_DATABASE_DSN`` is set the
+  plane reads and writes the 0002 tables so a paid-pilot restart keeps
+  glossary and catalog rows. This plane does not use Apache AGE or pgvector.

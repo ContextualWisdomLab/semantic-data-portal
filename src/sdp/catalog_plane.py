@@ -1,15 +1,16 @@
-"""In-memory ontology/catalog plane sitting above the document knowledge graph.
+"""Ontology/catalog plane sitting above the document knowledge graph.
 
 Buyers create, list, get, and query catalog objects that *reference* naruon
 content-graph / project-graph identifiers (and optional DiskSage or commons
-pointers). This module does not ingest files, preview bytes, compute TEPP
-scores, or keep a local GRC policy registry.
+pointers). Persistence is in-memory when ``SDP_DATABASE_DSN`` is unset (CI
+default) and the 0002 3NF tables when the DSN is set. This module does not
+ingest files, preview bytes, compute TEPP scores, or keep a local GRC policy
+registry.
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from threading import RLock
 from uuid import uuid4
 
 from sdp_core.catalog_plane import (
@@ -27,33 +28,31 @@ from sdp_core.catalog_plane import (
     ScoreReferenceRecord,
 )
 
+from .catalog_plane_store import (
+    get_catalog_plane_store,
+    reset_memory_catalog_plane,
+    restore_memory_catalog_plane,
+    snapshot_memory_catalog_plane,
+)
 from .policy import evaluate
-
-
-_CATALOG_OBJECTS: dict[str, CatalogObjectRecord] = {}
-_STORE_LOCK = RLock()
 
 
 def reset_catalog_plane() -> None:
     """Clear in-memory plane state so tests do not leak across cases."""
 
-    with _STORE_LOCK:
-        _CATALOG_OBJECTS.clear()
+    reset_memory_catalog_plane()
 
 
 def snapshot_catalog_plane() -> dict[str, CatalogObjectRecord]:
-    """Copy current plane rows for test isolation."""
+    """Copy current in-memory plane rows for test isolation."""
 
-    with _STORE_LOCK:
-        return {key: value.model_copy(deep=True) for key, value in _CATALOG_OBJECTS.items()}
+    return snapshot_memory_catalog_plane()
 
 
 def restore_catalog_plane(snapshot: dict[str, CatalogObjectRecord]) -> None:
-    """Replace plane rows with a previously captured snapshot."""
+    """Replace in-memory plane rows with a previously captured snapshot."""
 
-    with _STORE_LOCK:
-        _CATALOG_OBJECTS.clear()
-        _CATALOG_OBJECTS.update(snapshot)
+    restore_memory_catalog_plane(snapshot)
 
 
 def _now() -> datetime:
@@ -159,6 +158,81 @@ def _assert_unique_children(request: CatalogObjectCreateRequest) -> None:
         raise ValueError("duplicate concept binding in this catalog object")
 
 
+def _new_record(actor: PlaneActor, request: CatalogObjectCreateRequest) -> CatalogObjectRecord:
+    """Build a catalog object and 3NF children from a buyer create payload."""
+
+    catalog_object_id = CatalogObjectRecord.new_id()
+    recorded_at = _now()
+    return CatalogObjectRecord(
+        catalog_object_id=catalog_object_id,
+        tenant_reference=actor.tenant_reference,
+        object_kind=request.object_kind,
+        object_slug=request.object_slug,
+        display_title=request.display_title,
+        object_status=request.object_status,
+        created_by_subject=actor.subject,
+        created_at=recorded_at,
+        updated_at=recorded_at,
+        definition=ObjectDefinitionRecord(
+            definition_id=_child_id(),
+            catalog_object_id=catalog_object_id,
+            definition_text=request.definition_text,
+            preferred_language=request.preferred_language,
+            definition_status="current",
+            recorded_at=recorded_at,
+        ),
+        steward=ObjectStewardRecord(
+            steward_record_id=_child_id(),
+            catalog_object_id=catalog_object_id,
+            steward_subject=actor.subject,
+            steward_display_name=request.steward_display_name,
+            recorded_at=recorded_at,
+        ),
+        aliases=[
+            ObjectAliasRecord(
+                alias_id=_child_id(),
+                catalog_object_id=catalog_object_id,
+                alias_text=alias.alias_text,
+                alias_language=alias.alias_language,
+            )
+            for alias in request.aliases
+        ],
+        document_kg_links=[
+            DocumentKgLinkRecord(
+                document_kg_link_id=_child_id(),
+                catalog_object_id=catalog_object_id,
+                source_system=link.source_system,
+                source_object_kind=link.source_object_kind,
+                source_object_id=link.source_object_id,
+                provenance_uri=link.provenance_uri,
+                link_status="active",
+                recorded_at=recorded_at,
+            )
+            for link in request.document_kg_links
+        ],
+        concept_bindings=[
+            ConceptBindingRecord(
+                binding_id=_child_id(),
+                catalog_object_id=catalog_object_id,
+                concept_key=binding.concept_key,
+                binding_role=binding.binding_role,
+                recorded_at=recorded_at,
+            )
+            for binding in request.concept_bindings
+        ],
+        score_references=[
+            ScoreReferenceRecord(
+                score_reference_id=_child_id(),
+                catalog_object_id=catalog_object_id,
+                score_system=reference.score_system,
+                score_endpoint=reference.score_endpoint,
+                recorded_at=recorded_at,
+            )
+            for reference in request.score_references
+        ],
+    )
+
+
 def create_catalog_object(actor: PlaneActor, request: CatalogObjectCreateRequest) -> PlaneEnvelope:
     """Persist a tenant-scoped catalog object and its 3NF children.
 
@@ -184,85 +258,8 @@ def create_catalog_object(actor: PlaneActor, request: CatalogObjectCreateRequest
 
     decision_id = _govern(actor, mutate=True)
     _assert_unique_children(request)
-    with _STORE_LOCK:
-        for existing in _CATALOG_OBJECTS.values():
-            if (
-                existing.tenant_reference == actor.tenant_reference
-                and existing.object_slug == request.object_slug
-            ):
-                raise ValueError("object_slug already exists in this tenant")
-
-        catalog_object_id = CatalogObjectRecord.new_id()
-        recorded_at = _now()
-        record = CatalogObjectRecord(
-            catalog_object_id=catalog_object_id,
-            tenant_reference=actor.tenant_reference,
-            object_kind=request.object_kind,
-            object_slug=request.object_slug,
-            display_title=request.display_title,
-            object_status=request.object_status,
-            created_by_subject=actor.subject,
-            created_at=recorded_at,
-            updated_at=recorded_at,
-            definition=ObjectDefinitionRecord(
-                definition_id=_child_id(),
-                catalog_object_id=catalog_object_id,
-                definition_text=request.definition_text,
-                preferred_language=request.preferred_language,
-                definition_status="current",
-                recorded_at=recorded_at,
-            ),
-            steward=ObjectStewardRecord(
-                steward_record_id=_child_id(),
-                catalog_object_id=catalog_object_id,
-                steward_subject=actor.subject,
-                steward_display_name=request.steward_display_name,
-                recorded_at=recorded_at,
-            ),
-            aliases=[
-                ObjectAliasRecord(
-                    alias_id=_child_id(),
-                    catalog_object_id=catalog_object_id,
-                    alias_text=alias.alias_text,
-                    alias_language=alias.alias_language,
-                )
-                for alias in request.aliases
-            ],
-            document_kg_links=[
-                DocumentKgLinkRecord(
-                    document_kg_link_id=_child_id(),
-                    catalog_object_id=catalog_object_id,
-                    source_system=link.source_system,
-                    source_object_kind=link.source_object_kind,
-                    source_object_id=link.source_object_id,
-                    provenance_uri=link.provenance_uri,
-                    link_status="active",
-                    recorded_at=recorded_at,
-                )
-                for link in request.document_kg_links
-            ],
-            concept_bindings=[
-                ConceptBindingRecord(
-                    binding_id=_child_id(),
-                    catalog_object_id=catalog_object_id,
-                    concept_key=binding.concept_key,
-                    binding_role=binding.binding_role,
-                    recorded_at=recorded_at,
-                )
-                for binding in request.concept_bindings
-            ],
-            score_references=[
-                ScoreReferenceRecord(
-                    score_reference_id=_child_id(),
-                    catalog_object_id=catalog_object_id,
-                    score_system=reference.score_system,
-                    score_endpoint=reference.score_endpoint,
-                    recorded_at=recorded_at,
-                )
-                for reference in request.score_references
-            ],
-        )
-        _CATALOG_OBJECTS[catalog_object_id] = record
+    record = _new_record(actor, request)
+    get_catalog_plane_store().insert_catalog_object(record)
     envelope = _envelope(actor=actor, status="created", record=record)
     envelope.policy_decision_id = decision_id
     return envelope
@@ -276,13 +273,10 @@ def list_catalog_objects(
     """List catalog objects visible to the bound tenant only."""
 
     decision_id = _govern(actor, mutate=False)
-    with _STORE_LOCK:
-        items = [
-            record
-            for record in _CATALOG_OBJECTS.values()
-            if record.tenant_reference == actor.tenant_reference
-            and (object_kind is None or record.object_kind == object_kind)
-        ]
+    items = get_catalog_plane_store().list_catalog_objects(
+        tenant_reference=actor.tenant_reference,
+        object_kind=object_kind,
+    )
     items.sort(key=lambda row: row.display_title)
     next_action = (
         "다음으로 GET /plane/catalog-objects/{catalog_object_id} 로 steward가 "
@@ -309,11 +303,12 @@ def get_catalog_object(actor: PlaneActor, catalog_object_id: str) -> PlaneEnvelo
     """Return one catalog object if it belongs to the bound tenant."""
 
     decision_id = _govern(actor, mutate=False)
-    with _STORE_LOCK:
-        record = _CATALOG_OBJECTS.get(catalog_object_id)
-        if record is None or record.tenant_reference != actor.tenant_reference:
-            raise KeyError("catalog object not found in this tenant")
-        record = record.model_copy(deep=True)
+    record = get_catalog_plane_store().get_catalog_object(
+        tenant_reference=actor.tenant_reference,
+        catalog_object_id=catalog_object_id,
+    )
+    if record is None:
+        raise KeyError("catalog object not found in this tenant")
     envelope = _envelope(actor=actor, status="retrieved", record=record)
     envelope.policy_decision_id = decision_id
     return envelope
@@ -336,31 +331,23 @@ def attach_document_kg_link(
         source_object_id=source_object_id,
         provenance_uri=provenance_uri,
     )
-    with _STORE_LOCK:
-        record = _CATALOG_OBJECTS.get(catalog_object_id)
-        if record is None or record.tenant_reference != actor.tenant_reference:
-            raise KeyError("catalog object not found in this tenant")
-        if any(
-            link.source_system == draft.source_system
-            and link.source_object_id == draft.source_object_id
-            for link in record.document_kg_links
-        ):
-            raise ValueError("duplicate document-KG link in this catalog object")
-        recorded_at = _now()
-        record.document_kg_links.append(
-            DocumentKgLinkRecord(
-                document_kg_link_id=_child_id(),
-                catalog_object_id=record.catalog_object_id,
-                source_system=draft.source_system,
-                source_object_kind=draft.source_object_kind,
-                source_object_id=draft.source_object_id,
-                provenance_uri=draft.provenance_uri,
-                link_status="active",
-                recorded_at=recorded_at,
-            )
-        )
-        record.updated_at = recorded_at
-        snapshot = record.model_copy(deep=True)
+    recorded_at = _now()
+    snapshot = get_catalog_plane_store().attach_document_kg_link(
+        tenant_reference=actor.tenant_reference,
+        catalog_object_id=catalog_object_id,
+        link=DocumentKgLinkRecord(
+            document_kg_link_id=_child_id(),
+            catalog_object_id=catalog_object_id,
+            source_system=draft.source_system,
+            source_object_kind=draft.source_object_kind,
+            source_object_id=draft.source_object_id,
+            provenance_uri=draft.provenance_uri,
+            link_status="active",
+            recorded_at=recorded_at,
+        ),
+    )
+    if snapshot is None:
+        raise KeyError("catalog object not found in this tenant")
     envelope = _envelope(actor=actor, status="linked", record=snapshot)
     envelope.policy_decision_id = decision_id
     return envelope
@@ -376,27 +363,20 @@ def attach_concept_binding(
 
     decision_id = _govern(actor, mutate=True)
     draft = ConceptBindingDraft(concept_key=concept_key, binding_role=binding_role)  # type: ignore[arg-type]
-    with _STORE_LOCK:
-        record = _CATALOG_OBJECTS.get(catalog_object_id)
-        if record is None or record.tenant_reference != actor.tenant_reference:
-            raise KeyError("catalog object not found in this tenant")
-        if any(
-            binding.concept_key == draft.concept_key and binding.binding_role == draft.binding_role
-            for binding in record.concept_bindings
-        ):
-            raise ValueError("duplicate concept binding in this catalog object")
-        recorded_at = _now()
-        record.concept_bindings.append(
-            ConceptBindingRecord(
-                binding_id=_child_id(),
-                catalog_object_id=record.catalog_object_id,
-                concept_key=draft.concept_key,
-                binding_role=draft.binding_role,
-                recorded_at=recorded_at,
-            )
-        )
-        record.updated_at = recorded_at
-        snapshot = record.model_copy(deep=True)
+    recorded_at = _now()
+    snapshot = get_catalog_plane_store().attach_concept_binding(
+        tenant_reference=actor.tenant_reference,
+        catalog_object_id=catalog_object_id,
+        binding=ConceptBindingRecord(
+            binding_id=_child_id(),
+            catalog_object_id=catalog_object_id,
+            concept_key=draft.concept_key,
+            binding_role=draft.binding_role,
+            recorded_at=recorded_at,
+        ),
+    )
+    if snapshot is None:
+        raise KeyError("catalog object not found in this tenant")
     envelope = _envelope(actor=actor, status="bound", record=snapshot)
     envelope.policy_decision_id = decision_id
     return envelope
@@ -410,22 +390,10 @@ def query_catalog_objects(actor: PlaneActor, query: str) -> PlaneEnvelope:
     if not needle:
         raise ValueError("query text is required")
 
-    matches: list[CatalogObjectRecord] = []
-    with _STORE_LOCK:
-        for record in _CATALOG_OBJECTS.values():
-            if record.tenant_reference != actor.tenant_reference:
-                continue
-            haystacks = [
-                record.display_title,
-                record.object_slug,
-                record.definition.definition_text,
-                record.steward.steward_display_name,
-                *[alias.alias_text for alias in record.aliases],
-                *[binding.concept_key for binding in record.concept_bindings],
-                *[link.source_object_id for link in record.document_kg_links],
-            ]
-            if any(needle in value.lower() for value in haystacks):
-                matches.append(record.model_copy(deep=True))
+    matches = get_catalog_plane_store().query_catalog_objects(
+        tenant_reference=actor.tenant_reference,
+        query_text=needle,
+    )
     matches.sort(key=lambda row: row.display_title)
     next_action = (
         "다음으로 GET /plane/catalog-objects/{catalog_object_id} 로 매칭된 객체를 "

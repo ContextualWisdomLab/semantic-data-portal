@@ -11,3 +11,6 @@
   `X-CWL-Tenant-Reference`, and `X-CWL-Access-Purpose`.
 - 3NF migration `0002_ontology_catalog_plane.sql` and ADR 0001 (OWL/RDF/PROV
   cited in APA 7th only).
+- Catalog/ontology plane persistence: in-memory remains the CI default;
+  `SDP_DATABASE_DSN` reads and writes the 0002 tables so a paid-pilot restart
+  keeps glossary/catalog rows.
