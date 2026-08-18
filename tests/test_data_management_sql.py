@@ -195,10 +195,8 @@ def test_relational_store_enforces_natural_keys_and_tenant_scope(tmp_path) -> No
         with pytest.raises(ValueError, match="duplicate data-owner assignment"):
             assign_data_owner(actor, catalog_object_id, draft)
 
-        profile = build_data_management_profile(_reader_actor("external"), catalog_object_id)
-        assert profile.catalog_object_id == catalog_object_id  # pragma: no cover
-    except KeyError as exc:
-        assert "catalog object not found" in str(exc)
+        with pytest.raises(KeyError, match="catalog object not found"):
+            build_data_management_profile(_reader_actor("external"), catalog_object_id)
     finally:
         set_data_management_store(None)
         set_catalog_plane_store(None)
