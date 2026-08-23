@@ -25,7 +25,7 @@
 
 PII는 업무에 그대로 필요합니다. 카탈로그 plane에 masking을 추가하지 마십시오. purpose-limited authorization 계약 주인은 Keyverse, 응답 최소화·redaction·evidence export 계약 주인은 GRC입니다. 포털은 두 계약을 fail-closed로 소비합니다. unmasked 노출이 허용된다는 뜻이 아닙니다.
 
-main의 `src/sdp/browse.py` `apply_mask`는 steward browse에서 `customer_email` 등을 `***`로 바꿍니다. 이는 포털 소유 격차입니다. **유지하지 말고 제거**하십시오. 제거 PR은 `#80` (`9897376`)입니다. 인가된 steward에게는 원문을 보여 주며 접근은 Keyverse purpose-limited authorization과 GRC audit로 남기십시오. `#51` security-lock과 섞지 마십시오.
+main의 `src/sdp/browse.py` `apply_mask`는 steward browse에서 `customer_email` 등을 `***`로 바꿉니다. 이는 포털 소유 격차입니다. **유지하지 말고 제거**하십시오. 제거 PR은 `#80` (`9897376`)입니다. 인가된 steward에게는 원문을 보여 주며 접근은 Keyverse purpose-limited authorization과 GRC audit로 남기십시오. `#51` security-lock과 섞지 마십시오.
 
 ## 이미 채택한 표준 (APA 7th)
 
@@ -38,11 +38,11 @@ International Organization for Standardization. (2023). *Information technology 
 Moreau, L., & Missier, P. (Eds.). (2013). *PROV-DM: The PROV data model*. World Wide Web Consortium. https://www.w3.org/TR/prov-dm/  
 포털 계약: catalog 변경은 provenance pointer(PROV entity/activity)로만 남깁니다. KG write owner는 LineageWeave이며, 포털은 그 write 경로를 호출하지 않습니다.
 
-이후 커밋이 이 계약과 어귳나면 인용을 바꾸지 말고 코드를 고치십시오.
+이후 커밋이 이 계약과 어긋나면 인용을 바꾸지 말고 코드를 고치십시오.
 
 ## 병합 순서 (steward)
 
-1. PR `#51` `558dd2f` — outbound URL harden + cryptography CVE. 다른 포털 PR의 `trivy-fs`를 풀니다. Frozen. 이 head를 push하지 마십시오. 이 SHA에 OpenCode APPROVE가 붙은 뒤 Product Manager squash.
+1. PR `#51` `558dd2f` — outbound URL harden + cryptography CVE. 다른 포털 PR의 `trivy-fs`를 풉니다. Frozen. 이 head를 push하지 마십시오. 이 SHA에 OpenCode APPROVE가 붙은 뒤 Product Manager squash.
 2. PR `#58` `80966ae` — bounded Keyverse claim aliases. Frozen. 같은 merge gate.
 3. PR `#35` `9c12f5d` **그리고** PR `#32` `76fcfb6` (SQL gate). 둘 다 catalog plane SQL 표면의 전제입니다. **`#32`는 non-blocking이 아닙니다. `#73`보다 먼저** 병합하십시오. Frozen heads는 push하지 마십시오.
 4. PR `#73` `bfa409f` — catalog/ontology plane (#13). 제품 검사는 초록, 남은 빨강은 `#51`에서 inherit한 `trivy-fs`. push 보류. **`#75`는 `#73`이 main에 올 때까지 Draft.**
@@ -69,8 +69,8 @@ PR `#51` security-lock 파일을 catalog/docs PR에 섞지 마십시오. 이 문
 | #64 | `4b78611` | Current CWL product names | Yes (docs) | After #51. |
 | #65 | `19603c3` | setuptools 83 | Yes (build) | After unlock. |
 | #72 | `2295b0d` Draft | Operator README / draft ADRs | Yes (docs) | Draft. |
-| #79 | `1f4f633` | 이 기준선 문서 | Yes (docs) | #51 뒤에만 squash. |
-| #80 | `9897376` | steward preview `apply_mask` 제거 (인가 후 원문 PII) | Yes (catalog browse) | Open. Connector-contract leftover `***` assertion + GRC obligated-column tests patched this hour. OpenCode APPROVE on current SHA 후 squash. `#51`과 섞지 말 것. |
+| #79 | `a6c983f` | 이 기준선 문서 | Yes (docs) | #51 뒤에만 squash. |
+| #80 | `9897376` | steward preview `apply_mask` 제거 (인가 후 원문 PII) | Yes (catalog browse) | Open. OpenCode APPROVE on current SHA 후 squash. `#51`과 섞지 말 것. |
 | Dependabot #27 #29 #57 #62 #63 #67 #68 #69 #70 #71 | various | Dependency currency | Yes after unlock | trivy inherit이 빨간 동안 land 금지. |
 
 ## 아직 PR이 없는 operator-facing 격차
@@ -79,7 +79,7 @@ PR `#51` security-lock 파일을 catalog/docs PR에 섞지 마십시오. 이 문
 | --- | --- | --- |
 | Catalog plane이 main에 없음 | `SDP_DATABASE_DSN`이 없으면 glossary/catalog가 프로세스 재시작에 사라짐. 유료 파일럿 persistence는 #73에만 있음 | Portal — land #73 |
 | Keyverse 없이 tenant-bound catalog 없음 | fail-closed는 맞음. #58 병합 전에는 steward가 browse할 수 없음 | Consume Keyverse |
-| DiskSage batch를 main에서 preview 못 함 | inventory metadata를 catalog UI에서 다룸 수 없음 | Portal adapters #59/#61 |
+| DiskSage batch를 main에서 preview 못 함 | inventory metadata를 catalog UI에서 다룰 수 없음 | Portal adapters #59/#61 |
 | Hybrid file types | 업로드 office/binary가 file ontology에 매핑되지 않음 | Portal #28 after #37 |
 | Storybook + design tokens | `docs/design-tokens.md`는 있음. Figma file ID 없음. scene/edge-case event inventory 미완 | Portal UI — Figma ID를 만들지 말 것 |
 
