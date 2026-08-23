@@ -25,7 +25,7 @@
 
 PII는 업무에 그대로 필요합니다. 카탈로그 plane에 masking을 추가하지 마십시오. purpose-limited authorization 계약 주인은 Keyverse, 응답 최소화·redaction·evidence export 계약 주인은 GRC입니다. 포털은 두 계약을 fail-closed로 소비합니다. unmasked 노출이 허용된다는 뜻이 아닙니다.
 
-main의 `src/sdp/browse.py` `apply_mask`는 steward browse에서 `customer_email` 등을 `***`로 바꿉니다. 이는 포털 소유 격차입니다. **유지하지 말고 제거**하고, 인가된 steward에게는 원문을 보여 주며 접근은 Keyverse purpose-limited authorization과 GRC audit로 남기십시오.
+main의 `src/sdp/browse.py` `apply_mask`는 steward browse에서 `customer_email` 등을 `***`로 바꿉니다. 이는 포털 소유 격차입니다. **유지하지 말고 제거**하십시오. 제거 PR은 `#80` (`cd2fa68`)입니다. 인가된 steward에게는 원문을 보여 주며 접근은 Keyverse purpose-limited authorization과 GRC audit로 남기십시오. `#51` security-lock과 섞지 마십시오.
 
 ## 이미 채택한 표준 (APA 7th)
 
@@ -50,7 +50,7 @@ Moreau, L., & Missier, P. (Eds.). (2013). *PROV-DM: The PROV data model*. World 
 6. PR `#59` / `#61` — DiskSage ingest and preview boundary.
 7. PR `#64` product names (`#51` 이후, docs 실패로 trivy inherit을 받지 않게), then PR `#65` setuptools, then Dependabot.
 
-PR `#51` security-lock 파일을 catalog/docs PR에 섞지 마십시오. 이 문서 PR(`#79`)도 `#51`보다 먼저 병합하지 마십시오.
+PR `#51` security-lock 파일을 catalog/docs PR에 섞지 마십시오. 이 문서 PR(`#79`)도 `#51`보다 먼저 병합하지 마십시오. `#80`은 `#51` security-lock과 별개이며 squash는 현재 SHA OpenCode APPROVE 뒤에만 합니다.
 
 ## 열린 PR과 각 PR이 닫는 격차
 
@@ -69,7 +69,8 @@ PR `#51` security-lock 파일을 catalog/docs PR에 섞지 마십시오. 이 문
 | #64 | `4b78611` | Current CWL product names | Yes (docs) | After #51. |
 | #65 | `19603c3` | setuptools 83 | Yes (build) | After unlock. |
 | #72 | `2295b0d` Draft | Operator README / draft ADRs | Yes (docs) | Draft. |
-| #79 | `c51b68f` | 이 기준선 문서 | Yes (docs) | #51 뒤에만 squash. |
+| #79 | `a6c983f` | 이 기준선 문서 | Yes (docs) | #51 뒤에만 squash. |
+| #80 | `cd2fa68` | steward preview `apply_mask` 제거 (인가 후 원문 PII) | Yes (catalog browse) | Open. OpenCode APPROVE on current SHA 후 squash. `#51`과 섞지 말 것. |
 | Dependabot #27 #29 #57 #62 #63 #67 #68 #69 #70 #71 | various | Dependency currency | Yes after unlock | trivy inherit이 빨간 동안 land 금지. |
 
 ## 아직 PR이 없는 operator-facing 격차
@@ -81,7 +82,6 @@ PR `#51` security-lock 파일을 catalog/docs PR에 섞지 마십시오. 이 문
 | DiskSage batch를 main에서 preview 못 함 | inventory metadata를 catalog UI에서 다룰 수 없음 | Portal adapters #59/#61 |
 | Hybrid file types | 업로드 office/binary가 file ontology에 매핑되지 않음 | Portal #28 after #37 |
 | Storybook + design tokens | `docs/design-tokens.md`는 있음. Figma file ID 없음. scene/edge-case event inventory 미완 | Portal UI — Figma ID를 만들지 말 것 |
-| `browse.apply_mask`가 steward PII를 `***`로 지움 | 인가된 steward가 이메일·식별자를 못 보면 카탈로그 업무가 멈춤. masking 유지가 아니라 제거가 다음 행동 | Portal — 별도 PR, `#51` security-lock과 섞지 말 것 |
 
 ## 명시적 비격차 (여기서 만들지 말 것)
 
@@ -90,7 +90,7 @@ PR `#51` security-lock 파일을 catalog/docs PR에 섞지 마십시오. 이 문
 - Keyverse issuance, SCIM, PAT minting.
 - GRC control library or audit ledger.
 - naruon editor, calendar, HWPX.
-- 새 PII masking (기존 `apply_mask`는 제거할 격차이지 유지할 기능이 아님).
+- 새 PII masking (기존 `apply_mask`는 `#80`에서 제거할 격차이지 유지할 기능이 아님).
 - 분 시각 :17의 두 번째 hourly merge loop.
 
 ## 운영 메모
