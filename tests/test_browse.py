@@ -80,9 +80,13 @@ def test_preview_keeps_pii_for_authorized_steward() -> None:
     result = browse.preview("crm-customer-master", user="admin", purpose="analysis", limit=2)
     assert result["masking_summary"]["masking_applied"] is False
     assert result["masking_summary"]["masked_columns"] == []
+    assert result["masking_summary"]["grc_redaction_obligated_columns"] == ["customer_email"]
     emails = {row["customer_email"] for row in result["rows"]}
     assert emails == {"alice@example.com", "bob@example.com"}
     assert "***" not in emails
+    schema_result = browse.schema("crm-customer-master", user="admin", purpose="analysis")
+    assert schema_result["masked_columns"] == []
+    assert schema_result["grc_redaction_obligated_columns"] == ["customer_email"]
 
 
 def test_apply_mask_never_redacts() -> None:

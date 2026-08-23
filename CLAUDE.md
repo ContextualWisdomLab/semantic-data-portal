@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 프로젝트 개요
 
-온톨로지 기반 데이터 카탈로그/브라우징 플랫폼 MVP. FastAPI 단일 앱(`sdp.api:app`)이 카탈로그 검색, 온톨로지 용어 해석, 정책 기반 브라우징(민감 컬럼 마스킹), SQL draft 오케스트레이션, enterprise 증빙(evidence) 엔드포인트를 제공한다. PRD/TRD 원문은 `docs/prd-trd.md`, 요구사항 대응 매트릭스는 `docs/implementation-compliance.md`에 있다.
+온톨로지 기반 데이터 카탈로그/브라우징 플랫폼 MVP. FastAPI 단일 앱(`sdp.api:app`)이 카탈로그 검색, 온톨로지 용어 해석, 정책 기반 브라우징(인가 후 원문 PII; 마스킹은 GRC evidence export), SQL draft 오케스트레이션, enterprise 증빙(evidence) 엔드포인트를 제공한다. PRD/TRD 원문은 `docs/prd-trd.md`, 요구사항 대응 매트릭스는 `docs/implementation-compliance.md`에 있다.
 
 ## 자주 쓰는 명령어
 
@@ -62,7 +62,7 @@ supply-chain 하드닝 유지: base image는 digest-pinned(`python:3.12-slim@sha
 - `src/sdp/` — application 계층. `api.py`가 모든 라우트를 정의하고 도메인 모듈로 위임한다.
   - `catalog.py`: in-memory dataset store (`_DATA`, `buyer_demo_datasets()`로 seed). 검색/facet/lineage/schema history/audit.
   - `ontology.py`: 용어 해석, concept assets, ontology patch queue (propose/review).
-  - `browse.py`: schema/preview — policy 평가 후 PII 컬럼 마스킹(`***`) 적용.
+  - `browse.py`: schema/preview — Keyverse fail-closed 인가 후 원문 PII 반환. 카탈로그 plane은 마스킹하지 않으며 GRC evidence export가 redaction을 담당한다. `apply_mask`는 import 호환용 no-op.
   - `policy.py`: `evaluate(subject, resource, action, purpose)` — RBAC 역할, tenant boundary, sensitivity, purpose 기반 allow/deny. 모든 판단은 `evidence.record_policy_decision`으로 기록된다.
   - `orchestrator.py`: SQL draft 생성 + `validate_sql_query` 안전성 검사 (SELECT-only, 단일 statement, 금지 키워드, source table allowlist). fuzz 대상.
   - `evidence.py`: 모듈 로드 시 env로 store 선택 — `SDP_DATABASE_URL` → Postgres, 없으면 `SDP_SQLITE_PATH` → SQLite, 둘 다 없으면 in-memory list fallback.
@@ -74,7 +74,7 @@ supply-chain 하드닝 유지: base image는 digest-pinned(`python:3.12-slim@sha
 
 ### 데이터 흐름 (governance invariant)
 
-요청 → `api.py` 라우트 → 데이터 접근 전 `policy.evaluate()` → decision(allow/deny + masking/row_filter obligations)과 audit event를 evidence store에 기록 → 응답에 `policy_decision_id`와 masking 결과 포함. **카탈로그 mutation(create/publish/patch/deprecate)과 browse/query 경로에 정책 평가와 evidence 기록을 생략하는 변경은 회귀다.**
+요청 → `api.py` 라우트 → 데이터 접근 전 `policy.evaluate()` → decision(allow/deny + GRC redaction/row_filter obligations)과 audit event를 evidence store에 기록 → 응답에 `policy_decision_id`와 원문 preview 포함. 카탈로그 plane은 마스킹하지 않는다. **카탈로그 mutation(create/publish/patch/deprecate)과 browse/query 경로에 정책 평가와 evidence 기록을 생략하는 변경은 회귀다.**
 
 ### docker-compose 서비스 구성
 
