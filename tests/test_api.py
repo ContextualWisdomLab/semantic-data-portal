@@ -80,3 +80,19 @@ def test_enterprise_readiness_manifest_exposes_saleable_gates():
     assert artifacts["operator_console_design_capture"]["url"].startswith("https://www.figma.com/design/")
     assert "node-id=3-2" in artifacts["operator_console_design_capture"]["url"]
     assert artifacts["operator_console_design_capture"]["code_connect"] == "disabled"
+
+
+def test_enterprise_demo_plan_supports_buyer_activation_path():
+    response = client.get(
+        "/enterprise/demo-plan",
+        params={"domain": "insurance claims", "connector": ["sql_connector", "rest_connector"]},
+    )
+    assert response.status_code == 200
+
+    body = response.json()
+    assert body["priority_domain"] == "insurance claims"
+    assert body["activation_days"] == 10
+    assert [connector["id"] for connector in body["selected_connectors"]] == ["sql_connector", "rest_connector"]
+    assert any(step["id"] == "governed_browse_query" for step in body["workflow"])
+    assert any("/enterprise/demo-plan" in artifact for artifact in body["handoff_artifacts"])
+    assert any("policy_decision_id" in criterion for criterion in body["acceptance_criteria"])
