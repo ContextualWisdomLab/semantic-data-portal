@@ -43,3 +43,9 @@ def isolate_in_memory_app_state():
         app_observability.record_request_observation(observation, export=False)
     for error in export_errors:
         app_observability.record_observability_export_error(error)
+
+
+def test_health():
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
