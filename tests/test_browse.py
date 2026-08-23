@@ -1,11 +1,11 @@
-"""Browse-path security tests: input validation, policy-deny propagation, and
-PII masking.
+"""Browse-path security tests: input validation, policy-deny, and usable PII.
 
-``browse.preview``/``browse.schema`` are the policy-gated data-access surface;
-these pin the deny/validation branches (bad pagination, missing dataset, policy
-denial) and assert that PII columns obligated by policy are masked to ``***``.
-Every call records an audit event and a policy decision, so the in-memory
-catalog/audit/evidence stores are snapshot/restored for isolation.
+``browse.preview``/``browse.schema`` are the policy-gated data-access surface.
+These pin deny/validation branches (bad pagination, missing dataset, policy
+denial) and assert that an authorized steward still sees original PII values.
+Masking is not applied here; Keyverse fail-closed authorization plus GRC audit
+are the controls. Every call records an audit event and a policy decision, so
+the in-memory catalog/audit/evidence stores are snapshot/restored for isolation.
 """
 
 from __future__ import annotations
@@ -44,7 +44,9 @@ def _isolate_state():
 def test_preview_rejects_out_of_range_pagination(limit: int, offset: int) -> None:
     """preview enforces 1<=limit<=100 and offset>=0 before any data access."""
     with pytest.raises(ValueError):
-        browse.preview("crm-customer-master", user="admin", purpose="analysis", limit=limit, offset=offset)
+        browse.preview(
+            "crm-customer-master", user="admin", purpose="analysis", limit=limit, offset=offset
+        )
 
 
 def test_preview_denied_raises_permission_error() -> None:
@@ -67,21 +69,26 @@ def test_schema_denied_raises_permission_error() -> None:
     assert len(catalog._AUDIT_LOG) == before + 1  # the denial is audited
 
 
-def test_preview_masks_pii_columns() -> None:
-    """Any column policy obligates as masked is redacted to '***' in returned rows."""
-    # Mark an email-bearing column PII so policy obligates masking for the preview rows.
+def test_preview_keeps_pii_for_authorized_steward() -> None:
+    """Authorized preview keeps original emails; catalog plane does not mask."""
     base = catalog._DATA["crm-customer-master"]
     schema = [c.model_copy(update={"pii": (c.name == "customer_email")}) for c in base.schema]
     assert any(c.name == "customer_email" for c in schema), (
-        "fixture must include customer_email to exercise the preview masking integration"
+        "fixture must include customer_email to exercise authorized preview PII"
     )
     catalog._DATA["crm-customer-master"] = base.model_copy(update={"schema": schema})
     result = browse.preview("crm-customer-master", user="admin", purpose="analysis", limit=2)
-    assert "customer_email" in result["masking_summary"]["masked_columns"]
-    assert all(row["customer_email"] == "***" for row in result["rows"])
+    assert result["masking_summary"]["masking_applied"] is False
+    assert result["masking_summary"]["masked_columns"] == []
+    emails = {row["customer_email"] for row in result["rows"]}
+    assert emails == {"alice@example.com", "bob@example.com"}
+    assert "***" not in emails
 
 
-def test_apply_mask_noop_without_masked_columns() -> None:
-    """apply_mask returns the row unchanged when nothing is obligated masked."""
-    row = {"a": "1", "b": "2"}
-    assert browse.apply_mask(row, []) == {"a": "1", "b": "2"}
+def test_apply_mask_never_redacts() -> None:
+    """apply_mask is a compatibility no-op and must not replace steward PII."""
+    row = {"customer_email": "alice@example.com", "customer_id": "C-1001"}
+    assert browse.apply_mask(row, ["customer_email"]) == {
+        "customer_email": "alice@example.com",
+        "customer_id": "C-1001",
+    }
