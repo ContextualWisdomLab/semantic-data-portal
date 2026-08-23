@@ -49,3 +49,34 @@ def test_health():
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+def test_enterprise_readiness_manifest_exposes_saleable_gates():
+    response = client.get("/enterprise/readiness")
+    assert response.status_code == 200
+
+    body = response.json()
+    assert body["valuation_target_krw"] == 2_000_000_000
+    assert body["submodule_decision"]["decision"] == "monorepo_package_split_first"
+
+    packages = {package["id"]: package for package in body["package_boundary"]}
+    assert packages["sdp_core"]["kind"] == "library"
+    assert "store protocols" in packages["sdp_core"]["owns"]
+    assert packages["sdp_app"]["kind"] == "application"
+
+    stores = {store["id"]: store for store in body["storage_capabilities"]}
+    assert stores["audit_events"]["durability_required"] is True
+    assert stores["policy_decisions"]["scale_gate"].startswith("100 percent")
+
+    connectors = {connector["id"]: connector for connector in body["connector_capabilities"]}
+    assert {"sql_connector", "rdf_connector", "rest_connector", "file_lake_connector"} <= set(connectors)
+    assert "policy_before_query" in connectors["sql_connector"]["required_controls"]
+
+    gates = {gate["id"]: gate for gate in body["enterprise_gates"]}
+    assert gates["policy_audit_coverage"]["status"] == "implemented"
+    assert gates["operational_due_diligence"]["status"] == "external"
+    assert any(artifact["code_connect"] == "disabled" for artifact in body["design_artifacts"])
+    artifacts = {artifact["id"]: artifact for artifact in body["design_artifacts"]}
+    assert artifacts["operator_console_design_capture"]["url"].startswith("https://www.figma.com/design/")
+    assert "node-id=3-2" in artifacts["operator_console_design_capture"]["url"]
+    assert artifacts["operator_console_design_capture"]["code_connect"] == "disabled"
