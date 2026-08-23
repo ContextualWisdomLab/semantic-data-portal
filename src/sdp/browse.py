@@ -6,9 +6,7 @@ from .catalog import get_dataset, ingest_event
 from .policy import evaluate
 
 
-def preview(
-    dataset_id: str, user: str, purpose: str, limit: int = 100, offset: int = 0
-) -> Dict[str, Any]:
+def preview(dataset_id: str, user: str, purpose: str, limit: int = 100, offset: int = 0) -> Dict[str, Any]:
     """Return authorized preview rows with steward-usable PII.
 
     Access is fail-closed by Keyverse purpose-limited authorization.
@@ -34,9 +32,7 @@ def preview(
         )
         raise KeyError("dataset not found")
 
-    decision = evaluate(
-        subject=user, resource=dataset_id, action="preview", purpose=purpose
-    )
+    decision = evaluate(subject=user, resource=dataset_id, action="preview", purpose=purpose)
     if decision.effect != "allow":
         ingest_event(
             event_type="browse.preview",
@@ -117,9 +113,7 @@ def schema(dataset_id: str, user: str, purpose: str = "analysis") -> Dict[str, A
     if not dataset:
         raise KeyError("dataset not found")
 
-    decision = evaluate(
-        subject=user, resource=dataset_id, action="schema", purpose=purpose
-    )
+    decision = evaluate(subject=user, resource=dataset_id, action="schema", purpose=purpose)
     if decision.effect != "allow":
         ingest_event(
             event_type="browse.schema",
@@ -148,8 +142,5 @@ def schema(dataset_id: str, user: str, purpose: str = "analysis") -> Dict[str, A
         "mappings": [mapping.model_dump() for mapping in dataset.mappings],
         "masked_columns": [],
         "grc_redaction_obligated_columns": decision.obligations.get("masking", []),
-        "quality": {
-            "quality_score": dataset.quality_score,
-            "freshness_score": dataset.freshness_score,
-        },
+        "quality": {"quality_score": dataset.quality_score, "freshness_score": dataset.freshness_score},
     }
