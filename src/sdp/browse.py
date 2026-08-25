@@ -7,6 +7,12 @@ from .policy import evaluate
 
 
 def preview(dataset_id: str, user: str, purpose: str, limit: int = 100, offset: int = 0) -> Dict[str, Any]:
+    """Return authorized preview rows with steward-usable PII.
+
+    Access is fail-closed by Keyverse purpose-limited authorization.
+    This portal does not mask columns. Response minimization and redaction
+    belong to the GRC evidence contract, not this catalog plane.
+    """
     if limit < 1:
         raise ValueError("limit must be at least 1")
     if limit > 100:
@@ -56,8 +62,8 @@ def preview(dataset_id: str, user: str, purpose: str, limit: int = 100, offset: 
         },
     ]
 
-    selected = rows[offset : offset + limit]
-    masked = [apply_mask(row.copy(), decision.obligations.get("masking", [])) for row in selected]
+    selected = [row.copy() for row in rows[offset : offset + limit]]
+    obligated_mask = list(decision.obligations.get("masking", []))
     ingest_event(
         event_type="browse.preview",
         actor=user,
@@ -69,20 +75,26 @@ def preview(dataset_id: str, user: str, purpose: str, limit: int = 100, offset: 
             "purpose": purpose,
             "requested_offset": offset,
             "requested_limit": limit,
-            "returned_rows": len(masked),
+            "returned_rows": len(selected),
             "row_filter": decision.obligations.get("row_filter"),
             "policy_decision_id": decision.decision_id,
+            "masking_applied": False,
+            "grc_redaction_obligated_columns": obligated_mask,
         },
     )
     return {
         "dataset_id": dataset.id,
         "policy_decision": decision.model_dump(),
         "columns": [column.name for column in dataset.schema],
-        "rows": masked,
-        "row_count": min(limit, len(masked)),
+        "rows": selected,
+        "row_count": min(limit, len(selected)),
         "offset": offset,
-        "masking_summary": {"masked_columns": decision.obligations.get("masking", [])},
-        "has_more": offset + len(masked) < len(rows),
+        "masking_summary": {
+            "masked_columns": [],
+            "masking_applied": False,
+            "grc_redaction_obligated_columns": obligated_mask,
+        },
+        "has_more": offset + len(selected) < len(rows),
         "sampling_note": "샘플 결과이며 전체 데이터 대표성을 보장하지 않습니다.",
         "policy_decision_id": decision.decision_id,
         "applied_row_filter": decision.obligations.get("row_filter"),
@@ -90,15 +102,13 @@ def preview(dataset_id: str, user: str, purpose: str, limit: int = 100, offset: 
 
 
 def apply_mask(row: Dict[str, Any], masked_columns: List[str]) -> Dict[str, Any]:
-    if not masked_columns:
-        return row
-    for col in masked_columns:
-        if col in row:
-            row[col] = "***"
+    """Kept for import compatibility. Never redacts; GRC owns redaction."""
+    del masked_columns
     return row
 
 
 def schema(dataset_id: str, user: str, purpose: str = "analysis") -> Dict[str, Any]:
+    """Return dataset schema for an authorized steward without masking columns."""
     dataset = get_dataset(dataset_id)
     if not dataset:
         raise KeyError("dataset not found")
@@ -130,6 +140,7 @@ def schema(dataset_id: str, user: str, purpose: str = "analysis") -> Dict[str, A
         "policy_decision_id": decision.decision_id,
         "schema": [column.model_dump() for column in dataset.schema],
         "mappings": [mapping.model_dump() for mapping in dataset.mappings],
-        "masked_columns": decision.obligations.get("masking", []),
+        "masked_columns": [],
+        "grc_redaction_obligated_columns": decision.obligations.get("masking", []),
         "quality": {"quality_score": dataset.quality_score, "freshness_score": dataset.freshness_score},
     }

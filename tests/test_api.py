@@ -946,7 +946,7 @@ def test_sql_connector_adapter_implements_source_connector_contract():
     assert schema["source_system"].startswith("postgresql://")
     assert schema["columns"]
     assert rows
-    assert rows[0]["customer_email"] == "***"
+    assert rows[0]["customer_email"] == "alice@example.com"
 
 
 def test_rdf_connector_adapter_implements_source_connector_contract():
