@@ -124,6 +124,11 @@ glossary/catalog row가 유지됩니다.
 - `GET  /plane/catalog-objects/{catalog_object_id}` — 단건 조회
 - `POST /plane/catalog-objects/{catalog_object_id}/document-kg-links` — 문서 KG 참조 연결
 - `POST /plane/catalog-objects/{catalog_object_id}/concept-bindings` — 온톨로지 개념 연결
+- `POST /plane/catalog-objects/{catalog_object_id}/data-owner-assignments` — 데이터 오너 지정 (evidence-backed)
+- `POST /plane/catalog-objects/{catalog_object_id}/critical-data-elements` — CDE 등록
+- `POST /plane/critical-data-elements/{critical_data_element_id}/quality-rules` — 품질 규칙 정의
+- `POST /plane/quality-rules/{data_quality_rule_id}/observations` — 품질 observation 기록 (immutable)
+- `GET  /plane/catalog-objects/{catalog_object_id}/data-management-profile` — evidence 완결도 프로파일
 - `GET  /plane/query?q=...` — title/alias/concept/document-KG id 검색
 
 Production 필수 헤더: `Authorization: Bearer <Keyverse access token>`,

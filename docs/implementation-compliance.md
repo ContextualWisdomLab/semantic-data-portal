@@ -74,9 +74,12 @@
 
 ### CAT-010 Ontology/catalog plane above the document KG (issue #13)
 - 대응: `POST/GET /plane/catalog-objects`, `GET /plane/catalog-objects/{catalog_object_id}`, `POST .../document-kg-links`, `POST .../concept-bindings`, `GET /plane/query`
+- 데이터 관리 증거 확장(issue #74): `POST .../data-owner-assignments`, `POST .../critical-data-elements`, `POST /plane/critical-data-elements/{id}/quality-rules`, `POST /plane/quality-rules/{id}/observations`, `GET .../data-management-profile`
 - 핵심 코드:
   - [src/sdp/catalog_plane.py](src/sdp/catalog_plane.py)
   - [src/sdp/catalog_plane_store.py](src/sdp/catalog_plane_store.py)
+  - [src/sdp/data_management_evidence.py](src/sdp/data_management_evidence.py)
+  - [src/sdp/data_management_store.py](src/sdp/data_management_store.py)
   - [src/sdp/tenant_binding.py](src/sdp/tenant_binding.py)
   - [src/sdp_core/catalog_plane.py](src/sdp_core/catalog_plane.py)
   - [migrations/0002_ontology_catalog_plane.sql](migrations/0002_ontology_catalog_plane.sql)
