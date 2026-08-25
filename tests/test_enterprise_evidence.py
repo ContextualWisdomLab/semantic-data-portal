@@ -131,6 +131,7 @@ def test_export_tail_redacts_steward_pii_from_preview_events() -> None:
 @pytest.mark.usefixtures("_isolate_state")
 def test_export_without_activity_reports_zero_redactions() -> None:
     """An idle portal exports an empty tail and zero redaction counters."""
+    catalog._AUDIT_LOG.clear()
     pack = build_enterprise_evidence_pack()
     assert pack["grc_audit_tail"] == []
     assert pack["grc_redaction"]["obligation_declared_event_count"] == 0
