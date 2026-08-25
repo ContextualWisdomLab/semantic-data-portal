@@ -58,13 +58,13 @@ PR `#51` security-lock 파일을 catalog/docs PR에 섞지 마십시오. 이 문
 
 | PR | Head | 격차 | 포털 소유? | 상태 2026-08-24 |
 | --- | --- | --- | --- | --- |
+| #81 | `fce7045`+ | cryptography 50.0.0 — CVE-2026-69247, repo-wide trivy-fs unlock | Yes (shared base) | Checks 전부 초록. merge scheduler 대기. 최우선 병합. |
 | #51 | `558dd2f` | Outbound URL allowlist + security lock (cryptography CVE 부분은 `#81`이 선행 흡수) | Yes (security lock) | HOLD. 현재 SHA OpenCode APPROVE 없음. |
-| #81 | `fce7045` | cryptography 50.0.0 — CVE-2026-69247, repo-wide trivy-fs unlock | Yes (shared base) | Open. 최우선 병합. |
 | #58 | `80966ae` | Keyverse claim aliases fail-closed | Keyverse 소비, adapter는 여기 | HOLD. 이전 APPROVE는 옛 SHA. |
 | #35 | `9c12f5d` | SQL comma-join allowlist bypass | Yes | HOLD. CI 초록. |
 | #32 | `76fcfb6` | SELECT..INTO / volatile SQL bypass | Yes | #73 전제. #35/#51 뒤에 유지. |
 | #73 | `bfa409f` | Catalog plane above the document KG (#13) | Yes | HOLD. trivy inherit only. |
-| #75 | `56b0ad2` Draft | Framework-neutral data-management evidence *profiles* (GRC registry 아님) | Yes (catalog evidence shape) | Draft until #73. |
+| #75 | `2e97e20` Ready | Framework-neutral data-management evidence *profiles* (GRC registry 아님) — `/plane/*` data-management routes 노출 완료, 원샷 apply 워크플로 제거 | Yes (catalog evidence shape) | Ready for review. #73 이전 병합 금지는 유지. |
 | #59 | `65e4fd7` | DiskSage catalog ingest | Adapter yes | HOLD. |
 | #61 | `0c248d2` | DiskSage preview boundary | Adapter yes | Open; Analyze flake — extra-push 금지. |
 | #28 | `5e4b11c` | Hybrid file ontology | Yes after #37 | Wait #37. |
