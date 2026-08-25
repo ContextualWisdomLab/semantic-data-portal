@@ -133,13 +133,21 @@
   - `tests/test_api.py::test_enterprise_console_renders_operator_surface`
   - `tests/test_api.py::test_enterprise_demo_smoke_summary_is_ready`
 
-## 7) 다음 단계 (현재 브랜치에서 미반영 권고)
+## 7) DiskSage catalog preview
+
+- 대응: `POST /integrations/disksage/catalog-preview`, `POST /file-assets/preview/disksage`
+- 핵심 코드: [src/sdp/disksage.py](src/sdp/disksage.py), [src/sdp/api.py: disksage_catalog_preview](src/sdp/api.py)
+- 계약: path-free candidate batch 검증, 폐쇄형 production-time class / code-shaped `blocked_reason`, catalog write / eviction / storage coordinate 비활성
+- 오류: `ValidationError`는 입력값을 포함하지 않는 400, 그 외 예외는 500
+- 증빙 테스트: `tests/test_disksage.py`
+
+## 8) 다음 단계 (현재 브랜치에서 미반영 권고)
 
 1. 조직 정책 기준으로 `search` 및 `list` 에 대한 사용 권한/발견성 정책을 명시적으로 강화
 2. API level 감사 이벤트 보존 기간 및 위변조 방지(로그 저장소 정책) 적용
 3. OpenCode/PR 리뷰 증적 저장(`PR`, `review`, `merge` 로그)과 main 병합 완료 상태 정기 기록
 
-## 8) 구현 완료 증적(현재 HEAD 기준)
+## 9) 구현 완료 증적(현재 HEAD 기준)
 
 - 대상 브랜치: `codex/sdp-enterprise-foundation`
 - 기준: `origin/main` 병합 후 현재 브랜치 HEAD

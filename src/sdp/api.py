@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import ValidationError
 from sdp_core import (
     buyer_demo_activation_plan,
     enterprise_controls_manifest,
@@ -54,6 +55,7 @@ from .domain import (
     QueryDraftRequest,
     QueryExecutionRequest,
 )
+from .disksage import DiskSageCatalogBatch, catalog_preview
 from .enterprise_evidence import build_enterprise_evidence_pack
 from .evidence import list_policy_decisions
 from .observability import (
@@ -525,6 +527,21 @@ def create_dataset(payload: dict[str, Any]) -> dict[str, Any]:
 
     dataset = register_dataset(request, actor=actor_id, decision_id=decision.decision_id)
     return {"status": "created", "dataset": dataset.model_dump()}
+
+
+@app.post("/integrations/disksage/catalog-preview")
+@app.post("/file-assets/preview/disksage")
+def disksage_catalog_preview(payload: dict[str, Any]) -> dict[str, Any]:
+    """Validate and project DiskSage candidates; never persist or evict."""
+
+    try:
+        batch = DiskSageCatalogBatch.model_validate(payload)
+        return catalog_preview(batch)
+    except ValidationError:
+        raise HTTPException(status_code=400, detail="invalid DiskSage catalog batch") from None
+    except Exception:
+        _logger.exception("DiskSage catalog preview failed")
+        raise HTTPException(status_code=500, detail="DiskSage catalog preview unavailable") from None
 
 
 @app.post("/catalog/datasets/{dataset_id}/publish")
