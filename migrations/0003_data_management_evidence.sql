@@ -33,7 +33,10 @@ CREATE TABLE IF NOT EXISTS critical_data_elements (
     element_key              TEXT NOT NULL,
     display_name             TEXT NOT NULL,
     definition_text          TEXT NOT NULL,
-    data_classification      TEXT NOT NULL,
+    data_classification      TEXT NOT NULL
+        CHECK (data_classification IN (
+            'public', 'internal', 'confidential', 'restricted_pii', 'restricted_financial'
+        )),
     evidence_reference       TEXT NOT NULL CHECK (evidence_reference LIKE 'https://%'),
     truth_status             TEXT NOT NULL
         CHECK (truth_status IN ('authoritative', 'observed', 'inferred', 'proposed')),

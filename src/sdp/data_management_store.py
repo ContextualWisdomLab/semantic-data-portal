@@ -24,11 +24,12 @@ from sdp_core.data_management_evidence import (
 )
 
 try:
-    from sqlalchemy import create_engine, text
+    from sqlalchemy import create_engine, event, text
     from sqlalchemy.engine import Engine
     from sqlalchemy.exc import IntegrityError
 except ImportError:  # pragma: no cover - optional graph extra
     create_engine = None  # type: ignore[assignment]
+    event = None  # type: ignore[assignment]
     text = None  # type: ignore[assignment]
     Engine = Any  # type: ignore[misc,assignment]
 
@@ -75,11 +76,25 @@ def _sql_timestamp(value: datetime | None) -> str | None:
 
 
 def _open_engine(database_dsn: str) -> Engine:
-    """Open a SQLAlchemy engine or fail loud when the graph extra is absent."""
+    """Open a SQLAlchemy engine or fail loud when the graph extra is absent.
+
+    SQLite engines get ``PRAGMA foreign_keys=ON`` so relational cross-tenant
+    and parent-row guarantees hold during unit tests exactly as they do under
+    Postgres in production.
+    """
 
     if create_engine is None:
         raise RuntimeError(_GRAPH_EXTRA_HINT)
-    return create_engine(database_dsn, future=True)
+    engine = create_engine(database_dsn, future=True)
+    if engine.dialect.name == "sqlite":
+
+        @event.listens_for(engine, "connect")
+        def _set_sqlite_pragma(dbapi_connection, _connection_record) -> None:
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
+
+    return engine
 
 
 def _decimal(value: Any) -> Decimal:

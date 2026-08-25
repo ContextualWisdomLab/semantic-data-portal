@@ -261,6 +261,15 @@ def build_data_management_profile(
         catalog_object_id=catalog_object_id,
     )
     current_time = _now()
+    # Factor asymmetry is contractual, not accidental:
+    # - data_owner_present requires an *authoritative* assignment whose
+    #   effective-time window covers `current_time`, because authority lapses
+    #   when the window closes.
+    # - CDE/rule presence requires authoritative truth; these are definitions,
+    #   not measurements, so "observed" does not make a definition exist.
+    # - observation presence accepts authoritative or observed truth because an
+    #   observation row IS a measurement record — its native truth status is
+    #   "observed" by construction.
     owner_present = any(
         row.truth_status == "authoritative"
         and row.valid_from <= current_time
