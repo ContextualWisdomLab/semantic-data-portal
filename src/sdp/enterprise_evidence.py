@@ -28,8 +28,10 @@ def redact_grc_obligated_payload(payload: dict[str, Any]) -> tuple[dict[str, Any
     response minimization therefore happens here — immediately before any
     evidence export leaves the portal. A payload declares its obligations via
     ``grc_redaction_obligated_columns`` (top level or inside ``details``).
-    Every obligated column found as a payload key is replaced with
-    :data:`GRC_REDACTED_VALUE`; non-obligated fields pass through untouched.
+    Every obligated column found as a payload key is replaced wholesale —
+    scalars, lists, and nested objects alike — with :data:`GRC_REDACTED_VALUE`,
+    so a nested structure cannot smuggle personal data past the gate.
+    Non-obligated fields pass through untouched.
 
     Args:
         payload: Export record such as an audit-event dict.
@@ -60,19 +62,21 @@ def _iter_keys(node: Any) -> set[str]:
     return keys
 
 
-def _deep_redact(node: Any, obligated: set[str], in_details: bool = False) -> Any:
+def _deep_redact(node: Any, obligated: set[str]) -> Any:
     if not obligated:
         return node
     if isinstance(node, dict):
         redacted: dict[Any, Any] = {}
         for key, value in node.items():
-            if key in obligated and not isinstance(value, (dict, list)):
+            if key in obligated:
+                # Replace the entire value whatever its shape: an obligated
+                # list or object is exactly as sensitive as a scalar column.
                 redacted[key] = GRC_REDACTED_VALUE
             else:
-                redacted[key] = _deep_redact(value, obligated, in_details or key == "details")
+                redacted[key] = _deep_redact(value, obligated)
         return redacted
     if isinstance(node, list):
-        return [_deep_redact(item, obligated, in_details) for item in node]
+        return [_deep_redact(item, obligated) for item in node]
     return node
 
 

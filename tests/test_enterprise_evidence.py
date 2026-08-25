@@ -19,7 +19,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from sdp import browse, catalog  # noqa: E402
+from sdp import browse, catalog, evidence  # noqa: E402
 from sdp.enterprise_evidence import (  # noqa: E402
     GRC_OBLIGATION_KEY,
     GRC_REDACTED_VALUE,
@@ -30,15 +30,17 @@ from sdp.enterprise_evidence import (  # noqa: E402
 
 @pytest.fixture()
 def _isolate_state():
-    """Snapshot/restore module-level catalog data and audit log."""
+    """Snapshot/restore catalog data, audit log, and policy decisions."""
     data = {k: v.model_copy(deep=True) for k, v in catalog._DATA.items()}
     audit = list(catalog._AUDIT_LOG)
+    decisions = list(evidence._POLICY_DECISION_LOG)
     try:
         yield
     finally:
         catalog._DATA.clear()
         catalog._DATA.update(data)
         catalog._AUDIT_LOG[:] = audit
+        evidence._POLICY_DECISION_LOG[:] = decisions
 
 
 def _mark_customer_email_pii() -> None:
@@ -73,6 +75,22 @@ def test_no_obligations_returns_payload_unchanged() -> None:
     assert applied == []
     assert redacted == payload
     assert redacted is not payload
+
+
+def test_redacts_nested_list_and_object_values_for_obligated_columns() -> None:
+    """An obligated column is replaced wholesale even when nested or structured."""
+    payload = {
+        GRC_OBLIGATION_KEY: ["customer_contact"],
+        "details": {
+            "customer_contact": [{"email": "alice@example.com"}, {"phone": "+82-10-0000-0000"}],
+            "note": "keep me",
+        },
+    }
+    redacted, applied = redact_grc_obligated_payload(payload)
+    assert applied == ["customer_contact"]
+    assert redacted["details"]["customer_contact"] == GRC_REDACTED_VALUE
+    assert "alice@example.com" not in json.dumps(redacted)
+    assert redacted["details"]["note"] == "keep me"
 
 
 def test_declared_but_absent_columns_report_empty_application() -> None:
