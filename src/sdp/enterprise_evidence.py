@@ -16,6 +16,65 @@ from .evidence import list_policy_decisions
 from .semantic_validation import enterprise_shacl_validation_summary
 from .steward_review import build_steward_review_summary
 
+GRC_REDACTED_VALUE = "[grc-redacted]"
+GRC_OBLIGATION_KEY = "grc_redaction_obligated_columns"
+_AUDIT_TAIL_LIMIT = 50
+
+
+def redact_grc_obligated_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """Redact GRC-obligated columns from an export payload.
+
+    The catalog plane returns original PII to authorized stewards (PR #80);
+    response minimization therefore happens here — immediately before any
+    evidence export leaves the portal. A payload declares its obligations via
+    ``grc_redaction_obligated_columns`` (top level or inside ``details``).
+    Every obligated column found as a payload key is replaced with
+    :data:`GRC_REDACTED_VALUE`; non-obligated fields pass through untouched.
+
+    Args:
+        payload: Export record such as an audit-event dict.
+
+    Returns:
+        Tuple of ``(redacted_copy, applied_columns)`` where ``applied_columns``
+        lists the obligated columns that were actually present and redacted.
+    """
+    obligated = list(payload.get(GRC_OBLIGATION_KEY) or [])
+    details = payload.get("details")
+    if isinstance(details, dict):
+        obligated = obligated or list(details.get(GRC_OBLIGATION_KEY) or [])
+
+    redacted = _deep_redact(dict(payload), set(obligated))
+    applied = sorted(column for column in obligated if column in _iter_keys(redacted))
+    return redacted, applied
+
+
+def _iter_keys(node: Any) -> set[str]:
+    keys: set[str] = set()
+    if isinstance(node, dict):
+        for key, value in node.items():
+            keys.add(key)
+            keys |= _iter_keys(value)
+    elif isinstance(node, list):
+        for item in node:
+            keys |= _iter_keys(item)
+    return keys
+
+
+def _deep_redact(node: Any, obligated: set[str], in_details: bool = False) -> Any:
+    if not obligated:
+        return node
+    if isinstance(node, dict):
+        redacted: dict[Any, Any] = {}
+        for key, value in node.items():
+            if key in obligated and not isinstance(value, (dict, list)):
+                redacted[key] = GRC_REDACTED_VALUE
+            else:
+                redacted[key] = _deep_redact(value, obligated, in_details or key == "details")
+        return redacted
+    if isinstance(node, list):
+        return [_deep_redact(item, obligated, in_details) for item in node]
+    return node
+
 
 def _ratio(numerator: int, denominator: int) -> float:
     if denominator == 0:
@@ -47,6 +106,19 @@ def build_enterprise_evidence_pack() -> dict[str, Any]:
     audit_events = list_audit_events(limit=500)
     policy_decisions = list_policy_decisions(limit=500)
 
+    audit_tail: list[dict[str, Any]] = []
+    declared_event_count = 0
+    redacted_event_count = 0
+    redacted_column_count = 0
+    for event in sorted(audit_events, key=lambda row: row.created_at, reverse=True)[:_AUDIT_TAIL_LIMIT]:
+        event_payload, applied_columns = redact_grc_obligated_payload(event.model_dump(mode="json"))
+        if event_payload.get("details", {}).get(GRC_OBLIGATION_KEY):
+            declared_event_count += 1
+        if applied_columns:
+            redacted_event_count += 1
+            redacted_column_count += len(applied_columns)
+        audit_tail.append(event_payload)
+
     return {
         "product": readiness.product,
         "valuation_target_krw": readiness.valuation_target_krw,
@@ -60,6 +132,15 @@ def build_enterprise_evidence_pack() -> dict[str, Any]:
         "ontology_mapping_coverage": _ontology_mapping_coverage(),
         "policy_decision_count": len(policy_decisions),
         "audit_event_count": len(audit_events),
+        "grc_redaction": {
+            "obligation_key": GRC_OBLIGATION_KEY,
+            "redacted_value": GRC_REDACTED_VALUE,
+            "audit_tail_limit": _AUDIT_TAIL_LIMIT,
+            "obligation_declared_event_count": declared_event_count,
+            "redacted_event_count": redacted_event_count,
+            "redacted_column_count": redacted_column_count,
+        },
+        "grc_audit_tail": audit_tail,
         "production_demo_release_ready": production.demo_release_ready,
         "production_paid_pilot_ready": production.paid_pilot_ready,
         "production_paid_pilot_blockers": len(production.paid_pilot_blockers),

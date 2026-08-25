@@ -66,6 +66,7 @@ supply-chain 하드닝 유지: base image는 digest-pinned(`python:3.12-slim@sha
   - `policy.py`: `evaluate(subject, resource, action, purpose)` — RBAC 역할, tenant boundary, sensitivity, purpose 기반 allow/deny. 모든 판단은 `evidence.record_policy_decision`으로 기록된다.
   - `orchestrator.py`: SQL draft 생성 + `validate_sql_query` 안전성 검사 (SELECT-only, 단일 statement, 금지 키워드, source table allowlist). fuzz 대상.
   - `evidence.py`: 모듈 로드 시 env로 store 선택 — `SDP_DATABASE_URL` → Postgres, 없으면 `SDP_SQLITE_PATH` → SQLite, 둘 다 없으면 in-memory list fallback.
+  - `enterprise_evidence.py`: `/enterprise/evidence-pack` 조립. export 직전 GRC obligation-based redaction gate(`redact_grc_obligated_payload`)를 통과시킨다 — 이벤트가 선언한 `grc_redaction_obligated_columns` 컬럼은 `[grc-redacted]`로 치환되며, steward 원문 PII는 export를 떠나지 않는다.
   - `authz.py`: actor role/tenant 해석, OIDC claim mapping preview + JWKS 서명 검증 (PyJWT).
   - `observability.py`: request observation ring buffer, `/metrics` Prometheus text, `SDP_LOG_SINK_URL` file/http sink.
   - `console.py` + `design_tokens.py`: `/enterprise/console` 읽기 전용 HTML 콘솔.

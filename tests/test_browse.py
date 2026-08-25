@@ -88,6 +88,15 @@ def test_preview_keeps_pii_for_authorized_steward() -> None:
     assert schema_result["masked_columns"] == []
     assert schema_result["grc_redaction_obligated_columns"] == ["customer_email"]
 
+    preview_event = next(
+        event
+        for event in reversed(catalog._AUDIT_LOG)
+        if event.action == "browse.preview" and event.result == "allowed"
+    )
+    assert preview_event.details["masking_applied"] is False
+    assert preview_event.details["grc_redaction_obligated_columns"] == ["customer_email"]
+    assert preview_event.details["policy_decision_id"] == result["policy_decision_id"]
+
 
 def test_apply_mask_never_redacts() -> None:
     """apply_mask is a compatibility no-op and must not replace steward PII."""
