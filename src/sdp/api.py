@@ -16,6 +16,12 @@ from sdp_core import (
     enterprise_rbac_matrix,
     enterprise_readiness_manifest,
 )
+from sdp_core.data_management_evidence import (
+    CriticalDataElementDraft,
+    DataOwnerAssignmentDraft,
+    DataQualityObservationDraft,
+    DataQualityRuleDraft,
+)
 from sdp_core.catalog_plane import (
     CatalogObjectCreateRequest,
     ConceptBindingDraft,
@@ -32,6 +38,13 @@ from .catalog_plane import (
     get_catalog_object,
     list_catalog_objects,
     query_catalog_objects,
+)
+from .data_management_evidence import (
+    assign_data_owner,
+    build_data_management_profile,
+    define_data_quality_rule,
+    record_data_quality_observation,
+    register_critical_data_element,
 )
 from .config import get_app_config
 from .console import render_enterprise_console
@@ -822,6 +835,100 @@ def plane_query_catalog_objects(
         return query_catalog_objects(actor, q).model_dump()
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/plane/catalog-objects/{catalog_object_id}/data-owner-assignments")
+def plane_assign_data_owner(
+    catalog_object_id: str,
+    payload: DataOwnerAssignmentDraft,
+    request: Request,
+) -> dict[str, Any]:
+    """Assign an evidence-backed data owner to one catalog object."""
+
+    actor = _plane_actor(request)
+    try:
+        return assign_data_owner(actor, catalog_object_id, payload).model_dump()
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/plane/catalog-objects/{catalog_object_id}/critical-data-elements")
+def plane_register_critical_data_element(
+    catalog_object_id: str,
+    payload: CriticalDataElementDraft,
+    request: Request,
+) -> dict[str, Any]:
+    """Register an evidence-backed CDE under a catalog dataset."""
+
+    actor = _plane_actor(request)
+    try:
+        return register_critical_data_element(actor, catalog_object_id, payload).model_dump()
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/plane/critical-data-elements/{critical_data_element_id}/quality-rules")
+def plane_define_data_quality_rule(
+    critical_data_element_id: str,
+    payload: DataQualityRuleDraft,
+    request: Request,
+) -> dict[str, Any]:
+    """Define one evidence-backed quality rule for a CDE."""
+
+    actor = _plane_actor(request)
+    try:
+        return define_data_quality_rule(actor, critical_data_element_id, payload).model_dump()
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/plane/quality-rules/{data_quality_rule_id}/observations")
+def plane_record_data_quality_observation(
+    data_quality_rule_id: str,
+    payload: DataQualityObservationDraft,
+    request: Request,
+) -> dict[str, Any]:
+    """Append one immutable evidence-backed quality observation."""
+
+    actor = _plane_actor(request)
+    try:
+        return record_data_quality_observation(actor, data_quality_rule_id, payload).model_dump()
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/plane/catalog-objects/{catalog_object_id}/data-management-profile")
+def plane_data_management_profile(
+    catalog_object_id: str,
+    request: Request,
+) -> dict[str, Any]:
+    """Return the explainable evidence-completeness profile."""
+
+    actor = _plane_actor(request)
+    try:
+        return build_data_management_profile(actor, catalog_object_id).model_dump()
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

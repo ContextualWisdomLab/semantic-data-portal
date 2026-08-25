@@ -32,11 +32,15 @@ def test_data_management_evidence_migration_preserves_authority_and_provenance()
     """Every governance fact carries tenant, truth, time, and HTTPS evidence fields."""
 
     assert MIGRATION.exists(), "0003 data-management evidence migration is required"
-    sql = MIGRATION.read_text(encoding="utf-8")
+    # Collapse whitespace so the column contracts are checked independently of
+    # SQL alignment while still requiring one declaration per governed table.
+    sql = " ".join(MIGRATION.read_text(encoding="utf-8").split())
 
     assert sql.count("tenant_reference TEXT NOT NULL") >= 4
     assert sql.count("truth_status TEXT NOT NULL") >= 4
     assert sql.count("evidence_reference TEXT NOT NULL") >= 4
     assert "CHECK (truth_status IN ('authoritative', 'observed', 'inferred', 'proposed'))" in sql
     assert "CHECK (evidence_reference LIKE 'https://%')" in sql
-    assert "FOREIGN KEY (catalog_object_id) REFERENCES catalog_objects" in sql
+    # Each governed table carries a column-level FK into the catalog plane so
+    # evidence rows cannot outlive their tenant-scoped parent object.
+    assert sql.count("catalog_object_id TEXT NOT NULL REFERENCES catalog_objects") >= 4
