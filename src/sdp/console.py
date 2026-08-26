@@ -260,7 +260,7 @@ _CONSOLE_TEMPLATE = """<!doctype html>
       <div class="status-line">
         <span class="badge ok" id="readyBadge">pilot evidence</span>
         <span class="badge">KRW 2B enterprise readiness</span>
-        <span class="badge warn">Pilot onboarding: start at Readiness</span>
+        <span class="badge warn">파일럿 온보딩: Readiness 탭에서 시작하세요</span>
       </div>
       <nav class="actions" aria-label="Console evidence links">
         <a class="action" href="/enterprise/readiness">Readiness</a>
@@ -336,7 +336,7 @@ _CONSOLE_TEMPLATE = """<!doctype html>
         </section>
       </div>
     </div>
-    <div class="footer">Need dataset access or an API key? Open the <a href="/docs">API reference</a> for the full endpoint list, or contact your data steward to request access.</div>
+    <div class="footer">데이터셋 접근이나 API 키가 필요하신가요? <a href="/docs">API reference</a>에서 전체 엔드포인트 목록을 확인하거나 데이터 steward에게 접근을 요청하세요.</div>
   </main>
   <script>
     const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
@@ -397,8 +397,8 @@ _CONSOLE_TEMPLATE = """<!doctype html>
     }
 
     Promise.all([loadEvidence(), loadControls(), loadKpis(), loadConnectors()])
-      .then(() => text('readyBadge', 'ready for pilot review'))
-      .catch(() => text('readyBadge', 'evidence load failed - reload this console to retry'));
+      .then(() => text('readyBadge', '파일럿 검수 준비 완료'))
+      .catch(() => text('readyBadge', '증거 로딩 실패 - 콘솔을 새로고침해 재시도하세요'));
   </script>
 </body>
 </html>"""

@@ -286,7 +286,7 @@ def enterprise_connector_probe(
     except KeyError:
         raise HTTPException(
             status_code=404,
-            detail="dataset not found: verify dataset_id via GET /catalog/datasets and retry",
+            detail="데이터셋을 찾을 수 없습니다. GET /catalog/datasets로 dataset_id를 확인한 뒤 다시 요청하세요.",
         )
 
 
@@ -390,8 +390,8 @@ def catalog_facets(
         raise HTTPException(
             status_code=400,
             detail=(
-                "unsupported facet field: use one of domain, owner, sensitivity, "
-                "update_frequency, license, status and retry"
+                "지원하지 않는 facet 필드입니다. domain, owner, sensitivity, "
+                "update_frequency, license, status 중 하나를 사용해 다시 요청하세요."
             ),
         )
     return {"field": field, "counts": counts}
@@ -415,7 +415,7 @@ def dataset_detail(dataset_id: str) -> dict[str, Any]:
     if not dataset:
         raise HTTPException(
             status_code=404,
-            detail="dataset not found: verify dataset_id via GET /catalog/datasets and retry",
+            detail="데이터셋을 찾을 수 없습니다. GET /catalog/datasets로 dataset_id를 확인한 뒤 다시 요청하세요.",
         )
     return {
         **dataset.model_dump(),
@@ -430,7 +430,7 @@ def dataset_jsonld(dataset_id: str) -> dict[str, Any]:
     if not dataset:
         raise HTTPException(
             status_code=404,
-            detail="dataset not found: verify dataset_id via GET /catalog/datasets and retry",
+            detail="데이터셋을 찾을 수 없습니다. GET /catalog/datasets로 dataset_id를 확인한 뒤 다시 요청하세요.",
         )
     return {
         "@context": "https://www.w3.org/TR/vocab-dcat-3/",
@@ -458,7 +458,7 @@ def catalog_dataset_semantic_validation(dataset_id: str) -> dict[str, Any]:
     except KeyError:
         raise HTTPException(
             status_code=404,
-            detail="dataset not found: verify dataset_id via GET /catalog/datasets and retry",
+            detail="데이터셋을 찾을 수 없습니다. GET /catalog/datasets로 dataset_id를 확인한 뒤 다시 요청하세요.",
         )
 
 
@@ -506,7 +506,7 @@ def validate(dataset_id: str) -> dict[str, Any]:
     if not dataset:
         raise HTTPException(
             status_code=404,
-            detail="dataset not found: verify dataset_id via GET /catalog/datasets and retry",
+            detail="데이터셋을 찾을 수 없습니다. GET /catalog/datasets로 dataset_id를 확인한 뒤 다시 요청하세요.",
         )
     return validate_metadata(dataset)
 
@@ -776,7 +776,7 @@ def get_graph_node(node_id: str) -> dict[str, Any]:
     if node is None:
         raise HTTPException(
             status_code=404,
-            detail="node not found: verify the node_id (search existing nodes via POST /search/semantic) and retry",
+            detail="노드를 찾을 수 없습니다. POST /search/semantic으로 node_id를 확인한 뒤 다시 요청하세요.",
         )
     return node.as_dict()
 
@@ -822,7 +822,7 @@ def browse_schema(dataset_id: str, user: str = Query(default="anonymous"), purpo
     except KeyError:
         raise HTTPException(
             status_code=404,
-            detail="dataset not found: verify dataset_id via GET /catalog/datasets and retry",
+            detail="데이터셋을 찾을 수 없습니다. GET /catalog/datasets로 dataset_id를 확인한 뒤 다시 요청하세요.",
         )
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
@@ -843,7 +843,7 @@ def browse_preview(dataset_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     except KeyError:
         raise HTTPException(
             status_code=404,
-            detail="dataset not found: verify dataset_id via GET /catalog/datasets and retry",
+            detail="데이터셋을 찾을 수 없습니다. GET /catalog/datasets로 dataset_id를 확인한 뒤 다시 요청하세요.",
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -864,8 +864,8 @@ def llm_search(payload: dict[str, str]) -> dict[str, Any]:
         return {
             "question": query,
             "error": (
-                "No resolvable ontology term. Rephrase the question using a glossary term "
-                "(browse available terms via GET /ontology/concepts) and retry."
+                "해석 가능한 온톨로지 용어가 없습니다. 질문을 glossary 용어로 다시 표현하거나 "
+                "(GET /ontology/concepts에서 용어를 검색) 재시도하세요."
             ),
             "user": user,
             "purpose": purpose,

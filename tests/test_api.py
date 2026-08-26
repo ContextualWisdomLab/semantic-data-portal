@@ -229,9 +229,9 @@ def test_enterprise_console_renders_operator_surface():
     ):
         assert leaked.lower() not in body.lower(), f"internal token '{leaked}' leaked into console HTML"
     # Rule 2: every guidance string points at a next action.
-    assert "Pilot onboarding: start at Readiness" in body
-    assert "contact your data steward" in body
-    assert "reload this console to retry" in body
+    assert "파일럿 온보딩: Readiness 탭에서 시작하세요" in body
+    assert "데이터 steward에게 접근을 요청" in body
+    assert "콘솔을 새로고침해 재시도하세요" in body
 
 
 def test_enterprise_controls_expose_feature_gate_manifest():

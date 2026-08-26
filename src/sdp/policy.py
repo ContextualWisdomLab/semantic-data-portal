@@ -99,10 +99,10 @@ def evaluate(subject: str, resource: str, action: str, purpose: str) -> PolicyDe
             **decision_base,
             effect="deny",
             reason=(
-                "critical 민감도 자산은 별도 심사가 필요합니다. admin 권한으로 요청하거나 "
-                "보안 심사를 완료한 뒤 다시 요청하세요."
+                "critical 민감도 자산은 admin 권한이 있는 계정만 조회할 수 있습니다. "
+                "admin 또는 platform-admin 역할로 다시 요청하거나 관리자에게 승인을 요청하세요."
             ),
-            obligations={"redact": True, "masking": True},
+            obligations={"required_role": "admin", "redact": True, "masking": True},
         )
 
     if purpose.lower() == "external-export" and not _is_admin(subject):
@@ -110,10 +110,11 @@ def evaluate(subject: str, resource: str, action: str, purpose: str) -> PolicyDe
             **decision_base,
             effect="deny",
             reason=(
-                "외부 반출 목적(external-export)은 data-admin 승인이 필요합니다. "
-                "분석 목적(purpose=analysis 등)으로 다시 요청하거나 데이터 운영자의 승인을 받으세요."
+                "외부 반출 목적(external-export)은 admin 권한이 필요합니다. "
+                "분석 목적(purpose=analysis 등)으로 다시 요청하거나 "
+                "admin/platform-admin 역할로 재요청하세요."
             ),
-            obligations={"required_role": "data-admin"},
+            obligations={"required_role": "admin"},
         )
 
     if action_key in {"publish", "patch", "deprecate"} and not _can_mutate(subject, action_key):
@@ -132,8 +133,9 @@ def evaluate(subject: str, resource: str, action: str, purpose: str) -> PolicyDe
             **decision_base,
             effect="deny",
             reason=(
-                "조회 권한이 없습니다. data-analyst 역할이 필요합니다. "
-                "해당 역할을 부여받은 계정으로 다시 시도하거나 관리자에게 역할 부여를 요청하세요."
+                "조회 권한이 없습니다. data-analyst, admin, platform-admin, security 중 "
+                "하나의 역할이 필요합니다. 해당 역할을 부여받은 계정으로 다시 시도하거나 "
+                "관리자에게 역할 부여를 요청하세요."
             ),
             obligations={"required_role": "data-analyst"},
         )

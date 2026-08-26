@@ -67,8 +67,8 @@ def validate_sql_query(sql: str, *, source_system: str) -> list[str]:
     referenced_tables = {_safe_identifier(table.rsplit(".", 1)[-1]).lower() for table in referenced}
     if referenced_tables != {expected}:
         warnings.append(
-            f"unauthorized_table_reference: query only '{expected}' (the table bound to this dataset); "
-            "fix the FROM/JOIN clause and retry"
+            "unauthorized_table_reference: query only the source table bound to this dataset "
+            "(check GET /browse/{dataset_id}/schema for the bound source); fix the FROM/JOIN clause and retry"
         )
 
     return warnings
