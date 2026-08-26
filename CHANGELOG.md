@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Accepted Semantic Data Portal as the corporate-master entity-resolution
+  owner and published the target `sdp.corporate-master-resolution/v1` contract.
+  The contract preserves distinct `unique`, `miss`, and `tie` outcomes and adds
+  no matching heuristic, threshold, weight, or executable endpoint claim.
+
 ## 0.3.1 — 2026-08-18
 
 ### Added
