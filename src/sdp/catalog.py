@@ -361,7 +361,11 @@ def _build_dataset_payload(
 
 
 def validate_metadata(dataset: Dataset) -> Dict[str, object]:
-    missing = [field for field in _REQUIRED_METADATA_FIELDS if not getattr(dataset, field, None)]
+    missing = [
+        field
+        for field in _REQUIRED_METADATA_FIELDS
+        if not getattr(dataset, "dataset_schema" if field == "schema" else field, None)
+    ]
     return {
         "required_fields": list(_REQUIRED_METADATA_FIELDS),
         "missing": missing,

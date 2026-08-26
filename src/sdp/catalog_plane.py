@@ -134,6 +134,7 @@ def _govern(actor: PlaneActor, *, mutate: bool) -> str:
         resource="plane" if mutate else "catalog",
         action="create" if mutate else "search",
         purpose=actor.access_purpose,
+        roles=actor.roles,
     )
     if decision.effect != "allow":
         raise PermissionError(decision.reason)

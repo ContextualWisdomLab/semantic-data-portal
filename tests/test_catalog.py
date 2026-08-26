@@ -187,6 +187,17 @@ def test_schema_history_missing_raises() -> None:
         catalog.get_dataset_schema_history("nohist-ds")
 
 
+def test_metadata_validation_rejects_an_empty_dataset_schema() -> None:
+    """Publishing metadata cannot mistake Pydantic's schema method for columns."""
+
+    dataset = catalog._DATA[_CRM].model_copy(update={"dataset_schema": []})
+
+    result = catalog.validate_metadata(dataset)
+
+    assert "schema" in result["missing"]
+    assert result["is_valid"] is False
+
+
 def test_schema_diff_version_not_found() -> None:
     """A schema diff for versions absent from history raises ValueError (lines 309-310)."""
     with pytest.raises(ValueError):

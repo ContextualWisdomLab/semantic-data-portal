@@ -12,19 +12,38 @@ def _decision(**kwargs: object) -> PolicyDecision:
     return record_policy_decision(PolicyDecision(**kwargs))
 
 
-def _is_admin(subject: str) -> bool:
-    return has_role(subject, "admin", "platform-admin")
+def _has_any_role(subject: str, roles: list[str] | None, *required: str) -> bool:
+    """Check verified request roles when supplied, otherwise demo-map roles."""
+
+    if roles is not None:
+        return bool(set(required).intersection(roles))
+    return has_role(subject, *required)
+
+
+def _is_admin(subject: str, roles: list[str] | None = None) -> bool:
+    return _has_any_role(subject, roles, "admin", "platform-admin")
 
 
 def _can_mutate(subject: str, action: str) -> bool:
     return _is_admin(subject) and action.lower() in {"create", "publish", "patch", "deprecate"}
 
 
-def _has_reader_role(subject: str) -> bool:
-    return has_role(subject, "data-analyst", "admin", "platform-admin", "security")
+def _has_reader_role(subject: str, roles: list[str] | None = None) -> bool:
+    return _has_any_role(
+        subject, roles, "data-analyst", "admin", "platform-admin", "security"
+    )
 
 
-def evaluate(subject: str, resource: str, action: str, purpose: str) -> PolicyDecision:
+def evaluate(
+    subject: str,
+    resource: str,
+    action: str,
+    purpose: str,
+    *,
+    roles: list[str] | None = None,
+) -> PolicyDecision:
+    """Evaluate policy using verified request roles or legacy demo-map roles."""
+
     action_key = action.lower()
     decision_id = str(uuid4())
     decision_base = {
@@ -35,7 +54,7 @@ def evaluate(subject: str, resource: str, action: str, purpose: str) -> PolicyDe
     }
 
     if action_key == "create":
-        if _is_admin(subject):
+        if _is_admin(subject, roles):
             return _decision(
                 **decision_base,
                 effect="allow",
@@ -50,7 +69,7 @@ def evaluate(subject: str, resource: str, action: str, purpose: str) -> PolicyDe
         )
 
     if action_key in {"search", "search_catalog", "discover"}:
-        if _has_reader_role(subject):
+        if _has_reader_role(subject, roles):
             return _decision(
                 **decision_base,
                 effect="allow",

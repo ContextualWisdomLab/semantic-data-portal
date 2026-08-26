@@ -356,7 +356,7 @@ def test_plane_oidc_bearer_matches_tenant_claim(monkeypatch):
         {
             "iss": "https://idp.example.com/",
             "aud": "semantic-data-portal",
-            "email": "admin",
+            "email": "oidc.steward@example.test",
             "tenant_id": "demo",
             "groups": ["sdp-admins"],
             "exp": int(time()) + 3600,
@@ -386,7 +386,10 @@ def test_plane_oidc_bearer_matches_tenant_claim(monkeypatch):
         },
     )
     assert matched.status_code == 200, matched.text
-    assert matched.json()["catalog_object"]["created_by_subject"] == "admin"
+    assert (
+        matched.json()["catalog_object"]["created_by_subject"]
+        == "oidc.steward@example.test"
+    )
 
     mismatched = client.get(
         "/plane/catalog-objects",
