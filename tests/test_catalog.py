@@ -83,7 +83,7 @@ def test_join_candidates_skips_zero_overlap() -> None:
             "id": "no-overlap",
             "status": "published",
             "terms": ["완전무관용어"],
-            "schema": [],
+            "dataset_schema": [],
         }
     )
     candidates = catalog.get_join_candidates(_CRM)
@@ -254,7 +254,7 @@ def test_patch_dataset_schema_bumps_schema_version() -> None:
         ),
     )
     assert updated.schema_version == catalog._bump_version(before)
-    assert [column.name for column in updated.schema] == ["new_col"]
+    assert [column.name for column in updated.dataset_schema] == ["new_col"]
 
 
 # --- publish_dataset idempotent no-op (lines 471-480) --------------------

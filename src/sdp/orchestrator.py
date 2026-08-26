@@ -70,7 +70,7 @@ def draft_sql(req: QueryDraftRequest) -> dict:
         return {"error": "dataset_not_found"}
     if dataset.status != "published":
         return {"error": "policy_denied", "reason": "dataset is not published"}
-    if not dataset.schema:
+    if not dataset.dataset_schema:
         return {"error": "missing_schema", "reason": "dataset schema must be present to draft query"}
 
     decision = evaluate(subject=req.user, resource=req.dataset_id, action="query", purpose=req.purpose)
@@ -81,7 +81,7 @@ def draft_sql(req: QueryDraftRequest) -> dict:
     if any(token in question for token in _FORBIDDEN_KEYWORDS):
         return {"error": "policy_denied", "reason": "허용되지 않은 키워드가 질의에 포함되었습니다."}
 
-    allowed_columns = {column.name for column in dataset.schema if column.datatype}
+    allowed_columns = {column.name for column in dataset.dataset_schema if column.datatype}
     if req.columns:
         unknown = sorted(set(req.columns) - allowed_columns)
         if unknown:
@@ -132,7 +132,7 @@ def draft_sql(req: QueryDraftRequest) -> dict:
     if req.group_by in {"signup_at", "event_timestamp", "created_at"}:
         assumptions.append("날짜 집계는 기간 기반 집계로만 제한")
 
-    masked_pii = [col.name for col in dataset.schema if col.pii]
+    masked_pii = [col.name for col in dataset.dataset_schema if col.pii]
     if masked_pii and req.purpose == "analysis":
         assumptions.append(f"PII 컬럼({', '.join(masked_pii)})은 별도 집계/마스킹 필요")
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 import logging
 from datetime import datetime, timezone
 from time import monotonic
@@ -72,10 +74,22 @@ from .steward_review import build_steward_review_summary
 _logger = logging.getLogger(__name__)
 
 
+@asynccontextmanager
+async def _app_lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """Seed the active graph store when the ASGI application starts."""
+
+    try:
+        seed_store()
+    except Exception:  # pragma: no cover - seeding must never block startup
+        pass
+    yield
+
+
 app = FastAPI(
     title="Semantic Data Portal",
     description="온톨로지 기반 그래프 데이터 카탈로그 및 시맨틱 검색 서비스",
     version="0.3.0",
+    lifespan=_app_lifespan,
 )
 
 # CORS allowlist comes from config (KV table `config_entries` when a database is
@@ -87,16 +101,6 @@ app.add_middleware(
     allow_methods=_config.cors_allow_methods,
     allow_headers=_config.cors_allow_headers,
 )
-
-
-@app.on_event("startup")
-def _bootstrap_graph_engine() -> None:
-    """Seed the active graph store on startup (idempotent)."""
-
-    try:
-        seed_store()
-    except Exception:  # pragma: no cover - seeding must never block startup
-        pass
 
 
 # Seed at import time as well: the test client and embedded/submodule callers

@@ -10,6 +10,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from jwt.algorithms import RSAAlgorithm
 
 import sdp.catalog as app_catalog
+import sdp.api as app_api
 import sdp.domain as app_domain
 import sdp.evidence as app_evidence
 import sdp.observability as app_observability
@@ -49,6 +50,18 @@ def test_health():
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+def test_lifespan_seeds_graph_store(monkeypatch):
+    """The supported ASGI lifespan hook seeds once before serving requests."""
+
+    calls: list[bool] = []
+    monkeypatch.setattr(app_api, "seed_store", lambda: calls.append(True))
+
+    with TestClient(app_api.app) as lifespan_client:
+        assert lifespan_client.get("/health").status_code == 200
+
+    assert calls == [True]
 
 
 def test_enterprise_readiness_manifest_exposes_saleable_gates():
