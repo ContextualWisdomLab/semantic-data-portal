@@ -129,10 +129,6 @@ def _govern(actor: PlaneActor, *, mutate: bool) -> str:
     Steward names stay in the envelope unmasked.
     """
 
-    if mutate and not actor.can_mutate():
-        raise PermissionError("catalog-plane writes require an admin Keyverse role")
-    if not mutate and not actor.can_read():
-        raise PermissionError("catalog-plane reads require a Keyverse reader role")
     decision = evaluate(
         subject=actor.subject,
         resource="plane" if mutate else "catalog",

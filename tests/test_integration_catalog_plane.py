@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, inspect, text
 
 from sdp.catalog_plane_store import RelationalCatalogPlaneStore
 from sdp_core.catalog_plane import (
@@ -29,14 +29,11 @@ DSN = os.environ.get("SDP_DATABASE_DSN")
 def _catalog_objects_ready(database_dsn: str) -> bool:
     """Return whether the 0002 parent table already exists on this DSN."""
 
+    engine = create_engine(database_dsn, future=True)
     try:
-        engine = create_engine(database_dsn, future=True)
-        with engine.connect() as connection:
-            connection.execute(text("SELECT 1 FROM catalog_objects WHERE 1 = 0"))
+        return inspect(engine).has_table("catalog_objects")
+    finally:
         engine.dispose()
-        return True
-    except Exception:
-        return False
 
 
 @pytest.fixture(scope="module")
@@ -82,12 +79,23 @@ def test_live_dsn_create_survives_store_reopen(live_plane_store):
             recorded_at=recorded_at,
         ),
     )
-    live_plane_store.insert_catalog_object(record)
-    reopened = RelationalCatalogPlaneStore(DSN)
-    loaded = reopened.get_catalog_object(
-        tenant_reference=tenant_reference,
-        catalog_object_id=catalog_object_id,
-    )
-    assert loaded is not None
-    assert loaded.display_title == "재시작 보존"
-    assert loaded.steward.steward_display_name == "Mina Park"
+    try:
+        live_plane_store.insert_catalog_object(record)
+        reopened = RelationalCatalogPlaneStore(DSN)
+        loaded = reopened.get_catalog_object(
+            tenant_reference=tenant_reference,
+            catalog_object_id=catalog_object_id,
+        )
+        assert loaded is not None
+        assert loaded.display_title == "재시작 보존"
+        assert loaded.steward.steward_display_name == "Mina Park"
+    finally:
+        engine = create_engine(DSN, future=True)
+        try:
+            with engine.begin() as connection:
+                connection.execute(
+                    text("DELETE FROM catalog_objects WHERE catalog_object_id = :object_id"),
+                    {"object_id": catalog_object_id},
+                )
+        finally:
+            engine.dispose()

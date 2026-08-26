@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from sdp.api import app
 from sdp.catalog_plane import reset_catalog_plane
+from sdp.evidence import list_policy_decisions
 from sdp.tenant_binding import (
     PURPOSE_HEADER,
     SUBJECT_HEADER,
@@ -119,6 +120,22 @@ def test_buyer_can_create_list_get_and_query_catalog_object():
     assert queried.status_code == 200
     assert queried.json()["count"] == 1
     assert queried.json()["catalog_objects"][0]["display_title"] == "활성 고객"
+
+
+def test_denied_plane_access_records_policy_evidence():
+    """A role denial remains visible as a policy decision for audit."""
+
+    response = client.post(
+        "/plane/catalog-objects",
+        json=_create_payload(),
+        headers=_headers(subject="analyst"),
+    )
+
+    assert response.status_code == 403
+    decisions = list_policy_decisions(resource="plane")
+    assert decisions
+    assert decisions[0].effect == "deny"
+    assert decisions[0].obligations == {"required_role": "admin"}
 
 
 def test_plane_rejects_missing_tenant_header_fail_closed():

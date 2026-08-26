@@ -61,6 +61,10 @@ class BootstrapSettings:
     database_dsn: Optional[str]
     config_namespace: str
     environment: str
+    oidc_issuer: Optional[str] = None
+    oidc_audience: Optional[str] = None
+    oidc_jwks_url: Optional[str] = None
+    allow_unverified_subject_header: bool = False
 
     @property
     def has_database(self) -> bool:
@@ -82,6 +86,13 @@ def load_bootstrap() -> BootstrapSettings:
         database_dsn=os.environ.get("SDP_DATABASE_DSN") or None,
         config_namespace=os.environ.get("SDP_CONFIG_NAMESPACE", "default"),
         environment=os.environ.get("SDP_ENV", "local"),
+        oidc_issuer=os.environ.get("SDP_OIDC_ISSUER") or None,
+        oidc_audience=os.environ.get("SDP_OIDC_AUDIENCE") or None,
+        oidc_jwks_url=os.environ.get("SDP_OIDC_JWKS_URL") or None,
+        allow_unverified_subject_header=(
+            os.environ.get("SDP_ALLOW_UNVERIFIED_SUBJECT_HEADER", "").strip().lower()
+            == "true"
+        ),
     )
 
 

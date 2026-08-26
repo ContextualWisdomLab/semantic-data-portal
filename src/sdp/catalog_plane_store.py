@@ -214,7 +214,7 @@ class InMemoryCatalogPlaneStore(CatalogPlaneStore):
                 for existing in _MEMORY_ROWS.values()
             ):
                 raise ValueError("object_slug already exists in this tenant")
-            _MEMORY_ROWS[record.catalog_object_id] = record
+            _MEMORY_ROWS[record.catalog_object_id] = record.model_copy(deep=True)
 
     def list_catalog_objects(
         self,
@@ -696,38 +696,42 @@ class RelationalCatalogPlaneStore(CatalogPlaneStore):
         query_text: str,
     ) -> list[CatalogObjectRecord]:
         """Search 0002 rows with a portable case-insensitive LIKE needle."""
-        needle = f"%{query_text.strip().lower()}%"
+        literal_query = query_text.strip().lower()
+        escaped_query = (
+            literal_query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        )
+        needle = f"%{escaped_query}%"
         sql = """
             SELECT o.catalog_object_id
             FROM catalog_objects o
             WHERE o.tenant_reference = :tenant_reference
               AND (
-                lower(o.object_slug) LIKE :needle
-                OR lower(o.display_title) LIKE :needle
+                lower(o.object_slug) LIKE :needle ESCAPE '\\'
+                OR lower(o.display_title) LIKE :needle ESCAPE '\\'
                 OR EXISTS (
                     SELECT 1 FROM object_definitions d
                     WHERE d.catalog_object_id = o.catalog_object_id
-                      AND lower(d.definition_text) LIKE :needle
+                      AND lower(d.definition_text) LIKE :needle ESCAPE '\\'
                 )
                 OR EXISTS (
                     SELECT 1 FROM object_aliases a
                     WHERE a.catalog_object_id = o.catalog_object_id
-                      AND lower(a.alias_text) LIKE :needle
+                      AND lower(a.alias_text) LIKE :needle ESCAPE '\\'
                 )
                 OR EXISTS (
                     SELECT 1 FROM object_stewards s
                     WHERE s.catalog_object_id = o.catalog_object_id
-                      AND lower(s.steward_display_name) LIKE :needle
+                      AND lower(s.steward_display_name) LIKE :needle ESCAPE '\\'
                 )
                 OR EXISTS (
                     SELECT 1 FROM document_kg_links l
                     WHERE l.catalog_object_id = o.catalog_object_id
-                      AND lower(l.source_object_id) LIKE :needle
+                      AND lower(l.source_object_id) LIKE :needle ESCAPE '\\'
                 )
                 OR EXISTS (
                     SELECT 1 FROM concept_object_bindings b
                     WHERE b.catalog_object_id = o.catalog_object_id
-                      AND lower(b.concept_key) LIKE :needle
+                      AND lower(b.concept_key) LIKE :needle ESCAPE '\\'
                 )
               )
             ORDER BY o.created_at ASC

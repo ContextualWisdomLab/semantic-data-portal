@@ -143,14 +143,48 @@ def _admin_actor(tenant_reference: str = "demo") -> PlaneActor:
     )
 
 
-def test_get_catalog_plane_store_defaults_to_memory():
+def test_get_catalog_plane_store_defaults_to_memory(monkeypatch):
     """CI / pytest without SDP_DATABASE_DSN keeps the in-memory store."""
 
+    monkeypatch.delenv("SDP_DATABASE_DSN", raising=False)
     set_catalog_plane_store(None)
     reset_config_cache()
     store = get_catalog_plane_store()
     assert isinstance(store, InMemoryCatalogPlaneStore)
     set_catalog_plane_store(None)
+
+
+def test_relational_query_treats_like_metacharacters_literally(tmp_path):
+    """Percent, underscore, and backslash search text are literal substrings."""
+
+    store = RelationalCatalogPlaneStore(_sqlite_dsn(tmp_path))
+    literal = _sample_record(object_slug=r"rate_100%\\complete")
+    ordinary = _sample_record(object_slug="rate-100-complete")
+    store.insert_catalog_object(literal)
+    store.insert_catalog_object(ordinary)
+
+    assert [
+        row.catalog_object_id
+        for row in store.query_catalog_objects(
+            tenant_reference="demo", query_text=r"_100%\\"
+        )
+    ] == [literal.catalog_object_id]
+
+
+def test_in_memory_insert_detaches_the_callers_record():
+    """Mutating an input model after insertion cannot alter persisted state."""
+
+    reset_catalog_plane()
+    store = InMemoryCatalogPlaneStore()
+    record = _sample_record()
+    store.insert_catalog_object(record)
+    record.display_title = "changed outside the store"
+
+    loaded = store.get_catalog_object(
+        tenant_reference="demo", catalog_object_id=record.catalog_object_id
+    )
+    assert loaded is not None
+    assert loaded.display_title == "활성 고객"
 
 
 def test_build_store_uses_relational_when_dsn_is_set(tmp_path, monkeypatch):

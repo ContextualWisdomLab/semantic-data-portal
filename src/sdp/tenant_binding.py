@@ -9,12 +9,12 @@ is available only for an explicitly opted-in local demo or CI environment.
 
 from __future__ import annotations
 
-import os
 from typing import Mapping
 
 from sdp_core.catalog_plane import ACCESS_PURPOSES, AccessPurpose, PlaneActor
 
 from .authz import resolve_actor_context, verify_oidc_jwks_token
+from .config import load_bootstrap
 
 TENANT_HEADER = "X-CWL-Tenant-Reference"
 SUBJECT_HEADER = "X-CWL-Oidc-Subject"
@@ -144,10 +144,11 @@ def _oidc_verification_required() -> bool:
     rejects ``X-CWL-Oidc-Subject`` so a client cannot self-assert ``admin``.
     """
 
+    bootstrap = load_bootstrap()
     return bool(
-        os.getenv("SDP_OIDC_ISSUER")
-        and os.getenv("SDP_OIDC_AUDIENCE")
-        and os.getenv("SDP_OIDC_JWKS_URL")
+        bootstrap.oidc_issuer
+        and bootstrap.oidc_audience
+        and bootstrap.oidc_jwks_url
     )
 
 
@@ -158,7 +159,7 @@ def _unverified_subject_header_allowed() -> bool:
     is disabled, including when the variable is missing, blank, or misspelled.
     """
 
-    return os.getenv(UNVERIFIED_SUBJECT_HEADER_ENV, "").strip().lower() == "true"
+    return load_bootstrap().allow_unverified_subject_header
 
 
 def _actor_from_subject_header(subject: str) -> tuple[str, str, list[str]]:
