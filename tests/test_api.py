@@ -369,6 +369,25 @@ def test_oidc_preview_maps_claims_to_actor_context():
     assert body["actor_context"]["roles"] == ["data-analyst"]
 
 
+def test_oidc_preview_rejects_non_string_subject_claim():
+    """OIDC preview must fail closed when preferred_username is a non-string."""
+    response = client.post(
+        "/enterprise/auth/oidc-preview",
+        json={
+            "claims": {
+                "preferred_username": 123,
+                "email": "analyst@example.com",
+                "tenant_id": "demo",
+                "groups": ["sdp-analysts"],
+                "exp": int(time()) + 3600,
+            }
+        },
+    )
+
+    assert response.status_code == 400
+    assert "preferred_username claim must be a string" in response.json()["detail"]
+
+
 def test_oidc_preview_rejects_unverified_claim_shape():
     response = client.post(
         "/enterprise/auth/oidc-preview",
@@ -413,9 +432,9 @@ def test_oidc_jwks_verification_maps_verified_token_without_token_leak():
             "iss": "https://idp.example.com/",
             "aud": "semantic-data-portal",
             "email": "analyst@example.com",
-            "tenant_id": "buyer-demo",
-            "groups": ["sdp-analysts"],
-            "roles": ["sdp-platform-admins"],
+            "org": "buyer-demo",
+            "workspace": "workspace-buyer",
+            "role": "member",
             "exp": int(time()) + 3600,
         },
         private_key,
@@ -440,8 +459,84 @@ def test_oidc_jwks_verification_maps_verified_token_without_token_leak():
     assert body["actor_context"]["subject"] == "analyst@example.com"
     assert body["actor_context"]["tenant_id"] == "buyer-demo"
     assert body["actor_context"]["roles"] == ["data-analyst"]
-    assert body["ignored_role_claims"] == ["sdp-platform-admins"]
+    assert body["ignored_role_claims"] == []
     assert token not in json.dumps(body)
+
+
+def test_oidc_jwks_verification_rejects_unsupported_critical_header():
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    jwk = json.loads(RSAAlgorithm.to_jwk(private_key.public_key()))
+    jwk.update({"kid": "buyer-key-crit", "alg": "RS256", "use": "sig"})
+    token = jwt.encode(
+        {
+            "iss": "https://idp.example.com/",
+            "aud": "semantic-data-portal",
+            "email": "analyst@example.com",
+            "org": "buyer-demo",
+            "exp": int(time()) + 3600,
+        },
+        private_key,
+        algorithm="RS256",
+        headers={
+            "kid": "buyer-key-crit",
+            "crit": ["https://example.com/custom-extension"],
+        },
+    )
+
+    response = client.post(
+        "/enterprise/auth/oidc-verify",
+        json={
+            "token": token,
+            "issuer": "https://idp.example.com/",
+            "audience": "semantic-data-portal",
+            "jwks": {"keys": [jwk]},
+        },
+    )
+
+    assert response.status_code == 400
+    assert "critical JWT header" in response.json()["detail"]
+
+
+def test_oidc_jwks_verification_normalizes_malformed_critical_header():
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    jwk = json.loads(RSAAlgorithm.to_jwk(private_key.public_key()))
+    jwk.update({"kid": "buyer-key-malformed-crit", "alg": "RS256", "use": "sig"})
+    valid_token = jwt.encode(
+        {
+            "iss": "https://idp.example.com/",
+            "aud": "semantic-data-portal",
+            "email": "analyst@example.com",
+            "org": "buyer-demo",
+            "exp": int(time()) + 3600,
+        },
+        private_key,
+        algorithm="RS256",
+        headers={"kid": "buyer-key-malformed-crit"},
+    )
+    header_segment = jwt.utils.base64url_encode(
+        json.dumps(
+            {
+                "alg": "RS256",
+                "kid": "buyer-key-malformed-crit",
+                "typ": "JWT",
+                "crit": "not-an-array",
+            }
+        ).encode()
+    ).decode()
+    token = ".".join((header_segment, *valid_token.split(".")[1:]))
+
+    response = client.post(
+        "/enterprise/auth/oidc-verify",
+        json={
+            "token": token,
+            "issuer": "https://idp.example.com/",
+            "audience": "semantic-data-portal",
+            "jwks": {"keys": [jwk]},
+        },
+    )
+
+    assert response.status_code == 400
+    assert "critical JWT header" in response.json()["detail"]
 
 
 def test_oidc_jwks_verification_rejects_wrong_audience():

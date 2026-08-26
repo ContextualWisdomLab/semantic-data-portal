@@ -28,7 +28,17 @@ _DEFAULT_OIDC_GROUP_ROLE_MAP = {
     "sdp-security": ["security"],
 }
 
+_KEYVERSE_ROLE_MAP = {
+    "member": ["data-analyst"],
+    "data-analyst": ["data-analyst"],
+    "data-admin": ["data-admin", "data-analyst"],
+    "admin": ["admin", "data-analyst"],
+    "platform-admin": ["platform-admin", "admin", "data-analyst"],
+    "security": ["security"],
+}
+
 _SUBJECT_CLAIMS = ("preferred_username", "email", "sub")
+_TENANT_CLAIMS = ("tenant_id", "tid", "organization", "org")
 _ALLOWED_JWT_ALGORITHMS = {"RS256", "RS384", "RS512", "ES256", "ES384", "ES512"}
 
 
@@ -57,6 +67,23 @@ def _claim_values(value: Any) -> list[str]:
     return [str(value)]
 
 
+def _single_string_claim(value: Any, claim_name: str) -> str | None:
+    """Return one optional string claim, rejecting ambiguous claim shapes.
+
+    Signed identity claims that select a subject, tenant, or application role
+    must have one explicit string value. Accepting arrays or coercing arbitrary
+    JSON types could invent an ActorContext identity or merge authorities, so
+    malformed claims fail closed.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{claim_name} claim must be a string")
+    if not value.strip():
+        raise ValueError(f"{claim_name} claim must be non-empty")
+    return value
+
+
 def oidc_role_claims(claims: dict[str, Any]) -> list[str]:
     return _claim_values(claims.get("roles"))
 
@@ -73,10 +100,9 @@ def load_oidc_role_map() -> dict[str, list[str]]:
 
 
 def validate_oidc_claim_shape(claims: dict[str, Any]) -> None:
-    if not any(claims.get(key) for key in _SUBJECT_CLAIMS):
-        raise ValueError("missing subject claim")
-    if not (claims.get("tenant_id") or claims.get("tid") or claims.get("organization")):
-        raise ValueError("missing tenant claim")
+    """Reject tokens that lack a usable subject, tenant, or unexpired exp claim."""
+    _subject_claim_value(claims)
+    _tenant_claim_value(claims)
     if "exp" not in claims:
         raise ValueError("missing exp claim")
 
@@ -89,27 +115,60 @@ def validate_oidc_claim_shape(claims: dict[str, Any]) -> None:
         raise ValueError("expired token claims")
 
 
+def _subject_claim_value(claims: dict[str, Any]) -> str:
+    """Select the first valid subject alias and reject malformed present values.
+
+    Subject aliases are a precedence list (preferred_username, email, sub). A
+    missing or JSON-null alias may fall through, but a present non-string or
+    blank value is fail-closed so a coerced JSON type cannot become
+    ActorContext.subject.
+    """
+    for key in _SUBJECT_CLAIMS:
+        if key not in claims:
+            continue
+        subject = _single_string_claim(claims[key], key)
+        if subject is not None:
+            return subject
+    raise ValueError("missing subject claim")
+
+
+def _tenant_claim_value(claims: dict[str, Any]) -> str:
+    """Validate all tenant aliases before selecting the first configured one."""
+    tenant_ids: list[str] = []
+    for key in _TENANT_CLAIMS:
+        if key not in claims:
+            continue
+        tenant_id = _single_string_claim(claims[key], key)
+        if tenant_id is None:
+            raise ValueError("missing tenant claim")
+        tenant_ids.append(tenant_id)
+    if not tenant_ids:
+        raise ValueError("missing tenant claim")
+    if len(set(tenant_ids)) != 1:
+        raise ValueError("conflicting tenant claims")
+    return tenant_ids[0]
+
+
 def resolve_oidc_actor_context(
     claims: dict[str, Any],
     *,
     role_map: dict[str, list[str]] | None = None,
 ) -> ActorContext:
+    """Map verified OIDC claims to ActorContext after fail-closed claim-shape checks."""
     validate_oidc_claim_shape(claims)
     mapping = role_map or load_oidc_role_map()
-    subject = (
-        claims.get("preferred_username")
-        or claims.get("email")
-        or claims.get("sub")
-        or "anonymous"
-    )
-    tenant_id = str(claims.get("tenant_id") or claims.get("tid") or claims.get("organization") or "")
+    subject = _subject_claim_value(claims)
+    tenant_id = _tenant_claim_value(claims)
     groups = _claim_values(claims.get("groups"))
 
     roles: set[str] = set()
     for group in groups:
         roles.update(mapping.get(group, []))
+    role = _single_string_claim(claims.get("role"), "role")
+    if role:
+        roles.update(_KEYVERSE_ROLE_MAP.get(role, []))
 
-    return ActorContext(subject=str(subject), tenant_id=tenant_id, roles=sorted(roles))
+    return ActorContext(subject=subject, tenant_id=tenant_id, roles=sorted(roles))
 
 
 _ALLOWED_JWKS_SCHEMES = frozenset({"https", "http"})
@@ -141,6 +200,22 @@ def _select_jwk(jwks: dict[str, Any], kid: str | None) -> dict[str, Any]:
     raise ValueError("no matching jwks key")
 
 
+def _decode_unverified_jwt_header(token: str) -> dict[str, Any] | None:
+    """Decode a JWT header without invoking PyJWT critical-extension checks."""
+    try:
+        encoded_header = token.split(".", 1)[0].encode("ascii")
+        header = json.loads(jwt.utils.base64url_decode(encoded_header))
+    except (UnicodeDecodeError, UnicodeEncodeError, ValueError):
+        return None
+    return header if isinstance(header, dict) else None
+
+
+def _validate_jwt_header(header: dict[str, Any]) -> None:
+    """Reject critical JWT extensions because this verifier supports none."""
+    if "crit" in header:
+        raise ValueError("unsupported critical JWT header")
+
+
 def verify_oidc_jwks_token(
     token: str,
     *,
@@ -149,6 +224,7 @@ def verify_oidc_jwks_token(
     jwks: dict[str, Any] | None = None,
     role_map: dict[str, list[str]] | None = None,
 ) -> tuple[ActorContext, dict[str, Any]]:
+    """Verify a signed OIDC JWT and map fail-closed claims to ActorContext."""
     expected_issuer = issuer or os.getenv("SDP_OIDC_ISSUER")
     expected_audience = audience or os.getenv("SDP_OIDC_AUDIENCE")
     jwks_url = os.getenv("SDP_OIDC_JWKS_URL")
@@ -163,7 +239,11 @@ def verify_oidc_jwks_token(
         jwks = _load_jwks_from_url(jwks_url)
 
     try:
+        decoded_header = _decode_unverified_jwt_header(token)
+        if decoded_header is not None:
+            _validate_jwt_header(decoded_header)
         header = jwt.get_unverified_header(token)
+        _validate_jwt_header(header)
         alg = header.get("alg")
         if alg not in _ALLOWED_JWT_ALGORITHMS:
             raise ValueError("unsupported token algorithm")
