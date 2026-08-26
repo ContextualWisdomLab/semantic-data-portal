@@ -30,19 +30,27 @@ def validate_sql_query(sql: str, *, source_system: str) -> list[str]:
     warnings: list[str] = []
 
     if not lowered.startswith("select "):
-        warnings.append("only_select_allowed")
+        warnings.append("only_select_allowed: rewrite the request as a single read-only SELECT statement")
     if ";" in stripped:
-        warnings.append("single_statement_required")
+        warnings.append("single_statement_required: remove the extra statement(s); send one query per request")
     if "--" in stripped or "/*" in stripped or "*/" in stripped:
-        warnings.append("sql_comments_not_allowed")
+        warnings.append("sql_comments_not_allowed: delete all -- or /* */ comment text from the query")
     if "'" in stripped or '"' in stripped:
-        warnings.append("literal_values_not_allowed")
+        warnings.append(
+            "literal_values_not_allowed: remove quoted literals; express filters via "
+            "date_window_days/columns/group_by fields instead"
+        )
     if re.search(r"\b(and|or)\b", lowered):
-        warnings.append("boolean_operator_not_allowed")
+        warnings.append(
+            "boolean_operator_not_allowed: remove AND/OR clauses; run separate queries "
+            "and combine results outside the portal"
+        )
 
     for token in _FORBIDDEN_KEYWORDS:
         if re.search(rf"\b{re.escape(token)}\b", lowered):
-            warnings.append("forbidden_keyword_detected")
+            warnings.append(
+                "forbidden_keyword_detected: remove DML/DDL keywords; only read-only SELECT queries are permitted"
+            )
             break
 
     referenced = [
@@ -50,28 +58,53 @@ def validate_sql_query(sql: str, *, source_system: str) -> list[str]:
         for match in re.findall(r"\bfrom\s+([A-Za-z_][\w.]*)|\bjoin\s+([A-Za-z_][\w.]*)", stripped, re.IGNORECASE)
     ]
     if not referenced:
-        warnings.append("missing_source_table")
+        warnings.append(
+            "missing_source_table: add a FROM clause naming this dataset's source table and retry"
+        )
         return warnings
 
     expected = _source_table_name(source_system).lower()
     referenced_tables = {_safe_identifier(table.rsplit(".", 1)[-1]).lower() for table in referenced}
     if referenced_tables != {expected}:
-        warnings.append("unauthorized_table_reference")
+        warnings.append(
+            "unauthorized_table_reference: query only the source table bound to this dataset "
+            "(check GET /browse/{dataset_id}/schema for the bound source); fix the FROM/JOIN clause and retry"
+        )
 
     return warnings
 
 
 def draft_sql(req: QueryDraftRequest) -> dict:
     if req.date_window_days < 1 or req.date_window_days > 365:
-        return {"error": "invalid_date_window", "reason": "date_window_days must be between 1 and 365"}
+        return {
+            "error": "invalid_date_window",
+            "reason": "date_window_days must be between 1 and 365. Adjust the value and retry.",
+        }
 
     dataset = get_dataset(req.dataset_id)
     if not dataset:
-        return {"error": "dataset_not_found"}
+        return {
+            "error": "dataset_not_found",
+            "reason": (
+                "dataset not found. Verify dataset_id via GET /catalog/datasets and retry."
+            ),
+        }
     if dataset.status != "published":
-        return {"error": "policy_denied", "reason": "dataset is not published"}
+        return {
+            "error": "policy_denied",
+            "reason": (
+                "dataset is not published. Choose a published dataset "
+                "(check status via GET /catalog/datasets/{dataset_id}) or ask its data steward to publish it."
+            ),
+        }
     if not dataset.schema:
-        return {"error": "missing_schema", "reason": "dataset schema must be present to draft query"}
+        return {
+            "error": "missing_schema",
+            "reason": (
+                "dataset schema must be present to draft query. Ask the dataset's data steward "
+                "to complete the schema registration, then retry."
+            ),
+        }
 
     decision = evaluate(subject=req.user, resource=req.dataset_id, action="query", purpose=req.purpose)
     if decision.effect != "allow":
@@ -79,7 +112,13 @@ def draft_sql(req: QueryDraftRequest) -> dict:
 
     question = req.question.strip().lower()
     if any(token in question for token in _FORBIDDEN_KEYWORDS):
-        return {"error": "policy_denied", "reason": "허용되지 않은 키워드가 질의에 포함되었습니다."}
+        return {
+            "error": "policy_denied",
+            "reason": (
+                "허용되지 않은 키워드가 질의에 포함되었습니다. "
+                "질의에서 해당 키워드를 제거하고 읽기 전용 집계 형태로 다시 요청하세요."
+            ),
+        }
 
     allowed_columns = {column.name for column in dataset.schema if column.datatype}
     if req.columns:
@@ -87,23 +126,38 @@ def draft_sql(req: QueryDraftRequest) -> dict:
         if unknown:
             return {
                 "error": "invalid_columns",
-                "reason": f"요청한 컬럼이 데이터셋에 없습니다: {', '.join(unknown)}",
+                "reason": (
+                    f"요청한 컬럼이 데이터셋에 없습니다: {', '.join(unknown)}. "
+                    "GET /browse/{dataset_id}/schema 로 사용 가능한 컬럼을 확인한 뒤 다시 요청하세요."
+                ),
             }
 
     requested_columns = req.columns or ["*"]
     if req.group_by and req.group_by not in allowed_columns:
-        return {"error": "invalid_group_by", "reason": "요청한 그룹화 컬럼이 데이터셋에 없습니다."}
+        return {
+            "error": "invalid_group_by",
+            "reason": (
+                "요청한 그룹화 컬럼이 데이터셋에 없습니다. "
+                "GET /browse/{dataset_id}/schema 로 사용 가능한 컬럼을 확인한 뒤 다시 요청하세요."
+            ),
+        }
 
     where_clause = f"WHERE created_at >= current_date - interval '{req.date_window_days} day'"
     table_name = _source_table_name(dataset.source_system)
 
     row_limit = min(req.row_limit, 2000)
     if row_limit <= 0:
-        return {"error": "invalid_row_limit", "reason": "row_limit must be a positive integer"}
+        return {
+            "error": "invalid_row_limit",
+            "reason": "row_limit must be a positive integer. Set a positive value (max 2000) and retry.",
+        }
 
     timeout_ms = req.timeout_ms
     if timeout_ms < 500 or timeout_ms > 120000:
-        return {"error": "invalid_timeout", "reason": "timeout_ms must be between 500 and 120000"}
+        return {
+            "error": "invalid_timeout",
+            "reason": "timeout_ms must be between 500 and 120000. Adjust the value and retry.",
+        }
 
     if req.group_by:
         group_identifier = _safe_identifier(req.group_by)

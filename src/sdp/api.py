@@ -284,7 +284,10 @@ def enterprise_connector_probe(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except KeyError:
-        raise HTTPException(status_code=404, detail="dataset not found")
+        raise HTTPException(
+            status_code=404,
+            detail="데이터셋을 찾을 수 없습니다. GET /catalog/datasets로 dataset_id를 확인한 뒤 다시 요청하세요.",
+        )
 
 
 @app.get("/healthz")
@@ -384,7 +387,13 @@ def catalog_facets(
     try:
         counts = list_facet_counts(field, query=q)
     except ValueError:
-        raise HTTPException(status_code=400, detail="unsupported facet field")
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "지원하지 않는 facet 필드입니다. domain, owner, sensitivity, "
+                "update_frequency, license, status 중 하나를 사용해 다시 요청하세요."
+            ),
+        )
     return {"field": field, "counts": counts}
 
 
@@ -404,7 +413,10 @@ def list_datasets_endpoint() -> list[dict[str, Any]]:
 def dataset_detail(dataset_id: str) -> dict[str, Any]:
     dataset = get_dataset(dataset_id)
     if not dataset:
-        raise HTTPException(status_code=404, detail="dataset not found")
+        raise HTTPException(
+            status_code=404,
+            detail="데이터셋을 찾을 수 없습니다. GET /catalog/datasets로 dataset_id를 확인한 뒤 다시 요청하세요.",
+        )
     return {
         **dataset.model_dump(),
         "metadata_recommendation_score": dataset.metadata_recommendation_score,
@@ -416,7 +428,10 @@ def dataset_detail(dataset_id: str) -> dict[str, Any]:
 def dataset_jsonld(dataset_id: str) -> dict[str, Any]:
     dataset = get_dataset(dataset_id)
     if not dataset:
-        raise HTTPException(status_code=404, detail="dataset not found")
+        raise HTTPException(
+            status_code=404,
+            detail="데이터셋을 찾을 수 없습니다. GET /catalog/datasets로 dataset_id를 확인한 뒤 다시 요청하세요.",
+        )
     return {
         "@context": "https://www.w3.org/TR/vocab-dcat-3/",
         "@type": "Dataset",
@@ -441,7 +456,10 @@ def catalog_dataset_semantic_validation(dataset_id: str) -> dict[str, Any]:
     try:
         return validate_dataset_semantics(dataset_id)
     except KeyError:
-        raise HTTPException(status_code=404, detail="dataset not found")
+        raise HTTPException(
+            status_code=404,
+            detail="데이터셋을 찾을 수 없습니다. GET /catalog/datasets로 dataset_id를 확인한 뒤 다시 요청하세요.",
+        )
 
 
 @app.get("/catalog/datasets/{dataset_id}/schema-history")
@@ -486,7 +504,10 @@ def catalog_dataset_schema_diff(
 def validate(dataset_id: str) -> dict[str, Any]:
     dataset = get_dataset(dataset_id)
     if not dataset:
-        raise HTTPException(status_code=404, detail="dataset not found")
+        raise HTTPException(
+            status_code=404,
+            detail="데이터셋을 찾을 수 없습니다. GET /catalog/datasets로 dataset_id를 확인한 뒤 다시 요청하세요.",
+        )
     return validate_metadata(dataset)
 
 
@@ -753,7 +774,10 @@ def ingest_graph_edge(payload: GraphEdgeRequest) -> dict[str, Any]:
 def get_graph_node(node_id: str) -> dict[str, Any]:
     node = get_store().get_node(node_id)
     if node is None:
-        raise HTTPException(status_code=404, detail="node not found")
+        raise HTTPException(
+            status_code=404,
+            detail="노드를 찾을 수 없습니다. POST /search/semantic으로 node_id를 확인한 뒤 다시 요청하세요.",
+        )
     return node.as_dict()
 
 
@@ -796,7 +820,10 @@ def browse_schema(dataset_id: str, user: str = Query(default="anonymous"), purpo
     try:
         return browse.schema(dataset_id, user=user, purpose=purpose)
     except KeyError:
-        raise HTTPException(status_code=404, detail="dataset not found")
+        raise HTTPException(
+            status_code=404,
+            detail="데이터셋을 찾을 수 없습니다. GET /catalog/datasets로 dataset_id를 확인한 뒤 다시 요청하세요.",
+        )
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
 
@@ -814,7 +841,10 @@ def browse_preview(dataset_id: str, payload: dict[str, Any]) -> dict[str, Any]:
             offset=max(int(payload.get("offset", 0)), 0),
         )
     except KeyError:
-        raise HTTPException(status_code=404, detail="dataset not found")
+        raise HTTPException(
+            status_code=404,
+            detail="데이터셋을 찾을 수 없습니다. GET /catalog/datasets로 dataset_id를 확인한 뒤 다시 요청하세요.",
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except PermissionError as exc:
@@ -833,7 +863,10 @@ def llm_search(payload: dict[str, str]) -> dict[str, Any]:
     if not resolved:
         return {
             "question": query,
-            "error": "No resolvable ontology term.",
+            "error": (
+                "해석 가능한 온톨로지 용어가 없습니다. 질문을 glossary 용어로 다시 표현하거나 "
+                "(GET /ontology/concepts에서 용어를 검색) 재시도하세요."
+            ),
             "user": user,
             "purpose": purpose,
         }

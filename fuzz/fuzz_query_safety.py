@@ -25,12 +25,17 @@ def TestOneInput(data: bytes) -> None:
 
     warnings = validate_sql_query(query, source_system=source_system)
     assert len(warnings) == len(set(warnings))
+
+    def _has_code(code: str) -> bool:
+        """Warnings carry a stable ``code: guidance`` prefix; match on the code."""
+        return any(warning.split(":", 1)[0] == code for warning in warnings)
+
     if not query.strip().lower().startswith("select "):
-        assert "only_select_allowed" in warnings
+        assert _has_code("only_select_allowed")
     if ";" in query:
-        assert "single_statement_required" in warnings
+        assert _has_code("single_statement_required")
     if " drop " in f" {query.lower()} ":
-        assert "forbidden_keyword_detected" in warnings
+        assert _has_code("forbidden_keyword_detected")
 
 
 def main() -> None:
