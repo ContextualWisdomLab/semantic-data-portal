@@ -260,7 +260,7 @@ _CONSOLE_TEMPLATE = """<!doctype html>
       <div class="status-line">
         <span class="badge ok" id="readyBadge">pilot evidence</span>
         <span class="badge">KRW 2B enterprise readiness</span>
-        <span class="badge warn">Figma Code Connect disabled</span>
+        <span class="badge warn">Pilot onboarding: start at Readiness</span>
       </div>
       <nav class="actions" aria-label="Console evidence links">
         <a class="action" href="/enterprise/readiness">Readiness</a>
@@ -336,7 +336,7 @@ _CONSOLE_TEMPLATE = """<!doctype html>
         </section>
       </div>
     </div>
-    <div class="footer">Figma/FigJam board: https://www.figma.com/board/UptVQaUlwbLVYv20ot4ZDm</div>
+    <div class="footer">Need dataset access or an API key? Open the <a href="/docs">API reference</a> for the full endpoint list, or contact your data steward to request access.</div>
   </main>
   <script>
     const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
@@ -398,7 +398,7 @@ _CONSOLE_TEMPLATE = """<!doctype html>
 
     Promise.all([loadEvidence(), loadControls(), loadKpis(), loadConnectors()])
       .then(() => text('readyBadge', 'ready for pilot review'))
-      .catch(() => text('readyBadge', 'evidence load failed'));
+      .catch(() => text('readyBadge', 'evidence load failed - reload this console to retry'));
   </script>
 </body>
 </html>"""

@@ -214,7 +214,24 @@ def test_enterprise_console_renders_operator_surface():
     assert "/enterprise/evidence-pack" in body
     assert "/enterprise/steward-review" in body
     assert "/enterprise/connectors/sql_connector/probe" in body
-    assert "Figma Code Connect disabled" in body
+    # Rule 1: no internal implementation boundaries in customer-facing HTML.
+    for leaked in (
+        "figma",
+        "sdp_core",
+        "catalog.py",
+        "browse.py",
+        "_DATA",
+        "_AUDIT_LOG",
+        "_POLICY_DECISION_LOG",
+        "SDP_DATABASE_DSN",
+        "in-memory",
+        "SQLite",
+    ):
+        assert leaked.lower() not in body.lower(), f"internal token '{leaked}' leaked into console HTML"
+    # Rule 2: every guidance string points at a next action.
+    assert "Pilot onboarding: start at Readiness" in body
+    assert "contact your data steward" in body
+    assert "reload this console to retry" in body
 
 
 def test_enterprise_controls_expose_feature_gate_manifest():
@@ -1090,6 +1107,24 @@ def test_dataset_profile_endpoint():
     assert body["dataset_id"] == "crm-customer-master"
     assert "schema_profile" in body
     assert body["schema_profile"]
+    # Rule 1: no internal implementation boundaries in customer-facing payloads.
+    leaked = [
+        token
+        for token in (
+            "in-memory",
+            "DSN",
+            "SDP_DATABASE_DSN",
+            "SQLite",
+            "sdp_core",
+            "_DATA",
+            "_AUDIT_LOG",
+            ".py",
+            "Keyverse",
+            "naruon",
+        )
+        if token.lower() in json.dumps(body, ensure_ascii=False).lower()
+    ]
+    assert not leaked, f"internal token(s) leaked into profile response: {leaked}"
 
 
 def test_preview_policy_denies_missing_dataset():
@@ -1118,6 +1153,30 @@ def test_preview_pagination_and_decision_traceability():
     assert body["policy_decision_id"] == body["policy_decision"]["decision_id"]
     assert body["rows"]
     assert body["sampling_note"]
+    # Rule 2: the sampling note must point at a next action.
+    assert "offset" in body["sampling_note"] and "preview" in body["sampling_note"]
+    # Rule 1: no internal implementation boundaries leak into customer-visible payloads.
+    leaked = [
+        token
+        for token in (
+            "in-memory",
+            "process restart",
+            "DSN",
+            "SDP_DATABASE_DSN",
+            "SQLite",
+            "sdp_core",
+            "_DATA",
+            "_AUDIT_LOG",
+            "_POLICY_DECISION_LOG",
+            ".py",
+            "Keyverse",
+            "naruon",
+            "LineageWeave",
+            "Figma",
+        )
+        if token.lower() in json.dumps(body, ensure_ascii=False).lower()
+    ]
+    assert not leaked, f"internal token(s) leaked into preview response: {leaked}"
 
 
 def test_preview_denies_low_privilege_actor():
@@ -1496,7 +1555,8 @@ def test_browse_query_rejects_table_outside_dataset_binding():
         },
     )
     assert response.status_code == 400
-    assert "unauthorized_table_reference" in response.json()["detail"]["warnings"]
+    warnings = response.json()["detail"]["warnings"]
+    assert any(w.startswith("unauthorized_table_reference:") for w in warnings)
 
     events = client.get("/audit/events", params={"resource": "crm-event"})
     assert events.status_code == 200
@@ -1522,8 +1582,8 @@ def test_browse_query_rejects_literal_tautology_injection():
 
     assert response.status_code == 400
     warnings = response.json()["detail"]["warnings"]
-    assert "literal_values_not_allowed" in warnings
-    assert "boolean_operator_not_allowed" in warnings
+    assert any(w.startswith("literal_values_not_allowed:") for w in warnings)
+    assert any(w.startswith("boolean_operator_not_allowed:") for w in warnings)
 
 
 def test_browse_query_denied_without_user():

@@ -39,13 +39,16 @@ def evaluate(subject: str, resource: str, action: str, purpose: str) -> PolicyDe
             return _decision(
                 **decision_base,
                 effect="allow",
-                reason="관리자 권한으로 catalog mutation 권한 통과",
+                reason="관리자 권한으로 데이터셋 등록 정책 통과",
                 obligations={"required_role": "admin"},
             )
         return _decision(
             **decision_base,
             effect="deny",
-            reason="create 작업은 admin 권한만 가능",
+            reason=(
+                "데이터셋 등록(create)은 admin 권한이 있는 계정만 수행할 수 있습니다. "
+                "admin 역할로 다시 요청하거나 데이터 운영 담당자에게 등록을 요청하세요."
+            ),
             obligations={"required_role": "admin"},
         )
 
@@ -60,7 +63,10 @@ def evaluate(subject: str, resource: str, action: str, purpose: str) -> PolicyDe
         return _decision(
             **decision_base,
             effect="deny",
-            reason="목록 조회는 인증된 사용자만 가능합니다.",
+            reason=(
+                "목록 조회는 인증된 사용자만 가능합니다. "
+                "data-analyst 역할을 부여받은 계정으로 다시 시도하거나 관리자에게 역할 부여를 요청하세요."
+            ),
             obligations={"required_role": "data-analyst"},
         )
 
@@ -69,7 +75,10 @@ def evaluate(subject: str, resource: str, action: str, purpose: str) -> PolicyDe
         return _decision(
             **decision_base,
             effect="deny",
-            reason="존재하지 않는 데이터셋입니다.",
+            reason=(
+                "존재하지 않는 데이터셋입니다. dataset_id를 확인하고 카탈로그 검색"
+                "(GET /catalog/search?q=<용어>)으로 유효한 데이터셋을 찾은 뒤 다시 요청하세요."
+            ),
         )
 
     actor_context = resolve_actor_context(subject)
@@ -77,7 +86,11 @@ def evaluate(subject: str, resource: str, action: str, purpose: str) -> PolicyDe
         return _decision(
             **decision_base,
             effect="deny",
-            reason="tenant boundary denied",
+            reason=(
+                "tenant boundary denied. 이 데이터셋은 접근 권한이 없는 테넌트에 속해 있습니다. "
+                "올바른 테넌트 참조(X-CWL-Tenant-Reference 헤더)로 요청하거나 "
+                "데이터 거버넌스 담당자에게 해당 테넌트 접근을 요청하세요."
+            ),
             obligations={"tenant_id": dataset.tenant_id, "actor_tenant_id": actor_context.tenant_id},
         )
 
@@ -85,7 +98,10 @@ def evaluate(subject: str, resource: str, action: str, purpose: str) -> PolicyDe
         return _decision(
             **decision_base,
             effect="deny",
-            reason="critical 민감도 자산은 별도 심사 필요",
+            reason=(
+                "critical 민감도 자산은 별도 심사가 필요합니다. admin 권한으로 요청하거나 "
+                "보안 심사를 완료한 뒤 다시 요청하세요."
+            ),
             obligations={"redact": True, "masking": True},
         )
 
@@ -93,7 +109,10 @@ def evaluate(subject: str, resource: str, action: str, purpose: str) -> PolicyDe
         return _decision(
             **decision_base,
             effect="deny",
-            reason="외부 반출 목적은 데이터 운영자 승인 필요",
+            reason=(
+                "외부 반출 목적(external-export)은 data-admin 승인이 필요합니다. "
+                "분석 목적(purpose=analysis 등)으로 다시 요청하거나 데이터 운영자의 승인을 받으세요."
+            ),
             obligations={"required_role": "data-admin"},
         )
 
@@ -101,7 +120,10 @@ def evaluate(subject: str, resource: str, action: str, purpose: str) -> PolicyDe
         return _decision(
             **decision_base,
             effect="deny",
-            reason="catalog mutation 작업은 admin 권한만 가능",
+            reason=(
+                f"{action_key} 변경 작업은 admin 권한이 있는 계정만 수행할 수 있습니다. "
+                "admin 역할로 다시 요청하거나 관리자에게 승인을 요청하세요."
+            ),
             obligations={"required_role": "admin"},
         )
 
@@ -109,7 +131,10 @@ def evaluate(subject: str, resource: str, action: str, purpose: str) -> PolicyDe
         return _decision(
             **decision_base,
             effect="deny",
-            reason="조회 권한이 없습니다.",
+            reason=(
+                "조회 권한이 없습니다. data-analyst 역할이 필요합니다. "
+                "해당 역할을 부여받은 계정으로 다시 시도하거나 관리자에게 역할 부여를 요청하세요."
+            ),
             obligations={"required_role": "data-analyst"},
         )
 

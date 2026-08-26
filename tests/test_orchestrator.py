@@ -62,7 +62,12 @@ def test_validate_sql_query_accepts_clean_single_select() -> None:
     ],
 )
 def test_validate_sql_query_flags_unsafe_input(sql: str, expected: str) -> None:
-    assert expected in orch.validate_sql_query(sql, source_system=_SRC)
+    """Each unsafe input surfaces its stable warning code (prefixed with the
+    customer-facing fix guidance)."""
+    warnings = orch.validate_sql_query(sql, source_system=_SRC)
+    assert any(w.startswith(expected + ":") for w in warnings), (
+        f"expected code {expected!r} in warnings {warnings!r}"
+    )
 
 
 # --- draft_sql guard branches --------------------------------------------
