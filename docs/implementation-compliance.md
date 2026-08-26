@@ -82,6 +82,9 @@
   - [migrations/0002_ontology_catalog_plane.sql](migrations/0002_ontology_catalog_plane.sql)
 - 경계: Keyverse OIDC subject + `X-CWL-Tenant-Reference` fail-closed. DiskSage ingest/preview(#59/#61)를 복제하지 않고 opaque document-KG 참조만 저장. 로컬 policy registry/TEPP 채점/tenant 프로비저닝 없음. Steward PII는 purpose-limited로 사용 가능(마스킹 없음).
 - ADR: [docs/adr/0001-ontology-catalog-plane.md](docs/adr/0001-ontology-catalog-plane.md)
+- 증빙 테스트: `tests/test_catalog_plane.py`, `tests/test_catalog_plane_sql.py`
+  (SQLite mapping; live DSN in `tests/test_integration_catalog_plane.py`, skip
+  unless `SDP_DATABASE_DSN` and `catalog_objects` exist)
 
 ### ONT-009 Corporate-master resolution ownership
 
@@ -90,9 +93,6 @@
 - API contract: [docs/corporate-master-resolution-api.md](docs/corporate-master-resolution-api.md)
 - 수용 경계: `unique`만 binding; `miss`와 `tie`는 unbound. 구현 전까지
   consumer-local heuristic 또는 자동 catalog row 생성 금지.
-- 증빙 테스트: `tests/test_catalog_plane.py`, `tests/test_catalog_plane_sql.py`
-  (SQLite mapping; live DSN in `tests/test_integration_catalog_plane.py`, skip
-  unless `SDP_DATABASE_DSN` and `catalog_objects` exist)
 
 ## 2) Ontology / Terminology
 
