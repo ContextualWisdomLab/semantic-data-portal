@@ -80,7 +80,9 @@ def test_draft_sql_rejects_unpublished_dataset() -> None:
 
 
 def test_draft_sql_rejects_missing_schema() -> None:
-    catalog._DATA["noschema-ds"] = catalog._DATA[_CRM].model_copy(update={"id": "noschema-ds", "schema": []})
+    catalog._DATA["noschema-ds"] = catalog._DATA[_CRM].model_copy(
+        update={"id": "noschema-ds", "dataset_schema": []}
+    )
     assert _draft(dataset_id="noschema-ds")["error"] == "missing_schema"
 
 

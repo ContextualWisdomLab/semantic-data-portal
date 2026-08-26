@@ -155,7 +155,7 @@ def test_verify_oidc_jwks_token_config_and_alg_guards(monkeypatch):
         authz.verify_oidc_jwks_token("t", issuer="iss", audience="aud")
 
     # Unsupported algorithm is rejected before signature verification.
-    hs_token = _jwt.encode({"sub": "s"}, "secret", algorithm="HS256")
+    hs_token = _jwt.encode({"sub": "s"}, "synthetic-test-key-at-least-32-bytes", algorithm="HS256")
     with pytest.raises(ValueError):
         authz.verify_oidc_jwks_token(hs_token, issuer="iss", audience="aud", jwks={"keys": []})
 
@@ -170,6 +170,6 @@ def test_verify_oidc_jwks_token_loads_jwks_from_env_url(monkeypatch):
     monkeypatch.setattr(authz, "_load_jwks_from_url", _fake_load)
     # Unsupported alg is rejected after the env JWKS is loaded -> wrapped ValueError,
     # which exercises the `jwks = _load_jwks_from_url(jwks_url)` branch.
-    hs_token = _jwt.encode({"sub": "s"}, "secret", algorithm="HS256")
+    hs_token = _jwt.encode({"sub": "s"}, "synthetic-test-key-at-least-32-bytes", algorithm="HS256")
     with pytest.raises(ValueError):
         authz.verify_oidc_jwks_token(hs_token, issuer="iss", audience="aud")

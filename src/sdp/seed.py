@@ -60,7 +60,7 @@ def seed_store(store: Optional[GraphStore] = None) -> dict:
             text=text_blob,
         )
 
-        for column in dataset.schema:
+        for column in dataset.dataset_schema:
             column_id = f"{dataset.id}:{column.name}"
             store.upsert_node(
                 column_id,

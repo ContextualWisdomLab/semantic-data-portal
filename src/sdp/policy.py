@@ -119,7 +119,7 @@ def evaluate(subject: str, resource: str, action: str, purpose: str) -> PolicyDe
 
     obligations = {
         "tenant_id": dataset.tenant_id,
-        "masking": [col.name for col in dataset.schema if col.pii],
+        "masking": [col.name for col in dataset.dataset_schema if col.pii],
     }
     if row_filter:
         obligations["row_filter"] = row_filter

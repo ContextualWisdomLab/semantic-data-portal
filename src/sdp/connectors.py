@@ -36,7 +36,7 @@ class DemoSQLConnector(SourceConnector):
         return {
             "dataset_id": dataset.id,
             "source_system": dataset.source_system,
-            "columns": [column.model_dump() for column in dataset.schema],
+            "columns": [column.model_dump() for column in dataset.dataset_schema],
         }
 
     def preview(self, dataset_id: str, *, limit: int, offset: int) -> list[dict[str, Any]]:
@@ -60,7 +60,7 @@ class DemoRDFConnector(SourceConnector):
             "dataset_id": dataset.id,
             "source_system": dataset.source_system,
             "named_graph": dataset.source_system.removeprefix("sparql://"),
-            "columns": [column.model_dump() for column in dataset.schema],
+            "columns": [column.model_dump() for column in dataset.dataset_schema],
         }
 
     def preview(self, dataset_id: str, *, limit: int, offset: int) -> list[dict[str, Any]]:
@@ -136,7 +136,7 @@ class DemoFileLakeConnector(SourceConnector):
             "dataset_id": dataset.id,
             "source_system": dataset.source_system,
             "manifest_path": f"{dataset.source_system.rstrip('/')}/_manifest.json",
-            "columns": [column.model_dump() for column in dataset.schema],
+            "columns": [column.model_dump() for column in dataset.dataset_schema],
         }
 
     def preview(self, dataset_id: str, *, limit: int, offset: int) -> list[dict[str, Any]]:
@@ -210,7 +210,7 @@ class DemoRESTConnector(SourceConnector):
             "dataset_id": dataset.id,
             "source_system": dataset.source_system,
             "auth_mode": "service_account_reference",
-            "columns": [column.model_dump() for column in dataset.schema],
+            "columns": [column.model_dump() for column in dataset.dataset_schema],
         }
 
     def preview(self, dataset_id: str, *, limit: int, offset: int) -> list[dict[str, Any]]:
@@ -319,7 +319,7 @@ def connector_probe(connector_id: str, dataset_id: str) -> dict[str, Any]:
         "contract_methods": ["inspect_schema", "preview"],
         "adapter_status": adapter_status,
         "data_contract": {
-            "schema_fields": len(inspected_schema["columns"]) if inspected_schema else len(dataset.schema),
+            "schema_fields": len(inspected_schema["columns"]) if inspected_schema else len(dataset.dataset_schema),
             "sensitivity": dataset.sensitivity,
             "quality_score": dataset.quality_score,
             "freshness_score": dataset.freshness_score,
