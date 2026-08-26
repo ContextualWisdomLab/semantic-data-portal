@@ -45,7 +45,7 @@ def _make_schema_snapshot(dataset: Dataset) -> dict[str, Any]:
         "version": dataset.version,
         "schema_version": dataset.schema_version,
         "snapshot_at": datetime.now(timezone.utc).isoformat(),
-        "schema": _column_signature(dataset.schema),
+        "schema": _column_signature(dataset.dataset_schema),
         "lineage_inputs": list(dataset.lineage_inputs),
         "lineage_outputs": list(dataset.lineage_outputs),
         "mappings": [mapping.model_dump() for mapping in dataset.mappings],
@@ -69,7 +69,7 @@ def _coerce_version_index(history: list[dict[str, Any]]) -> dict[str, dict[str, 
 def get_dataset_profile(dataset_id: str) -> dict[str, Any]:
     dataset = get_dataset_or_404(dataset_id)
     schema_profile: list[dict[str, Any]] = []
-    for column in dataset.schema:
+    for column in dataset.dataset_schema:
         schema_profile.append(
             {
                 "name": column.name,
@@ -92,7 +92,7 @@ def get_join_candidates(dataset_id: str, *, limit: int = 10) -> list[dict[str, A
     dataset = get_dataset_or_404(dataset_id)
     candidates = []
 
-    dataset_columns = {column.name for column in dataset.schema}
+    dataset_columns = {column.name for column in dataset.dataset_schema}
     dataset_terms = {term for term in dataset.terms}
     for other in _DATA.values():
         if other.id == dataset.id:
@@ -100,7 +100,7 @@ def get_join_candidates(dataset_id: str, *, limit: int = 10) -> list[dict[str, A
         if other.status not in {"published", "registered"}:
             continue
         overlap_terms = sorted(dataset_terms.intersection({term for term in other.terms}))
-        overlap_columns = sorted(dataset_columns.intersection({column.name for column in other.schema}))
+        overlap_columns = sorted(dataset_columns.intersection({column.name for column in other.dataset_schema}))
         score = len(overlap_terms) * 2 + len(overlap_columns)
         if score == 0:
             continue
@@ -361,7 +361,11 @@ def _build_dataset_payload(
 
 
 def validate_metadata(dataset: Dataset) -> Dict[str, object]:
-    missing = [field for field in _REQUIRED_METADATA_FIELDS if not getattr(dataset, field, None)]
+    missing = [
+        field
+        for field in _REQUIRED_METADATA_FIELDS
+        if not getattr(dataset, "dataset_schema" if field == "schema" else field, None)
+    ]
     return {
         "required_fields": list(_REQUIRED_METADATA_FIELDS),
         "missing": missing,
@@ -402,7 +406,7 @@ def register_dataset(
         tags=list(payload.tags),
         terms=list(payload.terms),
         related_datasets=list(payload.related_datasets),
-        schema=list(payload.schema),
+        schema=list(payload.dataset_schema),
         distributions=list(payload.distributions),
         mappings=list(payload.mappings),
         profile=dict(payload.profile),

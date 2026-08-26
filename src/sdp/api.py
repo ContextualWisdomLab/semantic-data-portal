@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 import logging
 from datetime import datetime, timezone
 from time import monotonic
@@ -16,10 +18,26 @@ from sdp_core import (
     enterprise_rbac_matrix,
     enterprise_readiness_manifest,
 )
+from sdp_core.catalog_plane import (
+    CatalogObjectCreateRequest,
+    ConceptBindingDraft,
+    DocumentKgLinkDraft,
+    ObjectKind,
+    PlaneActor,
+)
 
 from . import authz, browse, catalog, connectors, ontology, orchestrator
+from .catalog_plane import (
+    attach_concept_binding,
+    attach_document_kg_link,
+    create_catalog_object,
+    get_catalog_object,
+    list_catalog_objects,
+    query_catalog_objects,
+)
 from .config import get_app_config
 from .console import render_enterprise_console
+from .tenant_binding import TenantBindingError, bind_keyverse_tenant
 from .graph_models import (
     GraphEdgeRequest,
     GraphNodeRequest,
@@ -72,10 +90,22 @@ from .steward_review import build_steward_review_summary
 _logger = logging.getLogger(__name__)
 
 
+@asynccontextmanager
+async def _app_lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """Seed the active graph store when the ASGI application starts."""
+
+    try:
+        seed_store()
+    except Exception:  # pragma: no cover - seeding must never block startup
+        pass
+    yield
+
+
 app = FastAPI(
     title="Semantic Data Portal",
     description="온톨로지 기반 그래프 데이터 카탈로그 및 시맨틱 검색 서비스",
-    version="0.3.0",
+    version="0.3.1",
+    lifespan=_app_lifespan,
 )
 
 # CORS allowlist comes from config (KV table `config_entries` when a database is
@@ -87,16 +117,6 @@ app.add_middleware(
     allow_methods=_config.cors_allow_methods,
     allow_headers=_config.cors_allow_headers,
 )
-
-
-@app.on_event("startup")
-def _bootstrap_graph_engine() -> None:
-    """Seed the active graph store on startup (idempotent)."""
-
-    try:
-        seed_store()
-    except Exception:  # pragma: no cover - seeding must never block startup
-        pass
 
 
 # Seed at import time as well: the test client and embedded/submodule callers
@@ -141,6 +161,34 @@ def _actor(payload: dict[str, Any] | None) -> str:
 
 def _require_actor(payload: dict[str, Any]) -> str:
     return _actor(payload)
+
+
+def _plane_actor(request: Request) -> PlaneActor:
+    """Bind Keyverse OIDC + X-CWL-Tenant-Reference or fail closed.
+
+    Returns
+    -------
+    PlaneActor
+        Tenant-bound actor for catalog-plane routes.
+
+    Raises
+    ------
+    HTTPException
+        401/403/400 with customer-next-action copy when identity is missing
+        or mismatched.
+    """
+
+    try:
+        return bind_keyverse_tenant(request.headers)
+    except TenantBindingError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={
+                "error": exc.error_code,
+                "detail": str(exc),
+                "customer_next_action": exc.customer_next_action,
+            },
+        ) from exc
 
 
 @app.get("/health")
@@ -674,6 +722,112 @@ def ontology_patch_review(patch_id: str, payload: dict[str, str]) -> dict[str, A
         raise HTTPException(status_code=404, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/plane/catalog-objects")
+def plane_create_catalog_object(payload: CatalogObjectCreateRequest, request: Request) -> dict[str, Any]:
+    """Create a tenant-scoped catalog/ontology object above the document KG."""
+
+    actor = _plane_actor(request)
+    try:
+        return create_catalog_object(actor, payload).model_dump()
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/plane/catalog-objects")
+def plane_list_catalog_objects(
+    request: Request,
+    object_kind: ObjectKind | None = Query(default=None),
+) -> dict[str, Any]:
+    """List catalog-plane objects visible to the bound Keyverse tenant."""
+
+    actor = _plane_actor(request)
+    try:
+        return list_catalog_objects(actor, object_kind=object_kind).model_dump()
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@app.get("/plane/catalog-objects/{catalog_object_id}")
+def plane_get_catalog_object(catalog_object_id: str, request: Request) -> dict[str, Any]:
+    """Get one catalog-plane object when it belongs to the bound tenant."""
+
+    actor = _plane_actor(request)
+    try:
+        return get_catalog_object(actor, catalog_object_id).model_dump()
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/plane/catalog-objects/{catalog_object_id}/document-kg-links")
+def plane_attach_document_kg_link(
+    catalog_object_id: str,
+    payload: DocumentKgLinkDraft,
+    request: Request,
+) -> dict[str, Any]:
+    """Attach an opaque naruon/DiskSage/commons reference to a catalog object."""
+
+    actor = _plane_actor(request)
+    try:
+        return attach_document_kg_link(
+            actor,
+            catalog_object_id,
+            source_system=payload.source_system,
+            source_object_kind=payload.source_object_kind,
+            source_object_id=payload.source_object_id,
+            provenance_uri=payload.provenance_uri,
+        ).model_dump()
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/plane/catalog-objects/{catalog_object_id}/concept-bindings")
+def plane_attach_concept_binding(
+    catalog_object_id: str,
+    payload: ConceptBindingDraft,
+    request: Request,
+) -> dict[str, Any]:
+    """Attach an ontology concept key to a catalog-plane object."""
+
+    actor = _plane_actor(request)
+    try:
+        return attach_concept_binding(
+            actor,
+            catalog_object_id,
+            concept_key=payload.concept_key,
+            binding_role=payload.binding_role,
+        ).model_dump()
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/plane/query")
+def plane_query_catalog_objects(
+    request: Request,
+    q: str = Query(..., min_length=1),
+) -> dict[str, Any]:
+    """Query tenant-local catalog objects by term, alias, or document-KG id."""
+
+    actor = _plane_actor(request)
+    try:
+        return query_catalog_objects(actor, q).model_dump()
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/ontology/term/{term}/graph")
