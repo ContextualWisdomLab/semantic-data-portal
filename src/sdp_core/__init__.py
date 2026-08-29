@@ -28,6 +28,14 @@ from .demo_seed import (
 )
 from .enterprise import EnterpriseControl, EnterpriseControlsManifest, enterprise_controls_manifest
 from .kpis import KPIFramework, SaleabilityKPI, enterprise_kpi_framework
+from .measurement_registry import (
+    CriterionRegistration,
+    MeasurementDefinition,
+    MeasurementDefinitionState,
+    MeasurementRegistryError,
+    RaterConfigurationRegistration,
+    TaskRegistration,
+)
 from .production import (
     ProductionIntegration,
     ProductionReadinessManifest,
@@ -54,6 +62,7 @@ __all__ = [
     "BuyerDemoActivationPlan",
     "BuyerDemoDomain",
     "ColumnMetadata",
+    "CriterionRegistration",
     "Dataset",
     "DatasetCreateRequest",
     "DatasetDistribution",
@@ -64,6 +73,9 @@ __all__ = [
     "EnterpriseControlsManifest",
     "KPIFramework",
     "MappingStatus",
+    "MeasurementDefinition",
+    "MeasurementDefinitionState",
+    "MeasurementRegistryError",
     "OntologyPatch",
     "PolicyDecision",
     "ProductionIntegration",
@@ -72,9 +84,11 @@ __all__ = [
     "QueryExecutionRequest",
     "QueryExecutionResponse",
     "RBACMatrix",
+    "RaterConfigurationRegistration",
     "RolePermission",
     "SaleabilityKPI",
     "SourceConnector",
+    "TaskRegistration",
     "PostgresEvidenceStore",
     "SQLiteEvidenceStore",
     "buyer_demo_context_for_dataset",
