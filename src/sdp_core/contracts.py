@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
 
 class ColumnMetadata(BaseModel):
@@ -205,15 +205,53 @@ class QueryExecutionResponse(BaseModel):
 
 
 class AuditEvent(BaseModel):
-    id: str
-    actor: str
-    action: str
-    resource: str
-    result: str
-    decision_id: str | None = None
-    reason: str = ""
-    details: Dict[str, Any] = Field(default_factory=dict)
+    """Governance evidence event with semantic internal names and legacy wire aliases."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    audit_event_id: str = Field(alias="id")
+    actor_subject: str = Field(alias="actor")
+    audit_action: str = Field(alias="action")
+    resource_reference: str = Field(alias="resource")
+    audit_result: str = Field(alias="result")
+    policy_decision_id: str | None = Field(default=None, alias="decision_id")
+    audit_reason: str = Field(default="", alias="reason")
+    audit_details: Dict[str, Any] = Field(default_factory=dict, alias="details")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    # Compatibility-only Python accessors for existing sdp_core consumers. New
+    # organization-owned code should use the semantic fields above.
+    @property
+    def id(self) -> str:
+        return self.audit_event_id
+
+    @property
+    def actor(self) -> str:
+        return self.actor_subject
+
+    @property
+    def action(self) -> str:
+        return self.audit_action
+
+    @property
+    def resource(self) -> str:
+        return self.resource_reference
+
+    @property
+    def result(self) -> str:
+        return self.audit_result
+
+    @property
+    def decision_id(self) -> str | None:
+        return self.policy_decision_id
+
+    @property
+    def reason(self) -> str:
+        return self.audit_reason
+
+    @property
+    def details(self) -> Dict[str, Any]:
+        return self.audit_details
 
 
 class DatasetCreateRequest(BaseModel):
