@@ -17,25 +17,25 @@ def preview(dataset_id: str, user: str, purpose: str, limit: int = 100, offset: 
     dataset = get_dataset(dataset_id)
     if not dataset:
         ingest_event(
-            event_type="browse.preview",
-            actor=user,
+            audit_action="browse.preview",
+            actor_subject=user,
             dataset_id=dataset_id,
-            decision="denied",
-            reason="dataset_not_found",
-            details={"policy_decision_id": None},
+            audit_result="denied",
+            audit_reason="dataset_not_found",
+            audit_details={"policy_decision_id": None},
         )
         raise KeyError("dataset not found")
 
     decision = evaluate(subject=user, resource=dataset_id, action="preview", purpose=purpose)
     if decision.effect != "allow":
         ingest_event(
-            event_type="browse.preview",
-            actor=user,
+            audit_action="browse.preview",
+            actor_subject=user,
             dataset_id=dataset_id,
-            decision="denied",
-            reason=decision.reason,
-            decision_id=decision.decision_id,
-            details={"purpose": purpose, "policy_decision_id": decision.decision_id},
+            audit_result="denied",
+            audit_reason=decision.reason,
+            policy_decision_id=decision.decision_id,
+            audit_details={"purpose": purpose, "policy_decision_id": decision.decision_id},
         )
         raise PermissionError(decision.reason)
 
@@ -59,13 +59,13 @@ def preview(dataset_id: str, user: str, purpose: str, limit: int = 100, offset: 
     selected = rows[offset : offset + limit]
     masked = [apply_mask(row.copy(), decision.obligations.get("masking", [])) for row in selected]
     ingest_event(
-        event_type="browse.preview",
-        actor=user,
+        audit_action="browse.preview",
+        actor_subject=user,
         dataset_id=dataset_id,
-        decision="allowed",
-        reason="ok",
-        decision_id=decision.decision_id,
-        details={
+        audit_result="allowed",
+        audit_reason="ok",
+        policy_decision_id=decision.decision_id,
+        audit_details={
             "purpose": purpose,
             "requested_offset": offset,
             "requested_limit": limit,
@@ -106,24 +106,24 @@ def schema(dataset_id: str, user: str, purpose: str = "analysis") -> Dict[str, A
     decision = evaluate(subject=user, resource=dataset_id, action="schema", purpose=purpose)
     if decision.effect != "allow":
         ingest_event(
-            event_type="browse.schema",
-            actor=user,
+            audit_action="browse.schema",
+            actor_subject=user,
             dataset_id=dataset_id,
-            decision="denied",
-            reason=decision.reason,
-            decision_id=decision.decision_id,
-            details={"purpose": purpose, "policy_decision_id": decision.decision_id},
+            audit_result="denied",
+            audit_reason=decision.reason,
+            policy_decision_id=decision.decision_id,
+            audit_details={"purpose": purpose, "policy_decision_id": decision.decision_id},
         )
         raise PermissionError(decision.reason)
 
     ingest_event(
-        event_type="browse.schema",
-        actor=user,
+        audit_action="browse.schema",
+        actor_subject=user,
         dataset_id=dataset_id,
-        decision="allowed",
-        reason=decision.reason,
-        decision_id=decision.decision_id,
-        details={"purpose": purpose, "policy_decision_id": decision.decision_id},
+        audit_result="allowed",
+        audit_reason=decision.reason,
+        policy_decision_id=decision.decision_id,
+        audit_details={"purpose": purpose, "policy_decision_id": decision.decision_id},
     )
     return {
         "dataset_id": dataset.id,
