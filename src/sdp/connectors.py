@@ -76,13 +76,13 @@ class DemoRDFConnector(SourceConnector):
         decision = evaluate(subject="analyst", resource=dataset_id, action="preview", purpose="analysis")
         if decision.effect != "allow":
             ingest_event(
-                event_type="connector.rdf.preview",
-                actor="analyst",
+                audit_action="connector.rdf.preview",
+                actor_subject="analyst",
                 dataset_id=dataset_id,
-                decision="denied",
-                decision_id=decision.decision_id,
-                reason=decision.reason,
-                details={"policy_decision_id": decision.decision_id},
+                audit_result="denied",
+                policy_decision_id=decision.decision_id,
+                audit_reason=decision.reason,
+                audit_details={"policy_decision_id": decision.decision_id},
             )
             raise PermissionError(decision.reason)
 
@@ -105,13 +105,13 @@ class DemoRDFConnector(SourceConnector):
         ]
         selected = rows[offset : offset + limit]
         ingest_event(
-            event_type="connector.rdf.preview",
-            actor="analyst",
+            audit_action="connector.rdf.preview",
+            actor_subject="analyst",
             dataset_id=dataset_id,
-            decision="allowed",
-            decision_id=decision.decision_id,
-            reason="ok",
-            details={
+            audit_result="allowed",
+            policy_decision_id=decision.decision_id,
+            audit_reason="ok",
+            audit_details={
                 "policy_decision_id": decision.decision_id,
                 "requested_offset": offset,
                 "requested_limit": limit,
@@ -152,13 +152,13 @@ class DemoFileLakeConnector(SourceConnector):
         decision = evaluate(subject="analyst", resource=dataset_id, action="preview", purpose="analysis")
         if decision.effect != "allow":
             ingest_event(
-                event_type="connector.file_lake.preview",
-                actor="analyst",
+                audit_action="connector.file_lake.preview",
+                actor_subject="analyst",
                 dataset_id=dataset_id,
-                decision="denied",
-                decision_id=decision.decision_id,
-                reason=decision.reason,
-                details={"policy_decision_id": decision.decision_id},
+                audit_result="denied",
+                policy_decision_id=decision.decision_id,
+                audit_reason=decision.reason,
+                audit_details={"policy_decision_id": decision.decision_id},
             )
             raise PermissionError(decision.reason)
 
@@ -178,13 +178,13 @@ class DemoFileLakeConnector(SourceConnector):
         ]
         selected = rows[offset : offset + limit]
         ingest_event(
-            event_type="connector.file_lake.preview",
-            actor="analyst",
+            audit_action="connector.file_lake.preview",
+            actor_subject="analyst",
             dataset_id=dataset_id,
-            decision="allowed",
-            decision_id=decision.decision_id,
-            reason="ok",
-            details={
+            audit_result="allowed",
+            policy_decision_id=decision.decision_id,
+            audit_reason="ok",
+            audit_details={
                 "policy_decision_id": decision.decision_id,
                 "requested_offset": offset,
                 "requested_limit": limit,
@@ -226,13 +226,13 @@ class DemoRESTConnector(SourceConnector):
         decision = evaluate(subject="analyst", resource=dataset_id, action="preview", purpose="analysis")
         if decision.effect != "allow":
             ingest_event(
-                event_type="connector.rest.preview",
-                actor="analyst",
+                audit_action="connector.rest.preview",
+                actor_subject="analyst",
                 dataset_id=dataset_id,
-                decision="denied",
-                decision_id=decision.decision_id,
-                reason=decision.reason,
-                details={"policy_decision_id": decision.decision_id},
+                audit_result="denied",
+                policy_decision_id=decision.decision_id,
+                audit_reason=decision.reason,
+                audit_details={"policy_decision_id": decision.decision_id},
             )
             raise PermissionError(decision.reason)
 
@@ -242,13 +242,13 @@ class DemoRESTConnector(SourceConnector):
         ]
         selected = rows[offset : offset + limit]
         ingest_event(
-            event_type="connector.rest.preview",
-            actor="analyst",
+            audit_action="connector.rest.preview",
+            actor_subject="analyst",
             dataset_id=dataset_id,
-            decision="allowed",
-            decision_id=decision.decision_id,
-            reason="ok",
-            details={
+            audit_result="allowed",
+            policy_decision_id=decision.decision_id,
+            audit_reason="ok",
+            audit_details={
                 "policy_decision_id": decision.decision_id,
                 "requested_offset": offset,
                 "requested_limit": limit,
