@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_serializer
 
 
 class ColumnMetadata(BaseModel):
@@ -29,6 +29,16 @@ class DatasetDistribution(BaseModel):
     distribution_id: str = Field(alias="id")
     distribution_format: str = Field(alias="format")
     distribution_endpoint: HttpUrl = Field(alias="endpoint")
+
+    @model_serializer(mode="plain")
+    def serialize_wire_contract(self) -> dict[str, str | HttpUrl]:
+        """Serialize with the established catalog wire vocabulary."""
+
+        return {
+            "id": self.distribution_id,
+            "format": self.distribution_format,
+            "endpoint": self.distribution_endpoint,
+        }
 
     @property
     def id(self) -> str:
