@@ -1,35 +1,93 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ProductionIntegration(BaseModel):
-    id: str
-    label: str
-    status: str = Field(pattern="^(implemented|planned|external)$")
+    """Production integration contract with semantic internal names and stable wire keys."""
+
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+
+    production_integration_id: str = Field(alias="id")
+    integration_label: str = Field(alias="label")
+    integration_status: str = Field(alias="status", pattern="^(implemented|planned|external)$")
     buyer_risk: str
     current_evidence: list[str]
     required_environment: list[str]
     acceptance_criteria: list[str]
 
+    @property
+    def id(self) -> str:  # noqa: A003 - legacy Python compatibility attribute
+        """Return the historical production-integration identifier."""
+
+        return self.production_integration_id
+
+    @id.setter
+    def id(self, legacy_integration_id: str) -> None:  # noqa: A003
+        self.production_integration_id = legacy_integration_id
+
+    @property
+    def label(self) -> str:
+        """Return the historical production-integration label."""
+
+        return self.integration_label
+
+    @label.setter
+    def label(self, legacy_integration_label: str) -> None:
+        self.integration_label = legacy_integration_label
+
+    @property
+    def status(self) -> str:
+        """Return the historical production-integration status."""
+
+        return self.integration_status
+
+    @status.setter
+    def status(self, legacy_integration_status: str) -> None:
+        self.integration_status = legacy_integration_status
+
 
 class ProductionReadinessManifest(BaseModel):
-    product: str
+    """Production-readiness manifest with semantic internal names and stable wire keys."""
+
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+
+    product_name: str = Field(alias="product")
     valuation_target_krw: int
     current_stage: str
     demo_release_ready: bool
     paid_pilot_ready: bool
-    integrations: list[ProductionIntegration]
+    production_integrations: list[ProductionIntegration] = Field(alias="integrations")
     demo_blockers: list[str]
     paid_pilot_blockers: list[str]
+
+    @property
+    def product(self) -> str:
+        """Return the historical product compatibility attribute."""
+
+        return self.product_name
+
+    @product.setter
+    def product(self, legacy_product_name: str) -> None:
+        self.product_name = legacy_product_name
+
+    @property
+    def integrations(self) -> list[ProductionIntegration]:
+        """Return the historical production-integrations collection."""
+
+        return self.production_integrations
+
+    @integrations.setter
+    def integrations(self, legacy_integrations: list[ProductionIntegration]) -> None:
+        self.production_integrations = legacy_integrations
 
 
 def production_integration_registry() -> list[ProductionIntegration]:
     return [
         ProductionIntegration(
-            id="postgres_evidence_store",
-            label="Postgres evidence store",
-            status="implemented",
+            production_integration_id="postgres_evidence_store",
+            integration_label="Postgres evidence store",
+            integration_status="implemented",
             buyer_risk="SQLite remains available for local demo fallback; paid pilots can use managed, backed-up, tenant-indexed Postgres evidence retention.",
             current_evidence=[
                 "SDP_DATABASE_URL",
@@ -55,9 +113,9 @@ def production_integration_registry() -> list[ProductionIntegration]:
             ],
         ),
         ProductionIntegration(
-            id="oidc_jwks_verification",
-            label="OIDC JWKS verification",
-            status="implemented",
+            production_integration_id="oidc_jwks_verification",
+            integration_label="OIDC JWKS verification",
+            integration_status="implemented",
             buyer_risk="Claim-shape preview proves the role-mapping contract, but production login needs signed token verification.",
             current_evidence=[
                 "POST /enterprise/auth/oidc-preview",
@@ -85,9 +143,9 @@ def production_integration_registry() -> list[ProductionIntegration]:
             ],
         ),
         ProductionIntegration(
-            id="connector_credential_vault",
-            label="Connector credential vault",
-            status="implemented",
+            production_integration_id="connector_credential_vault",
+            integration_label="Connector credential vault",
+            integration_status="implemented",
             buyer_risk="Connector contracts are implemented for demo, but real source credentials must never live in catalog metadata or LLM prompts.",
             current_evidence=[
                 "SDP_CONNECTOR_SECRET_REF_PREFIX",
@@ -109,9 +167,9 @@ def production_integration_registry() -> list[ProductionIntegration]:
             ],
         ),
         ProductionIntegration(
-            id="request_observability_export",
-            label="Request observability export",
-            status="implemented",
+            production_integration_id="request_observability_export",
+            integration_label="Request observability export",
+            integration_status="implemented",
             buyer_risk="Local metrics are enough for pilot review, but paid operation needs tenant-scoped logs and external alert routing.",
             current_evidence=[
                 "SDP_LOG_SINK_URL",
@@ -138,14 +196,18 @@ def production_integration_registry() -> list[ProductionIntegration]:
 
 def enterprise_production_readiness_manifest() -> ProductionReadinessManifest:
     integrations = production_integration_registry()
-    paid_pilot_blockers = [item.id for item in integrations if item.status != "implemented"]
+    paid_pilot_blockers = [
+        item.production_integration_id
+        for item in integrations
+        if item.integration_status != "implemented"
+    ]
     return ProductionReadinessManifest(
-        product="Semantic Data Portal",
+        product_name="Semantic Data Portal",
         valuation_target_krw=2_000_000_000,
         current_stage="pilot_candidate",
         demo_release_ready=True,
         paid_pilot_ready=not paid_pilot_blockers,
-        integrations=integrations,
+        production_integrations=integrations,
         demo_blockers=[],
         paid_pilot_blockers=paid_pilot_blockers,
     )
