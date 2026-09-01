@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
 
 class ColumnMetadata(BaseModel):
@@ -17,9 +17,48 @@ class ColumnMetadata(BaseModel):
 
 
 class DatasetDistribution(BaseModel):
-    id: str
-    format: str
-    endpoint: HttpUrl
+    """Dataset-distribution contract with semantic internal identifiers.
+
+    Historical ``id``/``format``/``endpoint`` names remain input/output aliases
+    for the existing HTTP/catalog wire contract. Organization-owned Python code
+    should use the qualified distribution vocabulary.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    distribution_id: str = Field(alias="id")
+    distribution_format: str = Field(alias="format")
+    distribution_endpoint: HttpUrl = Field(alias="endpoint")
+
+    @property
+    def id(self) -> str:
+        """Return the legacy distribution identifier compatibility attribute."""
+
+        return self.distribution_id
+
+    @id.setter
+    def id(self, legacy_distribution_id: str) -> None:
+        self.distribution_id = legacy_distribution_id
+
+    @property
+    def format(self) -> str:
+        """Return the legacy distribution-format compatibility attribute."""
+
+        return self.distribution_format
+
+    @format.setter
+    def format(self, legacy_distribution_format: str) -> None:
+        self.distribution_format = legacy_distribution_format
+
+    @property
+    def endpoint(self) -> HttpUrl:
+        """Return the legacy distribution-endpoint compatibility attribute."""
+
+        return self.distribution_endpoint
+
+    @endpoint.setter
+    def endpoint(self, legacy_distribution_endpoint: HttpUrl) -> None:
+        self.distribution_endpoint = legacy_distribution_endpoint
 
 
 class MappingStatus:
