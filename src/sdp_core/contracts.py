@@ -15,12 +15,38 @@ from pydantic import (
 
 
 class ColumnMetadata(BaseModel):
-    name: str
+    """Column contract with a semantic internal name and legacy wire alias."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    column_name: str = Field(alias="name")
     datatype: str
     nullable_ratio: float = Field(ge=0, le=1)
     distinct_ratio: float = Field(ge=0, le=1)
     quality_issues: list[str] = Field(default_factory=list)
     pii: bool = False
+
+    @model_serializer(mode="wrap")
+    def serialize_wire_contract(
+        self,
+        serializer: SerializerFunctionWrapHandler,
+    ) -> dict[str, Any]:
+        """Serialize the established catalog ``name`` key at the wire boundary."""
+
+        serialized_column = serializer(self)
+        if "column_name" in serialized_column:
+            serialized_column["name"] = serialized_column.pop("column_name")
+        return serialized_column
+
+    @property
+    def name(self) -> str:
+        """Return the legacy column-name compatibility attribute."""
+
+        return self.column_name
+
+    @name.setter
+    def name(self, legacy_column_name: str) -> None:
+        self.column_name = legacy_column_name
 
 
 class DatasetDistribution(BaseModel):
