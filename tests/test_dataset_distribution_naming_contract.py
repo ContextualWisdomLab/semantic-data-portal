@@ -48,6 +48,22 @@ def test_dataset_distribution_preserves_legacy_wire_and_python_compatibility() -
     assert "distribution_endpoint" not in wire_payload
 
 
+def test_dataset_distribution_serializer_honors_field_filters() -> None:
+    distribution = DatasetDistribution(
+        distribution_id="dist-customer-master",
+        distribution_format="postgresql.table",
+        distribution_endpoint="https://example.internal/api/table/customer_master",
+    )
+
+    assert distribution.model_dump(include={"distribution_id"}, mode="json") == {
+        "id": "dist-customer-master",
+    }
+    assert distribution.model_dump(exclude={"distribution_endpoint"}, mode="json") == {
+        "id": "dist-customer-master",
+        "format": "postgresql.table",
+    }
+
+
 def test_nested_dataset_dump_keeps_existing_distribution_wire_keys() -> None:
     dataset_payload = buyer_demo_datasets()[0].model_dump(mode="json")
     distribution_payload = dataset_payload["distributions"][0]
