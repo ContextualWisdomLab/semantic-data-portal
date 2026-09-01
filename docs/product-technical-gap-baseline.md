@@ -3,7 +3,7 @@
 **제품 홈:** ContextualWisdomLab/semantic-data-portal (ontology 기반 semantic catalog).
 **독자:** catalog steward / tenant operator.
 **다음 행동:** 아래 병합 순서로 unlock stack을 올리고, 이 저장소에 local IdP나 policy registry를 만들지 마십시오.
-**기준일:** 2026-08-31 (main `e48aa13`).
+**기준일:** 2026-09-02 (main `e48aa13`).
 **Figma file ID:** `JjYSqr6nWxpARUjaVKhG16` (KRDS 기반 디자인 시스템; `docs/design-tokens.md:3`의 토큰 계약과 동일 파일). 새 Figma 파일을 만들지 말고 이 파일을 소비하십시오.
 
 이 파일은 포털의 살아있는 격차 목록입니다. 열린 PR이 병합되거나 consume-only 계약이 바뀌면 갱신하십시오. GitHub review 대기는 작업 중지로 보지 마십시오.
@@ -57,12 +57,14 @@ Council of Europe. (2020). *Common European Framework of Reference for Languages
 8. PR `#64` product names after `#51`, then PR `#65` setuptools, then Dependabot.
 9. PR `#82` `a797e30` — customer-next-action copy. `#81` 뒤, Dependabot 앞.
 10. PR `#88` `8e281de` — Measurement Context Registry. `#81`/`#51`/`#58`/`#73` 뒤. 점수·응답·판정 소유 없음.
+11. PR `#90` `c75c937` — public Pages landing source (`docs/index.md`). trivy-fs inherit until `#81`. Pages live를 주장하지 않음. OpenCode exact-head APPROVE 뒤에만 squash.
+12. PR `#89` `0a06e20` Draft — DatasetDistribution 식별자 의미화 (`distribution_id` / `distribution_format` / `distribution_endpoint`); 와이어 계약 `{id, format, endpoint}` 유지. `#81`/`#51`/`#58`/`#73`보다 앞세우지 말 것. checks가 초록이 될 때까지 Draft 유지.
 
-PR `#51` security-lock 파일을 catalog/docs PR에 섞지 마십시오. 이 문서 PR(`#79`)도 보안 unlock stack 뒤에서 squash하십시오. `#80`은 `#51` security-lock과 별개이며 squash는 현재 SHA OpenCode APPROVE 뒤에만 합니다.
+PR `#51` security-lock 파일을 catalog/docs PR에 섞지 마십시오. 이 문서 PR(`#79`)도 보안 unlock stack 뒤에서 squash하십시오. `#80`은 `#51` security-lock과 별개이며 squash는 현재 SHA OpenCode APPROVE 뒤에만 합니다. `#90`도 `#81` 뒤에서 squash하십시오.
 
 ## 열린 PR과 각 PR이 닫는 격차
 
-| PR | Head | 격차 | 포털 소유? | 상태 2026-08-31 |
+| PR | Head | 격차 | 포털 소유? | 상태 2026-09-02 |
 | --- | --- | --- | --- | --- |
 | #81 | `ce40bd8` | cryptography 50.0.0 — CVE-2026-69247, repo-wide trivy-fs unlock | Yes (shared base) | 제품 CI 초록. OpenCode exact-head APPROVE 대기(comment 5469292683). 최우선 병합. |
 | #51 | `558dd2f` | Outbound URL allowlist + security lock (cryptography CVE 부분은 `#81`이 선행 흡수) | Yes (security lock) | HOLD. extra-push 금지. |
@@ -79,8 +81,10 @@ PR `#51` security-lock 파일을 catalog/docs PR에 섞지 마십시오. 이 문
 | #37 | `00ee8af` | Trusted document semantic deps | Yes (build) | Open. |
 | #64 | `4b78611` | Current CWL product names | Yes (docs) | After #51. |
 | #65 | `19603c3` | setuptools 83 | Yes (build) | After unlock. |
-| #72 | `2295b0d` Draft | Operator README / draft ADRs | Yes (docs) | Draft. |
+| #72 | `e1fe375` Draft | Operator README / draft ADRs | Yes (docs) | Draft. |
 | #79 | this branch | 이 기준선 문서 | Yes (docs) | 보안 unlock stack 뒤에 squash. main에는 아직 없음. |
+| #90 | `c75c937` | public Pages landing source (`docs/index.md`) | Yes (docs) | Ready. trivy-fs inherit until #81. OpenCode APPROVE 없음. extra-push 금지. |
+| #89 | `0a06e20` Draft | DatasetDistribution 식별자 의미화; 와이어 `{id, format, endpoint}` 유지 | Yes (catalog naming) | Draft. `#81`/`#73` 뒤. Ready 전환 금지 until checks green. extra-push 금지. |
 | #80 | `01f9720` | steward preview에서 인가된 steward에게 원문 값 제공 (policy masking obligation·GRC redaction은 유지) | Yes (catalog browse) | Open. restore 재시도 금지. |
 | Dependabot #27 #29 #57 #62 #63 #67 #68 #69 #70 #71 | various | Dependency currency | Yes after unlock | `#81` 이전 land 금지. |
 
