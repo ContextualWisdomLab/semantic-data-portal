@@ -61,13 +61,13 @@ def seed_store(store: Optional[GraphStore] = None) -> dict:
         )
 
         for column in dataset.schema:
-            column_id = f"{dataset.id}:{column.name}"
+            column_id = f"{dataset.id}:{column.column_name}"
             store.upsert_node(
                 column_id,
                 "column",
-                label=column.name,
+                label=column.column_name,
                 properties={"datatype": column.datatype, "pii": column.pii},
-                text=f"{column.name} {column.datatype}",
+                text=f"{column.column_name} {column.datatype}",
             )
             store.upsert_edge("has_column", dataset.id, column_id)
 
