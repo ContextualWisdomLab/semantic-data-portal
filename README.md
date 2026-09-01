@@ -1,5 +1,7 @@
 # Semantic Data Portal
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/ContextualWisdomLab/semantic-data-portal)
+
 온톨로지 기반 **데이터 카탈로그**입니다. ContextualWisdomLab(CWL)에서
 개념·데이터셋·컬럼의 **의미 진실(ontology / catalog truth)** 을 소유하는 leaf
 서비스입니다. 분석가·거버넌스 담당자가 **이 저장소만**으로 기동할 수 있고,
