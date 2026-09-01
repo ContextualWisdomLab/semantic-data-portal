@@ -36,6 +36,23 @@ def test_column_metadata_preserves_legacy_name_wire_compatibility() -> None:
     assert "column_name" not in wire_payload
 
 
+def test_column_metadata_serializer_honors_field_filters() -> None:
+    column = ColumnMetadata(
+        column_name="customer_id",
+        datatype="string",
+        nullable_ratio=0.0,
+        distinct_ratio=1.0,
+    )
+
+    assert column.model_dump(include={"column_name"}, mode="json") == {
+        "name": "customer_id",
+    }
+    filtered_payload = column.model_dump(exclude={"column_name"}, mode="json")
+    assert "name" not in filtered_payload
+    assert "column_name" not in filtered_payload
+    assert filtered_payload["datatype"] == "string"
+
+
 def test_nested_dataset_dump_keeps_existing_column_name_wire_key() -> None:
     dataset_payload = buyer_demo_datasets()[0].model_dump(mode="json")
     column_payload = dataset_payload["schema"][0]
