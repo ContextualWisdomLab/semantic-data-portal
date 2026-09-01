@@ -189,27 +189,27 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
     def audit(
         *,
         dataset_id: str,
-        result: str,
-        reason: str,
-        decision_id: str | None = None,
-        details: dict[str, object] | None = None,
+        audit_result: str,
+        audit_reason: str,
+        policy_decision_id: str | None = None,
+        audit_details: dict[str, object] | None = None,
     ) -> None:
-        audit_details = {"purpose": req.purpose, "request_id": request_id, "dry_run": req.dry_run}
-        if details:
-            audit_details.update(details)
+        event_details = {"purpose": req.purpose, "request_id": request_id, "dry_run": req.dry_run}
+        if audit_details:
+            event_details.update(audit_details)
         ingest_event(
-            event_type="browse.query",
-            actor=req.user,
+            audit_action="browse.query",
+            actor_subject=req.user,
             dataset_id=dataset_id,
-            decision=result,
-            decision_id=decision_id,
-            reason=reason,
-            details=audit_details,
+            audit_result=audit_result,
+            policy_decision_id=policy_decision_id,
+            audit_reason=audit_reason,
+            audit_details=event_details,
         )
 
     dataset_id = req.dataset_ids[0]
     if req.language.strip().upper() != "SQL":
-        audit(dataset_id=dataset_id, result="rejected", reason="unsupported_language")
+        audit(dataset_id=dataset_id, audit_result="rejected", audit_reason="unsupported_language")
         return response(
             dataset_id=dataset_id,
             status="REJECTED",
@@ -218,7 +218,7 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
 
     lowered = req.query.lower()
     if any(token in lowered for token in _FORBIDDEN_KEYWORDS):
-        audit(dataset_id=dataset_id, result="rejected", reason="forbidden_keyword_detected")
+        audit(dataset_id=dataset_id, audit_result="rejected", audit_reason="forbidden_keyword_detected")
         return response(
             dataset_id=dataset_id,
             status="REJECTED",
@@ -226,7 +226,7 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
         )
 
     if len(req.dataset_ids) > 1:
-        audit(dataset_id=dataset_id, result="rejected", reason="cross_source_join_not_supported")
+        audit(dataset_id=dataset_id, audit_result="rejected", audit_reason="cross_source_join_not_supported")
         return response(
             dataset_id=dataset_id,
             status="REJECTED",
@@ -235,7 +235,7 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
 
     dataset = get_dataset(dataset_id)
     if not dataset:
-        audit(dataset_id=dataset_id, result="rejected", reason="dataset_not_found")
+        audit(dataset_id=dataset_id, audit_result="rejected", audit_reason="dataset_not_found")
         return response(
             dataset_id=dataset_id,
             status="REJECTED",
@@ -246,10 +246,10 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
     if decision.effect != "allow":
         audit(
             dataset_id=dataset.id,
-            result="denied",
-            reason=decision.reason,
-            decision_id=decision.decision_id,
-            details={"policy_decision_id": decision.decision_id},
+            audit_result="denied",
+            audit_reason=decision.reason,
+            policy_decision_id=decision.decision_id,
+            audit_details={"policy_decision_id": decision.decision_id},
         )
         return response(
             dataset_id=dataset.id,
@@ -263,10 +263,10 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
     if validation_warnings:
         audit(
             dataset_id=dataset.id,
-            result="rejected",
-            reason="query_safety_validation_failed",
-            decision_id=decision.decision_id,
-            details={
+            audit_result="rejected",
+            audit_reason="query_safety_validation_failed",
+            policy_decision_id=decision.decision_id,
+            audit_details={
                 "policy_decision_id": decision.decision_id,
                 "warnings": validation_warnings,
             },
@@ -295,10 +295,10 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
     execution = {"elapsedMs": 100, "source": "mock-trino", "bytesScanned": 1024}
     audit(
         dataset_id=dataset.id,
-        result="allowed",
-        reason="ok",
-        decision_id=decision.decision_id,
-        details={
+        audit_result="allowed",
+        audit_reason="ok",
+        policy_decision_id=decision.decision_id,
+        audit_details={
             "policy_decision_id": decision.decision_id,
             "query_id": query_id,
             "row_count": row_count,
