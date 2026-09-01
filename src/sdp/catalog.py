@@ -29,11 +29,11 @@ _AUDIT_LOG: list[AuditEvent] = []
 _SCHEMA_HISTORY: dict[str, list[dict[str, Any]]] = {}
 
 
-def _record_audit_event(event: AuditEvent) -> AuditEvent:
-    append_audit_event(event)
+def _record_audit_event(audit_event: AuditEvent) -> AuditEvent:
+    append_audit_event(audit_event)
     if not has_configured_evidence_store():
-        _AUDIT_LOG.append(event)
-    return event
+        _AUDIT_LOG.append(audit_event)
+    return audit_event
 
 
 def _column_signature(columns: list[ColumnMetadata]) -> list[dict[str, Any]]:
@@ -342,20 +342,20 @@ def get_dataset_schema_diff(dataset_id: str, from_version: str, to_version: str)
 def _build_dataset_payload(
     dataset: Dataset,
     *,
-    actor: str,
-    action: str,
-    decision_id: str | None = None,
-    details: dict[str, object] | None = None,
+    actor_subject: str,
+    audit_action: str,
+    policy_decision_id: str | None = None,
+    audit_details: dict[str, object] | None = None,
 ) -> AuditEvent:
     return AuditEvent(
-        id=str(uuid4()),
-        actor=actor,
-        action=action,
-        resource=dataset.id,
-        decision_id=decision_id,
-        result="success",
-        reason="ok",
-        details=details or {},
+        audit_event_id=str(uuid4()),
+        actor_subject=actor_subject,
+        audit_action=audit_action,
+        resource_reference=dataset.id,
+        policy_decision_id=policy_decision_id,
+        audit_result="success",
+        audit_reason="ok",
+        audit_details=audit_details or {},
         created_at=datetime.now(timezone.utc),
     )
 
@@ -413,7 +413,14 @@ def register_dataset(
     dataset.recompute_scores()
     _DATA[dataset.id] = dataset
     _record_schema_snapshot(dataset)
-    _record_audit_event(_build_dataset_payload(dataset, actor=actor, action="dataset.register", decision_id=decision_id))
+    _record_audit_event(
+        _build_dataset_payload(
+            dataset,
+            actor_subject=actor,
+            audit_action="dataset.register",
+            policy_decision_id=decision_id,
+        )
+    )
     return dataset
 
 
@@ -447,10 +454,14 @@ def patch_dataset(
     _record_audit_event(
         _build_dataset_payload(
             updated,
-            actor=actor,
-            decision_id=decision_id,
-            action="dataset.patch",
-            details={"changes": updates, "before": {k: before[k] for k in updates}, "after": {k: data[k] for k in updates},},
+            actor_subject=actor,
+            policy_decision_id=decision_id,
+            audit_action="dataset.patch",
+            audit_details={
+                "changes": updates,
+                "before": {k: before[k] for k in updates},
+                "after": {k: data[k] for k in updates},
+            },
         )
     )
     return updated
@@ -471,10 +482,10 @@ def publish_dataset(
         _record_audit_event(
             _build_dataset_payload(
                 dataset,
-                actor=actor,
-                decision_id=decision_id,
-                action="dataset.publish",
-                details={"status": dataset.status, "noop": True},
+                actor_subject=actor,
+                policy_decision_id=decision_id,
+                audit_action="dataset.publish",
+                audit_details={"status": dataset.status, "noop": True},
             )
         )
         return dataset
@@ -490,10 +501,10 @@ def publish_dataset(
     _record_audit_event(
         _build_dataset_payload(
             published,
-            actor=actor,
-            decision_id=decision_id,
-            action="dataset.publish",
-            details={"previous_status": dataset.status},
+            actor_subject=actor,
+            policy_decision_id=decision_id,
+            audit_action="dataset.publish",
+            audit_details={"previous_status": dataset.status},
         )
     )
     return published
@@ -518,33 +529,61 @@ def deprecate_dataset(
     _record_audit_event(
         _build_dataset_payload(
             deprecated,
-            actor=actor,
-            action="dataset.deprecate",
-            decision_id=decision_id,
-            details={"reason": reason},
+            actor_subject=actor,
+            audit_action="dataset.deprecate",
+            policy_decision_id=decision_id,
+            audit_details={"reason": reason},
         )
     )
     return deprecated
 
 
-def list_audit_events(*, limit: int = 100, resource: str | None = None) -> list[AuditEvent]:
-    events = list(_AUDIT_LOG)
-    if resource:
-        events = [event for event in events if event.resource == resource]
+def list_audit_events(
+    *,
+    limit: int = 100,
+    resource_reference: str | None = None,
+    **compatibility_filters: object,
+) -> list[AuditEvent]:
+    legacy_resource = compatibility_filters.pop("resource", None)
+    if compatibility_filters:
+        unexpected_names = ", ".join(sorted(compatibility_filters))
+        raise TypeError(f"unexpected audit-event filter(s): {unexpected_names}")
+    if resource_reference is not None and legacy_resource is not None:
+        if resource_reference != legacy_resource:
+            raise TypeError("resource_reference and legacy resource filter disagree")
+    if resource_reference is None and legacy_resource is not None:
+        resource_reference = str(legacy_resource)
+
+    audit_events = list(_AUDIT_LOG)
+    if resource_reference:
+        audit_events = [
+            audit_event
+            for audit_event in audit_events
+            if audit_event.resource_reference == resource_reference
+        ]
 
     if has_configured_evidence_store():
-        persisted = list_persisted_audit_events(resource=resource, limit=limit)
-        by_id = {event.id: event for event in events}
-        for event in persisted:
-            by_id[event.id] = event
-        events = list(by_id.values())
+        persisted_events = list_persisted_audit_events(
+            resource_reference=resource_reference,
+            limit=limit,
+        )
+        events_by_id = {
+            audit_event.audit_event_id: audit_event for audit_event in audit_events
+        }
+        for audit_event in persisted_events:
+            events_by_id[audit_event.audit_event_id] = audit_event
+        audit_events = list(events_by_id.values())
 
-    events = sorted(events, key=lambda row: row.created_at, reverse=True)
-    return events[:limit]
+    audit_events = sorted(
+        audit_events,
+        key=lambda audit_event: audit_event.created_at,
+        reverse=True,
+    )
+    return audit_events[:limit]
 
 
 def get_dataset_audit_events(dataset_id: str, *, limit: int = 100) -> list[AuditEvent]:
-    return list_audit_events(limit=limit, resource=dataset_id)
+    return list_audit_events(limit=limit, resource_reference=dataset_id)
 
 
 def mapping_candidates(dataset: Dataset, concept: str) -> list[str]:
@@ -559,26 +598,26 @@ def mapping_candidates(dataset: Dataset, concept: str) -> list[str]:
 
 def ingest_event(
     *,
-    event_type: str,
-    actor: str,
+    audit_action: str,
+    actor_subject: str,
     dataset_id: str,
-    decision: str,
-    decision_id: str | None = None,
-    reason: str = "",
-    details: dict[str, object] | None = None,
+    audit_result: str,
+    policy_decision_id: str | None = None,
+    audit_reason: str = "",
+    audit_details: dict[str, object] | None = None,
 ) -> AuditEvent:
-    event = AuditEvent(
-        id=str(uuid4()),
-        actor=actor,
-        action=event_type,
-        resource=dataset_id,
-        result=decision,
-        decision_id=decision_id,
-        reason=reason,
-        details=details or {},
+    audit_event = AuditEvent(
+        audit_event_id=str(uuid4()),
+        actor_subject=actor_subject,
+        audit_action=audit_action,
+        resource_reference=dataset_id,
+        audit_result=audit_result,
+        policy_decision_id=policy_decision_id,
+        audit_reason=audit_reason,
+        audit_details=audit_details or {},
         created_at=datetime.now(timezone.utc),
     )
-    return _record_audit_event(event)
+    return _record_audit_event(audit_event)
 
 
 def get_related_datasets(dataset_id: str) -> list[str]:
