@@ -116,7 +116,7 @@ SDP_DATABASE_DSN='postgresql+psycopg://sdp_graph_app:<url-encoded-password>@loca
 ## Hub가 호출하는 HTTP 계약
 
 Hub는 이 서비스를 **독립 프로세스로** 띄운 뒤 HTTP로 호출합니다. 아래는
-이 브랜치(`main`)에 **이미 있는** 표면입니다. 새 런타임이나 새 엔드포인트를
+보호된 소스에 존재하는 표면을 설명합니다. 새 런타임이나 새 엔드포인트를
 이 문서가 만들지 않습니다.
 
 ### Health
@@ -169,7 +169,7 @@ Hub는 이 서비스를 **독립 프로세스로** 띄운 뒤 HTTP로 호출합�
 | [docs/adr/](docs/adr/) | 아키텍처 결정. **Status: Draft** — 최종이 아닙니다. |
 | [docs/REFERENCES.md](docs/REFERENCES.md) | APA 7th 서지. 인용은 사람이 재검증하기 전까지 draft입니다. |
 | [docs/papers/README.md](docs/papers/README.md) | 첨부 PDF 라이선스 메모. 서지 원천은 REFERENCES.md. |
-| [docs/prd-trd.md](docs/prd-trd.md) | 제품/기술 요구(draft). 운영 규칙이 충돌하면 이 README와 ADR을 따릅니다. |
+| [docs/prd-trd.md](docs/prd-trd.md) | 제품/기술 요구(draft). 운영 규칙이 충돌하면 보호된 코드·승인된 ADR·현재 운영 계약이 우선합니다. |
 
 ## 로컬 검증
 
@@ -177,3 +177,15 @@ Hub는 이 서비스를 **독립 프로세스로** 띄운 뒤 HTTP로 호출합�
 PYTHONPATH=src pytest
 PYTHONPATH=src python -m sdp.demo_smoke
 ```
+
+이 명령은 저장소 구현의 회귀와 smoke 동작을 확인하기 위한 개발 증거입니다. 개별 배포의 보안 검토, 데이터 거버넌스 승인, 규제 적합성, 고객 채택 또는 상용 운영 준비를 대신하지 않습니다. 보호된 브랜치와 immutable release가 실제 배포 가능 상태의 권위입니다.
+
+## 지원·보안·기여
+
+- 사용법과 운영 계약은 이 README 및 `docs/`의 보호된 브랜치 문서를 기준으로 확인합니다.
+- 취약점과 보안 경계는 [SECURITY.md](SECURITY.md)를 따릅니다.
+- 기여 절차와 개발 환경은 [CONTRIBUTING.md](CONTRIBUTING.md)에 둡니다. 고객용 README에 내부 자동화 절차를 복제하지 않습니다.
+
+## License
+
+Semantic Data Portal의 저장소 소스는 [MIT License](LICENSE)로 제공됩니다. 보호된 `main`의 라이선스 파일은 `Copyright (c) 2026 ContextualWisdomLab`을 명시합니다. 제3자 의존성·컨테이너 이미지·데이터베이스 확장은 각각의 라이선스 조건을 유지하며, 저장소 자체의 MIT grant와 혼동하지 않습니다.
