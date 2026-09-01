@@ -1,0 +1,72 @@
+name: Apply column metadata semantic naming
+
+on:
+  push:
+    branches:
+      - fix/dataset-distribution-semantic-identifiers
+
+permissions:
+  contents: write
+
+jobs:
+  apply_semantic_naming:
+    name: Apply semantic column naming
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out exact branch head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - name: Propagate organization-owned column vocabulary
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          demo_seed_path = Path("src/sdp_core/demo_seed.py")
+          demo_seed_text = demo_seed_path.read_text()
+          demo_seed_text, constructor_count = re.subn(
+              r"(ColumnMetadata\(\s*)name=",
+              r"\1column_name=",
+              demo_seed_text,
+          )
+          if constructor_count == 0:
+              raise SystemExit("expected at least one ColumnMetadata(name= caller")
+          demo_seed_path.write_text(demo_seed_text)
+
+          for caller_path in (
+              Path("src/sdp/catalog.py"),
+              Path("tests/test_catalog.py"),
+          ):
+              caller_text = caller_path.read_text()
+              replacement_count = caller_text.count("column.name")
+              if replacement_count == 0:
+                  raise SystemExit(f"expected column.name caller in {caller_path}")
+              caller_path.write_text(caller_text.replace("column.name", "column.column_name"))
+          PY
+
+      - name: Verify focused naming contract
+        shell: bash
+        run: |
+          python -m pip install -e '.[dev]'
+          PYTHONPATH=src pytest \
+            tests/test_column_metadata_naming_contract.py \
+            tests/test_catalog.py
+
+      - name: Reconcile exact remote head and commit cleanup
+        shell: bash
+        env:
+          REPAIR_BRANCH_NAME: ${{ github.ref_name }}
+          REPAIR_WORKFLOW_PATH: .github/workflows/apply-column-metadata-naming.yml
+        run: |
+          git fetch origin "${REPAIR_BRANCH_NAME}"
+          test "$(git rev-parse HEAD)" = "$(git rev-parse "origin/${REPAIR_BRANCH_NAME}")"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/sdp_core/demo_seed.py src/sdp/catalog.py tests/test_catalog.py
+          git rm "${REPAIR_WORKFLOW_PATH}"
+          git commit -m "refactor(catalog): propagate semantic column naming"
+          git push origin "HEAD:${REPAIR_BRANCH_NAME}"
