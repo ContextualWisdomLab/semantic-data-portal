@@ -4,7 +4,14 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_serializer
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    HttpUrl,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+)
 
 
 class ColumnMetadata(BaseModel):
@@ -30,34 +37,51 @@ class DatasetDistribution(BaseModel):
     distribution_format: str = Field(alias="format")
     distribution_endpoint: HttpUrl = Field(alias="endpoint")
 
-    @model_serializer(mode="plain")
-    def serialize_wire_contract(self) -> dict[str, str | HttpUrl]:
-        """Serialize with the established catalog wire vocabulary."""
+    @model_serializer(mode="wrap")
+    def serialize_wire_contract(
+        self,
+        serializer: SerializerFunctionWrapHandler,
+    ) -> dict[str, Any]:
+        """Serialize filtered fields with the established catalog wire vocabulary."""
 
-        return {
-            "id": self.distribution_id,
-            "format": self.distribution_format,
-            "endpoint": self.distribution_endpoint,
+        serialized_distribution = serializer(self)
+        wire_field_names = {
+            "distribution_id": "id",
+            "distribution_format": "format",
+            "distribution_endpoint": "endpoint",
         }
+        wire_payload: dict[str, Any] = {}
+        for semantic_field_name, wire_field_name in wire_field_names.items():
+            if semantic_field_name in serialized_distribution:
+                wire_payload[wire_field_name] = serialized_distribution[semantic_field_name]
+            elif wire_field_name in serialized_distribution:
+                wire_payload[wire_field_name] = serialized_distribution[wire_field_name]
+        return wire_payload
 
     @property
-    def id(self) -> str:
+    def id(self) -> str:  # noqa: A003 - legacy external compatibility attribute
         """Return the legacy distribution identifier compatibility attribute."""
 
         return self.distribution_id
 
     @id.setter
-    def id(self, legacy_distribution_id: str) -> None:
+    def id(  # noqa: A003 - legacy external compatibility attribute
+        self,
+        legacy_distribution_id: str,
+    ) -> None:
         self.distribution_id = legacy_distribution_id
 
     @property
-    def format(self) -> str:
+    def format(self) -> str:  # noqa: A003 - legacy external compatibility attribute
         """Return the legacy distribution-format compatibility attribute."""
 
         return self.distribution_format
 
     @format.setter
-    def format(self, legacy_distribution_format: str) -> None:
+    def format(  # noqa: A003 - legacy external compatibility attribute
+        self,
+        legacy_distribution_format: str,
+    ) -> None:
         self.distribution_format = legacy_distribution_format
 
     @property
