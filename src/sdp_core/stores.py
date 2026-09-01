@@ -21,8 +21,32 @@ def _policy_tenant_id(decision: PolicyDecision) -> str:
     return str(decision.obligations.get("tenant_id") or "demo")
 
 
-def _audit_tenant_id(event: AuditEvent) -> str:
-    return str(event.details.get("tenant_id") or event.details.get("tenant") or "demo")
+def _audit_tenant_id(audit_event: AuditEvent) -> str:
+    return str(
+        audit_event.audit_details.get("tenant_id")
+        or audit_event.audit_details.get("tenant")
+        or "demo"
+    )
+
+
+def _audit_resource_reference(
+    resource_reference: str | None,
+    compatibility_filters: dict[str, object],
+) -> str | None:
+    """Translate the legacy ``resource=`` filter at the store adapter boundary."""
+
+    legacy_resource = compatibility_filters.pop("resource", None)
+    if compatibility_filters:
+        unexpected_names = ", ".join(sorted(compatibility_filters))
+        raise TypeError(f"unexpected audit-event filter(s): {unexpected_names}")
+    if resource_reference is not None and legacy_resource is not None:
+        if resource_reference != legacy_resource:
+            raise TypeError("resource_reference and legacy resource filter disagree")
+    if resource_reference is not None:
+        return resource_reference
+    if legacy_resource is None:
+        return None
+    return str(legacy_resource)
 
 
 class SQLiteEvidenceStore:
@@ -35,6 +59,33 @@ class SQLiteEvidenceStore:
 
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self.path)
+
+    @staticmethod
+    def _migrate_audit_event_columns(connection: sqlite3.Connection) -> None:
+        """Rename legacy audit columns transactionally without rewriting event rows."""
+
+        column_names = {
+            column_row[1]
+            for column_row in connection.execute("PRAGMA table_info(audit_events)").fetchall()
+        }
+        if "id" in column_names and "audit_event_id" not in column_names:
+            connection.execute("ALTER TABLE audit_events RENAME COLUMN id TO audit_event_id")
+        if "actor" in column_names and "actor_subject" not in column_names:
+            connection.execute("ALTER TABLE audit_events RENAME COLUMN actor TO actor_subject")
+        if "action" in column_names and "audit_action" not in column_names:
+            connection.execute("ALTER TABLE audit_events RENAME COLUMN action TO audit_action")
+        if "resource" in column_names and "resource_reference" not in column_names:
+            connection.execute(
+                "ALTER TABLE audit_events RENAME COLUMN resource TO resource_reference"
+            )
+        if "result" in column_names and "audit_result" not in column_names:
+            connection.execute("ALTER TABLE audit_events RENAME COLUMN result TO audit_result")
+        if "decision_id" in column_names and "policy_decision_id" not in column_names:
+            connection.execute(
+                "ALTER TABLE audit_events RENAME COLUMN decision_id TO policy_decision_id"
+            )
+        if "payload" in column_names and "event_payload" not in column_names:
+            connection.execute("ALTER TABLE audit_events RENAME COLUMN payload TO event_payload")
 
     def _initialize(self) -> None:
         with self._connect() as connection:
@@ -54,17 +105,18 @@ class SQLiteEvidenceStore:
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS audit_events (
-                    id TEXT PRIMARY KEY,
-                    actor TEXT NOT NULL,
-                    action TEXT NOT NULL,
-                    resource TEXT NOT NULL,
-                    result TEXT NOT NULL,
-                    decision_id TEXT,
-                    payload TEXT NOT NULL,
+                    audit_event_id TEXT PRIMARY KEY,
+                    actor_subject TEXT NOT NULL,
+                    audit_action TEXT NOT NULL,
+                    resource_reference TEXT NOT NULL,
+                    audit_result TEXT NOT NULL,
+                    policy_decision_id TEXT,
+                    event_payload TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 )
                 """
             )
+            self._migrate_audit_event_columns(connection)
 
     def record_decision(self, decision: PolicyDecision) -> PolicyDecision:
         payload = decision.model_dump(mode="json")
@@ -110,34 +162,44 @@ class SQLiteEvidenceStore:
             rows = connection.execute(sql, params).fetchall()
         return [PolicyDecision.model_validate(json.loads(row[0])) for row in rows]
 
-    def append_event(self, event: AuditEvent) -> AuditEvent:
-        payload = event.model_dump(mode="json")
+    def append_event(self, audit_event: AuditEvent) -> AuditEvent:
+        audit_event_payload = audit_event.model_dump(mode="json", by_alias=True)
         with self._connect() as connection:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO audit_events
-                (id, actor, action, resource, result, decision_id, payload, created_at)
+                (audit_event_id, actor_subject, audit_action, resource_reference,
+                 audit_result, policy_decision_id, event_payload, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    event.id,
-                    event.actor,
-                    event.action,
-                    event.resource,
-                    event.result,
-                    event.decision_id,
-                    json.dumps(payload, ensure_ascii=False, sort_keys=True),
-                    event.created_at.isoformat(),
+                    audit_event.audit_event_id,
+                    audit_event.actor_subject,
+                    audit_event.audit_action,
+                    audit_event.resource_reference,
+                    audit_event.audit_result,
+                    audit_event.policy_decision_id,
+                    json.dumps(audit_event_payload, ensure_ascii=False, sort_keys=True),
+                    audit_event.created_at.isoformat(),
                 ),
             )
-        return event
+        return audit_event
 
-    def list_events(self, *, resource: str | None = None, limit: int = 100) -> list[AuditEvent]:
-        sql = "SELECT payload FROM audit_events"
+    def list_events(
+        self,
+        *,
+        resource_reference: str | None = None,
+        limit: int = 100,
+        **compatibility_filters: object,
+    ) -> list[AuditEvent]:
+        resource_reference = _audit_resource_reference(
+            resource_reference, compatibility_filters
+        )
+        sql = "SELECT event_payload FROM audit_events"
         params: tuple[object, ...] = ()
-        if resource:
-            sql += " WHERE resource = ?"
-            params = (resource,)
+        if resource_reference:
+            sql += " WHERE resource_reference = ?"
+            params = (resource_reference,)
         sql += " ORDER BY created_at DESC LIMIT ?"
         params = (*params, limit)
 
@@ -199,14 +261,14 @@ class PostgresEvidenceStore:
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS audit_events (
-                    id TEXT PRIMARY KEY,
+                    audit_event_id TEXT PRIMARY KEY,
                     tenant_id TEXT NOT NULL,
-                    actor TEXT NOT NULL,
-                    action TEXT NOT NULL,
-                    resource TEXT NOT NULL,
-                    result TEXT NOT NULL,
-                    decision_id TEXT,
-                    payload JSONB NOT NULL,
+                    actor_subject TEXT NOT NULL,
+                    audit_action TEXT NOT NULL,
+                    resource_reference TEXT NOT NULL,
+                    audit_result TEXT NOT NULL,
+                    policy_decision_id TEXT,
+                    event_payload JSONB NOT NULL,
                     created_at TIMESTAMPTZ NOT NULL
                 )
                 """
@@ -254,11 +316,81 @@ class PostgresEvidenceStore:
             )
             connection.execute("ALTER TABLE policy_decisions ALTER COLUMN tenant_id SET NOT NULL")
             connection.execute("ALTER TABLE policy_decisions ALTER COLUMN created_at SET NOT NULL")
+            connection.execute(
+                """
+                DO $$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'audit_events' AND column_name = 'id'
+                    ) AND NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'audit_events' AND column_name = 'audit_event_id'
+                    ) THEN
+                        ALTER TABLE audit_events RENAME COLUMN id TO audit_event_id;
+                    END IF;
+                    IF EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'audit_events' AND column_name = 'actor'
+                    ) AND NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'audit_events' AND column_name = 'actor_subject'
+                    ) THEN
+                        ALTER TABLE audit_events RENAME COLUMN actor TO actor_subject;
+                    END IF;
+                    IF EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'audit_events' AND column_name = 'action'
+                    ) AND NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'audit_events' AND column_name = 'audit_action'
+                    ) THEN
+                        ALTER TABLE audit_events RENAME COLUMN action TO audit_action;
+                    END IF;
+                    IF EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'audit_events' AND column_name = 'resource'
+                    ) AND NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'audit_events' AND column_name = 'resource_reference'
+                    ) THEN
+                        ALTER TABLE audit_events RENAME COLUMN resource TO resource_reference;
+                    END IF;
+                    IF EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'audit_events' AND column_name = 'result'
+                    ) AND NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'audit_events' AND column_name = 'audit_result'
+                    ) THEN
+                        ALTER TABLE audit_events RENAME COLUMN result TO audit_result;
+                    END IF;
+                    IF EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'audit_events' AND column_name = 'decision_id'
+                    ) AND NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'audit_events' AND column_name = 'policy_decision_id'
+                    ) THEN
+                        ALTER TABLE audit_events RENAME COLUMN decision_id TO policy_decision_id;
+                    END IF;
+                    IF EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'audit_events' AND column_name = 'payload'
+                    ) AND NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'audit_events' AND column_name = 'event_payload'
+                    ) THEN
+                        ALTER TABLE audit_events RENAME COLUMN payload TO event_payload;
+                    END IF;
+                END $$;
+                """
+            )
             connection.execute("ALTER TABLE audit_events ADD COLUMN IF NOT EXISTS tenant_id TEXT")
             connection.execute(
                 """
                 UPDATE audit_events
-                SET tenant_id = COALESCE(NULLIF(tenant_id, ''), payload -> 'details' ->> 'tenant_id', 'demo')
+                SET tenant_id = COALESCE(NULLIF(tenant_id, ''), event_payload -> 'details' ->> 'tenant_id', 'demo')
                 WHERE tenant_id IS NULL OR tenant_id = ''
                 """
             )
@@ -266,8 +398,9 @@ class PostgresEvidenceStore:
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_policy_decisions_tenant_resource_created ON policy_decisions (tenant_id, resource, created_at DESC)"
             )
+            connection.execute("DROP INDEX IF EXISTS idx_audit_events_tenant_resource_created")
             connection.execute(
-                "CREATE INDEX IF NOT EXISTS idx_audit_events_tenant_resource_created ON audit_events (tenant_id, resource, created_at DESC)"
+                "CREATE INDEX IF NOT EXISTS idx_audit_events_tenant_resource_reference_created ON audit_events (tenant_id, resource_reference, created_at DESC)"
             )
 
     def record_decision(self, decision: PolicyDecision) -> PolicyDecision:
@@ -323,44 +456,54 @@ class PostgresEvidenceStore:
             rows = connection.execute(sql, params).fetchall()
         return [PolicyDecision.model_validate(_payload_to_dict(row[0])) for row in rows]
 
-    def append_event(self, event: AuditEvent) -> AuditEvent:
-        payload = event.model_dump(mode="json")
+    def append_event(self, audit_event: AuditEvent) -> AuditEvent:
+        audit_event_payload = audit_event.model_dump(mode="json", by_alias=True)
         with self._connect() as connection:
             connection.execute(
                 """
                 INSERT INTO audit_events
-                (id, tenant_id, actor, action, resource, result, decision_id, payload, created_at)
+                (audit_event_id, tenant_id, actor_subject, audit_action, resource_reference,
+                 audit_result, policy_decision_id, event_payload, created_at)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (id) DO UPDATE SET
+                ON CONFLICT (audit_event_id) DO UPDATE SET
                     tenant_id = EXCLUDED.tenant_id,
-                    actor = EXCLUDED.actor,
-                    action = EXCLUDED.action,
-                    resource = EXCLUDED.resource,
-                    result = EXCLUDED.result,
-                    decision_id = EXCLUDED.decision_id,
-                    payload = EXCLUDED.payload,
+                    actor_subject = EXCLUDED.actor_subject,
+                    audit_action = EXCLUDED.audit_action,
+                    resource_reference = EXCLUDED.resource_reference,
+                    audit_result = EXCLUDED.audit_result,
+                    policy_decision_id = EXCLUDED.policy_decision_id,
+                    event_payload = EXCLUDED.event_payload,
                     created_at = EXCLUDED.created_at
                 """,
                 (
-                    event.id,
-                    _audit_tenant_id(event),
-                    event.actor,
-                    event.action,
-                    event.resource,
-                    event.result,
-                    event.decision_id,
-                    self._jsonb(payload),
-                    event.created_at,
+                    audit_event.audit_event_id,
+                    _audit_tenant_id(audit_event),
+                    audit_event.actor_subject,
+                    audit_event.audit_action,
+                    audit_event.resource_reference,
+                    audit_event.audit_result,
+                    audit_event.policy_decision_id,
+                    self._jsonb(audit_event_payload),
+                    audit_event.created_at,
                 ),
             )
-        return event
+        return audit_event
 
-    def list_events(self, *, resource: str | None = None, limit: int = 100) -> list[AuditEvent]:
-        sql = "SELECT payload FROM audit_events"
+    def list_events(
+        self,
+        *,
+        resource_reference: str | None = None,
+        limit: int = 100,
+        **compatibility_filters: object,
+    ) -> list[AuditEvent]:
+        resource_reference = _audit_resource_reference(
+            resource_reference, compatibility_filters
+        )
+        sql = "SELECT event_payload FROM audit_events"
         params: tuple[object, ...] = ()
-        if resource:
-            sql += " WHERE resource = %s"
-            params = (resource,)
+        if resource_reference:
+            sql += " WHERE resource_reference = %s"
+            params = (resource_reference,)
         sql += " ORDER BY created_at DESC LIMIT %s"
         params = (*params, limit)
 
