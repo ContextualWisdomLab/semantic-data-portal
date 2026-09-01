@@ -77,7 +77,7 @@ def preview(dataset_id: str, user: str, purpose: str, limit: int = 100, offset: 
     return {
         "dataset_id": dataset.id,
         "policy_decision": decision.model_dump(),
-        "columns": [column.name for column in dataset.schema],
+        "columns": [column.column_name for column in dataset.schema],
         "rows": masked,
         "row_count": min(limit, len(masked)),
         "offset": offset,
