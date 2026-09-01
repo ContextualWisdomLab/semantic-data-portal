@@ -254,7 +254,7 @@ def test_patch_dataset_schema_bumps_schema_version() -> None:
         ),
     )
     assert updated.schema_version == catalog._bump_version(before)
-    assert [column.name for column in updated.schema] == ["new_col"]
+    assert [column.column_name for column in updated.schema] == ["new_col"]
 
 
 # --- publish_dataset idempotent no-op (lines 471-480) --------------------
