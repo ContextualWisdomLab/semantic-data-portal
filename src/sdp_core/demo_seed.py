@@ -61,14 +61,68 @@ class BuyerDemoDomain(BaseModel):
 
 
 class BuyerDemoDatasetSummary(BaseModel):
-    id: str
-    title: str
-    domain: str
+    """Buyer-demo dataset summary with semantic internal catalog vocabulary."""
+
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+
+    dataset_id: str = Field(alias="id")
+    dataset_title: str = Field(alias="title")
+    dataset_domain: str = Field(alias="domain")
     source_type: str
     source_system: str
-    sensitivity: str
-    steward: str
+    dataset_sensitivity: str = Field(alias="sensitivity")
+    dataset_steward: str = Field(alias="steward")
     acceptance_role: str
+
+    @property
+    def id(self) -> str:  # noqa: A003 - legacy Python compatibility attribute
+        """Return the legacy dataset identifier compatibility attribute."""
+
+        return self.dataset_id
+
+    @id.setter
+    def id(self, legacy_dataset_id: str) -> None:  # noqa: A003
+        self.dataset_id = legacy_dataset_id
+
+    @property
+    def title(self) -> str:
+        """Return the legacy dataset title compatibility attribute."""
+
+        return self.dataset_title
+
+    @title.setter
+    def title(self, legacy_dataset_title: str) -> None:
+        self.dataset_title = legacy_dataset_title
+
+    @property
+    def domain(self) -> str:
+        """Return the legacy dataset domain compatibility attribute."""
+
+        return self.dataset_domain
+
+    @domain.setter
+    def domain(self, legacy_dataset_domain: str) -> None:
+        self.dataset_domain = legacy_dataset_domain
+
+    @property
+    def sensitivity(self) -> str:
+        """Return the legacy dataset sensitivity compatibility attribute."""
+
+        return self.dataset_sensitivity
+
+    @sensitivity.setter
+    def sensitivity(self, legacy_dataset_sensitivity: str) -> None:
+        self.dataset_sensitivity = legacy_dataset_sensitivity
+
+    @property
+    def steward(self) -> str:
+        """Return the legacy dataset steward compatibility attribute."""
+
+        return self.dataset_steward
+
+    @steward.setter
+    def steward(self, legacy_dataset_steward: str) -> None:
+        self.dataset_steward = legacy_dataset_steward
 
 
 def _approved_mapping(concept: str, *, steward: str) -> BusinessMapping:
@@ -430,13 +484,13 @@ def buyer_demo_dataset_summaries(domain_id: str = "customer_intelligence") -> li
             source_type = "file_lake"
         summaries.append(
             BuyerDemoDatasetSummary(
-                id=dataset.id,
-                title=dataset.title,
-                domain=dataset.domain,
+                dataset_id=dataset.id,
+                dataset_title=dataset.title,
+                dataset_domain=dataset.domain,
                 source_type=source_type,
                 source_system=dataset.source_system,
-                sensitivity=dataset.sensitivity,
-                steward=dataset.steward,
+                dataset_sensitivity=dataset.sensitivity,
+                dataset_steward=dataset.steward,
                 acceptance_role="priority_dataset",
             )
         )
