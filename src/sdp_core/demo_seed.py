@@ -107,21 +107,21 @@ def _customer_intelligence_datasets() -> list[Dataset]:
             related_datasets=["crm-event", "sales-order"],
             schema=[
                 ColumnMetadata(
-                    name="customer_id",
+                    column_name="customer_id",
                     datatype="string",
                     nullable_ratio=0.0,
                     distinct_ratio=1.0,
                     pii=False,
                 ),
                 ColumnMetadata(
-                    name="customer_email",
+                    column_name="customer_email",
                     datatype="string",
                     nullable_ratio=0.01,
                     distinct_ratio=0.99,
                     pii=True,
                 ),
                 ColumnMetadata(
-                    name="signup_at",
+                    column_name="signup_at",
                     datatype="timestamp",
                     nullable_ratio=0.0,
                     distinct_ratio=0.88,
@@ -166,28 +166,28 @@ def _customer_intelligence_datasets() -> list[Dataset]:
             related_datasets=["crm-customer-master", "marketing-campaign"],
             schema=[
                 ColumnMetadata(
-                    name="event_id",
+                    column_name="event_id",
                     datatype="string",
                     nullable_ratio=0.0,
                     distinct_ratio=1.0,
                     pii=False,
                 ),
                 ColumnMetadata(
-                    name="customer_id",
+                    column_name="customer_id",
                     datatype="string",
                     nullable_ratio=0.0,
                     distinct_ratio=0.98,
                     pii=False,
                 ),
                 ColumnMetadata(
-                    name="event_timestamp",
+                    column_name="event_timestamp",
                     datatype="timestamp",
                     nullable_ratio=0.0,
                     distinct_ratio=0.97,
                     pii=False,
                 ),
                 ColumnMetadata(
-                    name="device_id",
+                    column_name="device_id",
                     datatype="string",
                     nullable_ratio=0.05,
                     distinct_ratio=0.85,
@@ -226,21 +226,21 @@ def _customer_intelligence_datasets() -> list[Dataset]:
             related_datasets=["crm-customer-master"],
             schema=[
                 ColumnMetadata(
-                    name="order_id",
+                    column_name="order_id",
                     datatype="string",
                     nullable_ratio=0.0,
                     distinct_ratio=1.0,
                     pii=False,
                 ),
                 ColumnMetadata(
-                    name="customer_id",
+                    column_name="customer_id",
                     datatype="string",
                     nullable_ratio=0.0,
                     distinct_ratio=0.91,
                     pii=False,
                 ),
                 ColumnMetadata(
-                    name="order_amount",
+                    column_name="order_amount",
                     datatype="decimal",
                     nullable_ratio=0.0,
                     distinct_ratio=0.72,
@@ -279,21 +279,21 @@ def _customer_intelligence_datasets() -> list[Dataset]:
             related_datasets=["crm-customer-master", "crm-event", "sales-order"],
             schema=[
                 ColumnMetadata(
-                    name="concept_uri",
+                    column_name="concept_uri",
                     datatype="iri",
                     nullable_ratio=0.0,
                     distinct_ratio=1.0,
                     pii=False,
                 ),
                 ColumnMetadata(
-                    name="preferred_label",
+                    column_name="preferred_label",
                     datatype="string",
                     nullable_ratio=0.0,
                     distinct_ratio=0.9,
                     pii=False,
                 ),
                 ColumnMetadata(
-                    name="broader_concept",
+                    column_name="broader_concept",
                     datatype="iri",
                     nullable_ratio=0.2,
                     distinct_ratio=0.7,
@@ -334,21 +334,21 @@ def _customer_intelligence_datasets() -> list[Dataset]:
             related_datasets=["crm-customer-master", "crm-event", "sales-order"],
             schema=[
                 ColumnMetadata(
-                    name="campaign_id",
+                    column_name="campaign_id",
                     datatype="string",
                     nullable_ratio=0.0,
                     distinct_ratio=1.0,
                     pii=False,
                 ),
                 ColumnMetadata(
-                    name="target_segment",
+                    column_name="target_segment",
                     datatype="string",
                     nullable_ratio=0.03,
                     distinct_ratio=0.62,
                     pii=False,
                 ),
                 ColumnMetadata(
-                    name="channel",
+                    column_name="channel",
                     datatype="string",
                     nullable_ratio=0.0,
                     distinct_ratio=0.15,
