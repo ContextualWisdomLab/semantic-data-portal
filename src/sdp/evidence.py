@@ -42,16 +42,31 @@ def record_policy_decision(decision: PolicyDecision) -> PolicyDecision:
     return decision
 
 
-def append_audit_event(event: AuditEvent) -> AuditEvent:
+def append_audit_event(audit_event: AuditEvent) -> AuditEvent:
     if _STORE:
-        _STORE.append_event(event)
-    return event
+        _STORE.append_event(audit_event)
+    return audit_event
 
 
-def list_persisted_audit_events(*, resource: str | None = None, limit: int = 100) -> list[AuditEvent]:
+def list_persisted_audit_events(
+    *,
+    resource_reference: str | None = None,
+    limit: int = 100,
+    **compatibility_filters: object,
+) -> list[AuditEvent]:
+    legacy_resource = compatibility_filters.pop("resource", None)
+    if compatibility_filters:
+        unexpected_names = ", ".join(sorted(compatibility_filters))
+        raise TypeError(f"unexpected audit-event filter(s): {unexpected_names}")
+    if resource_reference is not None and legacy_resource is not None:
+        if resource_reference != legacy_resource:
+            raise TypeError("resource_reference and legacy resource filter disagree")
+    if resource_reference is None and legacy_resource is not None:
+        resource_reference = str(legacy_resource)
+
     if not _STORE:
         return []
-    return _STORE.list_events(resource=resource, limit=limit)
+    return _STORE.list_events(resource_reference=resource_reference, limit=limit)
 
 
 def list_policy_decisions(*, resource: str | None = None, limit: int = 100) -> list[PolicyDecision]:
