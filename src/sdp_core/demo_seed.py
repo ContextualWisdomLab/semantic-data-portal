@@ -130,9 +130,9 @@ def _customer_intelligence_datasets() -> list[Dataset]:
             ],
             distributions=[
                 DatasetDistribution(
-                    id="dist-crm-customer",
-                    format="postgresql.table",
-                    endpoint="https://example.internal/api/table/crm_customer_master",
+                    distribution_id="dist-crm-customer",
+                    distribution_format="postgresql.table",
+                    distribution_endpoint="https://example.internal/api/table/crm_customer_master",
                 )
             ],
             mappings=[
@@ -196,9 +196,9 @@ def _customer_intelligence_datasets() -> list[Dataset]:
             ],
             distributions=[
                 DatasetDistribution(
-                    id="dist-crm-event",
-                    format="parquet",
-                    endpoint="https://example.internal/api/file/crm_event",
+                    distribution_id="dist-crm-event",
+                    distribution_format="parquet",
+                    distribution_endpoint="https://example.internal/api/file/crm_event",
                 )
             ],
             mappings=[
@@ -249,9 +249,9 @@ def _customer_intelligence_datasets() -> list[Dataset]:
             ],
             distributions=[
                 DatasetDistribution(
-                    id="dist-sales-order",
-                    format="postgresql.table",
-                    endpoint="https://example.internal/api/table/sales_order",
+                    distribution_id="dist-sales-order",
+                    distribution_format="postgresql.table",
+                    distribution_endpoint="https://example.internal/api/table/sales_order",
                 )
             ],
             mappings=[
@@ -302,9 +302,9 @@ def _customer_intelligence_datasets() -> list[Dataset]:
             ],
             distributions=[
                 DatasetDistribution(
-                    id="dist-semantic-glossary",
-                    format="sparql.graph",
-                    endpoint="https://example.internal/sparql/customer-intelligence",
+                    distribution_id="dist-semantic-glossary",
+                    distribution_format="sparql.graph",
+                    distribution_endpoint="https://example.internal/sparql/customer-intelligence",
                 )
             ],
             mappings=[
@@ -357,9 +357,9 @@ def _customer_intelligence_datasets() -> list[Dataset]:
             ],
             distributions=[
                 DatasetDistribution(
-                    id="dist-marketing-campaign",
-                    format="rest.json",
-                    endpoint="https://api.example.internal/marketing/campaigns",
+                    distribution_id="dist-marketing-campaign",
+                    distribution_format="rest.json",
+                    distribution_endpoint="https://api.example.internal/marketing/campaigns",
                 )
             ],
             mappings=[
