@@ -142,8 +142,6 @@ def test_sqlite_legacy_schema_migrates_without_losing_evidence(tmp_path: Path) -
 
 
 def test_postgres_evidence_sql_uses_semantic_multiword_columns() -> None:
-    connections: list[FakeConnection] = []
-
     class FakeCursor:
         def fetchone(self):
             return None
@@ -164,6 +162,8 @@ def test_postgres_evidence_sql_uses_semantic_multiword_columns() -> None:
         def execute(self, sql: str, params: tuple[object, ...] = ()):
             self.statements.append((sql, params))
             return FakeCursor()
+
+    connections: list[FakeConnection] = []
 
     def connect_factory(dsn: str, **kwargs: str) -> FakeConnection:
         connection = FakeConnection()
