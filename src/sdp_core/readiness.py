@@ -41,10 +41,16 @@ class PolicyDecisionStore(Protocol):
 class AuditEventStore(Protocol):
     """Append-only boundary for user-visible compliance evidence."""
 
-    def append_event(self, event: AuditEvent) -> AuditEvent:
+    def append_event(self, audit_event: AuditEvent) -> AuditEvent:
         pass
 
-    def list_events(self, *, resource: str | None = None, limit: int = 100) -> list[AuditEvent]:
+    def list_events(
+        self,
+        *,
+        resource_reference: str | None = None,
+        limit: int = 100,
+        **compatibility_filters: object,
+    ) -> list[AuditEvent]:
         pass
 
 
