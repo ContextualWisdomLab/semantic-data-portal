@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from .contracts import (
     BusinessMapping,
@@ -15,15 +15,49 @@ from .contracts import (
 
 
 class BuyerDemoDomain(BaseModel):
-    id: str
-    label: str
-    description: str
+    """Buyer-demo domain contract with semantic internal vocabulary."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    demo_domain_id: str = Field(alias="id")
+    demo_domain_label: str = Field(alias="label")
+    demo_domain_description: str = Field(alias="description")
     default_connectors: list[str]
     analyst_questions: list[str]
     governance_questions: list[str]
     acceptance_questions: list[str]
     dataset_ids: list[str]
     glossary_terms: list[str]
+
+    @property
+    def id(self) -> str:  # noqa: A003 - legacy Python compatibility attribute
+        """Return the legacy demo-domain identifier compatibility attribute."""
+
+        return self.demo_domain_id
+
+    @id.setter
+    def id(self, legacy_demo_domain_id: str) -> None:  # noqa: A003
+        self.demo_domain_id = legacy_demo_domain_id
+
+    @property
+    def label(self) -> str:
+        """Return the legacy demo-domain label compatibility attribute."""
+
+        return self.demo_domain_label
+
+    @label.setter
+    def label(self, legacy_demo_domain_label: str) -> None:
+        self.demo_domain_label = legacy_demo_domain_label
+
+    @property
+    def description(self) -> str:
+        """Return the legacy demo-domain description compatibility attribute."""
+
+        return self.demo_domain_description
+
+    @description.setter
+    def description(self, legacy_demo_domain_description: str) -> None:
+        self.demo_domain_description = legacy_demo_domain_description
 
 
 class BuyerDemoDatasetSummary(BaseModel):
@@ -53,9 +87,9 @@ def _proposed_mapping(concept: str) -> BusinessMapping:
 
 def _customer_intelligence_domain() -> BuyerDemoDomain:
     return BuyerDemoDomain(
-        id="customer_intelligence",
-        label="customer intelligence",
-        description="고객 마스터, 행동 이벤트, 세일즈 전환 데이터를 연결해 고객 탐색과 이탈 분석을 시연하는 buyer demo domain.",
+        demo_domain_id="customer_intelligence",
+        demo_domain_label="customer intelligence",
+        demo_domain_description="고객 마스터, 행동 이벤트, 세일즈 전환 데이터를 연결해 고객 탐색과 이탈 분석을 시연하는 buyer demo domain.",
         default_connectors=["sql_connector", "rdf_connector"],
         analyst_questions=[
             "최근 90일 활성 고객과 이탈 위험 고객을 찾고 근거 데이터셋을 추천한다.",
@@ -79,11 +113,15 @@ def buyer_demo_domains() -> list[BuyerDemoDomain]:
 
 
 def get_buyer_demo_domain(priority_domain: str) -> BuyerDemoDomain | None:
-    normalized = priority_domain.strip().lower().replace("-", "_").replace(" ", "_")
-    for domain in buyer_demo_domains():
-        labels = {domain.id, domain.label.lower(), domain.label.lower().replace(" ", "_")}
-        if normalized in labels or priority_domain.strip() in domain.glossary_terms:
-            return domain
+    normalized_domain_key = priority_domain.strip().lower().replace("-", "_").replace(" ", "_")
+    for demo_domain in buyer_demo_domains():
+        domain_labels = {
+            demo_domain.demo_domain_id,
+            demo_domain.demo_domain_label.lower(),
+            demo_domain.demo_domain_label.lower().replace(" ", "_"),
+        }
+        if normalized_domain_key in domain_labels or priority_domain.strip() in demo_domain.glossary_terms:
+            return demo_domain
     return None
 
 
@@ -406,14 +444,14 @@ def buyer_demo_dataset_summaries(domain_id: str = "customer_intelligence") -> li
 
 
 def buyer_demo_context_for_dataset(dataset_id: str) -> dict[str, Any] | None:
-    for domain in buyer_demo_domains():
-        if dataset_id not in domain.dataset_ids:
+    for demo_domain in buyer_demo_domains():
+        if dataset_id not in demo_domain.dataset_ids:
             continue
         return {
-            "domain_id": domain.id,
-            "domain_label": domain.label,
-            "analyst_questions": domain.analyst_questions,
-            "governance_questions": domain.governance_questions,
-            "acceptance_questions": domain.acceptance_questions,
+            "domain_id": demo_domain.demo_domain_id,
+            "domain_label": demo_domain.demo_domain_label,
+            "analyst_questions": demo_domain.analyst_questions,
+            "governance_questions": demo_domain.governance_questions,
+            "acceptance_questions": demo_domain.acceptance_questions,
         }
     return None
