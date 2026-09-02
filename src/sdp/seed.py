@@ -78,8 +78,8 @@ def seed_store(store: Optional[GraphStore] = None) -> dict:
             store.upsert_edge(
                 "mapping",
                 dataset.id,
-                mapping.concept,
-                properties={"origin": "business_mapping", "status": mapping.status},
+                mapping.business_concept,
+                properties={"origin": "business_mapping", "status": mapping.mapping_status},
             )
 
         # lineage edges
