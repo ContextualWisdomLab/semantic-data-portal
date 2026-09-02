@@ -626,7 +626,7 @@ def test_postgres_evidence_store_uses_tenant_columns_and_store_protocol():
             self.rows = []
 
         def execute(self, sql, params=()):
-            if "SELECT payload FROM policy_decisions" in sql:
+            if "SELECT decision_payload FROM policy_decisions" in sql:
                 self.rows = [
                     (
                         {
@@ -640,7 +640,7 @@ def test_postgres_evidence_store_uses_tenant_columns_and_store_protocol():
                         },
                     )
                 ]
-            elif "SELECT payload FROM audit_events" in sql:
+            elif "SELECT audit_payload FROM audit_events" in sql:
                 self.rows = [
                     (
                         {
@@ -730,10 +730,11 @@ def test_postgres_evidence_store_uses_tenant_columns_and_store_protocol():
 
     statements = "\n".join(sql for _, _, connection in connections for sql, _ in connection.statements)
     assert "tenant_id TEXT NOT NULL" in statements
-    assert "payload JSONB NOT NULL" in statements
+    assert "decision_payload JSONB NOT NULL" in statements
+    assert "audit_payload JSONB NOT NULL" in statements
     assert "created_at TIMESTAMPTZ NOT NULL" in statements
-    assert "idx_policy_decisions_tenant_resource_created" in statements
-    assert "idx_audit_events_tenant_resource_created" in statements
+    assert "idx_policy_decisions_tenant_policy_resource_created" in statements
+    assert "idx_audit_events_tenant_audit_resource_created" in statements
     assert "ON CONFLICT" in statements
     assert any(kwargs == {"sslmode": "require"} for _, kwargs, _ in connections)
 
