@@ -291,16 +291,50 @@ class QueryExecutionRequest(BaseModel):
 
 
 class QueryExecutionResponse(BaseModel):
+    """Governed query result with semantic internal names and stable wire keys."""
+
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+
     request_id: str
     dataset_id: str
     query_id: str
     policy_decision_id: str
-    status: str
+    query_status: str = Field(alias="status")
     row_count: int
     columns: list[str]
     rows: list[dict[str, str | int | float | bool | None]]
-    execution: dict[str, Any]
-    warnings: list[str] = Field(default_factory=list)
+    execution_metadata: dict[str, Any] = Field(alias="execution")
+    query_warnings: list[str] = Field(default_factory=list, alias="warnings")
+
+    @property
+    def status(self) -> str:
+        """Return the legacy query-status compatibility attribute."""
+
+        return self.query_status
+
+    @status.setter
+    def status(self, legacy_query_status: str) -> None:
+        self.query_status = legacy_query_status
+
+    @property
+    def execution(self) -> dict[str, Any]:
+        """Return the legacy execution-metadata compatibility attribute."""
+
+        return self.execution_metadata
+
+    @execution.setter
+    def execution(self, legacy_execution_metadata: dict[str, Any]) -> None:
+        self.execution_metadata = legacy_execution_metadata
+
+    @property
+    def warnings(self) -> list[str]:
+        """Return the legacy query-warning compatibility attribute."""
+
+        return self.query_warnings
+
+    @warnings.setter
+    def warnings(self, legacy_query_warnings: list[str]) -> None:
+        self.query_warnings = legacy_query_warnings
 
 
 class AuditEvent(BaseModel):
