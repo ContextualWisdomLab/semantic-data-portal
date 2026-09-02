@@ -177,14 +177,14 @@ def _term_score(dataset: Dataset, tokens: list[str], query: str) -> float:
             if token_re.search(term):
                 score += 0.7
         for mapping in dataset.mappings:
-            if token_re.search(mapping.concept):
+            if token_re.search(mapping.business_concept):
                 score += 0.6
 
     if dataset.sensitivity == "low":
         score += 0.1
     if query in {"활성", "활성 고객", "customer"}:
-        for m in dataset.mappings:
-            if m.concept == "활성 고객":
+        for business_mapping in dataset.mappings:
+            if business_mapping.business_concept == "활성 고객":
                 score += 0.4
     return score
 
