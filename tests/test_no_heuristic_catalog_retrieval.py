@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from sdp import catalog  # noqa: E402
 
 _CRM = "crm-customer-master"
+_REPO = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture(autouse=True)
@@ -37,8 +38,17 @@ def test_catalog_source_contains_no_hand_weighted_term_score() -> None:
         "score += 0.4",
         "len(overlap_terms) * 2 + len(overlap_columns)",
         "metadata_completeness < 0.8",
+        "by_token.sort(key=lambda row: row.score, reverse=True)",
+        "candidates.sort(key=lambda row: row[\"score\"], reverse=True)",
     ):
         assert forbidden not in source
+
+
+def test_api_contains_no_repository_authored_completeness_badge_cutoff() -> None:
+    source = (_REPO / "src/sdp/api.py").read_text(encoding="utf-8")
+    assert "metadata_recommendation_score >= 0.8" not in source
+    assert "Query(default=20, ge=1, le=100)" not in source
+    assert "Query(default=10, ge=1, le=100)" not in source
 
 
 def test_search_returns_unranked_boolean_matches_without_score() -> None:
