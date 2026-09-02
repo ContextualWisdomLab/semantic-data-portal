@@ -1,6 +1,10 @@
 # PRD/TRD 요구사항 대응 매트릭스 (semantic-data-portal MVP)
 
 본 문서는 `docs/prd-trd.md` 요구사항을 현재 구현 기준으로 추적하기 위한 증빙용 매핑이다.
+구매자·운영자 안내는 루트 `README.md`에 두고, 이 매핑 표는 docs에 둔다.
+개인정보 운영 규칙(목적 바운드 접근 제어·암호화·감사, 마스킹 미처방)과
+leaf/hub 경계는 `README.md`, `docs/msa.md`, `docs/adr/0001-product-authority-boundary.md`가
+우선한다.
 
 ## 구현 상태 개요
 

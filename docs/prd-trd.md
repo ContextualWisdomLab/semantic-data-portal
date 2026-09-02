@@ -6,6 +6,13 @@
 **대상 독자:** Product Owner, Data Platform Architect, Ontology Engineer, Backend/Frontend Engineer, Data Governance, Security, ML/LLM Engineer  
 **제품 가칭:** Semantic Data Portal, SDP  
 
+> **Product-cut overlay (2026-08-18):** 운영 규칙이 본 draft의 마스킹 처방과
+> 충돌하면 `README.md`, `docs/msa.md`, `docs/adr/0001-product-authority-boundary.md`를
+> 따른다. 인가된 개인정보는 목적 바운드 접근 제어·암호화·감사 아래에서 사용
+> 가능해야 하며, 마스킹을 제품 규칙으로 처방하지 않는다. LineageWeave
+> weekly-report KG UI, `fast-mlsirm` 점수 커널, TEPP measurement import는
+> 이 저장소 범위가 아니다.  
+
 ---
 
 ## 0. 문서 요약

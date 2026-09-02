@@ -1,62 +1,73 @@
 # Semantic Data Portal
 
-온톨로지 기반 **그래프 + 벡터** 시맨틱 데이터 카탈로그 서비스입니다. 개념/데이터셋/컬럼을
-속성 그래프(property graph)로 저장하고, 의미 기반 검색(semantic search)으로 데이터를
-"찾아주는" 것을 목표로 합니다. 단독(standalone) 실행과 서브모듈(submodule) 임베딩을 모두 지원합니다.
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/ContextualWisdomLab/semantic-data-portal)
 
-## 그래프 엔진 (Graph Engine)
+온톨로지 기반 **데이터 카탈로그**입니다. ContextualWisdomLab(CWL)에서
+개념·데이터셋·컬럼의 **의미 진실(ontology / catalog truth)** 을 소유하는 leaf
+서비스입니다. 분석가·거버넌스 담당자가 **이 저장소만**으로 기동할 수 있고,
+hub(naruon, gyeot)는 게시된 HTTP 계약으로 **호출**할 수 있습니다.
 
-- **엔진**: 단일 Postgres 인스턴스에서 **Apache AGE**(property graph, openCypher 그래프 순회)
-  + **pgvector**(임베딩 KNN 시맨틱 검색)를 함께 사용합니다.
-- **영속성(persistence)**: 모듈 전역 dict 대신 DB 백엔드로 이전. 마이그레이션(`migrations/`)이
-  그래프/벡터 스키마를 생성하고, 시드(seed)가 카탈로그 + 5개 온톨로지 개념을 멱등(idempotent)하게 적재합니다.
-- **폴백(fallback)**: DB DSN이 없으면 의존성 없는 in-memory 백엔드로 동일 API가 동작하여
-  CI/서브모듈 환경에서도 그대로 실행됩니다.
+이 페이지는 운영자·구매자용입니다. 기여자 절차는 [CONTRIBUTING.md](CONTRIBUTING.md)를,
+아키텍처 경계는 [docs/msa.md](docs/msa.md)를, 결정 기록은 [docs/adr/](docs/adr/)를
+보세요.
 
-### 새 데이터베이스 객체 (2+ word snake_case)
+## 이 카탈로그가 하는 일
 
-`ontology_concepts`, `concept_edges`(→ `graph_edges`), `dataset_nodes`, `graph_nodes`,
-`embedding_vectors`, `config_entries`, `schema_migrations`.
+- 비즈니스 용어와 데이터셋을 연결해 **찾아주고** 해석합니다.
+- 카탈로그 검색, 용어 해석, 그래프 순회, 시맨틱 검색, JSON-LD export를
+  같은 HTTP 표면으로 제공합니다.
+- 데이터 접근은 **목적(purpose) 기반 접근 제어**, 암호화, 감사(audit) 아래에
+  둡니다. 인가된 개인정보는 사용 가능해야 합니다. 이 제품은 마스킹을
+  처방하지 않습니다.
+- 자체 그래프 엔진(기본 in-memory, 선택적으로 Postgres + Apache AGE +
+  pgvector)을 가집니다. 다른 CWL 저장소를 checkout 하거나 submodule로
+  넣지 않아도 부팅됩니다.
 
-## 목표
+## 이 카탈로그가 하지 않는 일
 
-- 데이터 탐색: 키워드 카탈로그 검색 + 유사어/용어(ontology) 해석 + **그래프 순회** + **시맨틱 검색**
-- 지식 그래프 수집(ingestion): NODES/EDGES/CONCEPTS 업스트림 푸시
-- 브라우징: 스키마 조회, 샘플 미리보기, 민감 컬럼 마스킹
-- 거버넌스: 정책 판단(PERMISSION), 샘플 정책 근거(Decision/Omission) 노출
-- 오케스트레이션: 자연어 질문 기반 질의 후보 추천 + SQL draft 제시
+| 책임 | 소유 |
+| --- | --- |
+| LineageWeave weekly-report 지식그래프 UI | LineageWeave ([PR #74](https://github.com/ContextualWisdomLab/LineageWeave/pull/74)). 포털이 그 UI를 소유·구현·restyle하지 않습니다. |
+| IRT / linking / score kernel | `fast-mlsirm`. 점수를 여기서 재구현하지 않습니다. |
+| 측정값 import / measurement REST | TEPP. measurement kernel을 여기서 만들지 않습니다. |
+| 문서 KG 저장소 | naruon. 이 서비스는 naruon 문서 KG **위**의 카탈로그/온톨로지 평면입니다. |
 
-첨부 문서는 다음 경로에 보관됩니다.
+naruon과 gyeot는 **composition hub**이며 이 leaf를 호출할 수 있습니다. hub 링크를
+끊지 마십시오. 반대로 이 서비스를 기동하려고 형제 저장소, path dependency,
+다른 CWL home의 git submodule을 **요구하지 마십시오**.
 
-- `docs/prd-trd.md`
-- `docs/papers/` — 지식그래프/온톨로지/그래프+벡터 하이브리드 검색 논문(인용/요약)
+## 단독 실행 (officer / analyst)
 
-## 로컬 실행
+패키지는 `pip install -e .`로 설치하지 않습니다. `PYTHONPATH=src`로
+`src/sdp`를 올립니다.
 
-### 로컬 개발 (venv, in-memory 백엔드 — DB 불필요)
+### venv — in-memory (데이터베이스 불필요)
 
 ```bash
 python -m venv .venv
-. .venv/Scripts/Activate.ps1
+. .venv/bin/activate          # Windows: .venv\Scripts\Activate.ps1
 python -m pip install --require-hashes -r requirements-dev.txt
 PYTHONPATH=src uvicorn sdp.api:app --reload
 ```
 
-`SDP_DATABASE_URL=postgresql://...`를 지정하면 policy decision과 audit event가 tenant/resource/evidence id 기준의 Postgres evidence store에 기록됩니다. `SDP_DATABASE_SSLMODE=require`처럼 SSL mode를 함께 지정할 수 있습니다.
-`SDP_SQLITE_PATH=.local/sdp-evidence.sqlite3`를 지정하면 production credential 없이도 같은 evidence store protocol을 로컬 SQLite fallback으로 검증할 수 있습니다. `SDP_DATABASE_URL`이 있으면 Postgres가 SQLite보다 우선합니다.
-`SDP_LOG_SINK_URL=file://.local/sdp-requests.jsonl`과 `SDP_REQUEST_ID_HEADER=X-Request-Id`를 지정하면 request id, tenant, actor, route, status, latency, evidence ids만 body 없이 request observation log로 기록됩니다.
-REST connector secret은 `SDP_CONNECTOR_SECRET_REF_PREFIX=SDP_CONNECTOR_SECRET_` 기준의 env secret reference로 조회합니다. 예: `SDP_CONNECTOR_SECRET_REST_CONNECTOR_MARKETING_CAMPAIGN_TOKEN` 값은 presence만 검증하며 API 응답에는 노출하지 않습니다.
-OIDC token verification은 `SDP_OIDC_ISSUER`, `SDP_OIDC_AUDIENCE`, `SDP_OIDC_JWKS_URL`, `SDP_OIDC_GROUP_ROLE_MAP`를 사용합니다.
+기본 포트는 `http://127.0.0.1:8000`입니다. 확인:
 
-Docker 기반 로컬 데모는 다음 명령으로 실행합니다.
+```bash
+curl -s http://127.0.0.1:8000/health
+```
+
+### Docker Compose — SQLite evidence store
 
 ```bash
 docker compose up --build
 ```
 
-컨테이너는 `SDP_SQLITE_PATH=/data/sdp-evidence.sqlite3`를 사용하고 `/health` healthcheck를 노출합니다.
+컨테이너는 `SDP_SQLITE_PATH=/data/sdp-evidence.sqlite3`를 쓰고 `/health`
+healthcheck를 노출합니다. 호스트 포트는 `8000`입니다.
 
-Postgres evidence store까지 포함한 paid-pilot 프로파일은 다음 명령으로 실행합니다.
+### Compose — Postgres evidence store (paid-pilot 프로파일)
+
+정책 결정·감사 이벤트를 Postgres evidence store에 기록하려면:
 
 ```bash
 export POSTGRES_USER=sdp_app
@@ -65,103 +76,116 @@ export SDP_DATABASE_URL='postgresql://sdp_app:<url-encoded-password>@postgres:54
 docker compose --profile postgres up --build
 ```
 
-이 프로파일은 `semantic-data-portal-postgres`를 `http://localhost:8001`에 열고, `SDP_DATABASE_URL`과 `POSTGRES_PASSWORD`를 필수 env로 요구합니다. `POSTGRES_USER`는 `sdp_app` 기본값이 있지만 명시 설정을 권장합니다. Postgres host port는 기본적으로 `127.0.0.1:54329`에만 바인딩되어 managed Postgres 경로와 동일한 store protocol을 로컬에서 검증합니다.
+앱은 `http://localhost:8001`에 열립니다. `SDP_DATABASE_URL`과
+`POSTGRES_PASSWORD`는 필수입니다. Postgres host port는 기본적으로
+`127.0.0.1:54329`에만 바인딩됩니다.
 
-그래프 엔진(Postgres + Apache AGE + pgvector) 프로파일은 다음 명령으로 실행합니다.
+### Compose — 그래프 엔진 (Apache AGE + pgvector)
 
 ```bash
 export GRAPH_POSTGRES_USER=sdp_graph_app
 export GRAPH_POSTGRES_PASSWORD='<strong-graph-password>'
 export SDP_DATABASE_DSN='postgresql+psycopg://sdp_graph_app:<url-encoded-password>@graph_db:5432/sdp'
 docker compose --profile graph up --build
-curl localhost:8002/healthz   # DB/AGE/pgvector 준비 상태 확인
+curl -s http://127.0.0.1:8002/healthz
 ```
 
-`sdp_api` 서비스는 필수 `SDP_DATABASE_DSN`으로 그래프 백엔드에 연결하며, `GRAPH_POSTGRES_PASSWORD`도 필수입니다. `GRAPH_POSTGRES_USER`는 `sdp_graph_app` 기본값이 있지만 명시 설정을 권장합니다. 기동 시 마이그레이션 + 시드를 멱등하게 적용합니다. Graph DB host port도 기본적으로 `127.0.0.1:5432`에만 바인딩됩니다.
+`sdp_api`는 필수 `SDP_DATABASE_DSN`으로 그래프 백엔드에 연결합니다.
+`GRAPH_POSTGRES_PASSWORD`도 필수입니다. Graph DB host port는 기본적으로
+`127.0.0.1:5432`에만 바인딩됩니다. DSN이 없으면 동일 HTTP 계약이
+in-memory 백엔드로 동작합니다.
 
-### 마이그레이션 + 시드 (그래프 DB 백엔드, 수동 실행)
+수동 마이그레이션:
 
 ```bash
-# 부트스트랩 전송(transport) 용도로만 env 사용 — 앱 설정/시크릿은 config_entries 테이블에서 로드
 SDP_DATABASE_DSN='postgresql+psycopg://sdp_graph_app:<url-encoded-password>@localhost:5432/sdp' \
   python -m migrations.run_migrations
 ```
 
-## API
+### 운영자가 이미 쓰는 환경 변수
 
-### Health / readiness
+| 변수 | 역할 |
+| --- | --- |
+| `SDP_DATABASE_URL` / `SDP_DATABASE_SSLMODE` | Postgres evidence store (정책·감사). 있으면 SQLite보다 우선. |
+| `SDP_SQLITE_PATH` | 로컬 SQLite evidence store. |
+| `SDP_DATABASE_DSN` | 그래프 엔진(AGE + pgvector) 부트스트랩. |
+| `SDP_LOG_SINK_URL` / `SDP_REQUEST_ID_HEADER` | body 없는 request observation. |
+| `SDP_OIDC_ISSUER` / `SDP_OIDC_AUDIENCE` / `SDP_OIDC_JWKS_URL` / `SDP_OIDC_GROUP_ROLE_MAP` | OIDC 검증. |
+| `SDP_CONNECTOR_SECRET_REF_PREFIX` (`SDP_CONNECTOR_SECRET_*`) | connector secret **참조**. 값은 presence만 확인하고 API 응답에 노출하지 않습니다. |
+
+## Hub가 호출하는 HTTP 계약
+
+Hub는 이 서비스를 **독립 프로세스로** 띄운 뒤 HTTP로 호출합니다. 아래는
+보호된 소스에 존재하는 표면을 설명합니다. 새 런타임이나 새 엔드포인트를
+이 문서가 만들지 않습니다.
+
+### Health
+
 - `GET /health` — liveness
-- `GET /healthz` — readiness (그래프 백엔드 DB/AGE/pgvector 준비 검증, 미준비 시 503)
+- `GET /healthz` — 그래프 백엔드 준비. AGE/pgvector가 필요하면 미준비 시 503
+- `GET /metrics` — Prometheus text
 
-### Graph ingestion (지식 그래프 수집)
-- `POST /graph/nodes` — 노드 업스트림 푸시
-- `POST /graph/edges` — 엣지 업스트림 푸시
-- `POST /ontology/concepts` — 온톨로지 개념 업스트림 푸시
-- `GET  /graph/nodes/{node_id}`
-- `GET  /graph/stats`
+### Catalog
 
-### Graph traversal + semantic retrieval
-- `POST /graph/query` — openCypher/BFS 그래프 순회 (edge_types/direction/max_depth, AGE 백엔드는 raw cypher 지원)
-- `GET  /ontology/term/{term}/graph` — 개념 그래프 (그래프 스토어 백엔드)
-- `POST /search/semantic` — pgvector KNN 시맨틱 검색 (kind 필터)
-
-### Catalog / governance / enterprise (기존)
-
-- `GET /health`
-- `GET /metrics`
 - `GET /catalog/search?q=...`
 - `GET /catalog/datasets`
 - `GET /catalog/datasets/{dataset_id}`
-- `GET /catalog/datasets/{dataset_id}/jsonld`
+- `GET /catalog/datasets/{dataset_id}/jsonld` — DCAT 3 컨텍스트 JSON-LD
+- `GET /catalog/datasets/{dataset_id}/lineage`
 - `GET /catalog/datasets/{dataset_id}/validate`
-- `GET /catalog/datasets/{dataset_id}/semantic-validation`
-- `POST /policy/decision`
-- `GET /policy/decisions`
+
+### Ontology / graph / semantic search
+
 - `POST /ontology/resolve`
 - `GET /ontology/concept/{concept}`
+- `GET /ontology/term/{term}/graph` — broader / narrower / related
+- `POST /graph/query` — 시작 노드 + 관계 허용 목록 + 방향 + 깊이 제한.
+  호출자가 raw openCypher를 보내지 않습니다. 서버가 파라미터 바인딩된
+  순회를 만듭니다.
+- `POST /search/semantic` — 임베딩 KNN (in-memory cosine 또는 pgvector)
+- `GET /graph/stats`
+- `POST /graph/nodes`, `POST /graph/edges`, `POST /ontology/concepts` —
+  업스트림 푸시 (쓰기 권한 필요)
+
+### Browse / policy / enterprise
+
+스키마·미리보기·SQL draft는 **목적 바운드 정책 평가와 감사**를 통과합니다.
+인가된 데이터는 그 조건 아래에서 사용 가능해야 합니다.
+
 - `GET /browse/{dataset_id}/schema`
 - `POST /browse/{dataset_id}/preview`
-- `POST /llm/search`
-- `POST /llm/draft-query`
-- `GET /enterprise/readiness`
-- `GET /enterprise/demo-plan`
-- `GET /enterprise/kpis`
-- `GET /enterprise/controls`
-- `GET /enterprise/rbac-matrix`
-- `GET /enterprise/observability`
-- `GET /enterprise/production-readiness`
-- `GET /enterprise/evidence-pack`
-- `GET /enterprise/shacl-validation`
-- `GET /enterprise/steward-review`
-- `GET /enterprise/console`
-- `POST /enterprise/auth/oidc-preview`
-- `POST /enterprise/auth/oidc-verify`
-- `GET /enterprise/connectors/{connector_id}/probe`
+- `POST /browse/query`
+- `POST /policy/decision`, `GET /policy/decisions`
+- `GET /enterprise/readiness`, `/enterprise/console`, `/enterprise/evidence-pack`
 
-## 테스트
+전체 경로와 구현 대응은 [docs/implementation-compliance.md](docs/implementation-compliance.md)와
+[docs/enterprise-readiness.md](docs/enterprise-readiness.md)에 있습니다.
+
+## 표준·ADR·참고문헌
+
+| 문서 | 내용 |
+| --- | --- |
+| [docs/msa.md](docs/msa.md) | leaf / hub MSA와 제품 경계 |
+| [docs/adr/](docs/adr/) | 아키텍처 결정. **Status: Draft** — 최종이 아닙니다. |
+| [docs/REFERENCES.md](docs/REFERENCES.md) | APA 7th 서지. 인용은 사람이 재검증하기 전까지 draft입니다. |
+| [docs/papers/README.md](docs/papers/README.md) | 첨부 PDF 라이선스 메모. 서지 원천은 REFERENCES.md. |
+| [docs/prd-trd.md](docs/prd-trd.md) | 제품/기술 요구(draft). 운영 규칙이 충돌하면 보호된 코드·승인된 ADR·현재 운영 계약이 우선합니다. |
+
+## 로컬 검증
 
 ```bash
 PYTHONPATH=src pytest
 PYTHONPATH=src python -m sdp.demo_smoke
 ```
 
-## 구현 대응 요약
+이 명령은 저장소 구현의 회귀와 smoke 동작을 확인하기 위한 개발 증거입니다. 개별 배포의 보안 검토, 데이터 거버넌스 승인, 규제 적합성, 고객 채택 또는 상용 운영 준비를 대신하지 않습니다. 보호된 브랜치와 immutable release가 실제 배포 가능 상태의 권위입니다.
 
-| PRD/TRD 항목 | 구현 |
-|---|---|
-| Catalog Service | `src/sdp/catalog.py`, `/catalog/*` |
-| Ontology / Terminology | `src/sdp/ontology.py`, `/ontology/*` |
-| Browse/Query | `src/sdp/browse.py`, `/browse/*` |
-| Policy Service | `src/sdp/policy.py`, `/policy/decision` |
-| LLM Orchestrator | `src/sdp/orchestrator.py`, `/llm/*` |
-| JSON-LD Export | `/catalog/datasets/{id}/jsonld` |
-| Enterprise Core Contracts | `src/sdp_core/contracts.py`, `src/sdp_core/readiness.py`, `src/sdp_core/demo_seed.py`, `src/sdp_core/enterprise.py`, `src/sdp_core/rbac.py`, `src/sdp/enterprise_evidence.py`, `src/sdp/semantic_validation.py`, `src/sdp/steward_review.py`, `src/sdp/observability.py`, `/enterprise/*` |
+## 지원·보안·기여
 
-`src/sdp_core/demo_seed.py`는 buyer demo domain, SQL/RDF/file/API seed dataset, analyst/governance question을 catalog seed, `/enterprise/demo-plan`, connector probe가 함께 쓰는 단일 계약으로 둡니다.
-`src/sdp/semantic_validation.py`는 현재 metadata gate와 approved mapping을 SHACL 호환 리포트 형태로 노출해 `/enterprise/shacl-validation`과 smoke readiness가 같은 validation pass rate를 쓰게 합니다.
-`src/sdp/steward_review.py`는 SHACL 호환 validation report와 ontology patch queue를 `/enterprise/steward-review`에 모아 buyer handoff 전 검토 대기열을 확인하게 합니다.
+- 사용법과 운영 계약은 이 README 및 `docs/`의 보호된 브랜치 문서를 기준으로 확인합니다.
+- 취약점과 보안 경계는 [SECURITY.md](SECURITY.md)를 따릅니다.
+- 기여 절차와 개발 환경은 [CONTRIBUTING.md](CONTRIBUTING.md)에 둡니다. 고객용 README에 내부 자동화 절차를 복제하지 않습니다.
 
-## 요구사항 대응 증적
+## License
 
-- PRD/TRD: `docs/prd-trd.md`
-- 요구사항 대응 매트릭스: `docs/implementation-compliance.md`
+Semantic Data Portal의 저장소 소스는 [MIT License](LICENSE)로 제공됩니다. 보호된 `main`의 라이선스 파일은 `Copyright (c) 2026 ContextualWisdomLab`을 명시합니다. 제3자 의존성·컨테이너 이미지·데이터베이스 확장은 각각의 라이선스 조건을 유지하며, 저장소 자체의 MIT grant와 혼동하지 않습니다.
