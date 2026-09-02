@@ -50,3 +50,13 @@ Rollback이 필요한 경우 semantic→legacy 방향으로 동일한 column ren
 - fresh Postgres DDL이 동일 semantic vocabulary를 사용하는지.
 
 Repository의 기존 Evidence Store tests는 persistence CRUD, tenant scoping, Postgres UPSERT, SQLite reopen behavior를 계속 검증한다. Exact-head GitHub checks가 최종 통합 증거이며 predecessor-head 결과는 재사용하지 않는다.
+
+## Exact-head RCA — 2026-09-02
+
+PR `#89` predecessor head `2f0925da933fdb69b0d71292ab0945fa97a2a008`의 Tests run `33576152305`, job `100080443378`은 `tests/test_api.py::test_postgres_evidence_store_uses_tenant_columns_and_store_protocol` 한 건만 실패했고 나머지 290 tests는 통과했다. Production `PostgresEvidenceStore`는 semantic projection `decision_payload` / `audit_payload`를 사용하지만 test fake는 legacy `SELECT payload ...` 문자열만 인식해 `get_decision()`이 `None`을 반환했다. 이는 runtime database, network, permission, provider race가 아니라 persisted-column rename 이후 남은 deterministic test-fixture contract drift다.
+
+동일 predecessor의 one-shot `Semantic Evidence Test Repair` run `33576152501`, job `100080448333`은 stale fake 문자열을 semantic columns로 바꾸고 workflow 자체를 `git rm`하는 단계까지 성공했지만, commit 단계에서 이미 삭제된 exact path에 `git add -u .github/workflows/semantic-evidence-test-repair.yml`을 실행해 pathspec error로 종료됐다. Commit `8d859f15da575a4279b1e520a65d1095389fa734`에서 staging을 repository-aware `git add -u`로 최소 수정했다. 이 workflow는 fake contract 수정과 자기 삭제를 하나의 ordinary successor commit으로 만들기 위한 일회성 authority이며, 성공 후 final tree에 남아서는 안 된다.
+
+별도의 Security Scan run `33576152356`, Trivy job `100080446792`은 `requirements.txt`의 `cryptography==49.0.0`에서 `CVE-2026-69247` HIGH를 정확히 탐지했다. 이 dependency는 PR `#89`가 도입한 것이 아니라 base/default branch에서 상속되며 patched version은 `50.0.0`이다. Canonical base-owner repair는 PR `#81` (`fix/cve-2026-69247-cryptography`)이며 exact head `ce40bd89e803642d62268bfab13a831171f2bc62`에서 product/security workflows는 통과했지만 required OpenCode exact-head formal verdict가 아직 fail-closed blocker다. `#89`에서는 scanner를 suppress하거나 동일 dependency delta를 중복 소유하지 않고 `#81`의 ordinary merge 후 base를 소비한다.
+
+Verification rule은 변하지 않는다: one-shot successor에서 fixture 변경과 workflow 삭제를 확인하고, final unchanged exact head의 Tests/Security/SAST/review checks가 terminal evidence를 낼 때까지 predecessor success나 queued/pending 상태를 merge evidence로 사용하지 않는다.
