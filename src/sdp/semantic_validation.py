@@ -43,7 +43,11 @@ def validate_dataset_semantics(dataset_id: str) -> dict[str, Any]:
             }
         )
 
-    approved_mappings = [mapping for mapping in dataset.mappings if mapping.status == MappingStatus.APPROVED]
+    approved_mappings = [
+        mapping
+        for mapping in dataset.mappings
+        if mapping.mapping_status == MappingStatus.APPROVED
+    ]
     if not approved_mappings:
         violations.append(
             {
