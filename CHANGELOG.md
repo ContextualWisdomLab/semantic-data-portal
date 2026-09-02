@@ -10,3 +10,9 @@
 - Replaced generic readiness nested dictionaries with typed semantic contracts for submodule strategy, design artifacts, and planned package splits.
 - Qualified governed-query response fields: `QueryExecutionResponse.status/execution/warnings` are now internally `query_status`/`execution_metadata`/`query_warnings`. Historical HTTP keys and legacy Python compatibility attributes remain at explicit Pydantic/property adapter boundaries, and organization-owned orchestrator callers now use the semantic vocabulary.
 - Qualified Evidence Store persisted columns in both SQLite and PostgreSQL. `policy_decisions.subject/resource/action/effect/payload` now migrate in place to `decision_subject`/`policy_resource`/`policy_action`/`decision_effect`/`decision_payload`; `audit_events.id/actor/action/resource/result/payload` now migrate to `audit_event_id`/`actor_subject`/`audit_action`/`audit_resource`/`audit_result`/`audit_payload`. Fresh stores create only the semantic schema; legacy stores use fail-closed in-place column renames with row data, policy/audit wire payloads, tenant scope, UPSERT identity, and read ordering preserved.
+
+### Fixed
+
+- Repaired the one-shot Evidence Store test-contract workflow so its ordinary successor commit can stage both the Postgres fake update and its own deletion after `git rm`; the predecessor failed because it attempted `git add -u` on an already-deleted exact workflow path.
+- Recorded the deterministic PR #89 Postgres fake drift: production SQL uses `decision_payload` / `audit_payload` while the stale test fake still matched legacy `payload` projections. The fixture is repaired without weakening the persistence contract.
+- Tracked the inherited `cryptography==49.0.0` / `CVE-2026-69247` HIGH failure as a base dependency-owner issue; canonical repair remains PR #81 upgrading to patched `50.0.0`, rather than suppressing Trivy or duplicating the dependency delta in PR #89.
