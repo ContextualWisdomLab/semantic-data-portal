@@ -31,7 +31,9 @@ def _metadata_validation_pass_rate() -> float:
 
 def _ontology_mapping_coverage() -> float:
     mappings = [mapping for dataset in list_datasets() for mapping in dataset.mappings]
-    approved = sum(1 for mapping in mappings if mapping.status == MappingStatus.APPROVED)
+    approved = sum(
+        1 for mapping in mappings if mapping.mapping_status == MappingStatus.APPROVED
+    )
     return _ratio(approved, len(mappings))
 
 
