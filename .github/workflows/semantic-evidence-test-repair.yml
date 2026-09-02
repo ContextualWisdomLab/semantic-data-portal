@@ -10,7 +10,7 @@ permissions:
 
 concurrency:
   group: semantic-evidence-test-repair-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   repair_test_contract:
