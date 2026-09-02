@@ -94,6 +94,14 @@ Large-blast-radius core contracts인 `Dataset`, `BusinessMapping`, `PolicyDecisi
 
 이번 slice는 UI component나 Storybook/Figma artifact를 변경하지 않는다. `/enterprise/*` 및 governed-query response key compatibility를 유지하므로 기존 console/client rendering contract를 깨지 않는 것이 acceptance criterion이다. UI 변경이 발생하는 후속 slice에서 screenshot, keyboard/focus, accessible-name, Storybook/Figma evidence를 추가한다.
 
+## Exact-head failure RCA / action status — 2026-09-02
+
+Predecessor exact head `2f0925da933fdb69b0d71292ab0945fa97a2a008`의 Tests run `33576152305`, job `100080443378`은 Postgres fake contract 한 건만 실패했다. Production SQL은 renamed persistence contract인 `decision_payload` / `audit_payload`를 조회하지만 `tests/test_api.py` fake는 legacy `SELECT payload ...`만 인식했고, 결과적으로 `get_decision()`이 `None`을 반환했다. 290개의 다른 tests가 통과했고 checkout/dependency setup도 성공했으므로 이 failure는 product runtime, provider/network 또는 permissions 문제가 아니라 deterministic CI fixture drift로 분류한다.
+
+동일 head의 one-shot `Semantic Evidence Test Repair` run `33576152501`, job `100080448333`은 intended fake replacements와 workflow self-deletion을 workspace에서 수행한 뒤 이미 `git rm`된 exact workflow path를 다시 `git add -u <path>` 하면서 pathspec error로 종료됐다. Causal owner는 repository-local one-shot workflow였다. Commit `8d859f15da575a4279b1e520a65d1095389fa734`에서 staging을 `git add -u`로 최소 수정했으며, 최종 acceptance는 successor commit이 fake 수정과 workflow 삭제를 함께 materialize하고 그 successor exact head의 fresh Checks가 terminal evidence를 내는 것이다. Queued/pending predecessor evidence는 통과로 이전하지 않는다.
+
+Security Scan run `33576152356`, Trivy job `100080446792`은 base에서 상속된 `cryptography==49.0.0`의 `CVE-2026-69247` HIGH를 검출했다. Patched version은 `50.0.0`이며 canonical dependency-owner repair는 PR `#81`, exact head `ce40bd89e803642d62268bfab13a831171f2bc62`다. 그 head의 product/security workflows는 terminal-success이나 required OpenCode exact-head formal verdict가 아직 fail-closed blocker이므로 `#89`에 dependency delta를 복제하거나 scanner를 suppress하지 않는다. `#81`을 ordinary merge한 뒤 `#89`가 updated base를 소비해 Security Scan을 exact-current-head에서 재검증하는 것이 owner→consumer 경로다.
+
 ## Traceability
 
 Repository authority는 `AGENTS.md`, `CLAUDE.md`, `docs/prd-trd.md`, `docs/enterprise-readiness.md`, `docs/doctoring/evidence-store-database-semantic-names.md`, `docs/doctoring/query-execution-response-semantic-names.md`, 기타 doctoring 문서, PR review thread와 exact-head GitHub Checks를 우선한다. Semantic/metadata architecture 연구 추적은 `docs/papers/README.md`에 유지된 repository-selected literature와 standards trace를 재사용하며, 이 naming/persistence slice에서 새로운 학술 주장을 임의로 추가하지 않는다.
