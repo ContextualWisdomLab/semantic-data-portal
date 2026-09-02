@@ -128,11 +128,55 @@ class MappingStatus:
 
 
 class BusinessMapping(BaseModel):
-    concept: str
-    status: str = MappingStatus.PROPOSED
-    source: str | None = None
-    steward: str | None = None
+    """Business-concept mapping with semantic internal names and stable wire keys."""
+
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+
+    business_concept: str = Field(alias="concept")
+    mapping_status: str = Field(default=MappingStatus.PROPOSED, alias="status")
+    mapping_source: str | None = Field(default=None, alias="source")
+    mapping_steward: str | None = Field(default=None, alias="steward")
     approved_at: datetime | None = None
+
+    @property
+    def concept(self) -> str:
+        """Return the legacy business-concept compatibility attribute."""
+
+        return self.business_concept
+
+    @concept.setter
+    def concept(self, legacy_business_concept: str) -> None:
+        self.business_concept = legacy_business_concept
+
+    @property
+    def status(self) -> str:
+        """Return the legacy mapping-status compatibility attribute."""
+
+        return self.mapping_status
+
+    @status.setter
+    def status(self, legacy_mapping_status: str) -> None:
+        self.mapping_status = legacy_mapping_status
+
+    @property
+    def source(self) -> str | None:
+        """Return the legacy mapping-source compatibility attribute."""
+
+        return self.mapping_source
+
+    @source.setter
+    def source(self, legacy_mapping_source: str | None) -> None:
+        self.mapping_source = legacy_mapping_source
+
+    @property
+    def steward(self) -> str | None:
+        """Return the legacy mapping-steward compatibility attribute."""
+
+        return self.mapping_steward
+
+    @steward.setter
+    def steward(self, legacy_mapping_steward: str | None) -> None:
+        self.mapping_steward = legacy_mapping_steward
 
 
 class DatasetProfile(BaseModel):
