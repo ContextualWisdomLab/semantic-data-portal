@@ -155,8 +155,14 @@ def test_number_time_release_and_tenant_guards() -> None:
         "when",
     )
 
-    assert validation._validate_source_release("2.0-release") == "2.0-release"
-    assert validation._validate_source_release("2.1.0") == "2.1.0"
+    assert validation._validate_source_release("2.0.1") == "2.0.1"
+    assert validation._validate_source_release("2.0.1-release") == "2.0.1"
+    for release in ("2.0-release", "2.1.0"):
+        _assert_contract(
+            "no verified OpenMetadata compatibility profile",
+            validation._validate_source_release,
+            release,
+        )
     _assert_contract(
         "OpenMetadata 2.x",
         validation._validate_source_release,
