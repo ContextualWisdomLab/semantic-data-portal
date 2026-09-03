@@ -6,9 +6,9 @@ from hashlib import sha256
 
 import pytest
 
-from sdp.openmetadata import OpenMetadataContractError
-from sdp.openmetadata.structural_digest import (
+from sdp.openmetadata import (
     DIGEST_PROFILE_ID,
+    OpenMetadataContractError,
     encode_structural_json,
     structural_sha256,
 )
@@ -74,6 +74,7 @@ def test_float_identity_preserves_signed_zero() -> None:
         (float("inf"), "not deterministic JSON data"),
         (("foreign",), "not deterministic JSON data"),
         ({1: "value"}, "JSON object keys must be strings"),
+        ("\ud800", "not deterministic JSON data"),
         (2**63, "signed 64-bit range"),
         (-(2**63) - 1, "signed 64-bit range"),
     ],
@@ -88,10 +89,15 @@ def test_unsupported_values_fail_closed(value: object, message: str) -> None:
 def test_cycles_and_excessive_depth_fail_closed() -> None:
     """Host-language object graphs cannot exhaust or confuse digest creation."""
 
-    cycle: list[object] = []
-    cycle.append(cycle)
+    list_cycle: list[object] = []
+    list_cycle.append(list_cycle)
     with pytest.raises(OpenMetadataContractError, match="cyclic container"):
-        encode_structural_json(cycle, "payload")
+        encode_structural_json(list_cycle, "payload")
+
+    dict_cycle: dict[str, object] = {}
+    dict_cycle["self"] = dict_cycle
+    with pytest.raises(OpenMetadataContractError, match="cyclic container"):
+        encode_structural_json(dict_cycle, "payload")
 
     too_deep: object = None
     for _ in range(66):
