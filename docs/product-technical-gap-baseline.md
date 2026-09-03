@@ -6,6 +6,7 @@
 - **OpenMetadata implementation owner:** Semantic Data Portal
 - **Primary delivery issue:** #95
 - **Current normalization PR:** #96
+- **Current receipt successor:** #97
 
 This document is the live evidence baseline for buyer-visible product capability and cross-product interoperability. A PR description, issue label, queued workflow, or planned consumer is not evidence that a capability is released. Every status below must be updated from the current protected source, exact PR head, immutable release, and executable contract evidence.
 
@@ -26,7 +27,7 @@ This document is the live evidence baseline for buyer-visible product capability
 
 ## Current OpenMetadata capability
 
-PR #96 implements the first read-only anti-corruption slice.
+PR #96 implements the read-only anti-corruption slice. PR #97 is its stacked deterministic admission-preview successor. Neither is released while its exact current head remains outside protected `main` and immutable package evidence is absent.
 
 ### Verified compatibility profile
 
@@ -54,30 +55,44 @@ The profile is bound to the upstream Table and EntityLineage schema paths at tha
 - typed normalization HTTP endpoint;
 - exact compatibility profile and upstream contract-source provenance.
 
-### Evidence still required before #96 integration
+### Implemented on the #97 branch
+
+- typed, non-mutating `table-snapshots:admission-preview` operation;
+- `source_snapshot_digest`, `projection_digest`, and tenant/source-instance-scoped `replay_key`;
+- observation time retained as UTC evidence but excluded from candidate replay identity;
+- `cwl-json-structural-sha256-v1` cross-language digest profile;
+- normative golden byte and SHA-256 vectors exposed through the package API;
+- signed-64-bit integer, exact IEEE-754 binary64, strict UTF-8 string, ordered array, and UTF-8-key-sorted object encoding;
+- duplicate JSON member, NaN/infinity, invalid UTF-8, lone surrogate, oversized body, malformed JSON, and decoder-recursion rejection for both OpenMetadata POST routes;
+- explicit non-persistence, non-publication, and omitted-source-value non-copying flags;
+- ADR-0002 and operator integration documentation.
+
+### Evidence still required before integration
+
+For #96 and then the non-force-restacked #97 exact heads:
 
 - unchanged exact-head repository test result;
 - production statement and branch coverage 100% for the new boundary;
 - public API docstrings 100%;
-- current-head fuzz, SAST, security, dependency, and required central workflow results;
+- current-head fuzz, SAST, security, dependency, package, and required central workflow results;
 - valid review findings resolved;
 - qualifying independent approval;
 - ordinary protected merge without force push or administrative bypass.
 
-Queued or missing workflow execution is non-passing. Focused local verification does not replace repository-level exact-head evidence.
+Queued, missing, skipped-required, startup-failed, or predecessor workflow evidence is non-passing. Focused local verification does not replace repository-level exact-head evidence.
 
 ## OpenMetadata Gap register
 
 | Gap ID | Buyer-visible problem | Owner and delivery path | Current status | Exit evidence |
 |---|---|---|---|---|
-| OM-001 | A customer cannot prove which source snapshot produced a candidate projection | SDP stacked successor #97 | In progress | deterministic source/projection digests, replay identity, golden vectors, strict transport JSON, no mutation |
-| OM-002 | Restart-safe admission and replay history do not exist | SDP successor after #97 | Open | 3NF source/snapshot/receipt/projection history, PostgreSQL integration, idempotent replay, migration and rollback |
+| OM-001 | A customer cannot prove which source snapshot produced a candidate projection | SDP stacked successor #97 | Implemented on PR branch; not released | exact-head tests/review; structural digest golden vectors; source/projection/replay identities; strict transport JSON; no mutation; protected merge and release |
+| OM-002 | Restart-safe admission and replay history do not exist | SDP successor after #97 | Open | 3NF source/observation/snapshot/receipt/projection history, PostgreSQL integration, concurrent replay idempotency, migration and rollback |
 | OM-003 | Raw payload evidence has no restricted immutable retention path | SDP evidence-store successor | Open | encrypted object evidence, tenant/purpose authorization, retention, legal hold, export receipt |
 | OM-004 | OpenMetadata Change Events cannot be consumed safely | SDP webhook successor | Open | signature verification, inbox deduplication, version ordering, bounded retry, dead letter, replay, deprecation history |
 | OM-005 | SDP cannot retrieve live OpenMetadata metadata | SDP outbound connector successor | Open | credential registry, canonical egress, capability discovery, pagination, rate/backoff, operation receipt |
 | OM-006 | Approved SDP changes cannot be synchronized back | SDP controlled-write successor | Open | steward approval, field authority matrix, ETag/version precondition, conflict receipt, rollback |
 | OM-007 | Only Table/Column/EntityLineage are profiled | SDP entity-profile successors | Open | exact profiles for pipelines, dashboards/charts/metrics, ML models/features/agents, quality/tests/incidents, domains/products/contracts, glossary/classification |
-| OM-008 | Cross-product contracts are not released | `context-graph-contracts#26` after its protected foundation stack | Blocked on owner foundation | immutable schema/SDK release, conformance fixtures, source provenance, consumer exact-version tests |
+| OM-008 | Cross-product contracts are not released | `context-graph-contracts#26` after its protected foundation stack | Blocked on owner foundation | immutable schema/SDK release, structural-digest or replacement canonicalization profile, conformance fixtures, source provenance, consumer exact-version tests |
 | OM-009 | Physical schema producer is not connected | `pg-erd-cloud#1072` after released contracts | Planned | PostgreSQL schema observation → SDP admission → OpenMetadata-ready projection E2E |
 | OM-010 | Extracted MHTML schema proposals are not connected | `mhtml-etl-gateway#66` after released contracts | Planned | immutable MHTML evidence → approved proposal → SDP receipt E2E |
 | OM-011 | EA impact paths do not include governed OpenMetadata assets | `enterprise-architecture-core#44` after released contracts and SDP durable admission | Planned | source authority/truth/provenance-preserving impact path and idempotent projection receipt |
@@ -85,6 +100,8 @@ Queued or missing workflow execution is non-passing. Focused local verification 
 | OM-013 | OpenMetadata release drift can silently break a future adapter | SDP compatibility-profile lane | Partially closed by #96 | automated exact-source schema diff, explicit profile addition, old-profile immutability, release matrix |
 | OM-014 | No buyer-operable connection, mapping, conflict, or replay workflow exists | SDP admin/operator UX after runtime contracts | Open | Figma IDs/tokens in ADR, Storybook normal/loading/empty/error/permission/conflict/replay states, keyboard/mobile/i18n E2E |
 | OM-015 | No supported OpenMetadata interoperability release exists | SDP release lane | Open | version bump, CHANGELOG release section, signed artifact, SBOM, provenance, upgrade/rollback runbook, compatibility matrix |
+| OM-016 | Application-level body limits still buffer the request before rejection | edge/runtime owner plus SDP deployment profile | Open | upstream request-size enforcement, streaming rejection where applicable, load test proving bounded application memory |
+| OM-017 | Digest implementations exist only in Python | `context-graph-contracts` release plus Rust/TypeScript consumers | Open | one immutable profile, identical golden vectors in Python/Rust/TypeScript, package conformance CI |
 
 ## First closed cross-product vertical
 
@@ -112,15 +129,18 @@ The path is complete only when every arrow consumes an immutable released contra
 - No cross-service SQL, mutable sibling source, provider database access, or copied runtime implementation.
 - LLM output cannot promote truth status, ownership authority, policy, or outbound write approval.
 - Source and projection fingerprints are restricted metadata and must not be exposed across tenants.
+- Existing compatibility and digest profile identities are immutable; behavioral changes require successor profile versions.
+- A repeated observation may have a new event timestamp while retaining one candidate replay identity.
 
 ## Performance and operability targets for durable admission
 
 These are acceptance targets for the future durable slice, not claims about current performance.
 
 - replay of 10,000 identical snapshots: zero duplicate admitted revisions;
+- concurrent submission of one replay key: one admitted revision and separately auditable observation events;
 - 100,000 Table observations and 1,000,000 column/lineage relations in the reference dataset;
 - admission API p95 at or below 20 ms excluding external network and restricted raw-evidence object upload;
-- bounded memory proportional to the configured payload, column, reference, and lineage limits;
+- bounded memory proportional to the configured request, payload, column, reference, and lineage limits;
 - no warm-cache-only benchmark or reduced validation path;
 - source outage, PostgreSQL restart, duplicate event, reversed event order, and partial projection failure recovery;
 - observable queue depth, projection lag, rejection reason, dead-letter count, replay count, and receipt latency;
