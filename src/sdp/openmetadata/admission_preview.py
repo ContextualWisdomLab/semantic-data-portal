@@ -52,6 +52,12 @@ def _normalize_observed_at(observed_at: object) -> datetime:
     return observed_at.astimezone(timezone.utc)
 
 
+def _utc_timestamp_text(value: datetime) -> str:
+    """Return one fixed-width UTC timestamp for cross-language receipt identity."""
+
+    return value.isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
 def preview_openmetadata_table_admission(
     *,
     tenant_id: str,
@@ -61,12 +67,13 @@ def preview_openmetadata_table_admission(
     table: Mapping[str, Any],
     lineage: Mapping[str, Any] | None = None,
 ) -> OpenMetadataAdmissionReceipt:
-    """Create replay-safe evidence for a valid non-mutating table candidate.
+    """Create replay-safe evidence for one observation of a table candidate.
 
     The source digest covers the submitted Table and optional EntityLineage
     values, including values intentionally omitted from the safe projection.
     The receipt never embeds that source object. The projection digest covers
-    only the validated safe projection.
+    only the validated safe projection. Candidate identity excludes observation
+    time; receipt identity includes the normalized observation instant.
     """
 
     tenant = _validate_tenant_id(tenant_id)
@@ -109,10 +116,25 @@ def preview_openmetadata_table_admission(
         replay_material,
         "replay material",
     )
-    receipt_suffix = replay_key.removeprefix("sha256:")
+    candidate_suffix = replay_key.removeprefix("sha256:")
+    admission_candidate_id = (
+        f"urn:cwl:{tenant}:sdp:openmetadata_admission_candidate:"
+        f"{candidate_suffix}"
+    )
+
+    observation_receipt_key = structural_sha256(
+        {
+            "receipt_contract_version": _RECEIPT_CONTRACT_VERSION,
+            "admission_candidate_id": admission_candidate_id,
+            "observed_at": _utc_timestamp_text(observation_time),
+        },
+        "observation receipt",
+    )
+    receipt_suffix = observation_receipt_key.removeprefix("sha256:")
 
     return OpenMetadataAdmissionReceipt(
         digest_profile_id=DIGEST_PROFILE_ID,
+        admission_candidate_id=admission_candidate_id,
         receipt_id=(
             f"urn:cwl:{tenant}:sdp:openmetadata_admission_preview:"
             f"{receipt_suffix}"
