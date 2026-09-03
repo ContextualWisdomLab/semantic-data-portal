@@ -57,6 +57,9 @@ class OpenMetadataAdmissionReceipt(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     receipt_contract_version: Literal["1.0.0"] = "1.0.0"
+    digest_profile_id: Literal["cwl-json-structural-sha256-v1"] = (
+        "cwl-json-structural-sha256-v1"
+    )
     receipt_id: str
     admission_status: Literal["accepted_for_review"] = "accepted_for_review"
     tenant_id: str
