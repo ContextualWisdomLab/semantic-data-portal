@@ -8,6 +8,8 @@ from typing import Any
 
 from .errors import OpenMetadataContractError
 
+_MAX_REQUEST_BODY_BYTES = 16 * 1024 * 1024
+
 
 class _DuplicateJsonKey(ValueError):
     """Signal that one JSON object repeated a member name."""
@@ -36,13 +38,36 @@ def _reject_non_standard_number(value: str) -> None:
     raise _NonStandardJsonNumber(value)
 
 
+def _validate_unicode_scalars(value: object) -> None:
+    """Reject lone UTF-16 surrogate code points anywhere in parsed JSON."""
+
+    pending = [value]
+    while pending:
+        current = pending.pop()
+        if isinstance(current, str):
+            if any(0xD800 <= ord(character) <= 0xDFFF for character in current):
+                raise OpenMetadataContractError(
+                    "request body strings must contain valid Unicode scalar values"
+                )
+        elif isinstance(current, list):
+            pending.extend(current)
+        elif isinstance(current, dict):
+            pending.extend(current.keys())
+            pending.extend(current.values())
+
+
 def validate_strict_json_bytes(payload: bytes) -> object:
-    """Parse strict UTF-8 JSON and reject duplicate object members.
+    """Parse bounded strict UTF-8 JSON with unique object member names.
 
     The returned value is used only to prove that the transport body has one
     unambiguous standard-JSON interpretation. FastAPI performs the typed request
     validation from the same cached body afterward.
     """
+
+    if len(payload) > _MAX_REQUEST_BODY_BYTES:
+        raise OpenMetadataContractError(
+            f"request body exceeds {_MAX_REQUEST_BODY_BYTES} bytes"
+        )
 
     try:
         text = payload.decode("utf-8")
@@ -52,7 +77,7 @@ def validate_strict_json_bytes(payload: bytes) -> object:
         ) from exc
 
     try:
-        return json.loads(
+        parsed = json.loads(
             text,
             object_pairs_hook=_unique_object_pairs,
             parse_constant=_reject_non_standard_number,
@@ -65,7 +90,10 @@ def validate_strict_json_bytes(payload: bytes) -> object:
         raise OpenMetadataContractError(
             "request body contains non-standard JSON number"
         ) from exc
-    except json.JSONDecodeError as exc:
+    except (json.JSONDecodeError, RecursionError) as exc:
         raise OpenMetadataContractError(
             "request body must be strict JSON"
         ) from exc
+
+    _validate_unicode_scalars(parsed)
+    return parsed
