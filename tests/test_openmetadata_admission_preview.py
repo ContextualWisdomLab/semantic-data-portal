@@ -34,7 +34,7 @@ def _preview(
         source_instance_id=source_instance_id,
         source_release=source_release,
         observed_at=OBSERVED_AT,
-        table=table or table_payload(),
+        table=table if table is not None else table_payload(),
     )
 
 
@@ -85,7 +85,9 @@ def test_omitted_secret_changes_source_digest_without_leaking_into_receipt() -> 
         "rows": [["customer-secret-alpha"]],
     }
     second_table = deepcopy(first_table)
-    second_table["sampleData"]["rows"] = [["customer-secret-beta"]]
+    second_sample_data = second_table["sampleData"]
+    assert isinstance(second_sample_data, dict)
+    second_sample_data["rows"] = [["customer-secret-beta"]]
 
     first = _preview(table=first_table)
     second = _preview(table=second_table)
@@ -100,7 +102,7 @@ def test_omitted_secret_changes_source_digest_without_leaking_into_receipt() -> 
     assert "customer-secret-beta" not in serialized
     assert first.raw_payload_persisted is False
     assert first.catalog_mutation_performed is False
-    assert first.sensitive_source_values_copied is False
+    assert first.omitted_source_values_copied is False
 
 
 def test_non_json_number_fails_before_receipt_creation() -> None:
@@ -165,6 +167,6 @@ def test_http_endpoint_returns_non_mutating_admission_receipt() -> None:
         assert len(body[field_name]) == 71
     assert body["raw_payload_persisted"] is False
     assert body["catalog_mutation_performed"] is False
-    assert body["sensitive_source_values_copied"] is False
+    assert body["omitted_source_values_copied"] is False
     assert "projection" in body
     assert json.dumps(body).find("customer-secret") == -1
