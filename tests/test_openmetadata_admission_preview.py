@@ -63,6 +63,7 @@ def test_equivalent_key_order_produces_identical_receipt_identity() -> None:
     first = _preview(table=original)
     second = _preview(table=reordered)
 
+    assert first.digest_profile_id == "cwl-json-structural-sha256-v1"
     assert first.source_snapshot_digest == second.source_snapshot_digest
     assert first.projection_digest == second.projection_digest
     assert first.replay_key == second.replay_key
@@ -121,17 +122,32 @@ def test_omitted_secret_changes_source_digest_without_leaking_into_receipt() -> 
     assert first.omitted_source_values_copied is False
 
 
-def test_non_json_number_fails_before_receipt_creation() -> None:
-    """NaN cannot enter a canonical digest or become replay evidence."""
+def test_non_deterministic_json_values_fail_before_receipt_creation() -> None:
+    """Non-finite numbers, non-string keys, and foreign containers fail closed."""
 
-    malformed = table_payload()
-    malformed["version"] = float("nan")
-
+    non_finite = table_payload()
+    non_finite["version"] = float("nan")
     with pytest.raises(
         OpenMetadataContractError,
-        match="source snapshot is not canonical JSON",
+        match="source snapshot is not deterministic JSON data",
     ):
-        _preview(table=malformed)
+        _preview(table=non_finite)
+
+    non_string_key = table_payload()
+    non_string_key["extension"] = {1: "value"}  # type: ignore[dict-item]
+    with pytest.raises(
+        OpenMetadataContractError,
+        match="JSON object keys must be strings",
+    ):
+        _preview(table=non_string_key)
+
+    foreign_container = table_payload()
+    foreign_container["extension"] = ("value",)
+    with pytest.raises(
+        OpenMetadataContractError,
+        match="source snapshot is not deterministic JSON data",
+    ):
+        _preview(table=foreign_container)
 
 
 def test_source_instance_and_observation_time_fail_closed() -> None:
@@ -208,6 +224,7 @@ def test_http_endpoint_returns_non_mutating_admission_receipt() -> None:
     body = response.json()
     assert body["admission_status"] == "accepted_for_review"
     assert body["receipt_contract_version"] == "1.0.0"
+    assert body["digest_profile_id"] == "cwl-json-structural-sha256-v1"
     assert body["external_entity_id"] == table_payload()["id"]
     assert body["receipt_id"].startswith(
         "urn:cwl:tenant_acme:sdp:openmetadata_admission_preview:"
