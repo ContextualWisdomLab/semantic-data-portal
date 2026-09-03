@@ -6,8 +6,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+import sdp.openmetadata.strict_json as strict_json
 from sdp.openmetadata import OpenMetadataContractError
-from sdp.openmetadata.strict_json import validate_strict_json_bytes
 from sdp.openmetadata_routes import router
 
 
@@ -17,6 +17,7 @@ from sdp.openmetadata_routes import router
         (b'{"value":1,"value":2}', "duplicate JSON object key"),
         (b'{"value":NaN}', "non-standard JSON number"),
         (b'{"value":Infinity}', "non-standard JSON number"),
+        (b'{"value":"\\ud800"}', "valid Unicode scalar"),
         (b"\xff", "request body must be UTF-8 JSON"),
         (b'{"value":', "request body must be strict JSON"),
     ],
@@ -28,19 +29,40 @@ def test_strict_json_validator_rejects_ambiguous_payloads(
     """Ambiguous or non-standard transport bytes fail with stable errors."""
 
     with pytest.raises(OpenMetadataContractError, match=message):
-        validate_strict_json_bytes(payload)
+        strict_json.validate_strict_json_bytes(payload)
 
 
 def test_strict_json_validator_returns_standard_json_value() -> None:
     """A standard UTF-8 document is returned without type coercion."""
 
-    value = validate_strict_json_bytes(
-        b'{"array":[null,true,false,1,1.5,"text"]}'
+    value = strict_json.validate_strict_json_bytes(
+        b'{"array":[null,true,false,1,1.5,"text","\\ud83d\\ude00"]}'
     )
 
     assert value == {
-        "array": [None, True, False, 1, 1.5, "text"],
+        "array": [None, True, False, 1, 1.5, "text", "😀"],
     }
+
+
+def test_strict_json_validator_bounds_transport_size_and_depth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Whitespace floods and decoder recursion cannot bypass payload controls."""
+
+    monkeypatch.setattr(strict_json, "_MAX_REQUEST_BODY_BYTES", 4)
+    with pytest.raises(
+        OpenMetadataContractError,
+        match="request body exceeds 4 bytes",
+    ):
+        strict_json.validate_strict_json_bytes(b'{"a":1}')
+
+    monkeypatch.setattr(strict_json, "_MAX_REQUEST_BODY_BYTES", 1_000_000)
+    deeply_nested = b"[" * 1_100 + b"0" + b"]" * 1_100
+    with pytest.raises(
+        OpenMetadataContractError,
+        match="request body must be strict JSON",
+    ):
+        strict_json.validate_strict_json_bytes(deeply_nested)
 
 
 @pytest.mark.parametrize(
