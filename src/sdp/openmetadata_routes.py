@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from .openmetadata import (
     OpenMetadataAdmissionPreviewRequest,
@@ -13,6 +13,7 @@ from .openmetadata import (
     normalize_openmetadata_table_snapshot,
     preview_openmetadata_table_admission,
 )
+from .openmetadata.strict_json import validate_strict_json_bytes
 
 router = APIRouter(
     prefix="/integrations/openmetadata/v1",
@@ -20,10 +21,20 @@ router = APIRouter(
 )
 
 
+async def require_strict_json_request(request: Request) -> None:
+    """Reject ambiguous transport JSON before an OpenMetadata operation runs."""
+
+    try:
+        validate_strict_json_bytes(await request.body())
+    except OpenMetadataContractError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.post(
     "/table-snapshots:normalize",
     response_model=OpenMetadataTableProjection,
     summary="Normalize a verified OpenMetadata table snapshot",
+    dependencies=[Depends(require_strict_json_request)],
 )
 def normalize_table_snapshot(
     request: OpenMetadataNormalizationRequest,
@@ -45,6 +56,7 @@ def normalize_table_snapshot(
     "/table-snapshots:admission-preview",
     response_model=OpenMetadataAdmissionReceipt,
     summary="Preview deterministic OpenMetadata admission evidence",
+    dependencies=[Depends(require_strict_json_request)],
 )
 def preview_table_snapshot_admission(
     request: OpenMetadataAdmissionPreviewRequest,
