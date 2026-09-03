@@ -7,8 +7,14 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-OPENMETADATA_TABLE_SCHEMA_URI = "https://open-metadata.org/schema/entity/data/table.json"
-OPENMETADATA_LINEAGE_SCHEMA_URI = "https://open-metadata.org/schema/type/entityLineage.json"
+from .compatibility import OPENMETADATA_2_0_1_PROFILE
+
+OPENMETADATA_TABLE_SCHEMA_URI = (
+    "https://open-metadata.org/schema/entity/data/table.json"
+)
+OPENMETADATA_LINEAGE_SCHEMA_URI = (
+    "https://open-metadata.org/schema/type/entityLineage.json"
+)
 
 
 class OpenMetadataReferenceProjection(BaseModel):
@@ -57,7 +63,9 @@ class OpenMetadataLineageEdgeProjection(BaseModel):
     to_reference: OpenMetadataReferenceProjection
     source: str
     pipeline_reference: OpenMetadataReferenceProjection | None = None
-    column_mappings: list[OpenMetadataColumnLineageProjection] = Field(default_factory=list)
+    column_mappings: list[OpenMetadataColumnLineageProjection] = Field(
+        default_factory=list
+    )
     transformation_text_omitted: bool = False
 
 
@@ -80,6 +88,15 @@ class OpenMetadataTableProjection(BaseModel):
     projection_id: str
     source_authority: Literal["openmetadata"] = "openmetadata"
     source_release: str
+    compatibility_profile_id: str = (
+        OPENMETADATA_2_0_1_PROFILE.profile_id
+    )
+    upstream_repository: str = (
+        OPENMETADATA_2_0_1_PROFILE.upstream_repository
+    )
+    upstream_revision: str = (
+        OPENMETADATA_2_0_1_PROFILE.upstream_revision
+    )
     source_schema_uri: str = OPENMETADATA_TABLE_SCHEMA_URI
     lineage_schema_uri: str | None = None
     truth_status: Literal["observed"] = "observed"
@@ -97,17 +114,27 @@ class OpenMetadataTableProjection(BaseModel):
     updated_by: str | None = None
     source_hash: str | None = None
     source_url: str | None = None
-    owner_references: list[OpenMetadataReferenceProjection] = Field(default_factory=list)
-    domain_references: list[OpenMetadataReferenceProjection] = Field(default_factory=list)
-    data_product_references: list[OpenMetadataReferenceProjection] = Field(default_factory=list)
+    owner_references: list[OpenMetadataReferenceProjection] = Field(
+        default_factory=list
+    )
+    domain_references: list[OpenMetadataReferenceProjection] = Field(
+        default_factory=list
+    )
+    data_product_references: list[OpenMetadataReferenceProjection] = Field(
+        default_factory=list
+    )
     data_contract_reference: OpenMetadataReferenceProjection | None = None
     database_schema_reference: OpenMetadataReferenceProjection | None = None
     database_reference: OpenMetadataReferenceProjection | None = None
     service_reference: OpenMetadataReferenceProjection | None = None
     tag_fqns: list[str] = Field(default_factory=list)
     columns: list[OpenMetadataColumnProjection] = Field(default_factory=list)
-    profile_summary: OpenMetadataProfileSummary = Field(default_factory=OpenMetadataProfileSummary)
-    lineage_edges: list[OpenMetadataLineageEdgeProjection] = Field(default_factory=list)
+    profile_summary: OpenMetadataProfileSummary = Field(
+        default_factory=OpenMetadataProfileSummary
+    )
+    lineage_edges: list[OpenMetadataLineageEdgeProjection] = Field(
+        default_factory=list
+    )
     omitted_fields: list[str] = Field(default_factory=list)
 
 
@@ -124,7 +151,10 @@ class OpenMetadataNormalizationRequest(BaseModel):
     source_release: str = Field(
         min_length=3,
         max_length=64,
-        pattern=r"^2\.(?:0|[1-9]\d*)(?:\.(?:0|[1-9]\d*))?(?:-release)?$",
+        pattern=(
+            r"^2\.(?:0|[1-9]\d*)"
+            r"(?:\.(?:0|[1-9]\d*))?(?:-release)?$"
+        ),
     )
     table: dict[str, Any]
     lineage: dict[str, Any] | None = None
