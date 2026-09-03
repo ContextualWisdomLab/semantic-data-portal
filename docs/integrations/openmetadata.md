@@ -1,99 +1,75 @@
 # OpenMetadata interoperability
 
-Semantic Data Portal provides the ContextualWisdomLab anti-corruption layer for OpenMetadata. The integration preserves external identity and provenance while preventing an external catalog payload from becoming authoritative domain truth without review.
+Semantic Data Portal owns the ContextualWisdomLab anti-corruption and admission boundary for OpenMetadata. The integration preserves external identity and provenance without making an external catalog authoritative for CWL product domains.
 
-## Current support
+## Current implementation stack
 
-| Capability | Status in PR #96 |
-|---|---|
-| Exact OpenMetadata 2.0.1 compatibility admission | Implemented |
-| Table identity and descriptive metadata | Implemented |
-| Nested column metadata | Implemented |
-| Owners, domains, data products, data contract, classifications | Implemented |
-| Aggregate table profile summary | Implemented |
-| Table and column lineage | Implemented |
-| Payload and reference hardening | Implemented |
-| Persistent catalog admission | Not in this slice |
-| Change Event/webhook ingestion | Not in this slice |
-| Live OpenMetadata API retrieval | Not in this slice |
-| Outbound synchronization | Not in this slice |
-| Pipelines, dashboards, metrics, ML models, agents, quality incidents | Planned in issue #95 |
+| Capability | Owning PR | Status on the branch |
+|---|---:|---|
+| Exact OpenMetadata 2.0.1 compatibility profile | #96 | Implemented, not released |
+| Table, nested Column, owner, domain, data-product, data-contract, tag, and structural references | #96 | Implemented, not released |
+| Aggregate-only profile summary | #96 | Implemented, not released |
+| Table and column lineage with endpoint integrity | #96 | Implemented, not released |
+| Sensitive source-field omission and hostile payload bounds | #96 | Implemented, not released |
+| Deterministic non-mutating admission preview | #97 | Implemented, not released |
+| Cross-language structural digest golden vectors | #97 | Implemented, not released |
+| Strict transport JSON for both POST routes | #97 | Implemented, not released |
+| Persistent catalog admission and replay history | successor after #97 | Not implemented |
+| Restricted immutable raw evidence | later successor | Not implemented |
+| Change Event/webhook ingestion | later successor | Not implemented |
+| Live API retrieval and controlled writeback | later successors | Not implemented |
+| Additional entity profiles | issue #95 | Not implemented |
 
-The verified compatibility profile is `openmetadata-table-lineage-2.0.1`. It is bound to:
+“Implemented” means source and tests exist on the PR branch. It does not mean protected `main`, an immutable package release, or full exact-head verification is complete.
 
-- upstream repository: `open-metadata/OpenMetadata`;
-- upstream tag: `2.0.1-release`;
-- upstream commit: `bf621b166ec12e8c99fcb1c1443442723386fa41`;
-- Table schema: `openmetadata-spec/src/main/resources/json/schema/entity/data/table.json`;
-- EntityLineage schema: `openmetadata-spec/src/main/resources/json/schema/type/entityLineage.json`.
+## Verified release profile
 
-The request may use `2.0.1` or `2.0.1-release`; both normalize to the canonical release value `2.0.1`. A different syntactically valid 2.x label, such as `2.1.0`, is rejected until an exact upstream revision, fixtures, schema-drift review, and a new compatibility profile have been added. Major-version syntax validation alone is not compatibility evidence.
+```text
+profile_id: openmetadata-table-lineage-2.0.1
+canonical_release: 2.0.1
+accepted_labels: 2.0.1, 2.0.1-release
+upstream_repository: open-metadata/OpenMetadata
+upstream_tag: 2.0.1-release
+upstream_revision: bf621b166ec12e8c99fcb1c1443442723386fa41
+```
+
+The profile references the upstream Table and EntityLineage schemas at that exact revision. A syntactically valid label such as `2.1.0` is rejected until a distinct immutable profile, source identity, schema-drift review, positive and hostile fixtures, omission tests, and exact-head evidence exist.
 
 ## Authority boundary
 
 ```text
-OpenMetadata entity
+OpenMetadata Table and EntityLineage
     │ external UUID, FQN, version, hash, references
     ▼
-OpenMetadata anti-corruption layer
-    │ exact release-profile admission
-    │ validated and privacy-bounded observation
+Exact release-profile admission
+    │ validated, bounded, privacy-limited observation
     ▼
 SDP projection: truth_status = observed
     │
-    ├─ steward admission in a successor slice
-    ├─ policy-filtered context bundle
-    └─ impact consumers
+    ├─ deterministic admission preview and replay identity
+    ├─ durable admission in a successor
+    ├─ policy-filtered context event
+    └─ EA and Agent consumers
 ```
 
-The normalizer does not publish a catalog asset, write to OpenMetadata, fetch a remote URL, or persist credentials. Domain owners continue to own their business facts.
+OpenMetadata remains the authority for the external entities it hosts. Each CWL domain product remains the authority for its own business facts. Neither normalization nor admission preview publishes a catalog asset, contacts OpenMetadata, writes a database row, retains a raw payload, or grants outbound synchronization authority.
 
-## Endpoint
+## HTTP operations
+
+### Normalize
 
 ```http
 POST /integrations/openmetadata/v1/table-snapshots:normalize
 Content-Type: application/json
 ```
 
-Request:
-
-```json
-{
-  "tenant_id": "tenant_acme",
-  "source_release": "2.0.1-release",
-  "table": {
-    "id": "11111111-1111-4111-8111-111111111111",
-    "name": "orders",
-    "displayName": "Orders",
-    "fullyQualifiedName": "warehouse.sales.public.orders",
-    "columns": [
-      {
-        "name": "order_id",
-        "dataType": "UUID",
-        "constraint": "PRIMARY_KEY"
-      }
-    ]
-  },
-  "lineage": {
-    "entity": {
-      "id": "11111111-1111-4111-8111-111111111111",
-      "type": "table",
-      "name": "warehouse.sales.public.orders"
-    },
-    "nodes": [],
-    "upstreamEdges": [],
-    "downstreamEdges": []
-  }
-}
-```
-
-The response is a typed `OpenMetadataTableProjection` with a tenant-scoped CWL identifier:
+Returns a typed `OpenMetadataTableProjection` whose identity is:
 
 ```text
 urn:cwl:{tenant_id}:sdp:openmetadata_table:{openmetadata_uuid}
 ```
 
-Every response carries the compatibility evidence needed by a downstream consumer:
+Every projection includes:
 
 ```json
 {
@@ -106,108 +82,109 @@ Every response carries the compatibility evidence needed by a downstream consume
 }
 ```
 
-The upstream revision identifies the contract source used to build and test the adapter. It is provenance, not an assertion that arbitrary payload bytes were fetched from that commit. Durable admission will add source-instance, payload-digest, observation-time, and receipt evidence separately.
+The upstream revision identifies the contract source used to build and test the adapter. It does not prove that a submitted payload originated from that commit.
 
-## Field mapping
+### Admission preview
+
+```http
+POST /integrations/openmetadata/v1/table-snapshots:admission-preview
+Content-Type: application/json
+```
+
+Adds tenant-local `source_instance_id` and timezone-qualified `observed_at`, then returns:
+
+- `source_snapshot_digest` over submitted Table and optional EntityLineage structures;
+- `projection_digest` over the complete safe projection;
+- tenant- and source-instance-scoped `replay_key`;
+- deterministic receipt URN;
+- explicit `accepted_for_review` status;
+- explicit evidence that no raw payload was persisted and no catalog mutation occurred.
+
+See [`openmetadata-admission-preview.md`](openmetadata-admission-preview.md) and ADR-0002 for the exact digest grammar, replay semantics, privacy boundary, and golden vectors.
+
+## Mapped content
 
 | OpenMetadata source | SDP projection |
 |---|---|
-| declared release label | canonical `source_release`, compatibility profile, upstream source revision |
-| `id` | `external_entity_id` and projection identity |
-| `name` | `name` |
-| `displayName` | `title`, falling back to `name` |
-| `fullyQualifiedName` | `fully_qualified_name` |
-| `version` | `entity_version` |
-| `updatedAt`, `updatedBy` | `updated_at`, `updated_by` |
-| `sourceHash`, `sourceUrl` | `source_hash`, validated `source_url` |
+| release label | canonical release, compatibility profile, upstream source revision |
+| `id` | external entity and projection identity |
+| `name`, `displayName`, `fullyQualifiedName`, `description` | safe descriptive fields |
+| `version`, `updatedAt`, `updatedBy`, `sourceHash`, `sourceUrl` | source revision and provenance fields |
 | `tableType`, `serviceType`, `entityStatus` | typed status fields |
-| `owners` | external owner references |
-| `domains` | external domain references |
-| `dataProducts` | external data-product references |
-| `dataContract` | external data-contract reference |
+| `owners`, `domains`, `dataProducts`, `dataContract` | external governed references |
 | `databaseSchema`, `database`, `service` | external structural references |
-| `tags[].tagFQN` | stable classification/tag FQNs |
-| `columns` and nested `children` | ordered flattened column paths |
-| `profile.rowCount` | aggregate `row_count` |
-| `profile.columnCount` | aggregate `column_count` |
-| `profile.sizeInByte` | aggregate `size_in_bytes` |
-| EntityLineage edges | validated table lineage edges |
-| `columnsLineage` identities | source/target column identities |
+| `tags[].tagFQN` | stable tag/classification FQNs |
+| `columns` and `children` | ordered flattened column paths |
+| table `profile` counts and size | aggregate-only profile summary |
+| EntityLineage edges | validated table lineage |
+| `columnsLineage` identities | source and target column identities |
 
-A missing optional value remains `null` or an empty collection. The adapter does not turn unknown quality, freshness, ownership, or nullability into a numeric zero or an invented default.
+Missing optional values remain unknown. The adapter does not turn unknown quality, freshness, ownership, or nullability into numeric zero or an invented value.
 
-## Deliberately omitted content
+## Content excluded from general projections and receipts
 
-The general catalog projection never copies these values:
-
-- table sample rows;
-- DDL or schema definition text;
+- sample rows;
+- DDL and schema definition text;
 - query and SQL text;
-- join samples or join statistics;
-- column data profiles and custom metrics;
+- join samples and statistics;
+- column profiles and custom metrics;
 - arbitrary extension payloads;
-- lineage transformation functions;
-- SQL attached to a lineage edge.
+- lineage SQL and transformation functions.
 
-`omitted_fields` records which source field classes were present, without carrying their values. A later restricted evidence store may preserve an encrypted raw payload under a separate retention and access policy; that is not part of this endpoint.
+`omitted_fields` records which source field classes were present without carrying their values. Admission preview includes omitted values in the source fingerprint but never embeds the source object in the receipt.
 
-## Validation and failure behavior
+Descriptions, labels, ownership references, classifications, fingerprints, FQNs, and lineage can still be restricted tenant metadata. The contract guarantees `omitted_source_values_copied=false`; it does not claim that every projected field is non-sensitive.
 
-The public admission boundary rejects:
+## Strict transport and semantic validation
 
-- a release label outside OpenMetadata 2.x syntax;
-- a syntactically valid 2.x release without an exact verified compatibility profile;
-- a non-object table or lineage body;
-- missing or malformed entity UUIDs;
-- conflicting reuse of one UUID for different references;
-- a lineage response whose primary entity differs from the table;
-- an edge whose endpoint is not the primary entity or a declared node;
-- missing required column names or types;
-- duplicate flattened column paths;
-- column nesting deeper than 16;
-- more than 10,000 normalized columns;
-- excessive reference, edge, or column-lineage collections;
-- direct-call cyclic containers or excessive generic payload nesting;
-- control characters in projected text;
-- non-HTTP(S) links and links containing credentials;
-- negative, floating-point, boolean, or text values where an integer aggregate is required.
+Both POST routes reject the request before operation execution when the raw body contains:
 
-Pydantic request-shape failures return HTTP 422. A valid request shape with an unsupported release profile or invalid external contract returns a bounded HTTP 400 error and does not echo the source payload.
+- more than 16 MiB;
+- invalid UTF-8;
+- malformed JSON or decoder recursion overflow;
+- duplicate object members at any level;
+- NaN or infinity;
+- lone Unicode surrogate code points.
 
-## Adding another OpenMetadata release
+The semantic boundary then rejects unsupported release profiles, malformed UUIDs, conflicting references, broken lineage endpoints, missing column names/types, duplicate column paths, excessive nesting or collection sizes, cyclic host containers, unsafe URLs, embedded URL credentials, invalid aggregate types, and control characters in projected text.
 
-A later OpenMetadata release is not enabled by widening a regular expression. A change must add all of the following on one reviewable branch:
+Infrastructure must also enforce body limits before application buffering. Application validation alone is not an edge-level denial-of-service control.
 
-1. exact upstream tag and commit identity;
-2. immutable Table and EntityLineage schema references;
-3. representative positive fixtures authored for the CWL contract tests;
-4. hostile and malformed fixtures;
-5. a field-level schema-drift review covering additions, removals, type changes, required fields, enums, and sensitive fields;
-6. serialization tests proving that omitted source classes still do not cross the boundary;
-7. a new `OpenMetadataReleaseProfile` entry;
-8. CHANGELOG, ADR, integration documentation, and exact-head CI evidence.
+## Adding another release
 
-Existing profiles remain immutable. A changed upstream tag target or incompatible schema requires a distinct profile identity rather than rewriting prior compatibility evidence.
+Release support is never added by widening a regular expression. A reviewable change must provide:
 
-## Use by other CWL products
+1. exact upstream tag and commit;
+2. immutable schema paths and digests where available;
+3. representative positive fixtures;
+4. malformed and hostile fixtures;
+5. field-level additions/removals/type/required/enum/sensitivity review;
+6. omission and serialization regressions;
+7. a distinct `OpenMetadataReleaseProfile`;
+8. ADR, integration guide, Gap baseline, CHANGELOG, and exact-head evidence.
 
-Products must not add independent OpenMetadata runtime clients merely to publish their own metadata.
+Existing profiles remain immutable. A changed tag target or incompatible schema requires a new profile identity.
 
-- `pg-erd-cloud` publishes released physical-schema observations to SDP.
-- `mhtml-etl-gateway` publishes schema proposals and lineage evidence to SDP after its own validation and steward workflow.
-- learning, HR, billing, psychometrics, security, and AI products retain their domain truth and publish only released metadata/evidence contracts.
-- `enterprise-architecture-core` consumes released SDP context for impact analysis; it does not query OpenMetadata directly.
-- Contextual Orchestrator consumes policy-filtered SDP context bundles. OpenMetadata text remains untrusted data and cannot alter orchestration policy.
+## Cross-product adoption
 
-## Successor implementation order
+Products publish or consume released provider-neutral contracts; they do not share databases or mutable branches.
 
-1. Deterministic normalization/admission receipt with payload and projection digests.
-2. Normalized external source, snapshot, admission receipt, and projection-history tables.
-3. Idempotent admission by tenant, source authority, entity UUID, source version, and source hash.
-4. Restricted immutable raw-payload evidence and purpose-bound retrieval.
-5. Signed Change Event/webhook inbox, replay protection, ordering, dead-letter evidence, and rollback.
-6. Credential-registry and canonical-egress based OpenMetadata API retrieval.
-7. Steward-approved outbound writes with version/ETag preconditions and operation receipts.
-8. Additional entity mappings and cross-product contract publication.
+- `pg-erd-cloud` publishes physical-schema observations.
+- `mhtml-etl-gateway` publishes validated schema proposals and lineage evidence.
+- learning, HR, billing, psychometrics, security, and AI products retain their domain truth.
+- `enterprise-architecture-core` consumes admitted SDP context for impact analysis.
+- Contextual Orchestrator consumes policy-filtered context bundles; OpenMetadata content remains untrusted data.
+- `context-graph-contracts` will own the released provider-neutral envelope after its foundation stack reaches protected source and an immutable version is published.
 
-See ADR-0001 and issue #95 for the ownership and delivery decisions.
+## Successor order
+
+1. Merge and release #96 exact compatibility normalization.
+2. Non-force restack and merge #97 deterministic receipt and strict transport boundary.
+3. Add 3NF source, observation, snapshot, receipt, projection-revision, and supersession persistence.
+4. Add restricted immutable raw evidence with tenant/purpose authorization.
+5. Add signed Change Event/webhook inbox, ordering, retry, dead letter, and replay.
+6. Add credential-registry and canonical-egress live retrieval.
+7. Add steward-approved writeback with version/ETag preconditions and receipts.
+8. Add exact profiles for additional entity types and released consumer integrations.
+
+See ADR-0001, ADR-0002, issue #95, and `docs/product-technical-gap-baseline.md`.
