@@ -52,7 +52,7 @@ class OpenMetadataAdmissionPreviewRequest(BaseModel):
 
 
 class OpenMetadataAdmissionReceipt(BaseModel):
-    """Deterministic evidence for a valid, non-mutating admission candidate."""
+    """Evidence for one observation of a deterministic admission candidate."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -60,6 +60,7 @@ class OpenMetadataAdmissionReceipt(BaseModel):
     digest_profile_id: Literal["cwl-json-structural-sha256-v1"] = (
         "cwl-json-structural-sha256-v1"
     )
+    admission_candidate_id: str
     receipt_id: str
     admission_status: Literal["accepted_for_review"] = "accepted_for_review"
     tenant_id: str
