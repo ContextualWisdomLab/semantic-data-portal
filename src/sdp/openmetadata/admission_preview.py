@@ -2,47 +2,25 @@
 
 from __future__ import annotations
 
-import json
 import re
 from collections.abc import Mapping
 from datetime import datetime, timezone
-from hashlib import sha256
 from typing import Any
 
 from .admission_models import OpenMetadataAdmissionReceipt
 from .errors import OpenMetadataContractError
-from .validation import _required_text, _validate_tenant_id
+from .structural_digest import DIGEST_PROFILE_ID, structural_sha256
+from .validation import (
+    _required_text,
+    _validate_payload_budget,
+    _validate_tenant_id,
+)
 from .verified_normalizer import normalize_openmetadata_table_snapshot
 
 _SOURCE_INSTANCE_PATTERN = re.compile(
     r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
 )
 _RECEIPT_CONTRACT_VERSION = "1.0.0"
-
-
-def _canonical_json_bytes(value: object, field_name: str) -> bytes:
-    """Encode a JSON-compatible value with deterministic object ordering."""
-
-    try:
-        serialized = json.dumps(
-            value,
-            ensure_ascii=False,
-            allow_nan=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-    except (TypeError, ValueError, RecursionError) as exc:
-        raise OpenMetadataContractError(
-            f"{field_name} is not canonical JSON"
-        ) from exc
-    return serialized.encode("utf-8")
-
-
-def _sha256_digest(value: object, field_name: str) -> str:
-    """Return a lowercase SHA-256 identifier for canonical JSON bytes."""
-
-    digest = sha256(_canonical_json_bytes(value, field_name)).hexdigest()
-    return f"sha256:{digest}"
 
 
 def _validate_source_instance_id(source_instance_id: object) -> str:
@@ -94,12 +72,13 @@ def preview_openmetadata_table_admission(
     tenant = _validate_tenant_id(tenant_id)
     source_instance = _validate_source_instance_id(source_instance_id)
     observation_time = _normalize_observed_at(observed_at)
+    _validate_payload_budget(table, lineage)
 
     source_snapshot = {
         "table": table,
         "lineage": lineage,
     }
-    source_snapshot_digest = _sha256_digest(
+    source_snapshot_digest = structural_sha256(
         source_snapshot,
         "source snapshot",
     )
@@ -110,13 +89,14 @@ def preview_openmetadata_table_admission(
         table=table,
         lineage=lineage,
     )
-    projection_digest = _sha256_digest(
+    projection_digest = structural_sha256(
         projection.model_dump(mode="json"),
         "projection",
     )
 
     replay_material = {
         "receipt_contract_version": _RECEIPT_CONTRACT_VERSION,
+        "digest_profile_id": DIGEST_PROFILE_ID,
         "tenant_id": tenant,
         "source_instance_id": source_instance,
         "source_authority": projection.source_authority,
@@ -125,10 +105,14 @@ def preview_openmetadata_table_admission(
         "source_snapshot_digest": source_snapshot_digest,
         "projection_digest": projection_digest,
     }
-    replay_key = _sha256_digest(replay_material, "replay material")
+    replay_key = structural_sha256(
+        replay_material,
+        "replay material",
+    )
     receipt_suffix = replay_key.removeprefix("sha256:")
 
     return OpenMetadataAdmissionReceipt(
+        digest_profile_id=DIGEST_PROFILE_ID,
         receipt_id=(
             f"urn:cwl:{tenant}:sdp:openmetadata_admission_preview:"
             f"{receipt_suffix}"
