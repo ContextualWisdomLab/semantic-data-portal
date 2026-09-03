@@ -34,7 +34,7 @@ Content-Type: application/json
 
 `source_instance_id` is the tenant-local identity of the OpenMetadata installation that supplied the candidate. It is not an OpenMetadata entity UUID and it must not contain a hostname, token, DSN, or credential.
 
-`observed_at` must include a timezone. The response normalizes it to UTC. It records when the caller observed the candidate but does not alter replay identity.
+`observed_at` must include a timezone. The response normalizes it to fixed-width UTC. It does not alter candidate replay identity, but it does identify the individual observation receipt.
 
 ## Response
 
@@ -42,7 +42,8 @@ Content-Type: application/json
 {
   "receipt_contract_version": "1.0.0",
   "digest_profile_id": "cwl-json-structural-sha256-v1",
-  "receipt_id": "urn:cwl:tenant_acme:sdp:openmetadata_admission_preview:<sha256-hex>",
+  "admission_candidate_id": "urn:cwl:tenant_acme:sdp:openmetadata_admission_candidate:<replay-key-hex>",
+  "receipt_id": "urn:cwl:tenant_acme:sdp:openmetadata_admission_preview:<observation-digest-hex>",
   "admission_status": "accepted_for_review",
   "tenant_id": "tenant_acme",
   "source_instance_id": "metadata_prod",
@@ -73,7 +74,7 @@ The response example abbreviates the nested projection. The OpenAPI response sch
 - strict transport JSON was unambiguous;
 - the declared release matched an exact verified compatibility profile;
 - the Table and optional EntityLineage payload passed the anti-corruption contract;
-- a safe projection and deterministic receipt could be produced.
+- a safe projection, admission candidate, and observation receipt could be produced.
 
 It does not mean:
 
@@ -85,7 +86,7 @@ It does not mean:
 - payload origin was cryptographically attested;
 - any value became authoritative CWL domain truth.
 
-## Digest roles
+## Identity and digest roles
 
 ### `source_snapshot_digest`
 
@@ -95,11 +96,29 @@ Covers the submitted `table` and `lineage` structures. Values excluded from the 
 
 Covers the complete safe projection after release-profile admission and normalization. It changes when the admitted mapping or projection contract changes.
 
-### `replay_key`
+### `replay_key` and `admission_candidate_id`
 
-Covers the receipt version, digest profile, tenant, source instance, source authority, compatibility profile, external entity UUID, source digest, and projection digest. It is the idempotency input for the future durable admission store.
+The replay key covers the receipt version, digest profile, tenant, source instance, source authority, compatibility profile, external entity UUID, source digest, and projection digest. It is the idempotency input for the future durable admission store.
 
-The observation timestamp is deliberately excluded. A repeated observation of the same candidate produces the same replay identity while retaining its own event time.
+`admission_candidate_id` is a tenant-scoped URN derived directly from that replay key. A repeated observation of the same source candidate retains this identity.
+
+### `receipt_id`
+
+The receipt ID identifies one observation event. It is derived from:
+
+```text
+receipt contract version
++ admission candidate ID
++ observed_at in fixed-width UTC
+```
+
+The timestamp representation is:
+
+```text
+YYYY-MM-DDTHH:MM:SS.ffffffZ
+```
+
+An exact retry with the same normalized instant preserves `receipt_id`. The same candidate observed later preserves its replay key and candidate ID but receives a different receipt ID. Equivalent instants expressed with different offsets, such as `2026-09-03T12:00:00Z` and `2026-09-03T21:00:00+09:00`, produce the same receipt identity.
 
 ## Structural digest profile
 
@@ -147,7 +166,8 @@ The receipt carries the safe projection, which can still contain descriptions, l
 
 Treat these as restricted tenant metadata:
 
-- `source_snapshot_digest`;
+- `source_snapshot_digest` and `projection_digest`;
+- replay key and admission candidate identity;
 - source installation identity;
 - external entity UUID and FQN;
 - ownership and classification references;
@@ -155,9 +175,9 @@ Treat these as restricted tenant metadata:
 
 The current endpoint is a contract slice, not the final production authorization surface. Durable admission must apply verified Keyverse tenant/actor/purpose context, database-level tenant enforcement, audit evidence, and purpose-bound response selection.
 
-## Deterministic retry example
+## Retry and re-observation examples
 
-These two requests share one replay key and receipt ID:
+An exact request retry preserves every identity:
 
 ```text
 source instance: metadata_prod
@@ -165,13 +185,27 @@ source payload: unchanged
 observed_at: 2026-09-03T12:00:00Z
 ```
 
+A later observation of the same candidate behaves differently:
+
 ```text
 source instance: metadata_prod
 source payload: unchanged
 observed_at: 2026-09-03T12:05:00Z
 ```
 
-Changing `source_instance_id`, any submitted source value, the compatibility profile, or the safe projection changes replay identity.
+The two observations share:
+
+- `source_snapshot_digest`;
+- `projection_digest`;
+- `replay_key`;
+- `admission_candidate_id`.
+
+They have different:
+
+- `observed_at`;
+- `receipt_id`.
+
+Changing `source_instance_id`, any submitted source value, the compatibility profile, or the safe projection changes admission candidate identity.
 
 ## Durable-admission handoff
 
@@ -181,13 +215,23 @@ Minimum future records:
 
 ```text
 external_metadata_source
-external_observation_event
+external_observation_receipt
 external_snapshot_record
-metadata_admission_receipt
+metadata_admission_candidate
 metadata_projection_revision
 metadata_supersession_record
 ```
 
-The store must use a uniqueness boundary that includes tenant, source instance, replay key, and receipt contract version. Concurrent submissions of one replay key must result in one admitted projection revision and separately auditable observation events.
+The store needs two uniqueness boundaries:
+
+```text
+candidate uniqueness
+= tenant + source instance + receipt contract version + replay key
+
+observation receipt uniqueness
+= tenant + source instance + receipt contract version + receipt ID
+```
+
+Concurrent submissions of one replay key must result in one admitted projection revision. Distinct `receipt_id` values remain separately auditable observation events and must not overwrite one another.
 
 See ADR-0002 and `docs/product-technical-gap-baseline.md` for the exact decision and successor gates.
