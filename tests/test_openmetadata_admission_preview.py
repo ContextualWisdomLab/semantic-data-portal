@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from openmetadata_test_support import table_payload
 from sdp.openmetadata import (
+    OpenMetadataAdmissionPreviewRequest,
     OpenMetadataContractError,
     preview_openmetadata_table_admission,
 )
@@ -19,6 +21,20 @@ from sdp.openmetadata_routes import router
 
 
 OBSERVED_AT = datetime(2026, 9, 3, 12, 0, tzinfo=timezone.utc)
+
+
+class IndeterminateTimezone(tzinfo):
+    """Timezone marker that deliberately has no usable UTC offset."""
+
+    def utcoffset(self, value: datetime | None) -> timedelta | None:
+        """Return no offset so ambiguity handling can be verified."""
+
+        return None
+
+    def dst(self, value: datetime | None) -> timedelta | None:
+        """Return no daylight-saving offset for the test timezone."""
+
+        return None
 
 
 def _preview(
@@ -118,8 +134,26 @@ def test_non_json_number_fails_before_receipt_creation() -> None:
         _preview(table=malformed)
 
 
-def test_observation_time_requires_timezone() -> None:
-    """Admission evidence cannot record an ambiguous local timestamp."""
+def test_source_instance_and_observation_time_fail_closed() -> None:
+    """Replay scope and event time reject ambiguous direct-call values."""
+
+    with pytest.raises(
+        OpenMetadataContractError,
+        match="source_instance_id contains unsupported characters",
+    ):
+        _preview(source_instance_id="metadata:prod")
+
+    with pytest.raises(
+        OpenMetadataContractError,
+        match="observed_at must be a datetime",
+    ):
+        preview_openmetadata_table_admission(
+            tenant_id="tenant_acme",
+            source_instance_id="metadata_prod",
+            source_release="2.0.1",
+            observed_at="2026-09-03T12:00:00Z",  # type: ignore[arg-type]
+            table=table_payload(),
+        )
 
     with pytest.raises(
         OpenMetadataContractError,
@@ -130,6 +164,26 @@ def test_observation_time_requires_timezone() -> None:
             source_instance_id="metadata_prod",
             source_release="2.0.1",
             observed_at=datetime(2026, 9, 3, 12, 0),
+            table=table_payload(),
+        )
+
+
+def test_request_model_rejects_timezone_without_offset() -> None:
+    """A timezone marker without an offset is invalid at the typed HTTP seam."""
+
+    with pytest.raises(ValidationError, match="observed_at must include a timezone"):
+        OpenMetadataAdmissionPreviewRequest(
+            tenant_id="tenant_acme",
+            source_instance_id="metadata_prod",
+            source_release="2.0.1",
+            observed_at=datetime(
+                2026,
+                9,
+                3,
+                12,
+                0,
+                tzinfo=IndeterminateTimezone(),
+            ),
             table=table_payload(),
         )
 
