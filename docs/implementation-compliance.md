@@ -4,17 +4,18 @@
 
 ## 구현 상태 개요
 
-- 분기: `codex/sdp-enterprise-foundation`
-- 기준 커밋: PR #5 current head
-- 증빙: API 엔드포인트, 도메인 모델, 테스트(`tests/test_api.py`)
+- 기본 제품 기준선: `main`
+- OpenMetadata 후보: PR #96 `feat/openmetadata-2-read-adapter`
+- 증빙: API 엔드포인트, 도메인 모델, OpenMetadata 계약·보안·회귀 테스트
+- PR 후보 기능은 보호된 `main` 병합과 immutable release 전에는 released capability로 간주하지 않는다.
 
 ## 1) 필수 기능 요구사항 대응
 
 ### CAT-001 검색
 - 대응: `GET /catalog/search`, `GET /catalog/facets`, `GET /catalog/datasets`
 - 핵심 코드:
-  - [src/sdp/catalog.py: search_catalog](src/sdp/catalog.py)
-  - [src/sdp/catalog.py: list_facet_counts](src/sdp/catalog.py)
+  - [src/sdp/catalog.py: search_catalog](../src/sdp/catalog.py)
+  - [src/sdp/catalog.py: list_facet_counts](../src/sdp/catalog.py)
 - 증빙 테스트:
   - `tests/test_api.py::test_catalog_search_and_detail`
   - `tests/test_api.py::test_catalog_search_filter_by_quality`
@@ -22,7 +23,7 @@
 
 ### CAT-002 상세 정보
 - 대응: `GET /catalog/datasets/{dataset_id}`, `GET /catalog/datasets/{dataset_id}/lineage`, `GET /catalog/datasets/{dataset_id}/schema-history`, `GET /catalog/datasets/{dataset_id}/schema-versions`, `GET /catalog/datasets/{dataset_id}/schema-diff`
-- 핵심 코드: [src/sdp/catalog.py: get_dataset](src/sdp/catalog.py), [get_dataset_lineage](src/sdp/catalog.py), [get_dataset_schema_history](src/sdp/catalog.py), [get_dataset_schema_diff](src/sdp/catalog.py), [list_dataset_schema_versions](src/sdp/catalog.py)
+- 핵심 코드: [src/sdp/catalog.py](../src/sdp/catalog.py)
 - 증빙 테스트:
   - `tests/test_api.py::test_catalog_search_and_detail`
   - `tests/test_api.py::test_dataset_profile_endpoint`
@@ -30,22 +31,21 @@
 
 ### CAT-003 DCAT 구조
 - 대응: `GET /catalog/datasets/{dataset_id}/jsonld`
-- 핵심 코드: [src/sdp/api.py: dataset_jsonld](src/sdp/api.py)
+- 핵심 코드: [src/sdp/api.py: dataset_jsonld](../src/sdp/api.py)
 
 ### CAT-004 용어 매핑 상태
 - 대응: `list_dataset.mappings`, `browse`, `ontology`
 - 핵심 코드:
-  - [src/sdp/domain.py: BusinessMapping / MappingStatus]
-  - [src/sdp/ontology.py: Concept/patch workflow]
-  - [src/sdp/catalog.py: mapping_candidates / concept_assets]
+  - [src/sdp/domain.py](../src/sdp/domain.py)
+  - [src/sdp/ontology.py](../src/sdp/ontology.py)
+  - [src/sdp/catalog.py](../src/sdp/catalog.py)
 - 증빙 테스트:
   - `tests/test_api.py::test_ontology_patch_workflow`
   - `tests/test_api.py::test_ontology_resolve`
 
 ### CAT-005 감사 로그
-- 대응: `Catalog` 변경 감사 + preview/query 감사
-- 핵심 코드: `src/sdp/catalog.py`의 `_AUDIT_LOG`, `register_dataset`, `patch_dataset`, `publish_dataset`, `deprecate_dataset`, `ingest_event`  
- - Browse 계열 감사: `src/sdp/browse.py`
+- 대응: Catalog 변경 감사 + preview/query 감사
+- 핵심 코드: `src/sdp/catalog.py`, `src/sdp/browse.py`
 - 증빙 테스트:
   - `tests/test_api.py::test_audit_event_includes_policy_decision_id_for_preview`
   - `tests/test_api.py::test_catalog_facets_and_audit_events`
@@ -53,15 +53,13 @@
 
 ### CAT-006 완성도 점수
 - 대응: `Dataset.metadata_completeness`, `Dataset.metadata_recommendation_score`, API 재구성 `completeness_badge`
-- 핵심 코드:
-  - [src/sdp/domain.py: Dataset]
-  - [src/sdp/catalog.py: validate_metadata, recompute_scores]
+- 핵심 코드: `src/sdp/domain.py`, `src/sdp/catalog.py`
 - 증빙 테스트:
   - `tests/test_api.py::test_catalog_dataset_detail_exposes_recommendation_score`
 
 ### CAT-007 JSON-LD Export
 - 대응: `GET /catalog/datasets/{dataset_id}/jsonld`
-- 증빙 테스트: `tests/test_api.py::test_catalog_search_and_detail` (ID 조회 후 JSON-LD 별도 API 호출은 필요 시 확장 가능)
+- 증빙 테스트: `tests/test_api.py::test_catalog_search_and_detail`
 
 ### CAT-008 버전/스키마 버전 분리
 - 대응: `Dataset.version`, `Dataset.schema_version`, `schema-history`, `schema-versions`, `schema-diff`
@@ -69,12 +67,12 @@
 
 ### CAT-009 관련 데이터셋/Join 후보
 - 대응: `GET /catalog/datasets/{dataset_id}/related`, `GET /catalog/datasets/{dataset_id}/join-candidates`
-- 핵심 코드: [src/sdp/catalog.py: get_related_datasets](src/sdp/catalog.py), [get_join_candidates](src/sdp/catalog.py)
+- 핵심 코드: `src/sdp/catalog.py`
 - 증빙 테스트: `tests/test_api.py::test_join_candidate_endpoint`
 
 ## 2) Ontology / Terminology
 
-- ONT-001 동의어/다국어: [src/sdp/ontology.py: _build_index, search_concepts]
+- ONT-001 동의어/다국어: `src/sdp/ontology.py`
 - ONT-003 SKOS 계층: `GET /ontology/search`, `GET /ontology/concept/{concept}`, `GET /ontology/term/{term}/graph`
 - ONT-004~006: 용어 제안-승인-노출 흐름, 매핑 상태(`proposed/approved/rejected`), 근거 문자열/신뢰도
   - `POST /ontology/patches`
@@ -87,7 +85,7 @@
 
 ## 3) Browse / Query
 
-- API: `GET /browse/{dataset_id}/schema`, `POST /browse/{dataset_id}/preview`, `POST /browse/query`, `POST /browse/query`, `POST /llm/draft-query`
+- API: `GET /browse/{dataset_id}/schema`, `POST /browse/{dataset_id}/preview`, `POST /browse/query`, `POST /llm/draft-query`
 - 정책 + 마스킹: `src/sdp/browse.py`, `src/sdp/policy.py`
 - 쿼리 허용/거부: `src/sdp/orchestrator.py: execute_query`, `draft_sql`
 - 증빙 테스트:
@@ -110,18 +108,19 @@
 
 ## 5) 운영/품질
 
-- 단위 테스트: `tests/test_api.py` (헬스체크 + 엔드포인트별 동작 + 정책/감사 검증 + enterprise readiness)
+- 단위 테스트: `tests/test_api.py`와 `tests/test_openmetadata_*.py`
 - 워크플로우: 조직 공통 규칙셋 `CWL Central required workflows`의 중앙 required workflow를 사용한다.
 - 정적/CI 게이트: repo-local OpenCode/Strix workflow 복사본은 `main`에서 제거되었으므로 이 브랜치도 중앙 workflow 정책을 따른다.
-- 로컬 증빙: `PYTHONPATH=src python3 -m pytest -q` 결과로 전체 테스트 통과 상태를 검증한다.
+- 로컬 증빙: `PYTHONPATH=src python3 -m pytest -q`로 전체 테스트 상태를 검증한다.
+- exact-head 원칙: 이전 commit의 테스트·리뷰·보안 결과를 현재 PR head의 증거로 이전하지 않는다.
 
 ## 6) Enterprise / Buyer Evidence
 
-- `GET /enterprise/readiness`: 20억 원 valuation target, package/submodule decision, storage/connector capability, enterprise gates, Figma Code Connect disabled artifact.
-- `GET /enterprise/production-readiness`: demo release와 paid pilot readiness를 분리하고, Postgres evidence store, OIDC JWKS verification, connector credential vault, request observability export의 환경변수·acceptance criteria·blocker를 노출한다. Postgres evidence store, OIDC JWKS verification, request observability export, connector credential vault가 구현되어 남은 paid-pilot blocker는 0개다.
+- `GET /enterprise/readiness`: package/submodule decision, storage/connector capability와 enterprise gates를 노출한다.
+- `GET /enterprise/production-readiness`: demo release와 paid pilot readiness를 분리한다.
 - `POST /enterprise/auth/oidc-verify`: issuer/audience/expiry/JWKS 서명 검증 후 group allow-list mapping으로 `ActorContext`를 생성하고 raw token은 응답에 포함하지 않는다.
 - `GET /enterprise/evidence-pack`: metadata validation, SHACL-compatible validation, steward queue, ontology mapping coverage, policy/audit counts, controls, KPI ids, proof endpoints.
-- `GET /enterprise/console`: buyer/operator가 evidence, KPI, controls, connector 상태를 브라우저에서 확인하는 no-build-dependency UI.
+- `GET /enterprise/console`: buyer/operator가 evidence, KPI, controls, connector 상태를 확인하는 no-build-dependency UI.
 - 증빙 테스트:
   - `tests/test_api.py::test_enterprise_readiness_manifest_exposes_saleable_gates`
   - `tests/test_api.py::test_enterprise_production_readiness_tracks_paid_pilot_integrations`
@@ -133,26 +132,78 @@
   - `tests/test_api.py::test_enterprise_console_renders_operator_surface`
   - `tests/test_api.py::test_enterprise_demo_smoke_summary_is_ready`
 
-## 7) 다음 단계 (현재 브랜치에서 미반영 권고)
+## 7) OpenMetadata interoperability — PR #96 candidate
 
-1. 조직 정책 기준으로 `search` 및 `list` 에 대한 사용 권한/발견성 정책을 명시적으로 강화
-2. API level 감사 이벤트 보존 기간 및 위변조 방지(로그 저장소 정책) 적용
-3. OpenCode/PR 리뷰 증적 저장(`PR`, `review`, `merge` 로그)과 main 병합 완료 상태 정기 기록
+### INT-OM-001 exact compatibility profile
 
-## 8) 구현 완료 증적(현재 HEAD 기준)
+- 대응: `2.0.1`과 `2.0.1-release`만 immutable `openmetadata-table-lineage-2.0.1` profile로 admission한다.
+- upstream contract identity: `open-metadata/OpenMetadata@bf621b166ec12e8c99fcb1c1443442723386fa41`
+- 핵심 코드:
+  - `src/sdp/openmetadata/compatibility.py`
+  - `src/sdp/openmetadata/normalizer.py`
+- 증빙 테스트:
+  - `tests/test_openmetadata_release_profile.py`
+  - `tests/test_openmetadata_upstream_contract_regressions.py`
 
-- 대상 브랜치: `codex/sdp-enterprise-foundation`
-- 기준: `origin/main` 병합 후 현재 브랜치 HEAD
-- 증적 파일:
-  - `src/sdp/api.py`
-  - `src/sdp/catalog.py`
-  - `src/sdp/browse.py`
-  - `src/sdp/orchestrator.py`
-  - `src/sdp/policy.py`
-  - `src/sdp/ontology.py`
-  - `tests/test_api.py`
-  - `docs/implementation-compliance.md`
+### INT-OM-002 schema-valid safe projection
+
+- 대응: Table의 필수 `id`, `name`, `columns`와 EntityReference의 필수 `id`, `type`을 보존하고 선택 필드를 임의의 필수조건으로 만들지 않는다.
+- source installation과 external UUID를 합성한 tenant-scoped projection ID를 사용한다.
+- 샘플, SQL/DDL, query/join, column profile, extension, lineage 변환 텍스트는 일반 projection에 복사하지 않는다.
+- 핵심 코드:
+  - `src/sdp/openmetadata/models.py`
+  - `src/sdp/openmetadata/normalizer.py`
+  - `src/sdp/openmetadata/source_identity.py`
+- 증빙 테스트:
+  - `tests/test_openmetadata_integration.py`
+  - `tests/test_openmetadata_review_regressions.py`
+  - `tests/test_openmetadata_source_instance.py`
+
+### INT-OM-003 hostile-input boundary
+
+- 대응: UUID, URL scheme/credential, control character, 깊이, 컨테이너 수, 컬럼 수, lineage endpoint, non-finite version을 fail-closed로 거부한다.
+- Python 객체 alias와 실제 back-edge cycle을 구분한다.
+- 본문은 route 수준에서 chunked input을 포함해 8 MiB로 제한한다.
+- 핵심 코드:
+  - `src/sdp/openmetadata/validation.py`
+  - `src/sdp/openmetadata_routes.py`
+- 증빙 테스트:
+  - `tests/test_openmetadata_validation.py`
+  - `tests/test_openmetadata_normalizer_guards.py`
+  - `tests/test_openmetadata_router_invariants.py`
+
+### INT-OM-004 authentication and tenant isolation
+
+- 대응: `POST /integrations/openmetadata/v1/table-snapshots:normalize`
+- Bearer token을 기존 OIDC/JWKS verifier로 검증한다.
+- `data-analyst`, `admin`, `platform-admin` 역할만 사용 가능하다.
+- verified actor tenant와 body tenant가 다르면 외부 자원 존재 여부를 숨기는 404를 반환한다.
+- 핵심 코드: `src/sdp/openmetadata_routes.py`, `src/sdp/authz.py`
+- 증빙 테스트: `tests/test_openmetadata_authorization.py`
+
+### INT-OM-005 authority and mutation boundary
+
+- projection은 항상 `truth_status = observed`이며 OpenMetadata나 CWL 도메인 원장의 authoritative truth를 대체하지 않는다.
+- 이 slice는 outbound network, credential persistence, catalog mutation, raw payload persistence, webhook 또는 writeback을 구현하지 않는다.
+- successor PR #97의 admission preview도 #96이 보호된 `main`에 통합되기 전에는 release authority가 아니다.
+
+## 8) 다음 단계
+
+1. PR #96의 current exact head에서 전체 Tests·fuzz·SAST·Security Scan·required central gates를 실행한다.
+2. 유효한 review finding을 모두 해결하고 qualifying independent approval을 받는다.
+3. #96을 보호된 `main`에 정상 병합한 뒤 #97을 그 merge result 위로 non-force restack한다.
+4. deterministic admission receipt → 3NF persistence → signed change-event inbox → canonical egress 순서로 진행한다.
+
+## 9) 구현 증적 판정
+
+- PR #96 상태는 GitHub metadata와 current exact-head Checks로 판단한다.
+- 로컬 focused 테스트는 원인 수리 증거이며 hosted repository/security gate를 대체하지 않는다.
+- PR #96과 #97은 현재 Draft/open 상태이므로 GA 또는 immutable release로 표현하지 않는다.
+- 관련 증적 파일:
+  - `src/sdp/openmetadata/`
+  - `src/sdp/openmetadata_routes.py`
+  - `tests/test_openmetadata_*.py`
+  - `docs/adr/0001-openmetadata-anti-corruption-boundary.md`
+  - `docs/integrations/openmetadata.md`
+  - `docs/product-technical-gap-baseline.md`
   - `docs/retrigger-evidence.md`
-- PR 상태: `open`. `origin/main`의 repo-local central workflow 삭제 정책과 충돌을 해소했다.
-- 현재 잠재 블로커: GitHub Actions required workflow 재실행 및 review state 갱신 대기. 추적 파일:
-  - [docs/retrigger-evidence.md](docs/retrigger-evidence.md)
