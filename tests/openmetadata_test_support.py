@@ -232,12 +232,14 @@ def normalize_fixture(
     lineage: object | None = None,
     *,
     tenant_id: str = "tenant_acme",
+    source_instance_id: str = "metadata_primary",
     source_release: str = "2.0.1",
 ):
     """Normalize fixtures while allowing a caller to replace either payload."""
 
     return normalize_openmetadata_table_snapshot(
         tenant_id=tenant_id,
+        source_instance_id=source_instance_id,
         source_release=source_release,
         table=table_payload() if table is None else table,
         lineage=lineage,
