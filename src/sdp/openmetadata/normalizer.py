@@ -38,12 +38,8 @@ _MAX_COLUMNS = 10_000
 _MAX_REFERENCES = 1_000
 _MAX_LINEAGE_EDGES = 20_000
 _MAX_COLUMN_MAPPINGS = 20_000
-_REFERENCE_OPTIONAL_FIELDS = (
-    "name",
-    "display_name",
-    "fully_qualified_name",
-    "href",
-)
+_REFERENCE_IDENTITY_FIELDS = ("name", "fully_qualified_name")
+_REFERENCE_ENRICHMENT_FIELDS = ("display_name", "href")
 
 
 def _reference_label(reference: OpenMetadataReferenceProjection) -> str | None:
@@ -74,7 +70,7 @@ def _register_reference(
             f"{field_name} conflicts with reference id: "
             f"{reference.external_entity_id}"
         )
-    for attribute_name in _REFERENCE_OPTIONAL_FIELDS:
+    for attribute_name in _REFERENCE_IDENTITY_FIELDS:
         prior_value = getattr(prior, attribute_name)
         candidate_value = getattr(reference, attribute_name)
         if (
@@ -88,6 +84,11 @@ def _register_reference(
             )
         if prior_value is None and candidate_value is not None:
             setattr(prior, attribute_name, candidate_value)
+    for attribute_name in _REFERENCE_ENRICHMENT_FIELDS:
+        if getattr(prior, attribute_name) is None:
+            candidate_value = getattr(reference, attribute_name)
+            if candidate_value is not None:
+                setattr(prior, attribute_name, candidate_value)
     prior.label = _reference_label(prior)
     return prior
 
