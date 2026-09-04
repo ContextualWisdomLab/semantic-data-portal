@@ -7,9 +7,6 @@ from typing import Callable
 
 import pytest
 
-from sdp.openmetadata import OpenMetadataContractError
-from sdp.openmetadata import normalizer
-
 from openmetadata_test_support import (
     TABLE_ID,
     UPSTREAM_ID,
@@ -18,6 +15,8 @@ from openmetadata_test_support import (
     reference_payload,
     table_payload,
 )
+from sdp.openmetadata import OpenMetadataContractError
+from sdp.openmetadata import normalizer
 
 
 def _assert_contract(
@@ -163,6 +162,7 @@ def test_table_and_column_shape_errors() -> None:
         "table must be an object",
         normalizer.normalize_openmetadata_table_snapshot,
         tenant_id="tenant_acme",
+        source_instance_id="metadata_primary",
         source_release="2.0.1",
         table=[],
     )
