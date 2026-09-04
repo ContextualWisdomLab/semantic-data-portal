@@ -10,6 +10,7 @@ from .errors import OpenMetadataContractError
 _RELEASE_PATTERN = re.compile(
     r"^2\.(?:0|[1-9]\d*)(?:\.(?:0|[1-9]\d*))?(?:-release)?$"
 )
+_REVISION_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,6 +24,43 @@ class OpenMetadataReleaseProfile:
     upstream_revision: str
     table_schema_path: str
     lineage_schema_path: str
+
+    def __post_init__(self) -> None:
+        """Reject internally inconsistent profile definitions at import time."""
+
+        if not self.profile_id:
+            raise OpenMetadataContractError("profile_id is required")
+        if not self.accepted_release_labels:
+            raise OpenMetadataContractError(
+                "accepted release labels must not be empty"
+            )
+        if len(set(self.accepted_release_labels)) != len(
+            self.accepted_release_labels
+        ):
+            raise OpenMetadataContractError(
+                "accepted release labels must be unique"
+            )
+        if self.canonical_release not in self.accepted_release_labels:
+            raise OpenMetadataContractError(
+                "canonical release must be included in accepted release labels"
+            )
+        if any(
+            not _RELEASE_PATTERN.fullmatch(label)
+            for label in self.accepted_release_labels
+        ):
+            raise OpenMetadataContractError(
+                "accepted release labels must identify OpenMetadata 2.x releases"
+            )
+        if not self.upstream_repository:
+            raise OpenMetadataContractError("upstream_repository is required")
+        if not _REVISION_PATTERN.fullmatch(self.upstream_revision):
+            raise OpenMetadataContractError(
+                "upstream_revision must be a lowercase 40-character commit SHA"
+            )
+        if not self.table_schema_path or not self.lineage_schema_path:
+            raise OpenMetadataContractError(
+                "compatibility profile schema paths are required"
+            )
 
 
 OPENMETADATA_2_0_1_PROFILE = OpenMetadataReleaseProfile(
