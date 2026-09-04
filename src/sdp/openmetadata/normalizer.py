@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from math import isfinite
 from typing import Any
 
+from .compatibility import resolve_openmetadata_release_profile
 from .errors import OpenMetadataContractError
 from .models import (
     OPENMETADATA_LINEAGE_SCHEMA_URI,
@@ -28,7 +30,6 @@ from .validation import (
     _text,
     _uuid_text,
     _validate_payload_budget,
-    _validate_source_release,
     _validate_tenant_id,
 )
 
@@ -37,35 +38,89 @@ _MAX_COLUMNS = 10_000
 _MAX_REFERENCES = 1_000
 _MAX_LINEAGE_EDGES = 20_000
 _MAX_COLUMN_MAPPINGS = 20_000
+_REFERENCE_OPTIONAL_FIELDS = (
+    "name",
+    "display_name",
+    "fully_qualified_name",
+    "href",
+)
 
 
-def _reference(value: object, field_name: str) -> OpenMetadataReferenceProjection:
-    """Normalize one OpenMetadata entity reference."""
+def _reference_label(reference: OpenMetadataReferenceProjection) -> str | None:
+    """Return the best non-invented label carried by one external reference."""
+
+    return (
+        reference.display_name
+        or reference.name
+        or reference.fully_qualified_name
+    )
+
+
+def _register_reference(
+    references: dict[str, OpenMetadataReferenceProjection],
+    reference: OpenMetadataReferenceProjection,
+    field_name: str,
+) -> OpenMetadataReferenceProjection:
+    """Register or enrich one UUID while rejecting snapshot-wide conflicts."""
+
+    prior = references.get(reference.external_entity_id)
+    if prior is None:
+        reference.label = _reference_label(reference)
+        references[reference.external_entity_id] = reference
+        return reference
+
+    if prior.entity_type != reference.entity_type:
+        raise OpenMetadataContractError(
+            f"{field_name} conflicts with reference id: "
+            f"{reference.external_entity_id}"
+        )
+    for attribute_name in _REFERENCE_OPTIONAL_FIELDS:
+        prior_value = getattr(prior, attribute_name)
+        candidate_value = getattr(reference, attribute_name)
+        if (
+            prior_value is not None
+            and candidate_value is not None
+            and prior_value != candidate_value
+        ):
+            raise OpenMetadataContractError(
+                f"{field_name} conflicts with reference id: "
+                f"{reference.external_entity_id}"
+            )
+        if prior_value is None and candidate_value is not None:
+            setattr(prior, attribute_name, candidate_value)
+    prior.label = _reference_label(prior)
+    return prior
+
+
+def _reference(
+    value: object,
+    field_name: str,
+    *,
+    references: dict[str, OpenMetadataReferenceProjection] | None = None,
+) -> OpenMetadataReferenceProjection:
+    """Normalize one schema-valid OpenMetadata entity reference."""
 
     payload = _require_mapping(value, field_name)
-    entity_id = _uuid_text(payload.get("id"), f"{field_name}.id")
-    entity_type = _required_text(
-        payload.get("type"),
-        f"{field_name}.type",
-        maximum=128,
-    )
-    name = _required_text(
-        payload.get("name"),
-        f"{field_name}.name",
-        maximum=512,
-    )
-    label = (
-        _text(
+    reference = OpenMetadataReferenceProjection(
+        external_entity_id=_uuid_text(
+            payload.get("id"),
+            f"{field_name}.id",
+        ),
+        entity_type=_required_text(
+            payload.get("type"),
+            f"{field_name}.type",
+            maximum=128,
+        ),
+        name=_text(
+            payload.get("name"),
+            f"{field_name}.name",
+            maximum=512,
+        ),
+        display_name=_text(
             payload.get("displayName"),
             f"{field_name}.displayName",
             maximum=512,
-        )
-        or name
-    )
-    return OpenMetadataReferenceProjection(
-        external_entity_id=entity_id,
-        entity_type=entity_type,
-        label=label,
+        ),
         fully_qualified_name=_text(
             payload.get("fullyQualifiedName"),
             f"{field_name}.fullyQualifiedName",
@@ -73,29 +128,51 @@ def _reference(value: object, field_name: str) -> OpenMetadataReferenceProjectio
         ),
         href=_safe_url(payload.get("href"), f"{field_name}.href"),
     )
+    reference.label = _reference_label(reference)
+    if references is None:
+        return reference
+    return _register_reference(references, reference, field_name)
 
 
 def _reference_list(
     value: object,
     field_name: str,
+    *,
+    references: dict[str, OpenMetadataReferenceProjection] | None = None,
 ) -> list[OpenMetadataReferenceProjection]:
-    """Normalize a bounded reference array and reject ambiguous duplicate IDs."""
+    """Normalize a bounded reference array with stable local deduplication."""
 
-    references = _optional_list(value, field_name, maximum=_MAX_REFERENCES)
+    source_items = _optional_list(
+        value,
+        field_name,
+        maximum=_MAX_REFERENCES,
+    )
+    registry = references if references is not None else {}
     normalized: list[OpenMetadataReferenceProjection] = []
-    identities: dict[str, OpenMetadataReferenceProjection] = {}
-    for index, item in enumerate(references):
-        reference = _reference(item, f"{field_name}[{index}]")
-        prior = identities.get(reference.external_entity_id)
-        if prior is not None and prior != reference:
-            raise OpenMetadataContractError(
-                f"{field_name} contains conflicting reference id: "
-                f"{reference.external_entity_id}"
-            )
-        if prior is None:
-            identities[reference.external_entity_id] = reference
+    local_identities: set[str] = set()
+    for index, item in enumerate(source_items):
+        reference = _reference(
+            item,
+            f"{field_name}[{index}]",
+            references=registry,
+        )
+        if reference.external_entity_id not in local_identities:
+            local_identities.add(reference.external_entity_id)
             normalized.append(reference)
     return normalized
+
+
+def _optional_reference(
+    value: object,
+    field_name: str,
+    *,
+    references: dict[str, OpenMetadataReferenceProjection] | None = None,
+) -> OpenMetadataReferenceProjection | None:
+    """Normalize an optional entity reference."""
+
+    if value is None:
+        return None
+    return _reference(value, field_name, references=references)
 
 
 def _tags(value: object, field_name: str) -> list[str]:
@@ -252,33 +329,6 @@ def _profile_summary(value: object) -> OpenMetadataProfileSummary:
     )
 
 
-def _optional_reference(
-    value: object,
-    field_name: str,
-) -> OpenMetadataReferenceProjection | None:
-    """Normalize an optional entity reference."""
-
-    if value is None:
-        return None
-    return _reference(value, field_name)
-
-
-def _register_reference(
-    references: dict[str, OpenMetadataReferenceProjection],
-    reference: OpenMetadataReferenceProjection,
-    field_name: str,
-) -> None:
-    """Add a lineage reference or reject conflicting reuse of one UUID."""
-
-    prior = references.get(reference.external_entity_id)
-    if prior is not None and prior != reference:
-        raise OpenMetadataContractError(
-            f"{field_name} conflicts with reference id: "
-            f"{reference.external_entity_id}"
-        )
-    references[reference.external_entity_id] = reference
-
-
 def _column_mappings(
     value: object,
     omitted_fields: set[str],
@@ -330,32 +380,37 @@ def _lineage_edges(
     *,
     table_id: str,
     omitted_fields: set[str],
+    references: dict[str, OpenMetadataReferenceProjection],
 ) -> list[OpenMetadataLineageEdgeProjection]:
-    """Normalize a complete bounded lineage response for the supplied table."""
+    """Normalize bounded lineage while preserving snapshot-wide identities."""
 
     if value is None:
         return []
 
     lineage = _require_mapping(value, "lineage")
-    primary = _reference(lineage.get("entity"), "lineage.entity")
+    primary = _reference(
+        lineage.get("entity"),
+        "lineage.entity",
+        references=references,
+    )
     if primary.external_entity_id != table_id:
         raise OpenMetadataContractError(
             "lineage entity does not match table id"
         )
 
-    references = {primary.external_entity_id: primary}
+    lineage_endpoint_ids = {primary.external_entity_id}
     nodes = _optional_list(
         lineage.get("nodes"),
         "lineage.nodes",
         maximum=_MAX_REFERENCES,
     )
     for index, item in enumerate(nodes):
-        reference = _reference(item, f"lineage.nodes[{index}]")
-        _register_reference(
-            references,
-            reference,
+        reference = _reference(
+            item,
             f"lineage.nodes[{index}]",
+            references=references,
         )
+        lineage_endpoint_ids.add(reference.external_entity_id)
 
     edge_payloads: list[tuple[object, str]] = []
     for group_name in ("upstreamEdges", "downstreamEdges"):
@@ -384,7 +439,10 @@ def _lineage_edges(
             edge.get("toEntity"),
             f"{field_name}.toEntity",
         )
-        if from_id not in references or to_id not in references:
+        if (
+            from_id not in lineage_endpoint_ids
+            or to_id not in lineage_endpoint_ids
+        ):
             raise OpenMetadataContractError("unknown lineage endpoint")
 
         details = _optional_mapping(
@@ -407,15 +465,14 @@ def _lineage_edges(
             pipeline = _optional_reference(
                 details.get("pipeline"),
                 f"{field_name}.lineageDetails.pipeline",
+                references=references,
             )
             column_mappings = _column_mappings(
                 details.get("columnsLineage"),
                 omitted_fields,
             )
             if details.get("sqlQuery") is not None:
-                omitted_fields.add(
-                    "lineage.lineageDetails.sqlQuery"
-                )
+                omitted_fields.add("lineage.lineageDetails.sqlQuery")
                 transformation_text_omitted = True
             column_lineage = _optional_list(
                 details.get("columnsLineage"),
@@ -473,14 +530,10 @@ def normalize_openmetadata_table_snapshot(
     table: Mapping[str, Any],
     lineage: Mapping[str, Any] | None = None,
 ) -> OpenMetadataTableProjection:
-    """Normalize one OpenMetadata 2.x Table and optional lineage payload.
-
-    The result is an ``observed`` projection suitable for policy review. It is
-    not an authoritative replacement for OpenMetadata or any CWL domain owner.
-    """
+    """Normalize a Table only under an exact verified compatibility profile."""
 
     tenant = _validate_tenant_id(tenant_id)
-    release = _validate_source_release(source_release)
+    profile = resolve_openmetadata_release_profile(source_release)
     _validate_payload_budget(table, lineage)
 
     table_payload = _require_mapping(table, "table")
@@ -490,18 +543,67 @@ def normalize_openmetadata_table_snapshot(
         "table.name",
         maximum=512,
     )
-    fully_qualified_name = _required_text(
+    display_name = _text(
+        table_payload.get("displayName"),
+        "table.displayName",
+        maximum=512,
+    )
+    fully_qualified_name = _text(
         table_payload.get("fullyQualifiedName"),
         "table.fullyQualifiedName",
         maximum=2_048,
     )
-    title = (
-        _text(
-            table_payload.get("displayName"),
-            "table.displayName",
-            maximum=512,
-        )
-        or name
+    title = display_name or name
+
+    references: dict[str, OpenMetadataReferenceProjection] = {}
+    _register_reference(
+        references,
+        OpenMetadataReferenceProjection(
+            external_entity_id=table_id,
+            entity_type="table",
+            name=name,
+            display_name=display_name,
+            label=title,
+            fully_qualified_name=fully_qualified_name,
+            href=_safe_url(table_payload.get("href"), "table.href"),
+        ),
+        "table",
+    )
+
+    owner_references = _reference_list(
+        table_payload.get("owners"),
+        "table.owners",
+        references=references,
+    )
+    domain_references = _reference_list(
+        table_payload.get("domains"),
+        "table.domains",
+        references=references,
+    )
+    data_product_references = _reference_list(
+        table_payload.get("dataProducts"),
+        "table.dataProducts",
+        references=references,
+    )
+    data_contract_reference = _optional_reference(
+        table_payload.get("dataContract"),
+        "table.dataContract",
+        references=references,
+    )
+    database_schema_reference = _optional_reference(
+        table_payload.get("databaseSchema"),
+        "table.databaseSchema",
+        references=references,
+    )
+    database_reference = _optional_reference(
+        table_payload.get("database"),
+        "table.database",
+        references=references,
+    )
+    service_reference = _optional_reference(
+        table_payload.get("service"),
+        "table.service",
+        references=references,
     )
 
     omitted_fields: set[str] = set()
@@ -514,20 +616,29 @@ def normalize_openmetadata_table_snapshot(
         lineage,
         table_id=table_id,
         omitted_fields=omitted_fields,
+        references=references,
     )
 
     entity_version = table_payload.get("version")
-    if entity_version is not None and (
-        isinstance(entity_version, bool)
-        or not isinstance(entity_version, (int, float))
-    ):
-        raise OpenMetadataContractError("table.version must be numeric")
+    if entity_version is not None:
+        if (
+            isinstance(entity_version, bool)
+            or not isinstance(entity_version, (int, float))
+        ):
+            raise OpenMetadataContractError(
+                "table.version must be numeric"
+            )
+        if isinstance(entity_version, float) and not isfinite(entity_version):
+            raise OpenMetadataContractError(
+                "table.version must be finite"
+            )
 
     return OpenMetadataTableProjection(
-        projection_id=(
-            f"urn:cwl:{tenant}:sdp:openmetadata_table:{table_id}"
-        ),
-        source_release=release,
+        projection_id=f"urn:cwl:{tenant}:sdp:openmetadata_table:{table_id}",
+        source_release=profile.canonical_release,
+        compatibility_profile_id=profile.profile_id,
+        upstream_repository=profile.upstream_repository,
+        upstream_revision=profile.upstream_revision,
         lineage_schema_uri=(
             OPENMETADATA_LINEAGE_SCHEMA_URI
             if lineage is not None
@@ -579,42 +690,19 @@ def normalize_openmetadata_table_snapshot(
             table_payload.get("sourceUrl"),
             "table.sourceUrl",
         ),
-        owner_references=_reference_list(
-            table_payload.get("owners"),
-            "table.owners",
-        ),
-        domain_references=_reference_list(
-            table_payload.get("domains"),
-            "table.domains",
-        ),
-        data_product_references=_reference_list(
-            table_payload.get("dataProducts"),
-            "table.dataProducts",
-        ),
-        data_contract_reference=_optional_reference(
-            table_payload.get("dataContract"),
-            "table.dataContract",
-        ),
-        database_schema_reference=_optional_reference(
-            table_payload.get("databaseSchema"),
-            "table.databaseSchema",
-        ),
-        database_reference=_optional_reference(
-            table_payload.get("database"),
-            "table.database",
-        ),
-        service_reference=_optional_reference(
-            table_payload.get("service"),
-            "table.service",
-        ),
+        owner_references=owner_references,
+        domain_references=domain_references,
+        data_product_references=data_product_references,
+        data_contract_reference=data_contract_reference,
+        database_schema_reference=database_schema_reference,
+        database_reference=database_reference,
+        service_reference=service_reference,
         tag_fqns=_tags(
             table_payload.get("tags"),
             "table.tags",
         ),
         columns=columns,
-        profile_summary=_profile_summary(
-            table_payload.get("profile")
-        ),
+        profile_summary=_profile_summary(table_payload.get("profile")),
         lineage_edges=lineage_edges,
         omitted_fields=sorted(omitted_fields),
     )
