@@ -15,7 +15,9 @@ _MAX_PAYLOAD_CONTAINERS = 100_000
 _MAX_PAYLOAD_TEXT_BYTES = 8 * 1024 * 1024
 _MAX_TEXT_LENGTH = 16_384
 _TENANT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
-_RELEASE_PATTERN = re.compile(r"^2\.(?:0|[1-9]\d*)(?:\.(?:0|[1-9]\d*))?(?:-release)?$")
+_RELEASE_PATTERN = re.compile(
+    r"^2\.(?:0|[1-9]\d*)(?:\.(?:0|[1-9]\d*))?(?:-release)?$"
+)
 
 
 def _require_mapping(value: object, field_name: str) -> Mapping[str, Any]:
@@ -70,16 +72,26 @@ def _text(
     if required and not value:
         raise OpenMetadataContractError(f"{field_name} is required")
     if len(value) > maximum:
-        raise OpenMetadataContractError(f"{field_name} exceeds {maximum} characters")
-    if any(ord(character) < 32 and character not in "\t\n\r" for character in value):
-        raise OpenMetadataContractError(f"{field_name} contains control characters")
+        raise OpenMetadataContractError(
+            f"{field_name} exceeds {maximum} characters"
+        )
+    if any(
+        ord(character) < 32 and character not in "\t\n\r"
+        for character in value
+    ):
+        raise OpenMetadataContractError(
+            f"{field_name} contains control characters"
+        )
     return value
 
 
 def _required_text(value: object, field_name: str, *, maximum: int) -> str:
     """Return required bounded text without relying on runtime assertions."""
 
-    return cast(str, _text(value, field_name, required=True, maximum=maximum))
+    return cast(
+        str,
+        _text(value, field_name, required=True, maximum=maximum),
+    )
 
 
 def _uuid_text(value: object, field_name: str) -> str:
@@ -103,11 +115,17 @@ def _safe_url(value: object, field_name: str) -> str | None:
         username = parsed.username
         password = parsed.password
     except ValueError as exc:
-        raise OpenMetadataContractError(f"{field_name} must be an HTTP(S) URL") from exc
+        raise OpenMetadataContractError(
+            f"{field_name} must be an HTTP(S) URL"
+        ) from exc
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise OpenMetadataContractError(f"{field_name} must be an HTTP(S) URL")
+        raise OpenMetadataContractError(
+            f"{field_name} must be an HTTP(S) URL"
+        )
     if username is not None or password is not None:
-        raise OpenMetadataContractError(f"{field_name} must not contain credentials")
+        raise OpenMetadataContractError(
+            f"{field_name} must not contain credentials"
+        )
     return text
 
 
@@ -117,7 +135,9 @@ def _optional_non_negative_int(value: object, field_name: str) -> int | None:
     if value is None:
         return None
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise OpenMetadataContractError(f"{field_name} must be a non-negative integer")
+        raise OpenMetadataContractError(
+            f"{field_name} must be a non-negative integer"
+        )
     return value
 
 
@@ -136,7 +156,7 @@ def _epoch_milliseconds(value: object, field_name: str) -> datetime | None:
 
 
 def _validate_source_release(source_release: object) -> str:
-    """Limit the first adapter contract to explicitly declared 2.x releases."""
+    """Validate only the syntax of an explicitly declared 2.x release label."""
 
     release = _required_text(source_release, "source_release", maximum=64)
     if not _RELEASE_PATTERN.fullmatch(release):
@@ -151,21 +171,29 @@ def _validate_tenant_id(tenant_id: object) -> str:
 
     value = _required_text(tenant_id, "tenant_id", maximum=128)
     if not _TENANT_ID_PATTERN.fullmatch(value):
-        raise OpenMetadataContractError("tenant_id contains unsupported characters")
+        raise OpenMetadataContractError(
+            "tenant_id contains unsupported characters"
+        )
     return value
 
 
 def _validate_payload_budget(*payloads: object) -> None:
-    """Bound direct-call payload complexity before extracting any metadata."""
+    """Bound payload depth, text, and containers while detecting true cycles."""
 
-    stack: list[tuple[object, int]] = [
-        (payload, 1) for payload in payloads if payload is not None
+    stack: list[tuple[object, int, bool]] = [
+        (payload, 1, False)
+        for payload in reversed(payloads)
+        if payload is not None
     ]
-    seen_containers: set[int] = set()
+    active_containers: set[int] = set()
     container_count = 0
     text_bytes = 0
+
     while stack:
-        value, depth = stack.pop()
+        value, depth, leaving = stack.pop()
+        if leaving:
+            active_containers.remove(id(value))
+            continue
         if depth > 64:
             raise OpenMetadataContractError("payload nesting exceeds 64")
         if isinstance(value, str):
@@ -175,31 +203,30 @@ def _validate_payload_budget(*payloads: object) -> None:
                     f"payload text exceeds {_MAX_PAYLOAD_TEXT_BYTES} bytes"
                 )
             continue
-        if isinstance(value, Mapping):
-            identity = id(value)
-            if identity in seen_containers:
-                raise OpenMetadataContractError("payload contains a cyclic container")
-            seen_containers.add(identity)
-            container_count += 1
-            if container_count > _MAX_PAYLOAD_CONTAINERS:
-                raise OpenMetadataContractError(
-                    f"payload exceeds {_MAX_PAYLOAD_CONTAINERS} containers"
-                )
-            stack.extend(
-                (item, depth + 1) for pair in value.items() for item in pair
-            )
+        if not isinstance(value, (Mapping, list)):
             continue
-        if isinstance(value, list):
-            identity = id(value)
-            if identity in seen_containers:
-                raise OpenMetadataContractError("payload contains a cyclic container")
-            seen_containers.add(identity)
-            container_count += 1
-            if container_count > _MAX_PAYLOAD_CONTAINERS:
-                raise OpenMetadataContractError(
-                    f"payload exceeds {_MAX_PAYLOAD_CONTAINERS} containers"
-                )
-            stack.extend((item, depth + 1) for item in value)
+
+        identity = id(value)
+        if identity in active_containers:
+            raise OpenMetadataContractError(
+                "payload contains a cyclic container"
+            )
+        active_containers.add(identity)
+        container_count += 1
+        if container_count > _MAX_PAYLOAD_CONTAINERS:
+            raise OpenMetadataContractError(
+                f"payload exceeds {_MAX_PAYLOAD_CONTAINERS} containers"
+            )
+
+        stack.append((value, depth, True))
+        if isinstance(value, Mapping):
+            children = [item for pair in value.items() for item in pair]
+        else:
+            children = list(value)
+        stack.extend(
+            (item, depth + 1, False)
+            for item in reversed(children)
+        )
 
 
 def _stable_unique(values: Sequence[str]) -> list[str]:
