@@ -83,12 +83,13 @@ class OpenMetadataProfileSummary(BaseModel):
 
 
 class OpenMetadataTableProjection(BaseModel):
-    """Tenant-scoped observation derived from one OpenMetadata table."""
+    """Tenant- and installation-scoped observation of one external table."""
 
     model_config = ConfigDict(extra="forbid")
 
     projection_id: str
     source_authority: Literal["openmetadata"] = "openmetadata"
+    source_instance_id: str
     source_release: str
     compatibility_profile_id: str = (
         OPENMETADATA_2_0_1_PROFILE.profile_id
@@ -146,6 +147,11 @@ class OpenMetadataNormalizationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     tenant_id: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
+    )
+    source_instance_id: str = Field(
         min_length=1,
         max_length=128,
         pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
