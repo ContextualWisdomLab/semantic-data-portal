@@ -13,8 +13,10 @@ from sdp_core import ActorContext
 
 from openmetadata_test_support import table_payload
 from sdp import openmetadata_routes
+import sdp.openmetadata.admission_preview as admission_preview_module
 from sdp.openmetadata import (
     OpenMetadataAdmissionReceipt,
+    OpenMetadataContractError,
     preview_openmetadata_table_admission,
 )
 
@@ -125,6 +127,32 @@ def test_reobservation_reuses_candidate_but_not_event_receipt() -> None:
     assert first.receipt_id == retry.receipt_id
     assert first.admission_candidate_id == later.admission_candidate_id
     assert first.receipt_id != later.receipt_id
+
+
+def test_invalid_tenant_fails_before_source_hashing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cheap identity admission precedes work proportional to source size."""
+
+    def hashing_must_not_run(_value: object, _field_name: str) -> str:
+        raise AssertionError("source hashing ran before tenant validation")
+
+    monkeypatch.setattr(
+        admission_preview_module,
+        "structural_sha256",
+        hashing_must_not_run,
+    )
+    with pytest.raises(
+        OpenMetadataContractError,
+        match="tenant_id contains unsupported characters",
+    ):
+        preview_openmetadata_table_admission(
+            tenant_id="tenant:other",
+            source_instance_id="metadata_primary",
+            source_release="2.0.1",
+            observed_at=OBSERVED_AT,
+            table=table_payload(),
+        )
 
 
 def test_admission_route_reuses_bearer_and_tenant_boundary(
