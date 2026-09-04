@@ -15,16 +15,25 @@ PIPELINE_ID = "44444444-4444-4444-8444-444444444444"
 def reference_payload(
     reference_id: str = TABLE_ID,
     entity_type: str = "table",
-    name: str = "warehouse.sales.public.orders",
+    name: str = "orders",
+    *,
+    fully_qualified_name: str | None = None,
 ) -> dict[str, Any]:
-    """Build a representative OpenMetadata entity reference."""
+    """Build a representative schema-valid OpenMetadata entity reference."""
 
+    resolved_fqn = fully_qualified_name
+    if resolved_fqn is None:
+        resolved_fqn = (
+            "warehouse.sales.public.orders"
+            if reference_id == TABLE_ID and entity_type == "table"
+            else name
+        )
     return {
         "id": reference_id,
         "type": entity_type,
         "name": name,
         "displayName": name.replace("_", " ").title(),
-        "fullyQualifiedName": name,
+        "fullyQualifiedName": resolved_fqn,
         "href": (
             f"https://metadata.example/api/v1/"
             f"{entity_type}/{reference_id}"
