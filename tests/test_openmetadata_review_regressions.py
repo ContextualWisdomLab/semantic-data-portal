@@ -16,6 +16,8 @@ from sdp.openmetadata.normalizer import (
 )
 from sdp.openmetadata.validation import _validate_payload_budget
 
+_SOURCE_INSTANCE_ID = "metadata_primary"
+
 
 def _minimal_table() -> dict[str, object]:
     """Return the smallest Table admitted by the pinned 2.0.1 schema."""
@@ -52,6 +54,7 @@ def test_minimal_schema_valid_table_does_not_require_fully_qualified_name() -> N
 
     projection = normalize_openmetadata_table_snapshot(
         tenant_id="tenant_acme",
+        source_instance_id=_SOURCE_INSTANCE_ID,
         source_release="2.0.1",
         table=_minimal_table(),
     )
@@ -87,6 +90,7 @@ def test_schema_valid_unnamed_references_remain_unlabelled() -> None:
 
     projection = normalize_openmetadata_table_snapshot(
         tenant_id="tenant_acme",
+        source_instance_id=_SOURCE_INSTANCE_ID,
         source_release="2.0.1",
         table=table,
         lineage=lineage,
@@ -134,6 +138,7 @@ def test_conflicting_uuid_across_table_reference_fields_fails_closed() -> None:
     with pytest.raises(OpenMetadataContractError, match="conflicts with reference id"):
         normalize_openmetadata_table_snapshot(
             tenant_id="tenant_acme",
+            source_instance_id=_SOURCE_INSTANCE_ID,
             source_release="2.0.1",
             table=table,
         )
@@ -159,6 +164,7 @@ def test_table_and_lineage_primary_identity_must_be_consistent() -> None:
     with pytest.raises(OpenMetadataContractError, match="conflicts with reference id"):
         normalize_openmetadata_table_snapshot(
             tenant_id="tenant_acme",
+            source_instance_id=_SOURCE_INSTANCE_ID,
             source_release="2.0.1",
             table=table,
             lineage=lineage,
@@ -174,6 +180,7 @@ def test_direct_normalization_sink_rejects_unverified_release() -> None:
     ):
         normalize_at_sink(
             tenant_id="tenant_acme",
+            source_instance_id=_SOURCE_INSTANCE_ID,
             source_release="2.1.0",
             table=_minimal_table(),
         )
@@ -189,6 +196,7 @@ def test_non_finite_table_version_is_rejected(version: float) -> None:
     with pytest.raises(OpenMetadataContractError, match="table.version must be finite"):
         normalize_openmetadata_table_snapshot(
             tenant_id="tenant_acme",
+            source_instance_id=_SOURCE_INSTANCE_ID,
             source_release="2.0.1",
             table=table,
         )
