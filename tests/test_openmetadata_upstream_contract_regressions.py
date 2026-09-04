@@ -1,9 +1,9 @@
 """RED contracts for exact OpenMetadata 2.0.1 compatibility.
 
 These tests intentionally exercise the normalization sink as well as the public
-verified wrapper.  They are grounded in the immutable upstream 2.0.1 schemas:
+verified wrapper. They are grounded in the immutable upstream 2.0.1 schemas:
 Table requires only ``id``, ``name`` and ``columns``; EntityReference requires
-only ``id`` and ``type``.  Optional upstream identity fields must therefore not
+only ``id`` and ``type``. Optional upstream identity fields must therefore not
 be invented as CWL admission requirements.
 """
 
@@ -14,13 +14,14 @@ from math import inf, nan
 
 import pytest
 
+from openmetadata_test_support import TABLE_ID, table_payload
 from sdp.openmetadata import (
     OpenMetadataContractError,
     normalize_openmetadata_table_snapshot,
 )
 from sdp.openmetadata import normalizer
 
-from openmetadata_test_support import TABLE_ID, table_payload
+_SOURCE_INSTANCE_ID = "metadata_primary"
 
 
 def test_core_normalizer_admits_schema_valid_table_without_fqn() -> None:
@@ -28,6 +29,7 @@ def test_core_normalizer_admits_schema_valid_table_without_fqn() -> None:
 
     projection = normalizer.normalize_openmetadata_table_snapshot(
         tenant_id="tenant_acme",
+        source_instance_id=_SOURCE_INSTANCE_ID,
         source_release="2.0.1",
         table={"id": TABLE_ID, "name": "orders", "columns": []},
     )
@@ -60,6 +62,7 @@ def test_core_normalizer_cannot_bypass_verified_release_profile() -> None:
     ):
         normalizer.normalize_openmetadata_table_snapshot(
             tenant_id="tenant_acme",
+            source_instance_id=_SOURCE_INSTANCE_ID,
             source_release="2.1.0-release",
             table=table_payload(),
         )
@@ -75,6 +78,7 @@ def test_non_finite_table_versions_fail_closed(version: float) -> None:
     with pytest.raises(OpenMetadataContractError, match="version must be finite"):
         normalize_openmetadata_table_snapshot(
             tenant_id="tenant_acme",
+            source_instance_id=_SOURCE_INSTANCE_ID,
             source_release="2.0.1",
             table=table,
         )
@@ -98,6 +102,7 @@ def test_reference_identity_conflicts_are_snapshot_wide() -> None:
     with pytest.raises(OpenMetadataContractError, match="conflict"):
         normalize_openmetadata_table_snapshot(
             tenant_id="tenant_acme",
+            source_instance_id=_SOURCE_INSTANCE_ID,
             source_release="2.0.1",
             table=table,
         )
