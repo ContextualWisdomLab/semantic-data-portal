@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import (
@@ -68,7 +68,7 @@ class OpenMetadataAdmissionPreviewRequest(BaseModel):
 
 
 class OpenMetadataAdmissionReceipt(BaseModel):
-    """Tamper-evident evidence for one deterministic candidate observation."""
+    """Unsigned self-consistency evidence for one candidate observation."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -79,6 +79,11 @@ class OpenMetadataAdmissionReceipt(BaseModel):
     admission_candidate_id: str
     receipt_id: str
     admission_status: Literal["accepted_for_review"] = "accepted_for_review"
+    integrity_assurance: Literal["unsigned_self_consistency"] = (
+        "unsigned_self_consistency"
+    )
+    source_origin_attested: Literal[False] = False
+    catalog_admission_performed: Literal[False] = False
     tenant_id: str = Field(
         min_length=1,
         max_length=128,
