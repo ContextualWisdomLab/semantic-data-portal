@@ -64,6 +64,7 @@ from .observability import (
     request_id_from_headers,
     request_id_header,
 )
+from .openmetadata_routes import router as openmetadata_router
 from .policy import evaluate
 from .semantic_validation import enterprise_shacl_validation_summary, validate_dataset_semantics
 from .steward_review import build_steward_review_summary
@@ -77,6 +78,7 @@ app = FastAPI(
     description="온톨로지 기반 그래프 데이터 카탈로그 및 시맨틱 검색 서비스",
     version="0.3.0",
 )
+app.include_router(openmetadata_router)
 
 # CORS allowlist comes from config (KV table `config_entries` when a database is
 # reachable, otherwise bundled safe defaults). Tightened from the previous "*".
