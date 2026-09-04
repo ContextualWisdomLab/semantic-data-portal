@@ -8,6 +8,7 @@ from typing import Any
 
 from .compatibility import resolve_openmetadata_release_profile
 from .errors import OpenMetadataContractError
+from .source_identity import validate_source_instance_id
 from .models import (
     OPENMETADATA_LINEAGE_SCHEMA_URI,
     OpenMetadataColumnLineageProjection,
@@ -527,6 +528,7 @@ def _record_omitted_table_fields(
 def normalize_openmetadata_table_snapshot(
     *,
     tenant_id: str,
+    source_instance_id: str,
     source_release: str,
     table: Mapping[str, Any],
     lineage: Mapping[str, Any] | None = None,
@@ -534,6 +536,7 @@ def normalize_openmetadata_table_snapshot(
     """Normalize a Table only under an exact verified compatibility profile."""
 
     tenant = _validate_tenant_id(tenant_id)
+    source_instance = validate_source_instance_id(source_instance_id)
     profile = resolve_openmetadata_release_profile(source_release)
     _validate_payload_budget(table, lineage)
 
@@ -635,7 +638,11 @@ def normalize_openmetadata_table_snapshot(
             )
 
     return OpenMetadataTableProjection(
-        projection_id=f"urn:cwl:{tenant}:sdp:openmetadata_table:{table_id}",
+        projection_id=(
+            f"urn:cwl:{tenant}:sdp:openmetadata_table:"
+            f"{source_instance}:{table_id}"
+        ),
+        source_instance_id=source_instance,
         source_release=profile.canonical_release,
         compatibility_profile_id=profile.profile_id,
         upstream_repository=profile.upstream_repository,
