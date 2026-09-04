@@ -59,7 +59,7 @@ supply-chain 하드닝 유지: base image는 digest-pinned(`python:3.12-slim@sha
   - `demo_seed.py`: buyer demo domain + SQL/RDF/file/API seed dataset의 단일 계약. 카탈로그 seed, `/enterprise/demo-plan`, connector probe가 모두 이 데이터를 공유한다.
   - `stores.py`: evidence store protocol 구현 2종 — `SQLiteEvidenceStore`(로컬/데모), `PostgresEvidenceStore`(paid pilot, tenant_id 컬럼 + 마이그레이션 DDL 내장).
   - `readiness.py` / `enterprise.py` / `kpis.py` / `production.py` / `rbac.py`: `/enterprise/*` 엔드포인트가 그대로 노출하는 manifest 계약들.
-- `src/sdp/` — application 계층. `api.py`가 모든 라우트를 정의하고 도메인 모듈로 위임한다.
+- `src/sdp/` — application 계층. `api.py`는 FastAPI 앱을 생성하고 application router를 정확히 한 번 등록하는 composition root다. 기존 응집된 라우트는 `api.py`에 둘 수 있지만, 독립적인 인증·본문 admission·버전 호환성·오류 매핑 lifecycle을 가진 integration은 focused `APIRouter` application module에 두고 `api.py`가 조합한다. Router module은 import만으로 전역 앱을 변경하지 않는다.
   - `catalog.py`: in-memory dataset store (`_DATA`, `buyer_demo_datasets()`로 seed). 검색/facet/lineage/schema history/audit.
   - `ontology.py`: 용어 해석, concept assets, ontology patch queue (propose/review).
   - `browse.py`: schema/preview — policy 평가 후 PII 컬럼 마스킹(`***`) 적용.
@@ -67,6 +67,7 @@ supply-chain 하드닝 유지: base image는 digest-pinned(`python:3.12-slim@sha
   - `orchestrator.py`: SQL draft 생성 + `validate_sql_query` 안전성 검사 (SELECT-only, 단일 statement, 금지 키워드, source table allowlist). fuzz 대상.
   - `evidence.py`: 모듈 로드 시 env로 store 선택 — `SDP_DATABASE_URL` → Postgres, 없으면 `SDP_SQLITE_PATH` → SQLite, 둘 다 없으면 in-memory list fallback.
   - `authz.py`: actor role/tenant 해석, OIDC claim mapping preview + JWKS 서명 검증 (PyJWT).
+  - `openmetadata_routes.py`: OpenMetadata integration application router. Bearer actor admission, verified tenant binding, request-body 제한, OpenMetadata DTO와 HTTP 오류 변환을 소유하고 도메인 정규화는 `openmetadata/`에 위임한다.
   - `observability.py`: request observation ring buffer, `/metrics` Prometheus text, `SDP_LOG_SINK_URL` file/http sink.
   - `console.py` + `design_tokens.py`: `/enterprise/console` 읽기 전용 HTML 콘솔.
   - `domain.py`: `sdp_core.contracts` 호환 re-export (신규 타입은 sdp_core에 추가).
@@ -74,7 +75,7 @@ supply-chain 하드닝 유지: base image는 digest-pinned(`python:3.12-slim@sha
 
 ### 데이터 흐름 (governance invariant)
 
-요청 → `api.py` 라우트 → 데이터 접근 전 `policy.evaluate()` → decision(allow/deny + masking/row_filter obligations)과 audit event를 evidence store에 기록 → 응답에 `policy_decision_id`와 masking 결과 포함. **카탈로그 mutation(create/publish/patch/deprecate)과 browse/query 경로에 정책 평가와 evidence 기록을 생략하는 변경은 회귀다.**
+요청 → `api.py` composition root에 등록된 application route/router → 데이터 접근 전 `policy.evaluate()` 또는 integration 전용 fail-closed actor/tenant admission → decision과 audit evidence 기록 → 응답에 필요한 policy/evidence identity 포함. **카탈로그 mutation(create/publish/patch/deprecate)과 browse/query 경로에 정책 평가와 evidence 기록을 생략하거나, integration router가 인증·tenant binding을 우회하는 변경은 회귀다.**
 
 ### docker-compose 서비스 구성
 
@@ -87,7 +88,8 @@ supply-chain 하드닝 유지: base image는 digest-pinned(`python:3.12-slim@sha
 
 ## 주요 컨벤션
 
-- **에러 매핑**: 도메인 모듈은 `KeyError`(→404), `ValueError`(→400), `PermissionError`(→403)를 raise하고, `api.py` 라우트가 `HTTPException`으로 변환한다. 도메인 계층에서 HTTPException을 직접 raise하지 않는다.
+- **에러 매핑**: 도메인 모듈은 `KeyError`(→404), `ValueError`(→400), `PermissionError`(→403)를 raise하고, `api.py`의 route 또는 composition root에 등록된 focused application router가 `HTTPException`으로 변환한다. 도메인 계층에서 `HTTPException`을 직접 raise하지 않는다.
+- **라우트 조합**: bounded integration router는 자기 prefix·dependency·route class를 소유할 수 있다. `api.py`는 이를 한 번만 등록하며, 동일 endpoint를 composition root와 router 양쪽에 중복 정의하지 않는다.
 - **테스트 격리**: `tests/test_api.py`의 autouse fixture `isolate_in_memory_app_state`가 `catalog._DATA`, `_AUDIT_LOG`, `_SCHEMA_HISTORY`, `evidence._POLICY_DECISION_LOG`, observability buffer를 snapshot/restore한다. 모듈 레벨 mutable 상태를 새로 추가하면 이 fixture에도 반영해야 테스트 간 오염이 없다.
 - **디자인 토큰**: `/enterprise/console` CSS는 임의 hex/px 리터럴 대신 `design_tokens.py`의 `var(--sdp-*)` 변수만 참조한다. 토큰 3계층(primitive/semantic/component)과 Figma 매핑 규칙은 `docs/design-tokens.md` 참조, `tests/test_design_tokens.py`가 무회귀를 강제한다.
 - **환경 변수**: 모두 `SDP_` prefix — evidence store(`SDP_DATABASE_URL`, `SDP_DATABASE_SSLMODE`, `SDP_SQLITE_PATH`), observability(`SDP_LOG_SINK_URL`, `SDP_REQUEST_ID_HEADER`, `SDP_ALERT_WEBHOOK_URL`), OIDC(`SDP_OIDC_ISSUER`, `SDP_OIDC_AUDIENCE`, `SDP_OIDC_JWKS_URL`, `SDP_OIDC_GROUP_ROLE_MAP`), connector secret(`SDP_CONNECTOR_SECRET_REF_PREFIX` 기준 `SDP_CONNECTOR_SECRET_*` env reference — 값은 presence만 검증하고 API 응답에 노출 금지).
