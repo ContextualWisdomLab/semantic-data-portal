@@ -25,12 +25,15 @@
 - 브라우징: 스키마 조회, 샘플 미리보기, 민감 컬럼 마스킹
 - 거버넌스: 정책 판단(PERMISSION), 샘플 정책 근거(Decision/Omission) 노출
 - 오케스트레이션: 자연어 질문 기반 질의 후보 추천 + SQL draft 제시
-- 상호운용: 외부 OpenMetadata 관측을 CWL 도메인 truth와 구분해 검증·정규화
+- 상호운용: 외부 OpenMetadata 관측을 CWL 도메인 truth와 구분해 검증·정규화하고, catalog mutation 전에 tamper-evident admission evidence를 생성
 
 첨부 문서는 다음 경로에 보관됩니다.
 
 - `docs/prd-trd.md`
 - `docs/integrations/openmetadata.md`
+- `docs/integrations/openmetadata-admission-preview.md`
+- `docs/adr/0001-openmetadata-anti-corruption-boundary.md`
+- `docs/adr/0002-openmetadata-admission-preview-receipts.md`
 - `docs/product-technical-gap-baseline.md`
 - `docs/papers/` — 지식그래프/온톨로지/그래프+벡터 하이브리드 검색 논문(인용/요약)
 
@@ -108,15 +111,27 @@ SDP_DATABASE_DSN='postgresql+psycopg://sdp_graph_app:<url-encoded-password>@loca
 - `GET  /ontology/term/{term}/graph` — 개념 그래프 (그래프 스토어 백엔드)
 - `POST /search/semantic` — pgvector KNN 시맨틱 검색 (kind 필터)
 
-### OpenMetadata interoperability — PR #96 candidate
+### OpenMetadata interoperability — stacked candidates
+
+#### PR #96: read-only normalization boundary
 
 - `POST /integrations/openmetadata/v1/table-snapshots:normalize`
   - OpenMetadata `2.0.1` Table과 선택적 EntityLineage를 읽기 전용 `observed` projection으로 정규화합니다.
   - `Authorization: Bearer ...`가 필요하며 검증된 OIDC tenant와 요청 tenant가 일치해야 합니다.
   - `source_instance_id`를 필수로 받아 동일 tenant의 복수 OpenMetadata 설치 간 UUID 충돌을 막습니다.
-  - 본문은 8 MiB로 제한합니다.
+  - 본문은 chunked input을 포함해 8 MiB로 제한합니다.
   - 샘플 행, SQL/DDL, query·join·변환식, column profile과 임의 extension 값은 projection에 복사하지 않습니다.
-  - 이 기능은 PR #96이 보호된 `main`에 병합되고 immutable release에 포함되기 전까지 released capability가 아닙니다.
+  - PR #96이 보호된 `main`에 병합되고 immutable release에 포함되기 전까지 released capability가 아닙니다.
+
+#### PR #99: non-mutating admission preview
+
+- `POST /integrations/openmetadata/v1/table-snapshots:admission-preview`
+  - #96의 Bearer authentication, verified tenant binding, source-instance identity와 request-body 제한을 그대로 사용합니다.
+  - `source_snapshot_digest`와 `projection_digest`를 분리해 omitted source 변경과 safe projection 변경을 구분합니다.
+  - replay key와 `admission_candidate_id`는 candidate deduplication에, `receipt_id`는 개별 observation event에 사용합니다.
+  - receipt를 다시 읽을 때 nested projection digest, replay key, candidate ID와 observation receipt ID를 재계산해 변조를 거부합니다.
+  - raw payload 저장, catalog mutation, OpenMetadata API 호출, credential 사용 또는 authority promotion을 수행하지 않습니다.
+  - PR #99는 stale predecessor #97의 유효 delta를 현재 #96 보안 경계에서 재구축한 Draft successor입니다. Exact-head 검증과 delta 승계가 끝날 때까지 #97을 닫지 않습니다.
 
 ### Catalog / governance / enterprise (기존)
 
@@ -169,6 +184,7 @@ PYTHONPATH=src python -m sdp.demo_smoke
 | LLM Orchestrator | `src/sdp/orchestrator.py`, `/llm/*` |
 | JSON-LD Export | `/catalog/datasets/{id}/jsonld` |
 | OpenMetadata anti-corruption boundary | `src/sdp/openmetadata/`, `src/sdp/openmetadata_routes.py`, `/integrations/openmetadata/v1/*`; exact release profile, OIDC tenant binding, source-instance identity, safe Table/EntityLineage projection |
+| OpenMetadata admission evidence | `src/sdp/openmetadata/admission_*`, `strict_json.py`, `structural_digest.py`; non-mutating candidate/observation receipt, transport and tamper validation |
 | Enterprise Core Contracts | `src/sdp_core/contracts.py`, `src/sdp_core/readiness.py`, `src/sdp_core/demo_seed.py`, `src/sdp_core/enterprise.py`, `src/sdp_core/rbac.py`, `src/sdp/enterprise_evidence.py`, `src/sdp/semantic_validation.py`, `src/sdp/steward_review.py`, `src/sdp/observability.py`, `/enterprise/*` |
 
 `src/sdp_core/demo_seed.py`는 buyer demo domain, SQL/RDF/file/API seed dataset, analyst/governance question을 catalog seed, `/enterprise/demo-plan`, connector probe가 함께 쓰는 단일 계약으로 둡니다.
@@ -179,4 +195,8 @@ PYTHONPATH=src python -m sdp.demo_smoke
 
 - PRD/TRD: `docs/prd-trd.md`
 - 요구사항 대응 매트릭스: `docs/implementation-compliance.md`
-- OpenMetadata 설계·운영 경계: `docs/adr/0001-openmetadata-anti-corruption-boundary.md`, `docs/integrations/openmetadata.md`
+- OpenMetadata 설계·운영 경계:
+  - `docs/adr/0001-openmetadata-anti-corruption-boundary.md`
+  - `docs/adr/0002-openmetadata-admission-preview-receipts.md`
+  - `docs/integrations/openmetadata.md`
+  - `docs/integrations/openmetadata-admission-preview.md`

@@ -5,8 +5,10 @@
 ## 구현 상태 개요
 
 - 기본 제품 기준선: `main`
-- OpenMetadata 후보: PR #96 `feat/openmetadata-2-read-adapter`
-- 증빙: API 엔드포인트, 도메인 모델, OpenMetadata 계약·보안·회귀 테스트
+- OpenMetadata normalization 후보: PR #96 `feat/openmetadata-2-read-adapter`
+- OpenMetadata admission receipt repair 후보: PR #99 `feat/openmetadata-admission-receipt-repair`
+- stale predecessor: PR #97 — #99가 유효 delta를 완전히 승계하고 exact-head gate를 통과하기 전까지 유지
+- 증빙: API 엔드포인트, 도메인 모델, OpenMetadata 계약·보안·회귀 테스트, ADR과 운영 문서
 - PR 후보 기능은 보호된 `main` 병합과 immutable release 전에는 released capability로 간주하지 않는다.
 
 ## 1) 필수 기능 요구사항 대응
@@ -132,7 +134,7 @@
   - `tests/test_api.py::test_enterprise_console_renders_operator_surface`
   - `tests/test_api.py::test_enterprise_demo_smoke_summary_is_ready`
 
-## 7) OpenMetadata interoperability — PR #96 candidate
+## 7) OpenMetadata interoperability — PR #96 normalization candidate
 
 ### INT-OM-001 exact compatibility profile
 
@@ -185,25 +187,86 @@
 
 - projection은 항상 `truth_status = observed`이며 OpenMetadata나 CWL 도메인 원장의 authoritative truth를 대체하지 않는다.
 - 이 slice는 outbound network, credential persistence, catalog mutation, raw payload persistence, webhook 또는 writeback을 구현하지 않는다.
-- successor PR #97의 admission preview도 #96이 보호된 `main`에 통합되기 전에는 release authority가 아니다.
 
-## 8) 다음 단계
+## 8) OpenMetadata admission evidence — PR #99 repair candidate
 
-1. PR #96의 current exact head에서 전체 Tests·fuzz·SAST·Security Scan·required central gates를 실행한다.
-2. 유효한 review finding을 모두 해결하고 qualifying independent approval을 받는다.
-3. #96을 보호된 `main`에 정상 병합한 뒤 #97을 그 merge result 위로 non-force restack한다.
-4. deterministic admission receipt → 3NF persistence → signed change-event inbox → canonical egress 순서로 진행한다.
+### INT-OM-006 strict transport admission
 
-## 9) 구현 증적 판정
+- 대응: normalization과 admission-preview endpoint에서 raw request를 먼저 검사한다.
+- duplicate JSON member, invalid UTF-8, malformed/deep JSON, NaN·Infinity, lone surrogate를 거부한다.
+- route class가 Content-Length 유무와 무관하게 chunked body 누적 크기를 8 MiB로 제한한다.
+- 핵심 코드:
+  - `src/sdp/openmetadata/strict_json.py`
+  - `src/sdp/openmetadata_routes.py`
+- 증빙 테스트:
+  - `tests/test_openmetadata_strict_json.py`
+  - `tests/test_openmetadata_router_invariants.py`
 
-- PR #96 상태는 GitHub metadata와 current exact-head Checks로 판단한다.
-- 로컬 focused 테스트는 원인 수리 증거이며 hosted repository/security gate를 대체하지 않는다.
-- PR #96과 #97은 현재 Draft/open 상태이므로 GA 또는 immutable release로 표현하지 않는다.
+### INT-OM-007 source and projection evidence split
+
+- 대응: `source_snapshot_digest`는 submitted Table·lineage 전체를, `projection_digest`는 safe projection 전체를 대상으로 한다.
+- omitted source 값은 source digest에는 영향을 주지만 receipt에 값 자체를 복사하지 않는다.
+- source instance가 달라지면 source bytes가 같더라도 projection identity·projection digest·candidate identity가 달라진다.
+- 핵심 코드:
+  - `src/sdp/openmetadata/structural_digest.py`
+  - `src/sdp/openmetadata/admission_preview.py`
+- 증빙 테스트:
+  - `tests/test_openmetadata_structural_digest.py`
+  - `tests/test_openmetadata_admission_preview.py`
+  - `tests/test_openmetadata_admission_receipt_repair.py`
+
+### INT-OM-008 candidate and observation identity
+
+- 대응: replay key와 `admission_candidate_id`는 source candidate를 식별하고, `receipt_id`는 candidate와 UTC observation instant를 결합한다.
+- exact retry는 candidate·receipt ID를 유지한다.
+- 같은 candidate의 later re-observation은 candidate ID를 유지하고 receipt ID만 변경한다.
+- equivalent timezone instant는 같은 receipt ID로 정규화한다.
+- 핵심 코드: `src/sdp/openmetadata/admission_identity.py`
+- 증빙 테스트:
+  - `tests/test_openmetadata_admission_identity.py`
+  - `tests/test_openmetadata_admission_preview.py`
+
+### INT-OM-009 tamper-evident receipt
+
+- 대응: transported receipt를 재수신할 때 nested projection scope·digest, replay key, candidate ID와 receipt ID를 다시 계산한다.
+- top-level release·profile·upstream revision·external ID·omitted field와 nested projection의 정합성을 확인한다.
+- receipt model은 frozen이며 source input으로부터 deep detached projection을 보유한다.
+- 핵심 코드: `src/sdp/openmetadata/admission_models.py`
+- 증빙 테스트:
+  - `tests/test_openmetadata_receipt_integrity.py`
+  - `tests/test_openmetadata_admission_receipt_repair.py`
+
+### INT-OM-010 secured non-mutating route
+
+- 대응: `POST /integrations/openmetadata/v1/table-snapshots:admission-preview`
+- #96과 같은 Bearer verifier, role set, verified tenant 404, strict JSON과 body limit을 재사용한다.
+- `accepted_for_review`만 반환하며 raw payload 저장, catalog mutation, external network, credential, publication과 authority promotion을 수행하지 않는다.
+- 핵심 코드: `src/sdp/openmetadata_routes.py`
+- 증빙 테스트:
+  - `tests/test_openmetadata_admission_preview.py`
+  - `tests/test_openmetadata_admission_receipt_repair.py`
+
+## 9) Stack·release 다음 단계
+
+1. PR #96 current exact head의 Tests·fuzz·SAST·Security Scan·required central gates를 완료하고 유효 review finding과 approval을 정리한다.
+2. #96을 보호된 `main`에 정상 병합한다.
+3. PR #99를 #96 merge result 위로 non-force restack하고 fresh exact-head evidence를 취득한다.
+4. #99와 #97 delta를 파일·행동·문서·테스트별로 비교해 완전 승계를 확인한 뒤에만 #97을 successor supersession 사유로 닫는다.
+5. #99를 병합·release한 뒤 3NF persistence → signed ChangeEvent inbox → canonical egress → steward-approved writeback 순서로 진행한다.
+6. `context-graph-contracts`의 provider-neutral source·observation·projection receipt contract가 immutable release되기 전에는 downstream consumer가 mutable PR head를 채택하지 않는다.
+
+## 10) 구현 증적 판정
+
+- PR #96과 #99 상태는 GitHub metadata와 current exact-head Checks로 판단한다.
+- focused test나 review bot status는 hosted repository/security gate를 대체하지 않는다.
+- PR #96·#99·#97은 현재 Draft/open 상태이므로 GA 또는 immutable release로 표현하지 않는다.
 - 관련 증적 파일:
   - `src/sdp/openmetadata/`
   - `src/sdp/openmetadata_routes.py`
   - `tests/test_openmetadata_*.py`
   - `docs/adr/0001-openmetadata-anti-corruption-boundary.md`
+  - `docs/adr/0002-openmetadata-admission-preview-receipts.md`
   - `docs/integrations/openmetadata.md`
+  - `docs/integrations/openmetadata-admission-preview.md`
   - `docs/product-technical-gap-baseline.md`
   - `docs/retrigger-evidence.md`

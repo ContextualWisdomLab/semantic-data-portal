@@ -4,22 +4,24 @@ Semantic Data Portal provides the ContextualWisdomLab anti-corruption layer for 
 
 ## Current support
 
-| Capability | Status in PR #96 |
-|---|---|
-| Exact OpenMetadata 2.0.1 compatibility admission | Implemented |
-| OIDC bearer verification and tenant binding | Implemented |
-| Source-installation-scoped projection identity | Implemented |
-| Table identity and descriptive metadata | Implemented |
-| Nested column metadata | Implemented |
-| Owners, domains, data products, data contract, classifications | Implemented |
-| Aggregate table profile summary | Implemented |
-| Table and column lineage | Implemented |
-| Payload, reference, and 8 MiB request-body hardening | Implemented |
-| Persistent catalog admission | Not in this slice |
-| Change Event/webhook ingestion | Not in this slice |
-| Live OpenMetadata API retrieval | Not in this slice |
-| Outbound synchronization | Not in this slice |
-| Pipelines, dashboards, metrics, ML models, agents, quality incidents | Planned in issue #95 |
+| Capability | Candidate owner | Status |
+|---|---|---|
+| Exact OpenMetadata 2.0.1 compatibility admission | PR #96 | Implemented, unreleased |
+| OIDC bearer verification and tenant binding | PR #96 | Implemented, unreleased |
+| Source-installation-scoped projection identity | PR #96 | Implemented, unreleased |
+| Table identity and descriptive metadata | PR #96 | Implemented, unreleased |
+| Nested column metadata | PR #96 | Implemented, unreleased |
+| Owners, domains, data products, data contract, classifications | PR #96 | Implemented, unreleased |
+| Aggregate table profile summary | PR #96 | Implemented, unreleased |
+| Table and column lineage | PR #96 | Implemented, unreleased |
+| Payload, reference, and 8 MiB request-body hardening | PR #96 | Implemented, unreleased |
+| Strict JSON, source/projection digest, candidate and observation receipt | PR #99 | Implemented candidate, exact-head verification pending |
+| Receipt tamper revalidation | PR #99 | Implemented candidate, exact-head verification pending |
+| Persistent catalog admission | successor | Not implemented |
+| Change Event/webhook ingestion | successor | Not implemented |
+| Live OpenMetadata API retrieval | successor | Not implemented |
+| Outbound synchronization | successor | Not implemented |
+| Pipelines, dashboards, metrics, ML models, agents, quality incidents | issue #95 | Planned |
 
 The verified compatibility profile is `openmetadata-table-lineage-2.0.1`. It is bound to:
 
@@ -46,16 +48,17 @@ OpenMetadata anti-corruption layer
     ▼
 SDP projection: truth_status = observed
     │
-    ├─ steward admission in a successor slice
+    ├─ non-mutating candidate/observation receipt (PR #99)
+    ├─ durable steward admission in a successor slice
     ├─ policy-filtered context bundle
     └─ impact consumers
 ```
 
-The normalizer does not publish a catalog asset, write to OpenMetadata, fetch a remote URL, or persist credentials. Domain owners continue to own their business facts.
+The normalizer and admission preview do not publish a catalog asset, write to OpenMetadata, fetch a remote URL, or persist credentials. Domain owners continue to own their business facts.
 
 ## Authentication and tenant isolation
 
-The HTTP endpoint requires `Authorization: Bearer ...`. It reuses the SDP OIDC/JWKS verifier configured with `SDP_OIDC_ISSUER`, `SDP_OIDC_AUDIENCE`, `SDP_OIDC_JWKS_URL`, and `SDP_OIDC_GROUP_ROLE_MAP`.
+Both OpenMetadata POST endpoints require `Authorization: Bearer ...`. They reuse the SDP OIDC/JWKS verifier configured with `SDP_OIDC_ISSUER`, `SDP_OIDC_AUDIENCE`, `SDP_OIDC_JWKS_URL`, and `SDP_OIDC_GROUP_ROLE_MAP`.
 
 Allowed roles are:
 
@@ -63,9 +66,9 @@ Allowed roles are:
 - `admin`;
 - `platform-admin`.
 
-The verified `ActorContext.tenant_id` must equal the request `tenant_id`. A mismatch returns `404 resource not found` so the endpoint does not disclose another tenant's namespace. A request body cannot override the verified tenant used to construct the projection.
+The verified `ActorContext.tenant_id` must equal the request `tenant_id`. A mismatch returns `404 resource not found` so the endpoint does not disclose another tenant's namespace. A request body cannot override the verified tenant used to construct a projection or receipt.
 
-## Endpoint
+## Normalization endpoint
 
 ```http
 POST /integrations/openmetadata/v1/table-snapshots:normalize
@@ -131,7 +134,7 @@ Every response carries the compatibility evidence needed by a downstream consume
 }
 ```
 
-The upstream revision identifies the contract source used to build and test the adapter. It is provenance, not an assertion that arbitrary payload bytes were fetched from that commit. Durable admission will add payload digest, observation time, and receipt evidence separately.
+The upstream revision identifies the contract source used to build and test the adapter. It is provenance, not an assertion that arbitrary payload bytes were fetched from that commit.
 
 ## Field mapping
 
@@ -177,7 +180,7 @@ The general catalog projection never copies these values:
 - lineage transformation functions;
 - SQL attached to a lineage edge.
 
-`omitted_fields` records which source field classes were present, without carrying their values. A later restricted evidence store may preserve an encrypted raw payload under a separate retention and access policy; that is not part of this endpoint.
+`omitted_fields` records which source field classes were present, without carrying their values. A later restricted evidence store may preserve an encrypted raw payload under a separate retention and access policy; that is not part of these endpoints.
 
 ## Validation and failure behavior
 
@@ -204,11 +207,32 @@ The public admission boundary rejects:
 - non-HTTP(S) links and links containing credentials;
 - negative, floating-point, boolean, or text values where an integer aggregate is required;
 - `NaN`, positive infinity, and negative infinity as table versions;
-- request bodies larger than 8 MiB.
+- request bodies larger than 8 MiB;
+- invalid UTF-8, malformed JSON, duplicate members, non-standard JSON numbers, and lone surrogates;
+- receipt values that no longer match the nested projection or derived identities.
 
 Repeated references to the same acyclic Python container are aliases, not cycles, and remain valid. Only a back-edge on the active traversal path is rejected as a cycle.
 
 Pydantic request-shape failures return HTTP 422. Unsupported release profiles and invalid external contracts return bounded HTTP 400 responses without echoing the source payload. Authentication failures return 401, insufficient roles return 403, cross-tenant requests return 404, and oversized bodies return 413.
+
+## Admission preview candidate
+
+PR #99 adds:
+
+```http
+POST /integrations/openmetadata/v1/table-snapshots:admission-preview
+```
+
+The endpoint uses the same authentication, tenant, body-size, strict JSON and compatibility boundary as normalization. It returns:
+
+- a digest of submitted source structure;
+- a separate digest of the safe projection;
+- a replay key and stable admission candidate identity;
+- a distinct observation receipt identity;
+- the safe projection;
+- explicit `false` statements for raw-payload persistence, catalog mutation and omitted-value copying.
+
+Transport validation recomputes the nested projection digest, replay key, candidate ID and receipt ID. Details and the normative structural digest vector are in `docs/integrations/openmetadata-admission-preview.md` and ADR-0002.
 
 ## Adding another OpenMetadata release
 
@@ -237,13 +261,15 @@ Products must not add independent OpenMetadata runtime clients merely to publish
 
 ## Successor implementation order
 
-1. Deterministic normalization/admission receipt with payload and projection digests.
-2. Normalized external source, snapshot, admission receipt, and projection-history tables.
-3. Idempotent admission by tenant, source installation, entity UUID, source version, and source hash.
-4. Restricted immutable raw-payload evidence and purpose-bound retrieval.
-5. Signed Change Event/webhook inbox, replay protection, ordering, dead-letter evidence, and rollback.
-6. Credential-registry and canonical-egress based OpenMetadata API retrieval.
-7. Steward-approved outbound writes with version/ETag preconditions and operation receipts.
-8. Additional entity mappings and cross-product contract publication.
+1. Merge and release PR #96 after exact-head repository/security/review gates.
+2. Restack PR #99 onto that protected merge result and prove complete valid-delta inheritance from PR #97.
+3. Merge and release the non-mutating admission receipt contract.
+4. Add normalized external source, snapshot, observation receipt, admission candidate, projection-history and supersession tables.
+5. Enforce idempotent concurrent admission by tenant, source installation, entity UUID, release profile and replay key.
+6. Add restricted immutable raw-payload evidence and purpose-bound retrieval.
+7. Add signed Change Event/webhook inbox, replay protection, ordering, dead-letter evidence and rollback.
+8. Add credential-registry and canonical-egress based OpenMetadata API retrieval.
+9. Add steward-approved outbound writes with version/ETag preconditions and operation receipts.
+10. Add further entity mappings and released cross-product contracts.
 
-See ADR-0001 and issue #95 for the ownership and delivery decisions.
+See ADR-0001, ADR-0002 and issue #95 for the ownership and delivery decisions.
