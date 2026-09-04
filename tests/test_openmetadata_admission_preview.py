@@ -134,7 +134,7 @@ def test_non_deterministic_json_values_fail_before_receipt_creation() -> None:
     non_finite["version"] = float("nan")
     with pytest.raises(
         OpenMetadataContractError,
-        match="table.version must be a finite number",
+        match="table.version must be finite",
     ):
         _preview(table=non_finite)
 
