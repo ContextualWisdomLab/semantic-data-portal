@@ -50,7 +50,7 @@ def test_reference_tag_and_profile_variants() -> None:
     assert len(normalizer._reference_list(same, "refs")) == 1
     conflicting = [deepcopy(basic), {**basic, "name": "other"}]
     _assert_contract(
-        "conflicting reference id",
+        "conflicts with reference id",
         normalizer._reference_list,
         conflicting,
         "refs",
@@ -135,10 +135,8 @@ def test_minimal_table_and_version_guards() -> None:
         "fullyQualifiedName": "svc.db.schema.orders",
         "columns": [],
     }
-    result = normalize_fixture(
-        minimal,
-        source_release="2.1.0-release",
-    )
+    result = normalize_fixture(minimal, source_release="2.0.1-release")
+    assert result.source_release == "2.0.1"
     assert result.title == "orders"
     assert result.entity_version is None
     assert result.updated_at is None
