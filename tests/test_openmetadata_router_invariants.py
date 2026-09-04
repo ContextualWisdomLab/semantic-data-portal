@@ -10,10 +10,7 @@ from fastapi import FastAPI
 
 from openmetadata_test_support import table_payload
 from sdp import openmetadata_routes
-from sdp.openmetadata import (
-    OpenMetadataCompatibilityProfile,
-    OpenMetadataContractError,
-)
+from sdp.openmetadata import OpenMetadataContractError, OpenMetadataReleaseProfile
 
 
 def _invoke_chunked_json(
@@ -76,13 +73,13 @@ def test_direct_router_embedding_enforces_chunked_body_limit(
         openmetadata_routes,
         "OPENMETADATA_REQUEST_BODY_MAX_BYTES",
         128,
-        raising=False,
     )
 
     messages = _invoke_chunked_json(
         direct_app,
         {
             "tenant_id": "tenant_acme",
+            "source_instance_id": "metadata_primary",
             "source_release": "2.0.1",
             "table": table_payload(),
         },
@@ -104,22 +101,25 @@ def test_direct_router_embedding_enforces_chunked_body_limit(
     }
 
 
-def test_compatibility_profile_rejects_invalid_direct_construction() -> None:
-    """The immutable profile validates itself, not only helper callers."""
+def test_release_profile_rejects_inconsistent_direct_construction() -> None:
+    """A compatibility profile validates its own release-label invariant."""
 
     with pytest.raises(
         OpenMetadataContractError,
-        match="profile canonical release must be 2.0.1",
+        match="canonical release must be included in accepted release labels",
     ):
-        OpenMetadataCompatibilityProfile(
+        OpenMetadataReleaseProfile(
             profile_id="openmetadata-table-lineage-2.0.1",
             canonical_release="2.1.0",
-            accepted_release_labels=frozenset(
-                {"2.0.1", "2.0.1-release"}
-            ),
+            accepted_release_labels=("2.0.1", "2.0.1-release"),
             upstream_repository="open-metadata/OpenMetadata",
-            upstream_tag="2.0.1-release",
-            upstream_revision=(
-                "bf621b166ec12e8c99fcb1c1443442723386fa41"
+            upstream_revision="bf621b166ec12e8c99fcb1c1443442723386fa41",
+            table_schema_path=(
+                "openmetadata-spec/src/main/resources/json/schema/"
+                "entity/data/table.json"
+            ),
+            lineage_schema_path=(
+                "openmetadata-spec/src/main/resources/json/schema/"
+                "type/entityLineage.json"
             ),
         )
