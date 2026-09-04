@@ -33,19 +33,19 @@ def preview_openmetadata_table_admission(
         source_instance_id
     )
     observation_time = normalize_observed_at(observed_at)
-    source_snapshot_digest = structural_sha256(
-        {
-            "table": table,
-            "lineage": lineage,
-        },
-        "source snapshot",
-    )
     projection = normalize_openmetadata_table_snapshot(
         tenant_id=tenant_id,
         source_instance_id=source_instance,
         source_release=source_release,
         table=table,
         lineage=lineage,
+    )
+    source_snapshot_digest = structural_sha256(
+        {
+            "table": table,
+            "lineage": lineage,
+        },
+        "source snapshot",
     )
     detached_projection = projection.model_copy(deep=True)
     projection_digest = structural_sha256(
