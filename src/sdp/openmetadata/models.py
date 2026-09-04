@@ -24,7 +24,9 @@ class OpenMetadataReferenceProjection(BaseModel):
 
     external_entity_id: str
     entity_type: str
-    label: str
+    name: str | None = None
+    display_name: str | None = None
+    label: str | None = None
     fully_qualified_name: str | None = None
     href: str | None = None
 
@@ -104,7 +106,7 @@ class OpenMetadataTableProjection(BaseModel):
     external_entity_id: str
     name: str
     title: str
-    fully_qualified_name: str
+    fully_qualified_name: str | None = None
     description: str | None = None
     entity_version: str | None = None
     entity_status: str | None = None
