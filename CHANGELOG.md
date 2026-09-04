@@ -14,6 +14,12 @@ All notable changes to Semantic Data Portal are recorded here.
 - Snapshot-wide external-reference registry that rejects contradictory UUID/type/name/FQN identities while permitting optional descriptive enrichment.
 - OpenMetadata authority ADR, integration guide, research and source traceability, capability index, and product/technical Gap baseline.
 - Exact OpenMetadata 2.0.1 fixtures plus compatibility, authorization, source-instance, body-limit, sparse-schema, hostile-input, and omission regression tests.
+- Draft repair successor PR #99 with authenticated `POST /integrations/openmetadata/v1/table-snapshots:admission-preview` for non-mutating candidate and observation evidence.
+- Versioned `cwl-json-structural-sha256-v1` encoding with exact golden bytes for strict UTF-8 strings, signed 64-bit integers, IEEE-754 binary64 values, arrays, and UTF-8-key-ordered objects.
+- Separate `source_snapshot_digest`, `projection_digest`, replay key, `admission_candidate_id`, and observation-scoped `receipt_id` contracts.
+- Tamper-evident receipt validation that recomputes nested projection scope and digest, replay identity, candidate identity, and observation receipt identity.
+- Strict transport JSON admission for duplicate members, invalid UTF-8, malformed or recursively excessive JSON, non-standard numbers, and lone Unicode surrogates.
+- Admission receipt ADR, operator guide, compliance mapping, retry/re-observation tests, digest vectors, and top-level/nested tamper regressions.
 
 ### Changed
 
@@ -24,6 +30,9 @@ All notable changes to Semantic Data Portal are recorded here.
 - Request `tenant_id` is descriptive input only; the effective projection tenant is taken from the verified actor and must match the request.
 - Repeated references to one acyclic Python container are treated as aliases, while a true active-path back-edge remains a rejected cycle.
 - OpenMetadata routes remain in a focused application module registered by the composition root rather than expanding the already broad `api.py` surface.
+- Admission candidate identity excludes `observed_at`, while `receipt_id` includes the normalized UTC observation instant; repeated observation and delivery retry therefore retain different semantics.
+- Source-instance changes now change projection identity, projection digest, replay key, and candidate identity even when submitted source bytes are equal.
+- PR #97 remains open as a stale predecessor until PR #99 proves full valid-delta inheritance and exact-head gate success.
 
 ### Security
 
@@ -31,6 +40,9 @@ All notable changes to Semantic Data Portal are recorded here.
 - Added bounds for HTTP body size, payload nesting, aggregate text, containers, columns, references, lineage edges, and column mappings.
 - Rejected missing or invalid bearer authentication, insufficient integration roles, cross-tenant namespace spoofing, invalid source installation identifiers, cyclic direct-call containers, contradictory external references, broken lineage endpoints, unsafe URL schemes, embedded URL credentials, malformed UUIDs, control characters, invalid aggregate number types, non-finite entity versions, and unverified release contracts.
 - Authentication and contract failures return bounded status-specific responses without echoing source payload or token-verification details.
+- Admission preview reuses the secured normalization router rather than the stale unauthenticated route from PR #97.
+- Source values omitted from the safe projection affect source identity without being copied into the receipt.
+- Receipt transport validation rejects changes to projection content, provenance metadata, external identity, source digest binding, replay key, candidate ID, tenant/source scope, or observation time.
 
 ### Fixed
 
@@ -40,11 +52,15 @@ All notable changes to Semantic Data Portal are recorded here.
 - The same external UUID can no longer acquire contradictory identities across table, structural, ownership, domain, product, lineage-node, or pipeline fields within one snapshot.
 - `NaN`, positive infinity, and negative infinity can no longer enter `entity_version` provenance.
 - Directly embedding the OpenMetadata router no longer bypasses chunked request-body limits.
+- Admission receipt validation is no longer specified only by tests; the model now recomputes all identities derivable from the transported receipt.
+- Invalid tenant or release input is rejected before work proportional to source hashing.
 
 ### Not yet included
 
-- Deterministic admission receipts and durable external metadata admission.
+- Durable 3NF external metadata admission, concurrent UPSERT/locking, observation history, and supersession records.
+- Restricted immutable raw-payload evidence storage and purpose-bound retrieval.
 - Live OpenMetadata API retrieval or credential handling.
 - Signed Change Event/webhook processing.
 - Outbound synchronization or steward-approved conflict resolution.
+- Released Rust and TypeScript digest/conformance implementations.
 - Additional OpenMetadata entity types beyond Table and EntityLineage.
