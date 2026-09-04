@@ -7,12 +7,12 @@ from typing import Callable
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
-from sdp.openmetadata import OpenMetadataContractError
-from sdp.openmetadata import validation
-from sdp.openmetadata_routes import router
+from sdp_core import ActorContext
 
 from openmetadata_test_support import table_payload
+from sdp import openmetadata_routes
+from sdp.openmetadata import OpenMetadataContractError
+from sdp.openmetadata import validation
 
 
 def _assert_contract(
@@ -221,15 +221,31 @@ def test_payload_budget_guards(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-def test_http_contract_rejects_expansion_and_malformed_url() -> None:
+def test_http_contract_rejects_expansion_and_malformed_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Request-shape and parser errors remain bounded at the HTTP surface."""
 
+    monkeypatch.setattr(
+        openmetadata_routes,
+        "verify_oidc_jwks_token",
+        lambda _token: (
+            ActorContext(
+                subject="user_001",
+                tenant_id="tenant_acme",
+                roles=["data-analyst"],
+            ),
+            {},
+        ),
+    )
     app = FastAPI()
-    app.include_router(router)
+    app.include_router(openmetadata_routes.router)
     client = TestClient(app)
+    headers = {"Authorization": "Bearer test-token"}
 
     extra = {
         "tenant_id": "tenant_acme",
+        "source_instance_id": "metadata_primary",
         "source_release": "2.0.1",
         "table": table_payload(),
         "unexpected": True,
@@ -237,6 +253,7 @@ def test_http_contract_rejects_expansion_and_malformed_url() -> None:
     assert (
         client.post(
             "/integrations/openmetadata/v1/table-snapshots:normalize",
+            headers=headers,
             json=extra,
         ).status_code
         == 422
@@ -246,8 +263,10 @@ def test_http_contract_rejects_expansion_and_malformed_url() -> None:
     malformed["sourceUrl"] = "https://["
     response = client.post(
         "/integrations/openmetadata/v1/table-snapshots:normalize",
+        headers=headers,
         json={
             "tenant_id": "tenant_acme",
+            "source_instance_id": "metadata_primary",
             "source_release": "2.0.1",
             "table": malformed,
         },
