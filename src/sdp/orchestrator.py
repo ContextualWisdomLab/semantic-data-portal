@@ -27,22 +27,22 @@ def _source_table_name(source_system: str) -> str:
 def validate_sql_query(sql: str, *, source_system: str) -> list[str]:
     stripped = sql.strip()
     lowered = stripped.lower()
-    warnings: list[str] = []
+    query_warnings: list[str] = []
 
     if not lowered.startswith("select "):
-        warnings.append("only_select_allowed")
+        query_warnings.append("only_select_allowed")
     if ";" in stripped:
-        warnings.append("single_statement_required")
+        query_warnings.append("single_statement_required")
     if "--" in stripped or "/*" in stripped or "*/" in stripped:
-        warnings.append("sql_comments_not_allowed")
+        query_warnings.append("sql_comments_not_allowed")
     if "'" in stripped or '"' in stripped:
-        warnings.append("literal_values_not_allowed")
+        query_warnings.append("literal_values_not_allowed")
     if re.search(r"\b(and|or)\b", lowered):
-        warnings.append("boolean_operator_not_allowed")
+        query_warnings.append("boolean_operator_not_allowed")
 
     for token in _FORBIDDEN_KEYWORDS:
         if re.search(rf"\b{re.escape(token)}\b", lowered):
-            warnings.append("forbidden_keyword_detected")
+            query_warnings.append("forbidden_keyword_detected")
             break
 
     referenced = [
@@ -50,15 +50,15 @@ def validate_sql_query(sql: str, *, source_system: str) -> list[str]:
         for match in re.findall(r"\bfrom\s+([A-Za-z_][\w.]*)|\bjoin\s+([A-Za-z_][\w.]*)", stripped, re.IGNORECASE)
     ]
     if not referenced:
-        warnings.append("missing_source_table")
-        return warnings
+        query_warnings.append("missing_source_table")
+        return query_warnings
 
     expected = _source_table_name(source_system).lower()
     referenced_tables = {_safe_identifier(table.rsplit(".", 1)[-1]).lower() for table in referenced}
     if referenced_tables != {expected}:
-        warnings.append("unauthorized_table_reference")
+        query_warnings.append("unauthorized_table_reference")
 
-    return warnings
+    return query_warnings
 
 
 def draft_sql(req: QueryDraftRequest) -> dict:
@@ -81,7 +81,7 @@ def draft_sql(req: QueryDraftRequest) -> dict:
     if any(token in question for token in _FORBIDDEN_KEYWORDS):
         return {"error": "policy_denied", "reason": "허용되지 않은 키워드가 질의에 포함되었습니다."}
 
-    allowed_columns = {column.name for column in dataset.schema if column.datatype}
+    allowed_columns = {column.column_name for column in dataset.schema if column.datatype}
     if req.columns:
         unknown = sorted(set(req.columns) - allowed_columns)
         if unknown:
@@ -132,7 +132,7 @@ def draft_sql(req: QueryDraftRequest) -> dict:
     if req.group_by in {"signup_at", "event_timestamp", "created_at"}:
         assumptions.append("날짜 집계는 기간 기반 집계로만 제한")
 
-    masked_pii = [col.name for col in dataset.schema if col.pii]
+    masked_pii = [col.column_name for col in dataset.schema if col.pii]
     if masked_pii and req.purpose == "analysis":
         assumptions.append(f"PII 컬럼({', '.join(masked_pii)})은 별도 집계/마스킹 필요")
 
@@ -161,122 +161,139 @@ def draft_sql(req: QueryDraftRequest) -> dict:
 def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
     request_id = _safe_request_id()
 
-    def response(
+    def build_query_response(
         *,
         dataset_id: str,
         query_id: str = "",
         policy_decision_id: str = "",
-        status: str,
+        query_status: str,
         row_count: int = 0,
         columns: list[str] | None = None,
         rows: list[dict[str, str | int | float | bool | None]] | None = None,
-        execution: dict[str, object] | None = None,
-        warnings: list[str] | None = None,
+        execution_metadata: dict[str, object] | None = None,
+        query_warnings: list[str] | None = None,
     ) -> QueryExecutionResponse:
         return QueryExecutionResponse(
             request_id=request_id,
             dataset_id=dataset_id,
             query_id=query_id,
             policy_decision_id=policy_decision_id,
-            status=status,
+            query_status=query_status,
             row_count=row_count,
             columns=columns or [],
             rows=rows or [],
-            execution=execution or {"elapsedMs": 0, "source": "validation", "bytesScanned": 0},
-            warnings=warnings or [],
+            execution_metadata=execution_metadata
+            or {"elapsedMs": 0, "source": "validation", "bytesScanned": 0},
+            query_warnings=query_warnings or [],
         )
 
-    def audit(
+    def record_query_audit(
         *,
         dataset_id: str,
-        result: str,
-        reason: str,
-        decision_id: str | None = None,
-        details: dict[str, object] | None = None,
+        audit_result: str,
+        audit_reason: str,
+        policy_decision_id: str | None = None,
+        audit_detail_patch: dict[str, object] | None = None,
     ) -> None:
         audit_details = {"purpose": req.purpose, "request_id": request_id, "dry_run": req.dry_run}
-        if details:
-            audit_details.update(details)
+        if audit_detail_patch:
+            audit_details.update(audit_detail_patch)
         ingest_event(
             event_type="browse.query",
             actor=req.user,
             dataset_id=dataset_id,
-            decision=result,
-            decision_id=decision_id,
-            reason=reason,
+            decision=audit_result,
+            decision_id=policy_decision_id,
+            reason=audit_reason,
             details=audit_details,
         )
 
     dataset_id = req.dataset_ids[0]
     if req.language.strip().upper() != "SQL":
-        audit(dataset_id=dataset_id, result="rejected", reason="unsupported_language")
-        return response(
+        record_query_audit(
             dataset_id=dataset_id,
-            status="REJECTED",
-            warnings=["unsupported_language"],
+            audit_result="rejected",
+            audit_reason="unsupported_language",
+        )
+        return build_query_response(
+            dataset_id=dataset_id,
+            query_status="REJECTED",
+            query_warnings=["unsupported_language"],
         )
 
     lowered = req.query.lower()
     if any(token in lowered for token in _FORBIDDEN_KEYWORDS):
-        audit(dataset_id=dataset_id, result="rejected", reason="forbidden_keyword_detected")
-        return response(
+        record_query_audit(
             dataset_id=dataset_id,
-            status="REJECTED",
-            warnings=["forbidden_keyword_detected"],
+            audit_result="rejected",
+            audit_reason="forbidden_keyword_detected",
+        )
+        return build_query_response(
+            dataset_id=dataset_id,
+            query_status="REJECTED",
+            query_warnings=["forbidden_keyword_detected"],
         )
 
     if len(req.dataset_ids) > 1:
-        audit(dataset_id=dataset_id, result="rejected", reason="cross_source_join_not_supported")
-        return response(
+        record_query_audit(
             dataset_id=dataset_id,
-            status="REJECTED",
-            warnings=["cross_source_join_not_supported"],
+            audit_result="rejected",
+            audit_reason="cross_source_join_not_supported",
+        )
+        return build_query_response(
+            dataset_id=dataset_id,
+            query_status="REJECTED",
+            query_warnings=["cross_source_join_not_supported"],
         )
 
     dataset = get_dataset(dataset_id)
     if not dataset:
-        audit(dataset_id=dataset_id, result="rejected", reason="dataset_not_found")
-        return response(
+        record_query_audit(
             dataset_id=dataset_id,
-            status="REJECTED",
-            warnings=["dataset_not_found"],
+            audit_result="rejected",
+            audit_reason="dataset_not_found",
+        )
+        return build_query_response(
+            dataset_id=dataset_id,
+            query_status="REJECTED",
+            query_warnings=["dataset_not_found"],
         )
 
     decision = evaluate(subject=req.user, resource=dataset_id, action="query", purpose=req.purpose)
     if decision.effect != "allow":
-        audit(
+        record_query_audit(
             dataset_id=dataset.id,
-            result="denied",
-            reason=decision.reason,
-            decision_id=decision.decision_id,
-            details={"policy_decision_id": decision.decision_id},
+            audit_result="denied",
+            audit_reason=decision.reason,
+            policy_decision_id=decision.decision_id,
+            audit_detail_patch={"policy_decision_id": decision.decision_id},
         )
-        return response(
+        return build_query_response(
             dataset_id=dataset.id,
             policy_decision_id=decision.decision_id,
-            status="DENIED",
-            execution={"elapsedMs": 0, "source": "policy", "bytesScanned": 0},
-            warnings=[decision.reason],
+            query_status="DENIED",
+            execution_metadata={"elapsedMs": 0, "source": "policy", "bytesScanned": 0},
+            query_warnings=[decision.reason],
         )
 
     validation_warnings = validate_sql_query(req.query, source_system=dataset.source_system)
     if validation_warnings:
-        audit(
+        record_query_audit(
             dataset_id=dataset.id,
-            result="rejected",
-            reason="query_safety_validation_failed",
-            decision_id=decision.decision_id,
-            details={
+            audit_result="rejected",
+            audit_reason="query_safety_validation_failed",
+            policy_decision_id=decision.decision_id,
+            audit_detail_patch={
                 "policy_decision_id": decision.decision_id,
                 "warnings": validation_warnings,
             },
         )
-        return response(
+        return build_query_response(
             dataset_id=dataset.id,
             policy_decision_id=decision.decision_id,
-            status="REJECTED",
-            execution={"elapsedMs": 0, "source": "query_safety", "bytesScanned": 0},
-            warnings=validation_warnings,
+            query_status="REJECTED",
+            execution_metadata={"elapsedMs": 0, "source": "query_safety", "bytesScanned": 0},
+            query_warnings=validation_warnings,
         )
 
     if req.dry_run:
@@ -292,27 +309,27 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
         if "group by" in lowered
         else [{"result": row_count}]
     )
-    execution = {"elapsedMs": 100, "source": "mock-trino", "bytesScanned": 1024}
-    audit(
+    execution_metadata = {"elapsedMs": 100, "source": "mock-trino", "bytesScanned": 1024}
+    record_query_audit(
         dataset_id=dataset.id,
-        result="allowed",
-        reason="ok",
-        decision_id=decision.decision_id,
-        details={
+        audit_result="allowed",
+        audit_reason="ok",
+        policy_decision_id=decision.decision_id,
+        audit_detail_patch={
             "policy_decision_id": decision.decision_id,
             "query_id": query_id,
             "row_count": row_count,
-            "bytes_scanned": execution["bytesScanned"],
+            "bytes_scanned": execution_metadata["bytesScanned"],
         },
     )
-    return response(
+    return build_query_response(
         dataset_id=dataset.id,
         query_id=query_id,
         policy_decision_id=decision.decision_id,
-        status="SUCCEEDED",
+        query_status="SUCCEEDED",
         row_count=row_count,
         columns=columns,
         rows=rows,
-        execution=execution,
-        warnings=["mock_execution_no_real_data"],
+        execution_metadata=execution_metadata,
+        query_warnings=["mock_execution_no_real_data"],
     )

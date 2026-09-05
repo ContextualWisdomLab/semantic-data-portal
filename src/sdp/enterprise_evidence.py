@@ -31,7 +31,9 @@ def _metadata_validation_pass_rate() -> float:
 
 def _ontology_mapping_coverage() -> float:
     mappings = [mapping for dataset in list_datasets() for mapping in dataset.mappings]
-    approved = sum(1 for mapping in mappings if mapping.status == MappingStatus.APPROVED)
+    approved = sum(
+        1 for mapping in mappings if mapping.mapping_status == MappingStatus.APPROVED
+    )
     return _ratio(approved, len(mappings))
 
 
@@ -48,11 +50,11 @@ def build_enterprise_evidence_pack() -> dict[str, Any]:
     policy_decisions = list_policy_decisions(limit=500)
 
     return {
-        "product": readiness.product,
+        "product": readiness.product_name,
         "valuation_target_krw": readiness.valuation_target_krw,
         "demo_domain": demo_plan.priority_domain,
         "dataset_count": len(datasets),
-        "demo_seed_datasets": [dataset.id for dataset in demo_plan.demo_datasets],
+        "demo_seed_datasets": [dataset.dataset_id for dataset in demo_plan.demo_datasets],
         "metadata_validation_pass_rate": _metadata_validation_pass_rate(),
         "shacl_validation_pass_rate": shacl_validation["validation_pass_rate"],
         "steward_review_queue_count": steward_review["review_queue_count"],
@@ -65,8 +67,8 @@ def build_enterprise_evidence_pack() -> dict[str, Any]:
         "production_paid_pilot_blockers": len(production.paid_pilot_blockers),
         "implemented_enterprise_controls": controls.implemented_controls,
         "planned_enterprise_controls": controls.planned_controls,
-        "primary_kpis": [kpi.id for kpi in kpis.primary_kpis],
-        "guardrail_kpis": [kpi.id for kpi in kpis.guardrail_kpis],
+        "primary_kpis": [kpi.kpi_id for kpi in kpis.primary_kpis],
+        "guardrail_kpis": [kpi.kpi_id for kpi in kpis.guardrail_kpis],
         "proof_endpoints": [
             "/enterprise/readiness",
             "/enterprise/demo-plan",

@@ -72,7 +72,7 @@ def get_dataset_profile(dataset_id: str) -> dict[str, Any]:
     for column in dataset.schema:
         schema_profile.append(
             {
-                "name": column.name,
+                "name": column.column_name,
                 "datatype": column.datatype,
                 "null_ratio": column.nullable_ratio,
                 "distinct_ratio": column.distinct_ratio,
@@ -92,7 +92,7 @@ def get_join_candidates(dataset_id: str, *, limit: int = 10) -> list[dict[str, A
     dataset = get_dataset_or_404(dataset_id)
     candidates = []
 
-    dataset_columns = {column.name for column in dataset.schema}
+    dataset_columns = {column.column_name for column in dataset.schema}
     dataset_terms = {term for term in dataset.terms}
     for other in _DATA.values():
         if other.id == dataset.id:
@@ -100,7 +100,7 @@ def get_join_candidates(dataset_id: str, *, limit: int = 10) -> list[dict[str, A
         if other.status not in {"published", "registered"}:
             continue
         overlap_terms = sorted(dataset_terms.intersection({term for term in other.terms}))
-        overlap_columns = sorted(dataset_columns.intersection({column.name for column in other.schema}))
+        overlap_columns = sorted(dataset_columns.intersection({column.column_name for column in other.schema}))
         score = len(overlap_terms) * 2 + len(overlap_columns)
         if score == 0:
             continue
@@ -177,14 +177,14 @@ def _term_score(dataset: Dataset, tokens: list[str], query: str) -> float:
             if token_re.search(term):
                 score += 0.7
         for mapping in dataset.mappings:
-            if token_re.search(mapping.concept):
+            if token_re.search(mapping.business_concept):
                 score += 0.6
 
     if dataset.sensitivity == "low":
         score += 0.1
     if query in {"활성", "활성 고객", "customer"}:
-        for m in dataset.mappings:
-            if m.concept == "활성 고객":
+        for business_mapping in dataset.mappings:
+            if business_mapping.business_concept == "활성 고객":
                 score += 0.4
     return score
 

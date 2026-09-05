@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from .contracts import (
     BusinessMapping,
@@ -15,9 +15,13 @@ from .contracts import (
 
 
 class BuyerDemoDomain(BaseModel):
-    id: str
-    label: str
-    description: str
+    """Buyer-demo domain contract with semantic internal vocabulary."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    demo_domain_id: str = Field(alias="id")
+    demo_domain_label: str = Field(alias="label")
+    demo_domain_description: str = Field(alias="description")
     default_connectors: list[str]
     analyst_questions: list[str]
     governance_questions: list[str]
@@ -25,16 +29,100 @@ class BuyerDemoDomain(BaseModel):
     dataset_ids: list[str]
     glossary_terms: list[str]
 
+    @property
+    def id(self) -> str:  # noqa: A003 - legacy Python compatibility attribute
+        """Return the legacy demo-domain identifier compatibility attribute."""
+
+        return self.demo_domain_id
+
+    @id.setter
+    def id(self, legacy_demo_domain_id: str) -> None:  # noqa: A003
+        self.demo_domain_id = legacy_demo_domain_id
+
+    @property
+    def label(self) -> str:
+        """Return the legacy demo-domain label compatibility attribute."""
+
+        return self.demo_domain_label
+
+    @label.setter
+    def label(self, legacy_demo_domain_label: str) -> None:
+        self.demo_domain_label = legacy_demo_domain_label
+
+    @property
+    def description(self) -> str:
+        """Return the legacy demo-domain description compatibility attribute."""
+
+        return self.demo_domain_description
+
+    @description.setter
+    def description(self, legacy_demo_domain_description: str) -> None:
+        self.demo_domain_description = legacy_demo_domain_description
+
 
 class BuyerDemoDatasetSummary(BaseModel):
-    id: str
-    title: str
-    domain: str
+    """Buyer-demo dataset summary with semantic internal catalog vocabulary."""
+
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+
+    dataset_id: str = Field(alias="id")
+    dataset_title: str = Field(alias="title")
+    dataset_domain: str = Field(alias="domain")
     source_type: str
     source_system: str
-    sensitivity: str
-    steward: str
+    dataset_sensitivity: str = Field(alias="sensitivity")
+    dataset_steward: str = Field(alias="steward")
     acceptance_role: str
+
+    @property
+    def id(self) -> str:  # noqa: A003 - legacy Python compatibility attribute
+        """Return the legacy dataset identifier compatibility attribute."""
+
+        return self.dataset_id
+
+    @id.setter
+    def id(self, legacy_dataset_id: str) -> None:  # noqa: A003
+        self.dataset_id = legacy_dataset_id
+
+    @property
+    def title(self) -> str:
+        """Return the legacy dataset title compatibility attribute."""
+
+        return self.dataset_title
+
+    @title.setter
+    def title(self, legacy_dataset_title: str) -> None:
+        self.dataset_title = legacy_dataset_title
+
+    @property
+    def domain(self) -> str:
+        """Return the legacy dataset domain compatibility attribute."""
+
+        return self.dataset_domain
+
+    @domain.setter
+    def domain(self, legacy_dataset_domain: str) -> None:
+        self.dataset_domain = legacy_dataset_domain
+
+    @property
+    def sensitivity(self) -> str:
+        """Return the legacy dataset sensitivity compatibility attribute."""
+
+        return self.dataset_sensitivity
+
+    @sensitivity.setter
+    def sensitivity(self, legacy_dataset_sensitivity: str) -> None:
+        self.dataset_sensitivity = legacy_dataset_sensitivity
+
+    @property
+    def steward(self) -> str:
+        """Return the legacy dataset steward compatibility attribute."""
+
+        return self.dataset_steward
+
+    @steward.setter
+    def steward(self, legacy_dataset_steward: str) -> None:
+        self.dataset_steward = legacy_dataset_steward
 
 
 def _approved_mapping(concept: str, *, steward: str) -> BusinessMapping:
@@ -53,9 +141,9 @@ def _proposed_mapping(concept: str) -> BusinessMapping:
 
 def _customer_intelligence_domain() -> BuyerDemoDomain:
     return BuyerDemoDomain(
-        id="customer_intelligence",
-        label="customer intelligence",
-        description="고객 마스터, 행동 이벤트, 세일즈 전환 데이터를 연결해 고객 탐색과 이탈 분석을 시연하는 buyer demo domain.",
+        demo_domain_id="customer_intelligence",
+        demo_domain_label="customer intelligence",
+        demo_domain_description="고객 마스터, 행동 이벤트, 세일즈 전환 데이터를 연결해 고객 탐색과 이탈 분석을 시연하는 buyer demo domain.",
         default_connectors=["sql_connector", "rdf_connector"],
         analyst_questions=[
             "최근 90일 활성 고객과 이탈 위험 고객을 찾고 근거 데이터셋을 추천한다.",
@@ -79,11 +167,15 @@ def buyer_demo_domains() -> list[BuyerDemoDomain]:
 
 
 def get_buyer_demo_domain(priority_domain: str) -> BuyerDemoDomain | None:
-    normalized = priority_domain.strip().lower().replace("-", "_").replace(" ", "_")
-    for domain in buyer_demo_domains():
-        labels = {domain.id, domain.label.lower(), domain.label.lower().replace(" ", "_")}
-        if normalized in labels or priority_domain.strip() in domain.glossary_terms:
-            return domain
+    normalized_domain_key = priority_domain.strip().lower().replace("-", "_").replace(" ", "_")
+    for demo_domain in buyer_demo_domains():
+        domain_labels = {
+            demo_domain.demo_domain_id,
+            demo_domain.demo_domain_label.lower(),
+            demo_domain.demo_domain_label.lower().replace(" ", "_"),
+        }
+        if normalized_domain_key in domain_labels or priority_domain.strip() in demo_domain.glossary_terms:
+            return demo_domain
     return None
 
 
@@ -107,21 +199,21 @@ def _customer_intelligence_datasets() -> list[Dataset]:
             related_datasets=["crm-event", "sales-order"],
             schema=[
                 ColumnMetadata(
-                    name="customer_id",
+                    column_name="customer_id",
                     datatype="string",
                     nullable_ratio=0.0,
                     distinct_ratio=1.0,
                     pii=False,
                 ),
                 ColumnMetadata(
-                    name="customer_email",
+                    column_name="customer_email",
                     datatype="string",
                     nullable_ratio=0.01,
                     distinct_ratio=0.99,
                     pii=True,
                 ),
                 ColumnMetadata(
-                    name="signup_at",
+                    column_name="signup_at",
                     datatype="timestamp",
                     nullable_ratio=0.0,
                     distinct_ratio=0.88,
@@ -130,9 +222,9 @@ def _customer_intelligence_datasets() -> list[Dataset]:
             ],
             distributions=[
                 DatasetDistribution(
-                    id="dist-crm-customer",
-                    format="postgresql.table",
-                    endpoint="https://example.internal/api/table/crm_customer_master",
+                    distribution_id="dist-crm-customer",
+                    distribution_format="postgresql.table",
+                    distribution_endpoint="https://example.internal/api/table/crm_customer_master",
                 )
             ],
             mappings=[
@@ -166,28 +258,28 @@ def _customer_intelligence_datasets() -> list[Dataset]:
             related_datasets=["crm-customer-master", "marketing-campaign"],
             schema=[
                 ColumnMetadata(
-                    name="event_id",
+                    column_name="event_id",
                     datatype="string",
                     nullable_ratio=0.0,
                     distinct_ratio=1.0,
                     pii=False,
                 ),
                 ColumnMetadata(
-                    name="customer_id",
+                    column_name="customer_id",
                     datatype="string",
                     nullable_ratio=0.0,
                     distinct_ratio=0.98,
                     pii=False,
                 ),
                 ColumnMetadata(
-                    name="event_timestamp",
+                    column_name="event_timestamp",
                     datatype="timestamp",
                     nullable_ratio=0.0,
                     distinct_ratio=0.97,
                     pii=False,
                 ),
                 ColumnMetadata(
-                    name="device_id",
+                    column_name="device_id",
                     datatype="string",
                     nullable_ratio=0.05,
                     distinct_ratio=0.85,
@@ -196,9 +288,9 @@ def _customer_intelligence_datasets() -> list[Dataset]:
             ],
             distributions=[
                 DatasetDistribution(
-                    id="dist-crm-event",
-                    format="parquet",
-                    endpoint="https://example.internal/api/file/crm_event",
+                    distribution_id="dist-crm-event",
+                    distribution_format="parquet",
+                    distribution_endpoint="https://example.internal/api/file/crm_event",
                 )
             ],
             mappings=[
@@ -226,21 +318,21 @@ def _customer_intelligence_datasets() -> list[Dataset]:
             related_datasets=["crm-customer-master"],
             schema=[
                 ColumnMetadata(
-                    name="order_id",
+                    column_name="order_id",
                     datatype="string",
                     nullable_ratio=0.0,
                     distinct_ratio=1.0,
                     pii=False,
                 ),
                 ColumnMetadata(
-                    name="customer_id",
+                    column_name="customer_id",
                     datatype="string",
                     nullable_ratio=0.0,
                     distinct_ratio=0.91,
                     pii=False,
                 ),
                 ColumnMetadata(
-                    name="order_amount",
+                    column_name="order_amount",
                     datatype="decimal",
                     nullable_ratio=0.0,
                     distinct_ratio=0.72,
@@ -249,9 +341,9 @@ def _customer_intelligence_datasets() -> list[Dataset]:
             ],
             distributions=[
                 DatasetDistribution(
-                    id="dist-sales-order",
-                    format="postgresql.table",
-                    endpoint="https://example.internal/api/table/sales_order",
+                    distribution_id="dist-sales-order",
+                    distribution_format="postgresql.table",
+                    distribution_endpoint="https://example.internal/api/table/sales_order",
                 )
             ],
             mappings=[
@@ -279,21 +371,21 @@ def _customer_intelligence_datasets() -> list[Dataset]:
             related_datasets=["crm-customer-master", "crm-event", "sales-order"],
             schema=[
                 ColumnMetadata(
-                    name="concept_uri",
+                    column_name="concept_uri",
                     datatype="iri",
                     nullable_ratio=0.0,
                     distinct_ratio=1.0,
                     pii=False,
                 ),
                 ColumnMetadata(
-                    name="preferred_label",
+                    column_name="preferred_label",
                     datatype="string",
                     nullable_ratio=0.0,
                     distinct_ratio=0.9,
                     pii=False,
                 ),
                 ColumnMetadata(
-                    name="broader_concept",
+                    column_name="broader_concept",
                     datatype="iri",
                     nullable_ratio=0.2,
                     distinct_ratio=0.7,
@@ -302,9 +394,9 @@ def _customer_intelligence_datasets() -> list[Dataset]:
             ],
             distributions=[
                 DatasetDistribution(
-                    id="dist-semantic-glossary",
-                    format="sparql.graph",
-                    endpoint="https://example.internal/sparql/customer-intelligence",
+                    distribution_id="dist-semantic-glossary",
+                    distribution_format="sparql.graph",
+                    distribution_endpoint="https://example.internal/sparql/customer-intelligence",
                 )
             ],
             mappings=[
@@ -334,21 +426,21 @@ def _customer_intelligence_datasets() -> list[Dataset]:
             related_datasets=["crm-customer-master", "crm-event", "sales-order"],
             schema=[
                 ColumnMetadata(
-                    name="campaign_id",
+                    column_name="campaign_id",
                     datatype="string",
                     nullable_ratio=0.0,
                     distinct_ratio=1.0,
                     pii=False,
                 ),
                 ColumnMetadata(
-                    name="target_segment",
+                    column_name="target_segment",
                     datatype="string",
                     nullable_ratio=0.03,
                     distinct_ratio=0.62,
                     pii=False,
                 ),
                 ColumnMetadata(
-                    name="channel",
+                    column_name="channel",
                     datatype="string",
                     nullable_ratio=0.0,
                     distinct_ratio=0.15,
@@ -357,9 +449,9 @@ def _customer_intelligence_datasets() -> list[Dataset]:
             ],
             distributions=[
                 DatasetDistribution(
-                    id="dist-marketing-campaign",
-                    format="rest.json",
-                    endpoint="https://api.example.internal/marketing/campaigns",
+                    distribution_id="dist-marketing-campaign",
+                    distribution_format="rest.json",
+                    distribution_endpoint="https://api.example.internal/marketing/campaigns",
                 )
             ],
             mappings=[
@@ -392,13 +484,13 @@ def buyer_demo_dataset_summaries(domain_id: str = "customer_intelligence") -> li
             source_type = "file_lake"
         summaries.append(
             BuyerDemoDatasetSummary(
-                id=dataset.id,
-                title=dataset.title,
-                domain=dataset.domain,
+                dataset_id=dataset.id,
+                dataset_title=dataset.title,
+                dataset_domain=dataset.domain,
                 source_type=source_type,
                 source_system=dataset.source_system,
-                sensitivity=dataset.sensitivity,
-                steward=dataset.steward,
+                dataset_sensitivity=dataset.sensitivity,
+                dataset_steward=dataset.steward,
                 acceptance_role="priority_dataset",
             )
         )
@@ -406,14 +498,14 @@ def buyer_demo_dataset_summaries(domain_id: str = "customer_intelligence") -> li
 
 
 def buyer_demo_context_for_dataset(dataset_id: str) -> dict[str, Any] | None:
-    for domain in buyer_demo_domains():
-        if dataset_id not in domain.dataset_ids:
+    for demo_domain in buyer_demo_domains():
+        if dataset_id not in demo_domain.dataset_ids:
             continue
         return {
-            "domain_id": domain.id,
-            "domain_label": domain.label,
-            "analyst_questions": domain.analyst_questions,
-            "governance_questions": domain.governance_questions,
-            "acceptance_questions": domain.acceptance_questions,
+            "domain_id": demo_domain.demo_domain_id,
+            "domain_label": demo_domain.demo_domain_label,
+            "analyst_questions": demo_domain.analyst_questions,
+            "governance_questions": demo_domain.governance_questions,
+            "acceptance_questions": demo_domain.acceptance_questions,
         }
     return None

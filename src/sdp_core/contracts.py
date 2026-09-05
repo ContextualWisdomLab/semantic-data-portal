@@ -4,22 +4,121 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    HttpUrl,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+)
 
 
 class ColumnMetadata(BaseModel):
-    name: str
+    """Column contract with a semantic internal name and legacy wire alias."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    column_name: str = Field(alias="name")
     datatype: str
     nullable_ratio: float = Field(ge=0, le=1)
     distinct_ratio: float = Field(ge=0, le=1)
     quality_issues: list[str] = Field(default_factory=list)
     pii: bool = False
 
+    @model_serializer(mode="wrap")
+    def serialize_wire_contract(
+        self,
+        serializer: SerializerFunctionWrapHandler,
+    ) -> dict[str, Any]:
+        """Serialize the established catalog ``name`` key at the wire boundary."""
+
+        serialized_column = serializer(self)
+        if "column_name" in serialized_column:
+            serialized_column["name"] = serialized_column.pop("column_name")
+        return serialized_column
+
+    @property
+    def name(self) -> str:
+        """Return the legacy column-name compatibility attribute."""
+
+        return self.column_name
+
+    @name.setter
+    def name(self, legacy_column_name: str) -> None:
+        self.column_name = legacy_column_name
+
 
 class DatasetDistribution(BaseModel):
-    id: str
-    format: str
-    endpoint: HttpUrl
+    """Dataset-distribution contract with semantic internal identifiers.
+
+    Historical ``id``/``format``/``endpoint`` names remain input/output aliases
+    for the existing HTTP/catalog wire contract. Organization-owned Python code
+    should use the qualified distribution vocabulary.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    distribution_id: str = Field(alias="id")
+    distribution_format: str = Field(alias="format")
+    distribution_endpoint: HttpUrl = Field(alias="endpoint")
+
+    @model_serializer(mode="wrap")
+    def serialize_wire_contract(
+        self,
+        serializer: SerializerFunctionWrapHandler,
+    ) -> dict[str, Any]:
+        """Serialize filtered fields with the established catalog wire vocabulary."""
+
+        serialized_distribution = serializer(self)
+        wire_field_names = {
+            "distribution_id": "id",
+            "distribution_format": "format",
+            "distribution_endpoint": "endpoint",
+        }
+        wire_payload: dict[str, Any] = {}
+        for semantic_field_name, wire_field_name in wire_field_names.items():
+            if semantic_field_name in serialized_distribution:
+                wire_payload[wire_field_name] = serialized_distribution[semantic_field_name]
+            elif wire_field_name in serialized_distribution:
+                wire_payload[wire_field_name] = serialized_distribution[wire_field_name]
+        return wire_payload
+
+    @property
+    def id(self) -> str:  # noqa: A003 - legacy external compatibility attribute
+        """Return the legacy distribution identifier compatibility attribute."""
+
+        return self.distribution_id
+
+    @id.setter
+    def id(  # noqa: A003 - legacy external compatibility attribute
+        self,
+        legacy_distribution_id: str,
+    ) -> None:
+        self.distribution_id = legacy_distribution_id
+
+    @property
+    def format(self) -> str:  # noqa: A003 - legacy external compatibility attribute
+        """Return the legacy distribution-format compatibility attribute."""
+
+        return self.distribution_format
+
+    @format.setter
+    def format(  # noqa: A003 - legacy external compatibility attribute
+        self,
+        legacy_distribution_format: str,
+    ) -> None:
+        self.distribution_format = legacy_distribution_format
+
+    @property
+    def endpoint(self) -> HttpUrl:
+        """Return the legacy distribution-endpoint compatibility attribute."""
+
+        return self.distribution_endpoint
+
+    @endpoint.setter
+    def endpoint(self, legacy_distribution_endpoint: HttpUrl) -> None:
+        self.distribution_endpoint = legacy_distribution_endpoint
 
 
 class MappingStatus:
@@ -29,11 +128,55 @@ class MappingStatus:
 
 
 class BusinessMapping(BaseModel):
-    concept: str
-    status: str = MappingStatus.PROPOSED
-    source: str | None = None
-    steward: str | None = None
+    """Business-concept mapping with semantic internal names and stable wire keys."""
+
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+
+    business_concept: str = Field(alias="concept")
+    mapping_status: str = Field(default=MappingStatus.PROPOSED, alias="status")
+    mapping_source: str | None = Field(default=None, alias="source")
+    mapping_steward: str | None = Field(default=None, alias="steward")
     approved_at: datetime | None = None
+
+    @property
+    def concept(self) -> str:
+        """Return the legacy business-concept compatibility attribute."""
+
+        return self.business_concept
+
+    @concept.setter
+    def concept(self, legacy_business_concept: str) -> None:
+        self.business_concept = legacy_business_concept
+
+    @property
+    def status(self) -> str:
+        """Return the legacy mapping-status compatibility attribute."""
+
+        return self.mapping_status
+
+    @status.setter
+    def status(self, legacy_mapping_status: str) -> None:
+        self.mapping_status = legacy_mapping_status
+
+    @property
+    def source(self) -> str | None:
+        """Return the legacy mapping-source compatibility attribute."""
+
+        return self.mapping_source
+
+    @source.setter
+    def source(self, legacy_mapping_source: str | None) -> None:
+        self.mapping_source = legacy_mapping_source
+
+    @property
+    def steward(self) -> str | None:
+        """Return the legacy mapping-steward compatibility attribute."""
+
+        return self.mapping_steward
+
+    @steward.setter
+    def steward(self, legacy_mapping_steward: str | None) -> None:
+        self.mapping_steward = legacy_mapping_steward
 
 
 class DatasetProfile(BaseModel):
@@ -192,16 +335,50 @@ class QueryExecutionRequest(BaseModel):
 
 
 class QueryExecutionResponse(BaseModel):
+    """Governed query result with semantic internal names and stable wire keys."""
+
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+
     request_id: str
     dataset_id: str
     query_id: str
     policy_decision_id: str
-    status: str
+    query_status: str = Field(alias="status")
     row_count: int
     columns: list[str]
     rows: list[dict[str, str | int | float | bool | None]]
-    execution: dict[str, Any]
-    warnings: list[str] = Field(default_factory=list)
+    execution_metadata: dict[str, Any] = Field(alias="execution")
+    query_warnings: list[str] = Field(default_factory=list, alias="warnings")
+
+    @property
+    def status(self) -> str:
+        """Return the legacy query-status compatibility attribute."""
+
+        return self.query_status
+
+    @status.setter
+    def status(self, legacy_query_status: str) -> None:
+        self.query_status = legacy_query_status
+
+    @property
+    def execution(self) -> dict[str, Any]:
+        """Return the legacy execution-metadata compatibility attribute."""
+
+        return self.execution_metadata
+
+    @execution.setter
+    def execution(self, legacy_execution_metadata: dict[str, Any]) -> None:
+        self.execution_metadata = legacy_execution_metadata
+
+    @property
+    def warnings(self) -> list[str]:
+        """Return the legacy query-warning compatibility attribute."""
+
+        return self.query_warnings
+
+    @warnings.setter
+    def warnings(self, legacy_query_warnings: list[str]) -> None:
+        self.query_warnings = legacy_query_warnings
 
 
 class AuditEvent(BaseModel):
