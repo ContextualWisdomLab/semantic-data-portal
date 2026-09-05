@@ -13,6 +13,4 @@
 
 ### Fixed
 
-- Repaired the one-shot Evidence Store test-contract workflow so its ordinary successor commit can stage both the Postgres fake update and its own deletion after `git rm`; the predecessor failed because it attempted `git add -u` on an already-deleted exact workflow path.
-- Recorded the deterministic PR #89 Postgres fake drift: production SQL uses `decision_payload` / `audit_payload` while the stale test fake still matched legacy `payload` projections. The fixture is repaired without weakening the persistence contract.
-- Tracked the inherited `cryptography==49.0.0` / `CVE-2026-69247` HIGH failure as a base dependency-owner issue; canonical repair remains PR #81 upgrading to patched `50.0.0`, rather than suppressing Trivy or duplicating the dependency delta in PR #89.
+- Aligned PostgreSQL Evidence Store contract fixtures with the semantic `decision_payload` / `audit_payload` projections so migration tests validate the current persisted-schema vocabulary.
