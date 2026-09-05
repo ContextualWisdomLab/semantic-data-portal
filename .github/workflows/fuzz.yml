@@ -8,6 +8,7 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, closed]
   schedule:
     - cron: "0 3 * * *"  # nightly, longer budget
   workflow_dispatch:
@@ -16,11 +17,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: fuzz-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.repository }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   property-tests:
+    if: ${{ github.event_name != 'pull_request' || (github.event.action != 'closed' && github.event.pull_request.draft == false) }}
     name: Hypothesis property tests
     runs-on: ubuntu-latest
     steps:
@@ -39,6 +41,7 @@ jobs:
           PYTHONPATH: src
 
   atheris:
+    if: ${{ github.event_name != 'pull_request' || (github.event.action != 'closed' && github.event.pull_request.draft == false) }}
     name: Atheris coverage-guided (bounded)
     runs-on: ubuntu-latest
     steps:
