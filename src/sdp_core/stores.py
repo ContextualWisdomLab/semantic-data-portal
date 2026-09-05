@@ -24,6 +24,45 @@ _AUDIT_EVENT_COLUMN_RENAMES = (
     ("result", "audit_result"),
     ("payload", "audit_payload"),
 )
+_SQLITE_TABLE_INFO_QUERIES = {
+    "policy_decisions": 'PRAGMA table_info("policy_decisions")',
+    "audit_events": 'PRAGMA table_info("audit_events")',
+}
+_EVIDENCE_COLUMN_RENAME_SQL = {
+    ("policy_decisions", "subject", "decision_subject"): (
+        'ALTER TABLE "policy_decisions" RENAME COLUMN "subject" TO "decision_subject"'
+    ),
+    ("policy_decisions", "resource", "policy_resource"): (
+        'ALTER TABLE "policy_decisions" RENAME COLUMN "resource" TO "policy_resource"'
+    ),
+    ("policy_decisions", "action", "policy_action"): (
+        'ALTER TABLE "policy_decisions" RENAME COLUMN "action" TO "policy_action"'
+    ),
+    ("policy_decisions", "effect", "decision_effect"): (
+        'ALTER TABLE "policy_decisions" RENAME COLUMN "effect" TO "decision_effect"'
+    ),
+    ("policy_decisions", "payload", "decision_payload"): (
+        'ALTER TABLE "policy_decisions" RENAME COLUMN "payload" TO "decision_payload"'
+    ),
+    ("audit_events", "id", "audit_event_id"): (
+        'ALTER TABLE "audit_events" RENAME COLUMN "id" TO "audit_event_id"'
+    ),
+    ("audit_events", "actor", "actor_subject"): (
+        'ALTER TABLE "audit_events" RENAME COLUMN "actor" TO "actor_subject"'
+    ),
+    ("audit_events", "action", "audit_action"): (
+        'ALTER TABLE "audit_events" RENAME COLUMN "action" TO "audit_action"'
+    ),
+    ("audit_events", "resource", "audit_resource"): (
+        'ALTER TABLE "audit_events" RENAME COLUMN "resource" TO "audit_resource"'
+    ),
+    ("audit_events", "result", "audit_result"): (
+        'ALTER TABLE "audit_events" RENAME COLUMN "result" TO "audit_result"'
+    ),
+    ("audit_events", "payload", "audit_payload"): (
+        'ALTER TABLE "audit_events" RENAME COLUMN "payload" TO "audit_payload"'
+    ),
+}
 
 
 def _payload_to_dict(evidence_payload: object) -> dict[str, Any]:
@@ -42,10 +81,33 @@ def _audit_tenant_id(audit_event: AuditEvent) -> str:
     return str(audit_event.details.get("tenant_id") or audit_event.details.get("tenant") or "demo")
 
 
+def _closed_column_rename_sql(
+    table_name: str,
+    legacy_column_name: str,
+    semantic_column_name: str,
+) -> str:
+    """Return the literal DDL for an Evidence Store-owned schema rename."""
+
+    rename_key = (table_name, legacy_column_name, semantic_column_name)
+    try:
+        return _EVIDENCE_COLUMN_RENAME_SQL[rename_key]
+    except KeyError as exc:
+        raise ValueError(
+            "unsupported evidence-store column rename: "
+            f"{table_name}.{legacy_column_name}->{semantic_column_name}"
+        ) from exc
+
+
 def _sqlite_column_names(connection: sqlite3.Connection, table_name: str) -> set[str]:
+    """Read columns only for the Evidence Store's closed SQLite table set."""
+
+    try:
+        table_info_query = _SQLITE_TABLE_INFO_QUERIES[table_name]
+    except KeyError as exc:
+        raise ValueError(f"unsupported evidence-store table: {table_name}") from exc
     return {
         str(column_record[1])
-        for column_record in connection.execute(f'PRAGMA table_info("{table_name}")').fetchall()
+        for column_record in connection.execute(table_info_query).fetchall()
     }
 
 
@@ -58,6 +120,7 @@ def _migrate_sqlite_columns(
 
     current_columns = _sqlite_column_names(connection, table_name)
     for legacy_column_name, semantic_column_name in column_renames:
+        rename_sql = _closed_column_rename_sql(table_name, legacy_column_name, semantic_column_name)
         legacy_exists = legacy_column_name in current_columns
         semantic_exists = semantic_column_name in current_columns
         if legacy_exists and semantic_exists:
@@ -67,10 +130,7 @@ def _migrate_sqlite_columns(
             )
         if not legacy_exists:
             continue
-        connection.execute(
-            f'ALTER TABLE "{table_name}" RENAME COLUMN '
-            f'"{legacy_column_name}" TO "{semantic_column_name}"'
-        )
+        connection.execute(rename_sql)
         current_columns.remove(legacy_column_name)
         current_columns.add(semantic_column_name)
 
@@ -83,27 +143,27 @@ def _migrate_postgres_columns(
     """Rename legacy Postgres columns and fail closed on partial dual-schema drift."""
 
     for legacy_column_name, semantic_column_name in column_renames:
-        connection.execute(
-            f"""
-            DO $$
-            BEGIN
-                IF EXISTS (
-                    SELECT 1 FROM information_schema.columns
-                    WHERE table_name = '{table_name}' AND column_name = '{legacy_column_name}'
-                ) AND EXISTS (
-                    SELECT 1 FROM information_schema.columns
-                    WHERE table_name = '{table_name}' AND column_name = '{semantic_column_name}'
-                ) THEN
-                    RAISE EXCEPTION 'ambiguous {table_name} schema contains both {legacy_column_name} and {semantic_column_name}';
-                ELSIF EXISTS (
-                    SELECT 1 FROM information_schema.columns
-                    WHERE table_name = '{table_name}' AND column_name = '{legacy_column_name}'
-                ) THEN
-                    ALTER TABLE {table_name} RENAME COLUMN {legacy_column_name} TO {semantic_column_name};
-                END IF;
-            END $$;
+        rename_sql = _closed_column_rename_sql(table_name, legacy_column_name, semantic_column_name)
+        column_rows = connection.execute(
             """
-        )
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name = %s
+              AND column_name IN (%s, %s)
+            """,
+            (table_name, legacy_column_name, semantic_column_name),
+        ).fetchall()
+        current_columns = {str(column_row[0]) for column_row in column_rows}
+        legacy_exists = legacy_column_name in current_columns
+        semantic_exists = semantic_column_name in current_columns
+        if legacy_exists and semantic_exists:
+            raise RuntimeError(
+                f"ambiguous {table_name} schema contains both "
+                f"{legacy_column_name} and {semantic_column_name}"
+            )
+        if legacy_exists:
+            connection.execute(rename_sql)
 
 
 class SQLiteEvidenceStore:
