@@ -116,7 +116,7 @@ Head SHA와 draft 여부는 2026-09-07 GitHub API 응답에서 그대로 옮겼�
 | DiskSage batch를 main에서 preview 못 함 | inventory metadata를 catalog UI에서 다룰 수 없음 | Portal adapters #59/#61 |
 | Hybrid file types | 업로드 office/binary가 file ontology에 매핑되지 않음 | Portal #28 after #37 |
 | Storybook scene/edge-case event inventory | 디자인 토큰·Figma file ID(`JjYSqr6nWxpARUjaVKhG16`)는 있으나 Storybook 장면별/Edge case별 event 정의가 미완 | Portal UI — Storybook stories 추가 |
-| `CHANGELOG.md`가 없음 | 커밋 100건·버전 `0.3.0`인데 변경 이력 문서가 저장소에 없습니다. 구매자·steward가 무엇이 언제 바뀌었는지 확인할 수단이 없습니다 | Portal docs — CVE 해소 뒤 첫 릴리즈와 함께 |
+| `CHANGELOG.md`가 main에 없음 | 커밋 100건·버전 `0.3.0`인데 main에 변경 이력 문서가 없습니다. **다만 `#88`이 Keep a Changelog 형식(`[Unreleased]` 절 포함)으로 추가하고 있으므로 PR 없는 격차가 아니라 `#88` 대기입니다.** | Portal docs — land `#88` |
 | 태그·릴리즈가 0건 | 버전 문자열만 있고 대응하는 불변 아티팩트가 없어, 어떤 커밋이 `0.3.0`인지 지목할 수 없습니다 | Portal release — CVE 해소 뒤 |
 | Public Pages landing이 main에 없음 | `docs/index.md`는 `#72`(Draft, `10096ce`)에만 있고 main에는 없습니다. `#90`은 그 delta를 `#72`로 넘기고 닫혔으므로 PR 없는 격차가 아니라 **`#72` 대기** 상태입니다. 잠재 구매자가 볼 진입점은 `#72`가 Ready·병합될 때 열립니다 | Portal docs — land `#72` |
 | Data management evidence console (#78) / persist registry (#76) | 프로필(#75) 뒤에 console·영속 API. #75는 #73 전까지 Draft | Portal after #73/#75 |
@@ -290,7 +290,20 @@ Head SHA와 draft 여부는 2026-09-07 GitHub API 응답에서 그대로 옮겼�
 
 나머지는 승인 전에 check 수리가 먼저입니다. 대부분은 cryptography single writer를 main에 올리는 것으로 `trivy-fs` 7건이 한 번에 정리됩니다.
 
-`#88`은 성격이 다릅니다 — check run이 4건(CodeQL 계열)뿐이고 `opencode-review`·`strix`·`tests` 등 필수 검사가 아예 붙지 않았습니다. 실패가 없는 것이 아니라 **검사가 실행되지 않은** 상태이므로, 승인 전에 왜 필수 워크플로가 이 PR에 attach되지 않는지 확인해야 합니다.
+### `#88`의 원인은 규명되었습니다 — 워크플로가 실행 승인을 기다립니다
+
+`#88`은 실패도 아니고 미부착도 아닙니다. 현재 head `8e281de`에서 워크플로 실행 4건이 **`action_required` 상태로 멈춰 있습니다.**
+
+| 워크플로 | head `8e281de` (현재) | head `39efbb8` (직전) |
+| --- | --- | --- |
+| Tests | `action_required`, check run 0건 | `success` |
+| fuzz | `action_required`, check run 0건 | `success` |
+| SAST Semgrep | `action_required`, check run 0건 | `success` |
+| Security Scan | `action_required`, check run 0건 | `failure` |
+
+직전 head에서는 같은 워크플로가 정상 실행됐습니다. 즉 설정이나 path filter 문제가 아닙니다(`tests.yml`은 `pull_request: branches: [main]`만 걸고 path filter가 없습니다). `action_required`는 GitHub가 **maintainer의 "Approve and run" 클릭을 기다리는** 상태입니다.
+
+따라서 `#88`에 필요한 조치는 리뷰 승인이 아니라 **워크플로 실행 승인**입니다. 검사가 돌아야 통과 여부를 알 수 있고, 그 다음에야 리뷰 승인 단계로 갑니다. 이 PR을 "검사 통과" 목록에 넣지 마십시오 — 검사는 아직 시작조차 하지 않았습니다.
 
 ## 릴리즈 준비 상태 (2026-09-07): 아직 아닙니다
 
@@ -299,14 +312,14 @@ Head SHA와 draft 여부는 2026-09-07 GitHub API 응답에서 그대로 옮겼�
 | `pyproject.toml` version | `0.3.0` |
 | git tag | 없음 (0건) |
 | GitHub release | 없음 (0건) |
-| `CHANGELOG.md` | **저장소 어디에도 없음** |
+| `CHANGELOG.md` | main에는 없음. `#88`이 추가 중(`[Unreleased]` 포함) |
 | main의 cryptography pin | **`cryptography==49.0.0`** — CVE-2026-69247 미수정 |
 
 **지금 릴리즈하면 안 되는 이유는 CVE입니다.** main(`e48aa13`)의 `requirements.txt`는 여전히 `cryptography==49.0.0`을 hash pin으로 고정하고 있습니다. 수정은 `#81`(Draft)과 `#57`(제목 불일치) 두 곳에만 있고 어느 쪽도 병합되지 않았으며, 추적 issue #101은 열려 있습니다. 알려진 미수정 취약점을 담은 pin으로 태그를 끊는 것은 구매자에게 그대로 전달되는 문제입니다. **cryptography single writer를 정해 main에 올린 뒤에 릴리즈를 논의하십시오.**
 
 부수적으로 드러난 격차 두 가지를 기록해 둡니다.
 
-- **`CHANGELOG.md`가 없습니다.** 커밋 100건, 버전 `0.3.0`을 선언하면서 변경 이력 문서가 없습니다. 구매자·steward가 무엇이 언제 바뀌었는지 저장소에서 확인할 수단이 없습니다.
+- **`CHANGELOG.md`가 main에 없습니다.** 커밋 100건, 버전 `0.3.0`을 선언하면서 main에 변경 이력 문서가 없습니다. 새로 만들지 마십시오 — `#88`이 Keep a Changelog 형식으로 이미 추가하고 있으며, 그쪽이 single writer입니다.
 - **태그·릴리즈가 한 번도 없습니다.** 버전 문자열만 있고 그 버전에 대응하는 불변 아티팩트가 없습니다. 어떤 커밋이 `0.3.0`인지 지금은 아무도 지목할 수 없습니다.
 
 두 항목 모두 CVE 해소 뒤 첫 릴리즈를 끊을 때 함께 만드는 것이 자연스럽습니다. CVE가 열려 있는 동안 태그부터 만들지 마십시오.
