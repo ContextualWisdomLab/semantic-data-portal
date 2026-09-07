@@ -72,7 +72,7 @@ Head SHA와 draft 여부는 2026-09-07 GitHub API 응답에서 그대로 옮겼�
 
 | PR | Head | 격차 | 포털 소유? | 상태 2026-09-07 |
 | --- | --- | --- | --- | --- |
-| #81 | `ce40bd8` **Draft** | cryptography 50.0.0 — CVE-2026-69247, repo-wide trivy-fs unlock | Yes (shared base) | **Draft로 내려감**(본문 `source+lock repair present`). head는 그대로. Ready 전환 전까지 unlock stack 전체가 대기. bump를 다른 PR로 복제하지 말 것. |
+| #81 | `ce40bd8` **Draft** | cryptography 50.0.0 — CVE-2026-69247, repo-wide trivy-fs unlock. 추적 issue #101 | Yes (shared base) | **Draft로 내려감**(본문 `source+lock repair present`). head는 그대로. Ready 전환 전까지 unlock stack 전체가 대기. issue #101은 열려 있으므로 CVE는 미해결 상태입니다. bump를 다른 PR로 복제하지 말 것. |
 | #51 | `558dd2f` | Outbound URL allowlist + security lock (cryptography CVE 부분은 `#81`이 선행 흡수) | Yes (security lock) | HOLD. extra-push 금지. |
 | #58 | `0ce6d1f` | Keyverse claim aliases fail-closed | Keyverse 소비, adapter는 여기 | HOLD. strix fail. extra-push 금지. |
 | #35 | `9c12f5d` | SQL comma-join allowlist bypass | Yes | HOLD. extra-push 금지. |
@@ -131,9 +131,9 @@ Head SHA와 draft 여부는 2026-09-07 GitHub API 응답에서 그대로 옮겼�
 - 카탈로그 plane에 새로운 PII masking (현행 policy-driven `apply_mask`는 PRD P0 통제로 유지; steward 원문 노출 변경만 `#80`에서).
 - 분 시각 :17의 두 번째 hourly merge loop.
 
-## ADR 번호 충돌 (repair finding, 2026-09-07)
+## ADR 번호 충돌 (repair finding, 2026-09-07) — issue #103
 
-`main`에는 `docs/adr/` 디렉터리가 아직 없습니다. 그런데 열린 PR 다섯 건이 같은 네 자리 번호를 서로 다른 주제로 각자 추가하고 있습니다.
+추적 issue는 #103입니다. `main`에는 `docs/adr/` 디렉터리가 아직 없습니다. 그런데 열린 PR 다섯 건이 같은 네 자리 번호를 서로 다른 주제로 각자 추가하고 있습니다.
 
 | 번호 | PR | 파일 | 주제 |
 | --- | --- | --- | --- |
