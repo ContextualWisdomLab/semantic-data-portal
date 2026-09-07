@@ -241,6 +241,34 @@ Head SHA와 draft 여부는 2026-09-07 GitHub API 응답에서 그대로 옮겼�
 
 **조치: 어느 쪽도 닫지 마십시오.** 단일 writer를 정하고 나머지 delta를 그 PR로 합치는 것이 규약입니다(폐기가 아니라 통합). `#93`이 상위 집합에 가까우므로 `#93`을 동시성 계약 파일의 writer로 두고 `#100`의 Draft/closed 가드를 `#93`으로 옮기는 편이 충돌 표면이 작습니다. 반대로 정하려면 `#93`의 Scorecard·ghost workflow·docs-only skip delta가 통째로 승계되어야 합니다. 어느 쪽이든 `tests/test_workflow_concurrency_contract.py`는 최종적으로 한 PR에서만 추가되어야 합니다.
 
+## 무엇이 실제로 막고 있는가 (2026-09-07 측정)
+
+열린 PR 12건을 표본으로 head SHA 기준 check run과 review를 대조했습니다. 결론은 **checks가 아니라 approval이 없다**는 것입니다.
+
+| PR | check run 총계 | 리뷰 게이트 check | review 총계 | **현재 head의 APPROVED** | mergeable_state |
+| --- | --- | --- | --- | --- | --- |
+| #51 | 60 | 7 | 28 | **0** | blocked |
+| #82 | 32 | 3 | 3 | **0** | blocked |
+| #88 | 4 | **0** | 7 | **0** | blocked |
+| #80 | 32 | 3 | 14 | **0** | blocked |
+| #73 | 32 | 3 | 28 | **0** | blocked |
+| #58 | 32 | 3 | 8 | **0** | blocked |
+| #35 | 32 | 3 | 14 | **0** | blocked |
+| #32 | 32 | 3 | 9 | **0** | blocked |
+| #64 | 32 | 3 | 2 | **0** | blocked |
+| #65 | 32 | 3 | 2 | **0** | blocked |
+| #93 | 37 | 4 | 4 | **0** | blocked |
+| #100 | 37 | 4 | 3 | **0** | blocked |
+
+핵심 두 가지입니다.
+
+1. **리뷰 워크플로는 돌고 있고 통과합니다.** `#51`·`#82`에서 `opencode-review`, `strix`, `noema-review`, `dependency-review`가 모두 `success`입니다. 즉 dispatch가 밀려서 검사가 안 도는 상황이 아닙니다. checks를 더 기다리는 것은 의미가 없습니다.
+2. **그런데 승인 리뷰가 한 건도 없습니다.** 표본 12건 전부 현재 head에 `APPROVED`가 0입니다. `#51`은 리뷰가 28건이나 쌓였는데 27건이 `COMMENTED`, 1건이 `DISMISSED`이고 승인은 없습니다.
+
+`blocked`의 원인은 검사 실패가 아니라 **승인 부재**입니다. 이는 기다려서 풀리는 종류가 아니며, 승인 주체가 현재 head에 대해 판정을 남겨야 풀립니다. 어떤 agent도 자기 PR을 승인하거나 branch protection을 우회할 수 없으므로, 이 항목은 사람 결정입니다.
+
+`#88`은 성격이 다릅니다 — check run이 4건뿐이고 리뷰 게이트 check가 아예 없습니다. 다른 PR과 달리 필수 검사가 붙지 않은 상태이므로 별도로 확인이 필요합니다.
+
 ## 릴리즈 준비 상태 (2026-09-07): 아직 아닙니다
 
 | 항목 | 상태 |
