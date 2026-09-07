@@ -243,7 +243,7 @@ Head SHA와 draft 여부는 2026-09-07 GitHub API 응답에서 그대로 옮겼�
 
 ## 무엇이 실제로 막고 있는가 (2026-09-07 측정)
 
-열린 PR 12건을 표본으로 head SHA 기준 check run과 review를 대조했습니다. 결론은 **checks가 아니라 approval이 없다**는 것입니다.
+열린 PR 16건을 표본으로 head SHA 기준 check run과 review를 전수 대조했습니다. 승인 부재는 예외가 없고, 그와 별개로 실패 중인 check가 다수 존재합니다.
 
 | PR | check run 총계 | 리뷰 게이트 check | review 총계 | **현재 head의 APPROVED** | mergeable_state |
 | --- | --- | --- | --- | --- | --- |
@@ -260,14 +260,37 @@ Head SHA와 draft 여부는 2026-09-07 GitHub API 응답에서 그대로 옮겼�
 | #93 | 37 | 4 | 4 | **0** | blocked |
 | #100 | 37 | 4 | 3 | **0** | blocked |
 
-핵심 두 가지입니다.
+표본을 16건으로 넓혀 실패 중인 check까지 전수 대조한 결과입니다.
 
-1. **리뷰 워크플로는 돌고 있고 통과합니다.** `#51`·`#82`에서 `opencode-review`, `strix`, `noema-review`, `dependency-review`가 모두 `success`입니다. 즉 dispatch가 밀려서 검사가 안 도는 상황이 아닙니다. checks를 더 기다리는 것은 의미가 없습니다.
-2. **그런데 승인 리뷰가 한 건도 없습니다.** 표본 12건 전부 현재 head에 `APPROVED`가 0입니다. `#51`은 리뷰가 28건이나 쌓였는데 27건이 `COMMENTED`, 1건이 `DISMISSED`이고 승인은 없습니다.
+| PR | check 총계 | 실패 중인 check | 현재 head APPROVED |
+| --- | --- | --- | --- |
+| #51 | 60 | — | 0 |
+| #35 | 32 | — | 0 |
+| #59 | 32 | — | 0 |
+| #88 | 4 | — (필수 검사 자체가 안 붙음) | 0 |
+| #82 | 32 | `trivy-fs` | 0 |
+| #80 | 32 | `trivy-fs` | 0 |
+| #32 | 32 | `trivy-fs` | 0 |
+| #64 | 32 | `trivy-fs` | 0 |
+| #65 | 32 | `trivy-fs` | 0 |
+| #58 | 32 | `strix` | 0 |
+| #73 | 32 | `strix`, `trivy-fs` | 0 |
+| #37 | 32 | `dependency-review`, `osv-scan`, `trivy-fs` | 0 |
+| #28 | 56 | `dependency-review`, `osv-scan`, `strix`, `trivy-fs` 외 | 0 |
+| #61 | 55 | `Analyze (actions)`, `Analyze (python)` | 0 |
+| #93 | 37 | `Scorecard`, `noema-review`, `opencode-review` 외 | 0 |
+| #100 | 37 | `CodeQL compatibility analysis` 외 | 0 |
 
-`blocked`의 원인은 검사 실패가 아니라 **승인 부재**입니다. 이는 기다려서 풀리는 종류가 아니며, 승인 주체가 현재 head에 대해 판정을 남겨야 풀립니다. 어떤 agent도 자기 PR을 승인하거나 branch protection을 우회할 수 없으므로, 이 항목은 사람 결정입니다.
+두 가지 서로 다른 원인이 겹쳐 있습니다.
 
-`#88`은 성격이 다릅니다 — check run이 4건뿐이고 리뷰 게이트 check가 아예 없습니다. 다른 PR과 달리 필수 검사가 붙지 않은 상태이므로 별도로 확인이 필요합니다.
+1. **승인 부재는 예외 없이 전부에 해당합니다 — 16/16이 현재 head에 `APPROVED` 0건입니다.** `#51`은 리뷰가 28건 쌓였는데 27건이 `COMMENTED`, 1건이 `DISMISSED`이고 승인은 없습니다. 승인은 기다린다고 생기지 않으며, 어떤 agent도 승인하거나 branch protection을 우회할 수 없으므로 이 축은 사람 결정입니다.
+2. **실패 중인 check는 16건 중 12건에 있습니다.** 최다는 `trivy-fs`(7건)이며, 이는 main의 `cryptography==49.0.0` 상속 그대로입니다. 즉 이 문서가 줄곧 말해 온 "`#81`이 올라가면 상속이 풀린다"는 예측이 실측으로 확인됩니다.
+
+**승인만 있으면 바로 풀리는 PR은 `#51`, `#35`, `#59` 세 건입니다.** 실패 중인 check가 하나도 없고 오직 승인만 없습니다. 우선순위를 하나만 고른다면 이 세 건입니다 — 다른 어떤 수리도 필요 없고 판정만 남기면 됩니다.
+
+나머지는 승인 전에 check 수리가 먼저입니다. 대부분은 cryptography single writer를 main에 올리는 것으로 `trivy-fs` 7건이 한 번에 정리됩니다.
+
+`#88`은 성격이 다릅니다 — check run이 4건(CodeQL 계열)뿐이고 `opencode-review`·`strix`·`tests` 등 필수 검사가 아예 붙지 않았습니다. 실패가 없는 것이 아니라 **검사가 실행되지 않은** 상태이므로, 승인 전에 왜 필수 워크플로가 이 PR에 attach되지 않는지 확인해야 합니다.
 
 ## 릴리즈 준비 상태 (2026-09-07): 아직 아닙니다
 
