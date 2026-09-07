@@ -58,13 +58,13 @@ Council of Europe. (2020). *Common European Framework of Reference for Languages
 8. PR `#64` product names after `#51`, then PR `#65` setuptools, then Dependabot.
 9. PR `#82` `a797e30` — customer-next-action copy. `#81` 뒤, Dependabot 앞.
 10. PR `#88` `8e281de` — Measurement Context Registry. `#81`/`#51`/`#58`/`#73` 뒤. 점수·응답·판정 소유 없음.
-11. ~~PR `#90` `c75c937` — public Pages landing source~~ — **2026-09-07 기준 병합 없이 closed.** `docs/index.md` public Pages landing은 다시 열린 격차이며 아래 operator-facing 표에 올렸습니다. 되살리려면 reopen 또는 delta를 온전히 승계하는 successor PR로 잇고, 새 사본을 만들지 마십시오.
+11. ~~PR `#90` — public Pages landing source~~ — **2026-09-02에 병합 없이 closed(정상 승계).** `docs/index.md`는 `#72` `10096ce`가 담고 있으므로 landing은 `#72` 순서를 따릅니다. `#72`는 현재 Draft이며, Ready·병합 시 landing이 main에 올라갑니다. Pages-source PR을 새로 만들지 마십시오.
 12. PR `#89` `3b59d90` Draft — DatasetDistribution 식별자 의미화 (`distribution_id` / `distribution_format` / `distribution_endpoint`); 와이어 계약 `{id, format, endpoint}` 유지. `#81`/`#51`/`#58`/`#73`보다 앞세우지 말 것. checks가 초록이 될 때까지 Draft 유지. (head가 `0a06e20`에서 `3b59d90`으로 이동했습니다.)
 13. PR `#92` `51fb384` Draft — evidence store의 영속 식별자 의미화. `#89`와 같은 명명 규약(두 단어 이상 snake_case) 작업이며, evidence 스키마를 건드리므로 `#73` 뒤에 둡니다. Draft 유지.
 14. PR `#93` `1dcca7b` / PR `#100` `5bba1e6` — Actions 검증 워크플로 정리. **두 PR이 서로 겹칩니다(아래 CI 거버넌스 절 참조).** 겹침을 정리하기 전에는 어느 쪽도 병합하지 마십시오.
 15. PR `#96` `baa536b` → `#97` `dff4668` / `#99` `c3f0162` (모두 Draft) — OpenMetadata 2.x read-only 정규화 경계와 admission receipt. `#97`과 `#99`는 둘 다 `#96`의 브랜치(`feat/openmetadata-2-read-adapter`)를 base로 하는 stacked PR입니다. `#96`이 먼저이고, `#99`는 `#97`의 보안 경계 repair successor로 보입니다 — 둘 중 하나를 닫기 전에 delta 승계를 확인하십시오. consume-only 경계(외부 catalog는 read-only)를 넘지 마십시오.
 
-PR `#51` security-lock 파일을 catalog/docs PR에 섞지 마십시오. 이 문서 PR(`#79`)도 보안 unlock stack 뒤에서 squash하십시오. `#80`은 `#51` security-lock과 별개이며 squash는 현재 SHA OpenCode APPROVE 뒤에만 합니다. `#90`도 `#81` 뒤에서 squash하십시오.
+PR `#51` security-lock 파일을 catalog/docs PR에 섞지 마십시오. 이 문서 PR(`#79`)도 보안 unlock stack 뒤에서 squash하십시오. `#80`은 `#51` security-lock과 별개이며 squash는 현재 SHA OpenCode APPROVE 뒤에만 합니다. (`#90`은 closed되어 이 순서에서 빠졌고, 그 landing delta는 `#72`가 잇습니다.)
 
 ## 열린 PR과 각 PR이 닫는 격차
 
@@ -87,7 +87,7 @@ Head SHA와 draft 여부는 2026-09-07 GitHub API 응답에서 그대로 옮겼�
 | #37 | `00ee8af` | Trusted document semantic deps | Yes (build) | Open. |
 | #64 | `4b78611` | Current CWL product names | Yes (docs) | After #51. |
 | #65 | `19603c3` | setuptools 83 | Yes (build) | After unlock. |
-| #72 | `10096ce` Draft | Operator README / draft ADRs | Yes (docs) | Draft. head가 `e1fe375`에서 이동했습니다. |
+| #72 | `10096ce` Draft | Operator README / draft ADRs **+ public Pages landing `docs/index.md`** (`#90`에서 승계) | Yes (docs) | Draft. head가 `e1fe375`에서 이동했습니다. 이제 landing의 single writer이므로 `#90`을 되살리거나 Pages-source를 복제하지 마십시오. |
 | #79 | `21bcc86` | 이 기준선 문서 | Yes (docs) | 보안 unlock stack 뒤에 squash. main에는 아직 없음. |
 | #89 | `3b59d90` Draft | DatasetDistribution 식별자 의미화; 와이어 `{id, format, endpoint}` 유지 | Yes (catalog naming) | Draft. `#81`/`#73` 뒤. Ready 전환 금지 until checks green. extra-push 금지. |
 | #92 | `51fb384` Draft | evidence 영속 식별자 의미화(두 단어 이상 snake_case) | Yes (evidence naming) | Draft. `#89`와 같은 명명 lane, evidence 스키마를 건드리므로 `#73` 뒤. |
@@ -103,7 +103,7 @@ Head SHA와 draft 여부는 2026-09-07 GitHub API 응답에서 그대로 옮겼�
 
 | PR | 결과 | 조치 |
 | --- | --- | --- |
-| #90 `c75c937` | 병합 없이 closed | public Pages landing(`docs/index.md`) 격차가 다시 열렸습니다. 아래 operator-facing 표 참조. reopen 또는 delta 완전 승계 successor로만 복구하십시오. |
+| #90 `3a23f87` | 병합 없이 closed (2026-09-02) | **정상 승계이며 복구 대상이 아닙니다.** PR 본문에 따르면 이 lane의 publication·license 경계 값이 `#72`의 `10096ce`로 흡수되었고, `#72`가 이미 더 강한 `docs/index.md`(48줄 신규)를 담고 있습니다. `#72` 파일 목록에서 확인했습니다. 별도 Pages-source PR을 다시 만들지 마십시오 — landing의 single writer는 `#72`입니다. |
 | #94 | 병합 없이 closed | `#93`이 docs-only fuzz skip delta를 본문에서 명시적으로 흡수했습니다("Supersede #94"). 정상적인 승계 후 종료이며 복구 대상이 아닙니다. |
 
 ## 아직 PR이 없는 operator-facing 격차
@@ -115,7 +115,7 @@ Head SHA와 draft 여부는 2026-09-07 GitHub API 응답에서 그대로 옮겼�
 | DiskSage batch를 main에서 preview 못 함 | inventory metadata를 catalog UI에서 다룰 수 없음 | Portal adapters #59/#61 |
 | Hybrid file types | 업로드 office/binary가 file ontology에 매핑되지 않음 | Portal #28 after #37 |
 | Storybook scene/edge-case event inventory | 디자인 토큰·Figma file ID(`JjYSqr6nWxpARUjaVKhG16`)는 있으나 Storybook 장면별/Edge case별 event 정의가 미완 | Portal UI — Storybook stories 추가 |
-| Public Pages landing source 없음 | `#90`이 병합 없이 closed되어 `docs/index.md` landing이 main에 없습니다. 잠재 구매자가 저장소 밖에서 볼 수 있는 제품 소개 진입점이 여전히 비어 있습니다 | Portal docs — `#90` reopen 또는 delta 승계 successor |
+| Public Pages landing이 main에 없음 | `docs/index.md`는 `#72`(Draft, `10096ce`)에만 있고 main에는 없습니다. `#90`은 그 delta를 `#72`로 넘기고 닫혔으므로 PR 없는 격차가 아니라 **`#72` 대기** 상태입니다. 잠재 구매자가 볼 진입점은 `#72`가 Ready·병합될 때 열립니다 | Portal docs — land `#72` |
 | Data management evidence console (#78) / persist registry (#76) | 프로필(#75) 뒤에 console·영속 API. #75는 #73 전까지 Draft | Portal after #73/#75 |
 | Governed corporate-master unique/miss/tie (#84) | ADR 0002 / `sdp.corporate-master-resolution/v1`은 #73 보드(스택 #83 merged). 실행 엔드포인트는 #73가 main에 온 뒤. extra-push 금지 | Portal after #73 |
 | CEFR framework / descriptor / language-profile registry (#86, #87) | 공식 descriptor 정보·권리 메타데이터가 카탈로그에 없음. `cwl_cefr_language_assessment/v1` 구현은 LIC PR #5가 머지되고 계약이 릴리스된 뒤에만 | Portal after released contract; no scoring |
