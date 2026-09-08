@@ -290,6 +290,34 @@ Head SHA와 draft 여부는 2026-09-07 GitHub API 응답에서 그대로 옮겼�
 
 나머지는 승인 전에 check 수리가 먼저입니다. 대부분은 cryptography single writer를 main에 올리는 것으로 `trivy-fs` 7건이 한 번에 정리됩니다.
 
+### 승인은 "오지 않는" 것이 아니라 2026-08-13에 멈췄습니다
+
+병합된 PR의 리뷰 이력을 보면 승인 기구는 정상 작동한 적이 있습니다. `opencode-agent[bot]`이 2026-07-11부터 2026-08-13까지 승인을 냈고(병합된 PR 10건에 18건), 그 뒤로 **어떤 PR에도 `APPROVED`가 붙지 않았습니다.**
+
+| 기간 | `opencode-agent`의 `APPROVED` |
+| --- | --- |
+| 2026-07-11 ~ 2026-08-13 | 18건 (병합 PR 10건) |
+| 2026-08-13 이후 현재까지 | **0건** |
+
+리뷰 자체가 끊긴 것은 아닙니다. 열린 PR 36건 중 20건에 `opencode-agent` 리뷰가 있고, 최신 판정은 대부분 `CHANGES_REQUESTED`(일부 `DISMISSED`)이며 2026-08-24까지 이어집니다. 즉 **리뷰어는 계속 판정하되 8-13 이후로는 승인을 내지 않는 상태**입니다. 이것이 대기로 풀리지 않는 이유입니다.
+
+### 그래서 PR마다 필요한 조치가 다릅니다
+
+`CHANGES_REQUESTED`가 현재 head에 붙어 있으면 승인이 아니라 **요청된 수정**이 먼저입니다. 반면 판정이 과거 head에 남은 stale 상태면 성격이 다릅니다.
+
+| PR | 최신 `opencode` 판정 | 현재 head 기준 | 실패 check | 필요한 것 |
+| --- | --- | --- | --- | --- |
+| #51 | `DISMISSED` | stale (`9e06c45`) | 없음 | 승인만 |
+| #59 | 리뷰 이력 없음 | — | 없음 | 승인만 |
+| #35 | `CHANGES_REQUESTED` | stale (`4c12f25`) | 없음 | dismiss-stale 설정에 따라 다름 |
+| #32 | `CHANGES_REQUESTED` | **현재 head** | `trivy-fs` | 수정 후 재판정 |
+| #27 | `CHANGES_REQUESTED` | **현재 head** | `trivy-fs` | 수정 후 재판정 |
+| #64 | `CHANGES_REQUESTED` | **현재 head** | `trivy-fs` | 수정 후 재판정 |
+| #58 | `DISMISSED` | 현재 head | `strix` | check 수리 먼저 |
+| #73 | `CHANGES_REQUESTED` | stale (`bfa409f`) | `strix`, `trivy-fs` | check 수리 먼저 |
+
+`#35`의 stale `CHANGES_REQUESTED`가 병합을 막는지 여부는 branch protection의 stale review dismissal 설정에 달려 있는데, 이 설정은 현재 토큰 권한으로 읽을 수 없습니다(`Resource not accessible by integration`). 설정을 볼 수 있는 사람이 확인해야 합니다.
+
 ### `#88`의 원인은 규명되었습니다 — 워크플로가 실행 승인을 기다립니다
 
 `#88`은 실패도 아니고 미부착도 아닙니다. 현재 head `8e281de`에서 워크플로 실행 4건이 **`action_required` 상태로 멈춰 있습니다.**
