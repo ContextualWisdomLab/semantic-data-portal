@@ -383,6 +383,19 @@ Scheduled review-feedback autofix for this PR head.
 
 포털에서 고칠 것은 없습니다. 다만 이 노이즈가 `updated_at`을 매일 올리므로, **`#27`의 갱신 시각을 실제 진전으로 읽지 마십시오.**
 
+**그리고 autofix는 애초에 `#27`을 고칠 수 없습니다.** `#27`의 리뷰를 전수 확인하면 3건이고 전부 `opencode-agent[bot]`입니다. 현재 head `8aad3b4`에 붙은 최신 판정(review `4935228502`, 2026-08-14)이 지목하는 실패는 다음 하나입니다.
+
+```text
+Failed checks:
+- Security Scan/trivy-fs: FAILURE
+```
+
+즉 `#27`의 blocker는 **리뷰 피드백이 아니라 상속된 CVE-2026-69247**입니다. autofix는 리뷰 피드백을 반영하는 흐름이므로 고칠 대상이 존재하지 않습니다. `#27`은 다른 PR과 같은 뿌리에서 막혀 있고, CVE가 main에 올라오면 함께 풀립니다. 매일의 dispatch는 그 사실을 바꾸지 않습니다.
+
+(참고로 `#27`의 옛 head `a45ab73`에서는 실패가 `Semgrep (multi-language SAST)`였습니다. 즉 이 PR은 blocker가 한 번 바뀌었고, 지금 것은 CVE입니다.)
+
+리뷰어 구성에도 비대칭이 있습니다 — bot이 작성한 PR은 CodeRabbit이 건너뜁니다(`#102`에 `Review skipped / Bot user detected`가 그대로 게시되었습니다). 그래서 `#27` 같은 Dependabot PR과 `#102`의 리뷰어 집합은 `opencode-agent` 중심으로 좁습니다. 위 census 표의 `review 총계`를 PR 간에 그대로 비교하지 마십시오 — 작성자 종류에 따라 리뷰어 수가 구조적으로 다릅니다.
+
 ## 무엇이 실제로 막고 있는가 (2026-09-07 측정)
 
 열린 PR 16건을 표본으로 head SHA 기준 check run과 review를 전수 대조했습니다. 승인 부재는 예외가 없고, 그와 별개로 실패 중인 check가 다수 존재합니다.
