@@ -150,7 +150,7 @@ def test_select_jwk_guard_branches():
 
 
 def test_verify_oidc_jwks_token_config_and_alg_guards(monkeypatch):
-    monkeypatch.setattr(authz, "get_app_config", lambda: _configuration())
+    monkeypatch.setattr(authz, "get_app_config", _configuration)
     with pytest.raises(ValueError):  # missing issuer
         authz.verify_oidc_jwks_token("t", jwks={"keys": []})
     with pytest.raises(ValueError):  # missing audience
