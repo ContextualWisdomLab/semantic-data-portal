@@ -180,6 +180,29 @@ Head SHA와 draft 여부는 2026-09-07 GitHub API 응답에서 그대로 옮겼�
 | Governed corporate-master unique/miss/tie (#84) | ADR 0002 / `sdp.corporate-master-resolution/v1`은 #73 보드(스택 #83 merged). 실행 엔드포인트는 #73가 main에 온 뒤. extra-push 금지 | Portal after #73 |
 | CEFR framework / descriptor / language-profile registry (#86, #87) | 공식 descriptor 정보·권리 메타데이터가 카탈로그에 없음. `cwl_cefr_language_assessment/v1` 구현은 LIC PR #5가 머지되고 계약이 릴리스된 뒤에만 | Portal after released contract; no scoring |
 
+## 자칭 신원은 `preview` 한 곳이 아니라 네 경로입니다 (2026-09-09 확인)
+
+이 문서는 caller-supplied `user` 격차를 `/browse/{dataset_id}/preview` 한 곳으로만 적어 두었습니다(위 경계 절과 격차 표). `main` `e48aa13`에서 같은 패턴을 쓰는 경로를 전수 확인한 결과 **네 개**입니다.
+
+| 경로 | 신원이 오는 곳 | 기본값 |
+| --- | --- | --- |
+| `GET /browse/{dataset_id}/schema` | **query string** (`user=`) | `anonymous` (조용히) |
+| `POST /browse/{dataset_id}/preview` | body | 없음 — 누락 시 400 |
+| `POST /browse/query` | body (`QueryExecutionRequest.user`) | `anonymous` |
+| `POST /api/v1/browse/query` | 위 함수로 위임 | `anonymous` |
+
+`src/sdp/api.py`에는 `Header`도 `Authorization` 참조도 없습니다. `authz.verify_oidc_jwks_token`과 `resolve_oidc_actor_context`는 실재하지만 호출되는 곳은 OIDC 진단·preview 엔드포인트 네 줄(`:228`, `:237`, `:256`, `:273`)뿐이고, 데이터 경로에는 결선돼 있지 않습니다.
+
+세 가지가 이 표에서 새로 드러납니다.
+
+1. **`schema`가 `preview`보다 노출이 큽니다.** `preview`는 `user` 누락을 400으로 막지만 `schema`는 조용히 `anonymous`로 떨어집니다. 게다가 GET이라 자칭 신원이 URL에 실려 로그·리퍼러·캐시에 남습니다.
+2. **`/api/v1/browse/query`도 같은 격차를 가집니다.** 버전이 붙은 공개 표면이므로 외부 구매자가 실제로 통합하는 경로입니다.
+3. **`preview`만 고치면 나머지 셋이 남습니다.** 이 문서를 근거로 하드닝하는 사람이 정확히 그렇게 하기 쉬운 상태였습니다.
+
+`#80`과의 관계를 분명히 해 둡니다. `#80`은 인가된 steward에게 원문 값을 보여주는 변경입니다. 신원이 자칭인 동안에는 "인가된 steward"가 `"user": "steward_..."`라고 적는 누구나가 됩니다. **`#80`은 잘못된 PR이 아니라 선행 조건이 있는 PR입니다** — browse 경로에 검증된 토큰 기반 신원이 결선된 뒤에 안전합니다. 순서를 바꾸지 마십시오.
+
+여기서 고치지 않습니다. browse 경로의 writer는 `#80`이고 신원 결선은 `#58`(Keyverse) 뒤의 교차 관심사입니다.
+
 ## 명시적 비격차 (여기서 만들지 말 것)
 
 - naruon document-KG write path, LineageWeave weekly-report write path (owner는 각각 naruon / LineageWeave; 포털은 pointer만).
