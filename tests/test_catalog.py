@@ -83,7 +83,7 @@ def test_join_candidates_skips_zero_overlap() -> None:
             "id": "no-overlap",
             "status": "published",
             "terms": ["완전무관용어"],
-            "schema": [],
+            "dataset_schema": [],
         }
     )
     candidates = catalog.get_join_candidates(_CRM)
@@ -187,6 +187,17 @@ def test_schema_history_missing_raises() -> None:
         catalog.get_dataset_schema_history("nohist-ds")
 
 
+def test_metadata_validation_rejects_an_empty_dataset_schema() -> None:
+    """Publishing metadata cannot mistake Pydantic's schema method for columns."""
+
+    dataset = catalog._DATA[_CRM].model_copy(update={"dataset_schema": []})
+
+    result = catalog.validate_metadata(dataset)
+
+    assert "schema" in result["missing"]
+    assert result["is_valid"] is False
+
+
 def test_schema_diff_version_not_found() -> None:
     """A schema diff for versions absent from history raises ValueError (lines 309-310)."""
     with pytest.raises(ValueError):
@@ -254,7 +265,7 @@ def test_patch_dataset_schema_bumps_schema_version() -> None:
         ),
     )
     assert updated.schema_version == catalog._bump_version(before)
-    assert [column.name for column in updated.schema] == ["new_col"]
+    assert [column.name for column in updated.dataset_schema] == ["new_col"]
 
 
 # --- publish_dataset idempotent no-op (lines 471-480) --------------------

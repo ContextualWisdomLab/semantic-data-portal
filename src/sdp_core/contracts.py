@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
 
 class ColumnMetadata(BaseModel):
@@ -44,6 +44,8 @@ class DatasetProfile(BaseModel):
 
 
 class Dataset(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+
     id: str
     tenant_id: str = "demo"
     title: str
@@ -60,7 +62,7 @@ class Dataset(BaseModel):
     terms: list[str] = Field(default_factory=list)
     license: str = "internal"
     related_datasets: list[str] = Field(default_factory=list)
-    schema: list[ColumnMetadata] = Field(default_factory=list)
+    dataset_schema: list[ColumnMetadata] = Field(default_factory=list, alias="schema")
     distributions: list[DatasetDistribution] = Field(default_factory=list)
     mappings: list[BusinessMapping] = Field(default_factory=list)
     lineage_inputs: list[str] = Field(default_factory=list)
@@ -102,7 +104,7 @@ class Dataset(BaseModel):
             self.license,
             self.tags,
             self.terms,
-            bool(self.schema),
+            bool(self.dataset_schema),
             bool(self.distributions),
             bool(self.lineage_inputs),
             bool(self.profile),
@@ -133,7 +135,7 @@ class Dataset(BaseModel):
             scored += 1
         if self.tags:
             scored += 1
-        if self.schema:
+        if self.dataset_schema:
             scored += 1
         if self.distributions:
             scored += 1
@@ -217,6 +219,8 @@ class AuditEvent(BaseModel):
 
 
 class DatasetCreateRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+
     id: Optional[str] = None
     tenant_id: str = "demo"
     title: str
@@ -232,13 +236,15 @@ class DatasetCreateRequest(BaseModel):
     tags: list[str] = Field(default_factory=list)
     terms: list[str] = Field(default_factory=list)
     related_datasets: list[str] = Field(default_factory=list)
-    schema: list[ColumnMetadata] = Field(default_factory=list)
+    dataset_schema: list[ColumnMetadata] = Field(default_factory=list, alias="schema")
     distributions: list[DatasetDistribution] = Field(default_factory=list)
     mappings: list[BusinessMapping] = Field(default_factory=list)
     profile: Dict[str, Any] = Field(default_factory=dict)
 
 
 class DatasetPatchRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+
     title: Optional[str] = None
     description: Optional[str] = None
     steward: Optional[str] = None
@@ -251,7 +257,7 @@ class DatasetPatchRequest(BaseModel):
     tags: Optional[list[str]] = None
     terms: Optional[list[str]] = None
     related_datasets: Optional[list[str]] = None
-    schema: Optional[list[ColumnMetadata]] = None
+    dataset_schema: Optional[list[ColumnMetadata]] = Field(default=None, alias="schema")
     lineage_inputs: Optional[list[str]] = None
     lineage_outputs: Optional[list[str]] = None
     mappings: Optional[list[BusinessMapping]] = None

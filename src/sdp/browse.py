@@ -77,7 +77,7 @@ def preview(dataset_id: str, user: str, purpose: str, limit: int = 100, offset: 
     return {
         "dataset_id": dataset.id,
         "policy_decision": decision.model_dump(),
-        "columns": [column.name for column in dataset.schema],
+        "columns": [column.name for column in dataset.dataset_schema],
         "rows": masked,
         "row_count": min(limit, len(masked)),
         "offset": offset,
@@ -128,7 +128,7 @@ def schema(dataset_id: str, user: str, purpose: str = "analysis") -> Dict[str, A
     return {
         "dataset_id": dataset.id,
         "policy_decision_id": decision.decision_id,
-        "schema": [column.model_dump() for column in dataset.schema],
+        "schema": [column.model_dump() for column in dataset.dataset_schema],
         "mappings": [mapping.model_dump() for mapping in dataset.mappings],
         "masked_columns": decision.obligations.get("masking", []),
         "quality": {"quality_score": dataset.quality_score, "freshness_score": dataset.freshness_score},

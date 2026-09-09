@@ -392,6 +392,15 @@ Acceptance Criteria:
 | ONT-006 | ontology term과 physical column mapping을 관리해야 한다. | P0 | mapping type, confidence, source, approval state 포함 |
 | ONT-007 | reasoner consistency check를 수동/자동 실행할 수 있어야 한다. | P1 | unsatisfiable class 0개가 release gate |
 | ONT-008 | competency question을 test case로 등록할 수 있어야 한다. | P1 | SPARQL/SHACL/reasoner/API test type 지원 |
+| ONT-009 | corporate-master entity resolution은 tenant의 governed catalog snapshot에 대해 `unique`, `miss`, `tie`를 구분해야 한다. | P1 | `unique`만 binding을 반환하고, `miss`/`tie`는 source label을 unbound로 유지하며 request/snapshot/method/evidence/result digest를 보존 |
+
+`ONT-009`의 ecosystem owner는 Semantic Data Portal이다. Keyverse의 account
+identity, TEPP의 temporal/event measurement, RankWeave의 ranking artifact, 또는
+LineageWeave의 source reconstruction은 corporate-master binding authority가
+아니다. 실행 가능한 matching method가 승인되기 전에는
+`sdp.corporate-master-resolution/v1`을 target contract로만 게시하고 resolution을
+unavailable로 반환한다. suffix 목록, 문자열 유사도 threshold, 임의 가중치,
+first-match tie break를 구현 근거로 사용할 수 없다.
 
 ### 7.3. Data Browsing Service 요구사항
 
@@ -2544,5 +2553,4 @@ A = Accountable, R = Responsible, C = Consulted, I = Informed
 가장 중요한 구현 원칙은 다음이다.
 
 > **LLM은 사용자의 자연어를 이해하고 도구 호출을 조율하는 계층으로 두고, 데이터 접근·권한·마스킹·감사·온톨로지 병합은 deterministic service와 human-in-the-loop workflow에서 처리한다.**
-
 

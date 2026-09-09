@@ -44,6 +44,20 @@ _DEFAULT_CONFIG: Dict[str, Any] = {
     #   "postgres" -- require the database backend (fail loud if unavailable).
     #   "memory"   -- always use the in-memory backend.
     "graph_backend": "auto",
+    # OIDC is application policy.  It is deliberately loaded through the
+    # versioned config_entries boundary, never from request-path environment
+    # variables.  Empty coordinates fail closed for bearer verification.
+    "oidc_issuer": None,
+    "oidc_audience": None,
+    "oidc_jwks_url": None,
+    "oidc_jwks_timeout_seconds": 2.0,
+    "oidc_group_role_map": {
+        "sdp-admins": ["admin", "data-analyst"],
+        "sdp-analysts": ["data-analyst"],
+        "sdp-platform-admins": ["platform-admin", "admin", "data-analyst"],
+        "sdp-security": ["security"],
+    },
+    "allow_unverified_subject_header": False,
 }
 
 
@@ -98,6 +112,12 @@ class AppConfig:
     semantic_search_default_limit: int = 5
     traversal_max_depth: int = 4
     graph_backend: str = "auto"
+    oidc_issuer: Optional[str] = None
+    oidc_audience: Optional[str] = None
+    oidc_jwks_url: Optional[str] = None
+    oidc_jwks_timeout_seconds: float = 2.0
+    oidc_group_role_map: Dict[str, List[str]] = field(default_factory=dict)
+    allow_unverified_subject_header: bool = False
     source: str = "defaults"
 
     @classmethod
@@ -107,6 +127,14 @@ class AppConfig:
         backend = str(merged["graph_backend"]).lower()
         if backend not in {"auto", "postgres", "memory"}:
             raise ValueError(f"invalid graph_backend: {merged['graph_backend']!r}")
+        role_map = merged["oidc_group_role_map"]
+        if not isinstance(role_map, dict):
+            raise ValueError("oidc_group_role_map must be an object")
+        if any(not isinstance(roles, list) for roles in role_map.values()):
+            raise ValueError("oidc_group_role_map values must be arrays")
+        timeout_seconds = float(merged["oidc_jwks_timeout_seconds"])
+        if timeout_seconds <= 0:
+            raise ValueError("oidc_jwks_timeout_seconds must be positive")
         return cls(
             cors_allow_origins=list(merged["cors_allow_origins"]),
             cors_allow_methods=list(merged["cors_allow_methods"]),
@@ -116,6 +144,15 @@ class AppConfig:
             semantic_search_default_limit=int(merged["semantic_search_default_limit"]),
             traversal_max_depth=int(merged["traversal_max_depth"]),
             graph_backend=backend,
+            oidc_issuer=str(merged["oidc_issuer"]) if merged["oidc_issuer"] else None,
+            oidc_audience=str(merged["oidc_audience"]) if merged["oidc_audience"] else None,
+            oidc_jwks_url=str(merged["oidc_jwks_url"]) if merged["oidc_jwks_url"] else None,
+            oidc_jwks_timeout_seconds=timeout_seconds,
+            oidc_group_role_map={
+                str(group): [str(role) for role in roles]
+                for group, roles in role_map.items()
+            },
+            allow_unverified_subject_header=bool(merged["allow_unverified_subject_header"]),
             source=source,
         )
 

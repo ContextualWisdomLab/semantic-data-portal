@@ -63,3 +63,7 @@ are cited with a link + summary, respecting copyright.
 | Graph traversal for retrieval | `POST /graph/query`, `GET /ontology/term/{t}/graph` (openCypher) |
 | Vector similarity retrieval | `embedding_vectors` (pgvector), `POST /search/semantic` |
 | Hybrid graph + vector | single Postgres instance running AGE **and** pgvector |
+
+OWL 2, RDF 1.1, and PROV-O are cited (APA 7th, link + summary only) in
+[`docs/adr/0001-ontology-catalog-plane.md`](../adr/0001-ontology-catalog-plane.md).
+CWL Researcher owns deeper doctoring; this repo does not attach those W3C PDFs.

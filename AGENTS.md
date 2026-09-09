@@ -27,17 +27,20 @@ Claude, Codex, Cursor, opencode, …). This repo is a Python / FastAPI MVP
 - **Reproduce locally correctly**: a stale local DB misses findings. Refresh the
   DB first, then scan the **merge ref** (not just the PR head), e.g.
   `trivy fs --format table .` to read the exact rule id / severity / file.
+- When a CVE is found in a hash-pinned requirements file, update its source pin
+  first, regenerate every consuming lockfile, then run `trivy fs` locally.
+  `requirements-test.in` is the source for `requirements-test.txt`; it must stay
+  aligned with `pyproject.toml` so the test workflow cannot retain a vulnerable
+  transitive pin.
 - The org `code_scanning` ruleset is intentionally **CodeQL-only** — multiple
   code-scanning tools can't converge on one PR ref. Gating is by the Security
   Scan **job result**, not the `code_scanning` rule. **Do not add tools to that
   rule.**
 
 ### Code exploration
-- There is **no `.codegraph/` index** in this repo, so use normal search
-  (grep/find/ripgrep) to locate and understand code. If a `.codegraph/` directory
-  is later added at the repo root, prefer CodeGraph
+- This repository has a `.codegraph/` index. Prefer CodeGraph
   (`codegraph explore "<query>"`, or the code-review-graph MCP tools) **before**
-  grep/find — it surfaces callers/callees/impact that text search misses.
+  broad grep/find; it surfaces callers/callees/impact that text search misses.
 
 ### Config & secrets (KV, not env)
 - **Org rule: do NOT read runtime config/secrets via `os.getenv()` / raw
@@ -48,12 +51,28 @@ Claude, Codex, Cursor, opencode, …). This repo is a Python / FastAPI MVP
 - **Reference implementation:** xtrmLLMBatchPython's pgcrypto-encrypted Postgres
   credential registry (`get_credential(name)`). Reuse that pattern (a DB-backed KV
   is fine) unless a dedicated KV is adopted.
-- **Status in this repo:** the service is an in-memory MVP that reads **no**
-  runtime secrets today — no `os.getenv`, no DB credentials, no external API keys,
-  nothing in CI. So there is no deviation to migrate; this rule is forward-looking.
-  The moment real credentials appear — e.g. wiring `/llm/*` to an actual LLM
-  provider, or `orchestrator`/`browse` to a real database — pull them from the KV
-  via `get_credential(...)`, **not** `os.getenv`.
+- **Status in this repo:** OIDC application policy now uses the database-backed
+  configuration boundary. Bootstrap transport coordinates are the only allowed
+  environment reads for reaching that boundary. When real credentials appear —
+  e.g. wiring `/llm/*` to an actual LLM provider — pull them from the KV via
+  `get_credential(...)`, **not** `os.getenv`.
+
+- **OIDC policy configuration:** issuer, audience, JWKS URL, JWKS timeout,
+  group-to-role mapping, and the demo subject-header switch are application
+  policy in versioned `config_entries`. `BootstrapSettings` may read only the
+  database transport coordinates required to reach that store. Tests should
+  use `override_app_config` at the configuration seam; do not reintroduce
+  request-path OIDC environment reads.
+
+- **Subject-header guidance:** buyer-facing identity errors must name the
+  supported Bearer-token path and the administrator-controlled demo/CI option,
+  never a retired configuration key. Regression-test the response copy so a
+  configuration migration cannot restore request-path plumbing.
+
+- **Verified role propagation:** when `policy.evaluate` receives verified
+  request roles, pass them through every action branch. Falling back to the
+  demo subject map after a verified OIDC admission can silently deny or grant
+  the wrong authority; cover a role that intentionally differs from that map.
 
 ### This repo's role in the ecosystem
 - **`semantic-data-portal`** is the higher-level ontology-driven dataset catalog /

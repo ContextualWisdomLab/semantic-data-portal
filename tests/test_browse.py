@@ -71,11 +71,11 @@ def test_preview_masks_pii_columns() -> None:
     """Any column policy obligates as masked is redacted to '***' in returned rows."""
     # Mark an email-bearing column PII so policy obligates masking for the preview rows.
     base = catalog._DATA["crm-customer-master"]
-    schema = [c.model_copy(update={"pii": (c.name == "customer_email")}) for c in base.schema]
+    schema = [c.model_copy(update={"pii": (c.name == "customer_email")}) for c in base.dataset_schema]
     assert any(c.name == "customer_email" for c in schema), (
         "fixture must include customer_email to exercise the preview masking integration"
     )
-    catalog._DATA["crm-customer-master"] = base.model_copy(update={"schema": schema})
+    catalog._DATA["crm-customer-master"] = base.model_copy(update={"dataset_schema": schema})
     result = browse.preview("crm-customer-master", user="admin", purpose="analysis", limit=2)
     assert "customer_email" in result["masking_summary"]["masked_columns"]
     assert all(row["customer_email"] == "***" for row in result["rows"])

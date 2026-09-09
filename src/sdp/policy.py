@@ -12,19 +12,38 @@ def _decision(**kwargs: object) -> PolicyDecision:
     return record_policy_decision(PolicyDecision(**kwargs))
 
 
-def _is_admin(subject: str) -> bool:
-    return has_role(subject, "admin", "platform-admin")
+def _has_any_role(subject: str, roles: list[str] | None, *required: str) -> bool:
+    """Check verified request roles when supplied, otherwise demo-map roles."""
+
+    if roles is not None:
+        return bool(set(required).intersection(roles))
+    return has_role(subject, *required)
 
 
-def _can_mutate(subject: str, action: str) -> bool:
-    return _is_admin(subject) and action.lower() in {"create", "publish", "patch", "deprecate"}
+def _is_admin(subject: str, roles: list[str] | None = None) -> bool:
+    return _has_any_role(subject, roles, "admin", "platform-admin")
 
 
-def _has_reader_role(subject: str) -> bool:
-    return has_role(subject, "data-analyst", "admin", "platform-admin", "security")
+def _can_mutate(subject: str, action: str, roles: list[str] | None = None) -> bool:
+    return _is_admin(subject, roles) and action.lower() in {"create", "publish", "patch", "deprecate"}
 
 
-def evaluate(subject: str, resource: str, action: str, purpose: str) -> PolicyDecision:
+def _has_reader_role(subject: str, roles: list[str] | None = None) -> bool:
+    return _has_any_role(
+        subject, roles, "data-analyst", "admin", "platform-admin", "security"
+    )
+
+
+def evaluate(
+    subject: str,
+    resource: str,
+    action: str,
+    purpose: str,
+    *,
+    roles: list[str] | None = None,
+) -> PolicyDecision:
+    """Evaluate policy using verified request roles or legacy demo-map roles."""
+
     action_key = action.lower()
     decision_id = str(uuid4())
     decision_base = {
@@ -35,7 +54,7 @@ def evaluate(subject: str, resource: str, action: str, purpose: str) -> PolicyDe
     }
 
     if action_key == "create":
-        if _is_admin(subject):
+        if _is_admin(subject, roles):
             return _decision(
                 **decision_base,
                 effect="allow",
@@ -50,7 +69,7 @@ def evaluate(subject: str, resource: str, action: str, purpose: str) -> PolicyDe
         )
 
     if action_key in {"search", "search_catalog", "discover"}:
-        if _has_reader_role(subject):
+        if _has_reader_role(subject, roles):
             return _decision(
                 **decision_base,
                 effect="allow",
@@ -81,7 +100,7 @@ def evaluate(subject: str, resource: str, action: str, purpose: str) -> PolicyDe
             obligations={"tenant_id": dataset.tenant_id, "actor_tenant_id": actor_context.tenant_id},
         )
 
-    if dataset.sensitivity == "critical" and not _is_admin(subject):
+    if dataset.sensitivity == "critical" and not _is_admin(subject, roles):
         return _decision(
             **decision_base,
             effect="deny",
@@ -89,7 +108,7 @@ def evaluate(subject: str, resource: str, action: str, purpose: str) -> PolicyDe
             obligations={"redact": True, "masking": True},
         )
 
-    if purpose.lower() == "external-export" and not _is_admin(subject):
+    if purpose.lower() == "external-export" and not _is_admin(subject, roles):
         return _decision(
             **decision_base,
             effect="deny",
@@ -97,7 +116,7 @@ def evaluate(subject: str, resource: str, action: str, purpose: str) -> PolicyDe
             obligations={"required_role": "data-admin"},
         )
 
-    if action_key in {"publish", "patch", "deprecate"} and not _can_mutate(subject, action_key):
+    if action_key in {"publish", "patch", "deprecate"} and not _can_mutate(subject, action_key, roles):
         return _decision(
             **decision_base,
             effect="deny",
@@ -105,7 +124,7 @@ def evaluate(subject: str, resource: str, action: str, purpose: str) -> PolicyDe
             obligations={"required_role": "admin"},
         )
 
-    if action_key in {"query", "preview", "schema", "search", "list"} and not _has_reader_role(subject):
+    if action_key in {"query", "preview", "schema", "search", "list"} and not _has_reader_role(subject, roles):
         return _decision(
             **decision_base,
             effect="deny",
@@ -119,7 +138,7 @@ def evaluate(subject: str, resource: str, action: str, purpose: str) -> PolicyDe
 
     obligations = {
         "tenant_id": dataset.tenant_id,
-        "masking": [col.name for col in dataset.schema if col.pii],
+        "masking": [col.name for col in dataset.dataset_schema if col.pii],
     }
     if row_filter:
         obligations["row_filter"] = row_filter

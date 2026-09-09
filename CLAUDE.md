@@ -41,11 +41,16 @@ docker compose --profile postgres up --build
 
 ## 의존성 변경 절차
 
-`pyproject.toml`이 원천이고, `requirements.txt` / `requirements-dev.txt`는 uv로 hash와 함께 컴파일된 산출물이다. 의존성을 바꾸면 반드시 두 파일을 재생성해야 한다 (`--require-hashes` 설치가 깨진다):
+`pyproject.toml`과 `requirements-test.in`이 원천이다. `requirements.txt` /
+`requirements-dev.txt` / `requirements-test.txt`는 uv가 hash와 함께 만든
+산출물이다. 의존성을 바꾸면 세 파일을 모두 다시 생성한다. 특히
+`requirements-test.in`은 테스트 CI가 쓰는 독립 원천이므로 `pyproject.toml`과
+같은 runtime pin을 유지해야 한다 (`--require-hashes` 설치가 깨진다):
 
 ```bash
 uv pip compile pyproject.toml --generate-hashes -o requirements.txt
 uv pip compile pyproject.toml --extra dev --generate-hashes -o requirements-dev.txt
+uv pip compile --generate-hashes --universal --python-version 3.12 requirements-test.in -o requirements-test.txt
 ```
 
 supply-chain 하드닝 유지: base image는 digest-pinned(`python:3.12-slim@sha256:...`), 컨테이너는 non-root(uid 10001), GitHub Actions는 commit SHA로 pin. Dockerfile/requirements/workflow를 수정할 때 이 속성을 되돌리지 말 것.
@@ -76,6 +81,8 @@ supply-chain 하드닝 유지: base image는 digest-pinned(`python:3.12-slim@sha
 
 요청 → `api.py` 라우트 → 데이터 접근 전 `policy.evaluate()` → decision(allow/deny + masking/row_filter obligations)과 audit event를 evidence store에 기록 → 응답에 `policy_decision_id`와 masking 결과 포함. **카탈로그 mutation(create/publish/patch/deprecate)과 browse/query 경로에 정책 평가와 evidence 기록을 생략하는 변경은 회귀다.**
 
+OIDC에서 검증된 role을 `policy.evaluate()`에 전달했다면 create/search뿐 아니라 dataset action의 모든 역할 검사까지 그대로 전파한다. 중간에 demo subject map으로 되돌아가면 검증된 권한을 잘못 해석할 수 있다.
+
 ### docker-compose 서비스 구성
 
 - `semantic-data-portal` (기본): 앱 단독, `SDP_SQLITE_PATH=/data/sdp-evidence.sqlite3` + `sdp-evidence` volume, 8000 포트, `/health` healthcheck.
@@ -90,6 +97,7 @@ supply-chain 하드닝 유지: base image는 digest-pinned(`python:3.12-slim@sha
 - **에러 매핑**: 도메인 모듈은 `KeyError`(→404), `ValueError`(→400), `PermissionError`(→403)를 raise하고, `api.py` 라우트가 `HTTPException`으로 변환한다. 도메인 계층에서 HTTPException을 직접 raise하지 않는다.
 - **테스트 격리**: `tests/test_api.py`의 autouse fixture `isolate_in_memory_app_state`가 `catalog._DATA`, `_AUDIT_LOG`, `_SCHEMA_HISTORY`, `evidence._POLICY_DECISION_LOG`, observability buffer를 snapshot/restore한다. 모듈 레벨 mutable 상태를 새로 추가하면 이 fixture에도 반영해야 테스트 간 오염이 없다.
 - **디자인 토큰**: `/enterprise/console` CSS는 임의 hex/px 리터럴 대신 `design_tokens.py`의 `var(--sdp-*)` 변수만 참조한다. 토큰 3계층(primitive/semantic/component)과 Figma 매핑 규칙은 `docs/design-tokens.md` 참조, `tests/test_design_tokens.py`가 무회귀를 강제한다.
-- **환경 변수**: 모두 `SDP_` prefix — evidence store(`SDP_DATABASE_URL`, `SDP_DATABASE_SSLMODE`, `SDP_SQLITE_PATH`), observability(`SDP_LOG_SINK_URL`, `SDP_REQUEST_ID_HEADER`, `SDP_ALERT_WEBHOOK_URL`), OIDC(`SDP_OIDC_ISSUER`, `SDP_OIDC_AUDIENCE`, `SDP_OIDC_JWKS_URL`, `SDP_OIDC_GROUP_ROLE_MAP`), connector secret(`SDP_CONNECTOR_SECRET_REF_PREFIX` 기준 `SDP_CONNECTOR_SECRET_*` env reference — 값은 presence만 검증하고 API 응답에 노출 금지).
+- **구성 경계**: bootstrap transport만 `SDP_` 환경에서 읽고, OIDC issuer/audience/JWKS URL·timeout·group-role map·데모 subject-header switch는 versioned `config_entries`에서 읽는다. 테스트는 `override_app_config` seam을 사용한다. connector credential 값은 `SDP_CONNECTOR_SECRET_REF_PREFIX` 기준 registry reference로만 다루며 API 응답에 노출하지 않는다.
+- **Subject-header 안내**: 구매자용 identity error에는 Bearer token 경로와 관리자가 제어하는 demo/CI 옵션만 안내한다. 폐기된 설정 키를 노출하지 않으며, 해당 문구가 다시 돌아오지 않도록 응답 copy를 회귀 테스트로 고정한다.
 - **문서/문자열 언어**: README·docs와 사용자 노출 메시지(정책 사유 등)는 한국어 + 영문 기술 용어 혼용이다. 기존 스타일을 유지한다.
 - 기능을 추가하면 README의 API 목록/구현 대응 표와 `docs/implementation-compliance.md`의 매트릭스를 함께 갱신한다.
