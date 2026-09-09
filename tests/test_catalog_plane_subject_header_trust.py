@@ -34,6 +34,7 @@ def test_subject_header_is_rejected_without_explicit_demo_opt_in(monkeypatch) ->
     detail = response.json()["detail"]
     assert detail["error"] == "oidc_subject_header_rejected"
     assert "Authorization: Bearer" in detail["customer_next_action"]
+    assert "SDP_ALLOW_UNVERIFIED_SUBJECT_HEADER" not in detail["customer_next_action"]
 
 
 def test_subject_header_is_accepted_with_explicit_demo_opt_in(monkeypatch) -> None:

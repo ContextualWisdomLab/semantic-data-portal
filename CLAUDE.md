@@ -93,5 +93,6 @@ OIDC에서 검증된 role을 `policy.evaluate()`에 전달했다면 create/searc
 - **테스트 격리**: `tests/test_api.py`의 autouse fixture `isolate_in_memory_app_state`가 `catalog._DATA`, `_AUDIT_LOG`, `_SCHEMA_HISTORY`, `evidence._POLICY_DECISION_LOG`, observability buffer를 snapshot/restore한다. 모듈 레벨 mutable 상태를 새로 추가하면 이 fixture에도 반영해야 테스트 간 오염이 없다.
 - **디자인 토큰**: `/enterprise/console` CSS는 임의 hex/px 리터럴 대신 `design_tokens.py`의 `var(--sdp-*)` 변수만 참조한다. 토큰 3계층(primitive/semantic/component)과 Figma 매핑 규칙은 `docs/design-tokens.md` 참조, `tests/test_design_tokens.py`가 무회귀를 강제한다.
 - **구성 경계**: bootstrap transport만 `SDP_` 환경에서 읽고, OIDC issuer/audience/JWKS URL·timeout·group-role map·데모 subject-header switch는 versioned `config_entries`에서 읽는다. 테스트는 `override_app_config` seam을 사용한다. connector credential 값은 `SDP_CONNECTOR_SECRET_REF_PREFIX` 기준 registry reference로만 다루며 API 응답에 노출하지 않는다.
+- **Subject-header 안내**: 구매자용 identity error에는 Bearer token 경로와 관리자가 제어하는 demo/CI 옵션만 안내한다. 폐기된 설정 키를 노출하지 않으며, 해당 문구가 다시 돌아오지 않도록 응답 copy를 회귀 테스트로 고정한다.
 - **문서/문자열 언어**: README·docs와 사용자 노출 메시지(정책 사유 등)는 한국어 + 영문 기술 용어 혼용이다. 기존 스타일을 유지한다.
 - 기능을 추가하면 README의 API 목록/구현 대응 표와 `docs/implementation-compliance.md`의 매트릭스를 함께 갱신한다.

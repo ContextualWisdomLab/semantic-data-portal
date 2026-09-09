@@ -16,13 +16,12 @@ import sdp.domain as app_domain
 import sdp.evidence as app_evidence
 import sdp.observability as app_observability
 import sdp_core
-from sdp.api import app
 from sdp.connectors import get_source_connector
 from sdp.demo_smoke import smoke_summary
 from sdp.policy import evaluate
 
 
-client = TestClient(app)
+client = TestClient(app_api.app)
 
 
 @pytest.fixture(autouse=True)

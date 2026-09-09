@@ -19,13 +19,11 @@ from .config import get_app_config
 TENANT_HEADER = "X-CWL-Tenant-Reference"
 SUBJECT_HEADER = "X-CWL-Oidc-Subject"
 PURPOSE_HEADER = "X-CWL-Access-Purpose"
-UNVERIFIED_SUBJECT_HEADER_ENV = "SDP_ALLOW_UNVERIFIED_SUBJECT_HEADER"
-
 _MISSING_IDENTITY_NEXT_ACTION = (
     "Send Authorization: Bearer <Keyverse access token> together with "
     f"{TENANT_HEADER} and {PURPOSE_HEADER}. Both identity values must name "
-    "the same tenant. For local demo or CI only, an operator may explicitly "
-    f"set {UNVERIFIED_SUBJECT_HEADER_ENV}=true before using {SUBJECT_HEADER}. "
+    "the same tenant. For local demo or CI only, ask the service administrator "
+    f"to enable {SUBJECT_HEADER} access. "
     "SDP will not create a tenant, IdP, or SCIM record for you."
 )
 _MISMATCH_NEXT_ACTION = (
@@ -172,8 +170,8 @@ def _actor_from_subject_header(subject: str) -> tuple[str, str, list[str]]:
             error_code="oidc_subject_header_rejected",
             customer_next_action=(
                 "Send Authorization: Bearer <Keyverse access token>. For a "
-                "local demo or CI environment only, an operator may set "
-                f"{UNVERIFIED_SUBJECT_HEADER_ENV}=true; never expose that "
+                "local demo or CI environment only, ask the service administrator "
+                f"to enable {SUBJECT_HEADER} access; never expose that "
                 "configuration on an externally reachable deployment."
             ),
         )
@@ -194,8 +192,8 @@ def bind_keyverse_tenant(headers: Mapping[str, str]) -> PlaneActor:
     Identity sources, in order:
 
     1. ``Authorization: Bearer`` — verified with the existing JWKS helper.
-    2. ``X-CWL-Oidc-Subject`` — disabled by default; available only when
-       ``SDP_ALLOW_UNVERIFIED_SUBJECT_HEADER=true`` and JWKS verification is
+    2. ``X-CWL-Oidc-Subject`` — disabled by default; available only when the
+       service enables demo/CI subject-header access and JWKS verification is
        not configured. This path is restricted to a local demo or CI.
 
     The ``X-CWL-Tenant-Reference`` header must match the OIDC tenant claim.

@@ -61,6 +61,11 @@ Claude, Codex, Cursor, opencode, …). This repo is a Python / FastAPI MVP
   use `override_app_config` at the configuration seam; do not reintroduce
   request-path OIDC environment reads.
 
+- **Subject-header guidance:** buyer-facing identity errors must name the
+  supported Bearer-token path and the administrator-controlled demo/CI option,
+  never a retired configuration key. Regression-test the response copy so a
+  configuration migration cannot restore request-path plumbing.
+
 - **Verified role propagation:** when `policy.evaluate` receives verified
   request roles, pass them through every action branch. Falling back to the
   demo subject map after a verified OIDC admission can silently deny or grant
