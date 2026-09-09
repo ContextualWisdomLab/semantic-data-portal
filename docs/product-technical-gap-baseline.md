@@ -72,7 +72,7 @@ Head SHA와 draft 여부는 2026-09-07 GitHub API 응답에서 그대로 옮겼�
 
 | PR | Head | 격차 | 포털 소유? | 상태 2026-09-07 |
 | --- | --- | --- | --- | --- |
-| #81 | `ce40bd8` **Draft** | cryptography 50.0.0 — CVE-2026-69247, repo-wide trivy-fs unlock. 추적 issue #101 | Yes (shared base) | **Draft로 내려감**(본문 `source+lock repair present`). head는 그대로. Ready 전환 전까지 unlock stack 전체가 대기. issue #101은 열려 있으므로 CVE는 미해결 상태입니다. **주의: 같은 bump가 이미 `#57`에도 들어 있습니다**(아래 `#57` 절) — 두 PR을 함께 main에 올리지 말고 single writer를 먼저 정하십시오. |
+| #81 | `ce40bd8` **Draft** | cryptography 50.0.0 — CVE-2026-69247, repo-wide trivy-fs unlock. 추적 issue #101 | Yes (shared base) | **Draft로 내려감**(본문 `source+lock repair present`). head는 그대로. issue #101은 열려 있으므로 CVE는 미해결 상태입니다. 현재 `opencode-review` 실패. **주의: 같은 bump가 `#57`(50.0.0)과 `#73`(50.0.1)에도 있습니다** — 3자 중복이며 목표 버전이 두 갈래입니다(아래 `#57` 절). |
 | #51 | `558dd2f` | Outbound URL allowlist + security lock (cryptography CVE 부분은 `#81`이 선행 흡수) | Yes (security lock) | HOLD. extra-push 금지. |
 | #58 | `0ce6d1f` | Keyverse claim aliases fail-closed | Keyverse 소비, adapter는 여기 | HOLD. strix fail. extra-push 금지. |
 | #35 | `9c12f5d` | SQL comma-join allowlist bypass | Yes | HOLD. extra-push 금지. |
@@ -200,7 +200,15 @@ Head SHA와 draft 여부는 2026-09-07 GitHub API 응답에서 그대로 옮겼�
 ### 이것이 만드는 세 가지 문제
 
 1. **분류 오류.** 이 문서도 직전 판까지 `#57`을 Dependabot 묶음에 넣고 "dependency currency, `#81` 이전 land 금지"로 적고 있었습니다. steward가 본문만 읽으면 routine bump로 오판합니다. 위 표에서 분리했습니다.
-2. **`#81`의 single-writer 위반.** `#57`은 `requirements.txt`에서 `cryptography==49.0.0` → `50.0.0`을 그대로 바꿉니다. `#81`이 존재하는 이유가 정확히 그 변경입니다. 즉 CVE-2026-69247 수정이 이미 두 PR에 복제돼 있습니다. 이 문서가 `#81` 행에 "bump를 다른 PR로 복제하지 말 것"이라고 적어 둔 상태에서 이미 복제가 존재합니다.
+2. **`#81`의 single-writer 위반 — 2026-09-09 기준 3자, 그리고 목표 버전이 서로 다릅니다.** `#57`은 `requirements.txt`에서 `cryptography==49.0.0` → `50.0.0`을 그대로 바꿉니다. `#81`이 존재하는 이유가 정확히 그 변경입니다. 여기에 `#73`이 2026-09-09에 head를 `311668e`에서 `1681a7f`로 올리면서 같은 줄을 **`50.0.1`로** 바꿨습니다.
+
+   | PR | cryptography 목표 | 상태 |
+   | --- | --- | --- |
+   | #81 `ce40bd8` | `50.0.0` | Draft |
+   | #57 `fb48fc9` | `50.0.0` | 제목 불일치, check 통과 |
+   | #73 `1681a7f` | **`50.0.1`** | non-draft, check 4건 실패 |
+
+   즉 CVE-2026-69247 수정이 세 PR에 복제돼 있고 **목표 버전이 두 갈래**입니다. 먼저 병합되는 쪽이 나머지 둘에 `requirements.txt` 충돌을 남기며, `50.0.0`이 먼저 오르면 `#73`은 곧바로 다시 bump하는 PR이 됩니다. 이 문서가 `#81` 행에 "bump를 다른 PR로 복제하지 말 것"이라고 적어 둔 상태에서 이미 복제가 셋입니다. **어느 버전을 쓸지부터 정한 뒤 writer를 하나로 좁히십시오** — 버전 선택은 owner 결정이며, 여기서는 세 갈래가 존재한다는 사실만 기록합니다.
 3. **동시성 파일 충돌은 2자가 아니라 3자입니다.** `#57`도 `fuzz.yml`의 concurrency group을 바꿉니다. 그런데 세 번째 변형이며 조직 계약을 지키지 않습니다.
 
 | PR | `fuzz.yml` group 식 | `{workflow}-{repository}-{PR번호}` 계약 |
