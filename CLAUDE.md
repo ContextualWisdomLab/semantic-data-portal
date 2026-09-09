@@ -76,6 +76,8 @@ supply-chain 하드닝 유지: base image는 digest-pinned(`python:3.12-slim@sha
 
 요청 → `api.py` 라우트 → 데이터 접근 전 `policy.evaluate()` → decision(allow/deny + masking/row_filter obligations)과 audit event를 evidence store에 기록 → 응답에 `policy_decision_id`와 masking 결과 포함. **카탈로그 mutation(create/publish/patch/deprecate)과 browse/query 경로에 정책 평가와 evidence 기록을 생략하는 변경은 회귀다.**
 
+OIDC에서 검증된 role을 `policy.evaluate()`에 전달했다면 create/search뿐 아니라 dataset action의 모든 역할 검사까지 그대로 전파한다. 중간에 demo subject map으로 되돌아가면 검증된 권한을 잘못 해석할 수 있다.
+
 ### docker-compose 서비스 구성
 
 - `semantic-data-portal` (기본): 앱 단독, `SDP_SQLITE_PATH=/data/sdp-evidence.sqlite3` + `sdp-evidence` volume, 8000 포트, `/health` healthcheck.

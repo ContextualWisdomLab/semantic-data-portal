@@ -24,8 +24,8 @@ def _is_admin(subject: str, roles: list[str] | None = None) -> bool:
     return _has_any_role(subject, roles, "admin", "platform-admin")
 
 
-def _can_mutate(subject: str, action: str) -> bool:
-    return _is_admin(subject) and action.lower() in {"create", "publish", "patch", "deprecate"}
+def _can_mutate(subject: str, action: str, roles: list[str] | None = None) -> bool:
+    return _is_admin(subject, roles) and action.lower() in {"create", "publish", "patch", "deprecate"}
 
 
 def _has_reader_role(subject: str, roles: list[str] | None = None) -> bool:
@@ -100,7 +100,7 @@ def evaluate(
             obligations={"tenant_id": dataset.tenant_id, "actor_tenant_id": actor_context.tenant_id},
         )
 
-    if dataset.sensitivity == "critical" and not _is_admin(subject):
+    if dataset.sensitivity == "critical" and not _is_admin(subject, roles):
         return _decision(
             **decision_base,
             effect="deny",
@@ -108,7 +108,7 @@ def evaluate(
             obligations={"redact": True, "masking": True},
         )
 
-    if purpose.lower() == "external-export" and not _is_admin(subject):
+    if purpose.lower() == "external-export" and not _is_admin(subject, roles):
         return _decision(
             **decision_base,
             effect="deny",
@@ -116,7 +116,7 @@ def evaluate(
             obligations={"required_role": "data-admin"},
         )
 
-    if action_key in {"publish", "patch", "deprecate"} and not _can_mutate(subject, action_key):
+    if action_key in {"publish", "patch", "deprecate"} and not _can_mutate(subject, action_key, roles):
         return _decision(
             **decision_base,
             effect="deny",
@@ -124,7 +124,7 @@ def evaluate(
             obligations={"required_role": "admin"},
         )
 
-    if action_key in {"query", "preview", "schema", "search", "list"} and not _has_reader_role(subject):
+    if action_key in {"query", "preview", "schema", "search", "list"} and not _has_reader_role(subject, roles):
         return _decision(
             **decision_base,
             effect="deny",

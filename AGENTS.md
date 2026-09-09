@@ -61,6 +61,11 @@ Claude, Codex, Cursor, opencode, …). This repo is a Python / FastAPI MVP
   use `override_app_config` at the configuration seam; do not reintroduce
   request-path OIDC environment reads.
 
+- **Verified role propagation:** when `policy.evaluate` receives verified
+  request roles, pass them through every action branch. Falling back to the
+  demo subject map after a verified OIDC admission can silently deny or grant
+  the wrong authority; cover a role that intentionally differs from that map.
+
 ### This repo's role in the ecosystem
 - **`semantic-data-portal`** is the higher-level ontology-driven dataset catalog /
   glossary / governance plane with its **OWN graph engine + persistence** (target:

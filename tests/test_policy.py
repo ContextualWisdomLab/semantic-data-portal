@@ -70,6 +70,21 @@ def test_evaluate_denies_mutation_for_non_admin() -> None:
     assert decision.obligations.get("required_role") == "admin"
 
 
+def test_evaluate_uses_verified_roles_for_every_dataset_action() -> None:
+    """Verified OIDC roles must not fall back to the legacy demo subject map."""
+
+    for action in ("query", "preview", "schema", "publish", "patch", "deprecate"):
+        roles = ["data-analyst"] if action in {"query", "preview", "schema"} else ["admin"]
+        decision = policy.evaluate(
+            subject="analyst",
+            resource="crm-customer-master",
+            action=action,
+            purpose="analysis",
+            roles=roles,
+        )
+        assert decision.effect == "allow", action
+
+
 def test_is_mutable_reflects_allow_deny() -> None:
     """`is_mutable` is True only when the underlying evaluation allows the mutation."""
     assert policy.is_mutable("admin", "create", "crm-customer-master") is True
