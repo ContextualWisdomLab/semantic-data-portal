@@ -3,7 +3,7 @@
 **제품 홈:** ContextualWisdomLab/semantic-data-portal (ontology 기반 semantic catalog).
 **독자:** catalog steward / tenant operator.
 **다음 행동:** 아래 병합 순서로 unlock stack을 올리고, 이 저장소에 local IdP나 policy registry를 만들지 마십시오.
-**기준일:** 2026-09-07 (main `e48aa13`, 변동 없음).
+**기준일:** 2026-09-09 (main `e48aa13`, 변동 없음). 2026-09-09에 리뷰 판정 증거를 전수 재검증했고, 그 결과 병합 순서 1번·3번의 승인 근거와 "승인만 있으면 풀리는 세 건" 권고를 정정했습니다 — 아래 "정정(2026-09-09)" 절을 먼저 읽으십시오.
 **Figma file ID:** `JjYSqr6nWxpARUjaVKhG16` (KRDS 기반 디자인 시스템; `docs/design-tokens.md:3`의 토큰 계약과 동일 파일). 새 Figma 파일을 만들지 말고 이 파일을 소비하십시오.
 
 이 파일은 포털의 살아있는 격차 목록입니다. 열린 PR이 병합되거나 consume-only 계약이 바뀌면 갱신하십시오. GitHub review 대기는 작업 중지로 보지 마십시오.
@@ -47,12 +47,12 @@ Council of Europe. (2020). *Common European Framework of Reference for Languages
 
 ## 병합 순서 (steward)
 
-1. PR `#81` `ce40bd8` — cryptography 49.0.0 → 50.0.0 (CVE-2026-69247 / GHSA-g6cj-pr64-35w5). trivy-fs는 merge ref를 스캔하므로 이 PR이 main에 올리면 모든 열린 PR이 상속해 풀립니다. OpenCode exact-head APPROVE 확인(comment 5469292683) 뒤에만 PM squash. 3초 `opencode-review` stub는 receipt가 아닙니다. `#51`과 섞지 마십시오.
+1. PR `#81` `ce40bd8` — cryptography 49.0.0 → 50.0.0 (CVE-2026-69247 / GHSA-g6cj-pr64-35w5). trivy-fs는 merge ref를 스캔하므로 이 PR이 main에 올리면 모든 열린 PR이 상속해 풀립니다. **정정(2026-09-09): 이 자리에 있던 “OpenCode exact-head APPROVE 확인(comment 5469292683)” 지시는 틀렸습니다.** comment 5469292683은 승인 receipt가 아니라 seonghobae가 `@opencode-agent`에게 승인을 **요청한** 코멘트입니다(2026-08-30T14:33:54Z, 본문 첫 줄 `Please APPROVE exact current head ce40bd8...`). `GET /repos/ContextualWisdomLab/semantic-data-portal/pulls/81/reviews`는 `opencode-agent[bot]`의 리뷰를 **어느 커밋에서도 0건** 반환합니다. 즉 이 PR에는 승인은 물론 `CHANGES_REQUESTED`조차 없습니다. 요청 코멘트를 승인 증거로 읽지 마십시오 — squash 조건은 여전히 미충족입니다. 3초 `opencode-review` stub는 receipt가 아닙니다. `#51`과 섞지 마십시오.
    **상태 변경(2026-09-07): 이 PR은 현재 Draft입니다.** head는 `ce40bd8` 그대로지만 본문이 `Draft / source+lock repair present`로 바뀌었습니다. 즉 unlock stack의 1번 항목이 스스로 merge 대기열에서 빠진 상태이며, repo-wide trivy-fs unlock은 이 PR이 Ready로 돌아올 때까지 열리지 않습니다. Draft를 우회하려고 다른 PR에 cryptography bump를 복제하지 마십시오 — single writer는 `#81`입니다. 조치는 `#81`의 repair를 끝내고 Ready 전환하는 것이며, 그 전까지 2번 이하 항목의 trivy-fs 상속 실패는 예상된 상태입니다.
 2. PR `#51` `558dd2f` — outbound URL harden + security lock (cryptography 부분은 `#81`이 흡수). Frozen. 이 head를 push하지 마십시오. 이 SHA에 OpenCode APPROVE가 붙은 뒤 Product Manager squash.
-3. PR `#58` `0ce6d1f` — bounded Keyverse claim aliases. Frozen (strix fail on this head). 이전 APPROVE는 `80966ae`/`47e2215c` 뒷 SHA. extra-push 금지.
+3. PR `#58` `0ce6d1f` — bounded Keyverse claim aliases. Frozen (strix fail on this head). extra-push 금지. **정정(2026-09-09): 이 줄의 “이전 APPROVE” 표현은 API 상태와 어긋납니다.** 현재 head `0ce6d1f`에 붙은 `opencode-agent[bot]` 리뷰는 존재하지만 API `state`가 `DISMISSED`입니다. 그 리뷰 **본문** 끝에 `- Result: APPROVE`와 `- Head SHA: 80966ae...`가 적혀 있어 승인처럼 보이지만, 본문이 주장하는 SHA는 그 리뷰 자신의 `commit_id`(`0ce6d1f`)와도 다릅니다. 판정은 리뷰 본문 산문이 아니라 API의 `state` + `commit_id`로만 읽으십시오.
 4. PR `#35` `9c12f5d` **그리고** PR `#32` `76fcfb6` (SQL gate). 둘 다 catalog plane SQL 표면의 전제입니다. **`#32`는 non-blocking이 아닙니다. `#73`보다 먼저** 병합하십시오. Frozen heads는 push하지 마십시오.
-5. PR `#73` `311668e` — catalog/ontology plane (#13). Frozen. trivy-fs inherit + strix fail. `#84` corporate-master 구현은 이 PR 뒤; extra-push 금지. **`#75`는 `#73`이 main에 올 때까지 Draft.**
+5. PR `#73` `1681a7f` — catalog/ontology plane (#13). Frozen. trivy-fs inherit + strix fail. `#84` corporate-master 구현은 이 PR 뒤; extra-push 금지. **`#75`는 `#73`이 main에 올 때까지 Draft.** **정정(2026-09-09): head가 `311668e` → `1681a7f`로 이동했고(같은 날 203행이 이미 기록), 이 문서의 5번·PR 표는 옛 SHA로 남아 있었습니다.** 새 head `1681a7f`에는 `opencode-agent[bot]`의 `CHANGES_REQUESTED`(review id 5152624078)가 붙어 있습니다. 즉 이 PR은 “승인 대기”가 아니라 **요청된 수정이 남은 상태**입니다.
 6. PR `#28` after PR `#37` — trusted document deps 위의 hybrid file ontology.
 7. PR `#59` / `#61` — DiskSage ingest and preview boundary.
 8. PR `#64` product names after `#51`, then PR `#65` setuptools, then Dependabot.
@@ -77,7 +77,7 @@ Head SHA와 draft 여부는 2026-09-07 GitHub API 응답에서 그대로 옮겼�
 | #58 | `0ce6d1f` | Keyverse claim aliases fail-closed | Keyverse 소비, adapter는 여기 | HOLD. strix fail. extra-push 금지. |
 | #35 | `9c12f5d` | SQL comma-join allowlist bypass | Yes | HOLD. extra-push 금지. |
 | #32 | `76fcfb6` | SELECT..INTO / volatile SQL bypass | Yes | #73 전제. #35/#51 뒤. |
-| #73 | `311668e` | Catalog plane above the document KG (#13). ADR 0002 / stacked #83 already on this branch | Yes | HOLD. trivy-fs + strix fail. `#84` extra-push 금지. |
+| #73 | `1681a7f` | Catalog plane above the document KG (#13). ADR 0002 / stacked #83 already on this branch | Yes | HOLD. trivy-fs + strix fail. 현재 head에 `opencode-agent` `CHANGES_REQUESTED`. `#84` extra-push 금지. |
 | #75 | `6cba648` Draft | Framework-neutral data-management evidence *profiles* (GRC registry 아님). issue #74 구현 | Yes (catalog evidence shape) | Draft. base가 main이 아니라 `#73`의 브랜치(`cursor/ontology-catalog-plane-90aa…`)이므로 `#73` 뒤에서만 의미가 있습니다. dirty. Ready로 돌아가면 다시 Draft. |
 | #82 | `a797e30` | customer-next-action copy, hide internal boundaries | Yes (UX copy) | `#81` 뒤. |
 | #88 | `8e281de` | Measurement Context Registry (Draft/Published/Superseded) | Yes (catalog aggregate) | Ready. `#81`/`#51`/`#58`/`#73` 뒤. 점수·응답·판정 없음. |
@@ -298,6 +298,74 @@ Head SHA와 draft 여부는 2026-09-07 GitHub API 응답에서 그대로 옮겼�
 
 나머지는 승인 전에 check 수리가 먼저입니다. 대부분은 cryptography single writer를 main에 올리는 것으로 `trivy-fs` 7건이 한 번에 정리됩니다.
 
+### 정정(2026-09-09): 위 두 표의 "실패 중인 check 없음"은 그대로 읽으면 안 됩니다
+
+위 권고 — **"승인만 있으면 바로 풀리는 PR은 `#51`, `#35`, `#59` 세 건"** — 은 철회합니다. 근거로 삼은 초록이 두 가지 이유로 증거가 되지 못합니다.
+
+**첫째, `opencode-review` check에는 세대가 둘 있고 셋 다 옛 세대입니다.**
+
+2026-08-18까지의 세대는 아무것도 검증하지 않는 `echo` 한 줄입니다. 잡 본문 전체가 이렇습니다.
+
+```
+Run echo "Review approval remains a separate current-head PR review requirement produced by the authenticated dispatch workflow."
+```
+
+`gh api`도, `/pulls/N/reviews` 조회도, `jq`도, `opencode-agent` 문자열도 로그에 없습니다. 실패할 수 있는 경로 자체가 없으므로 이 check의 초록은 판정이 아니라 상수입니다.
+
+2026-08-30 세대는 다릅니다. reviews API를 실제로 조회해 head SHA와 `opencode-agent` 판정을 맞춰 보고, 없으면 fail-closed합니다.
+
+```
+##[error]No APPROVED or CHANGES_REQUESTED from opencode-agent on the current head.
+This required check is not a review and must not succeed until the authenticated dispatch posts a current-head verdict.
+```
+
+세대 판별 결과입니다. 실행 시간 자체가 지표입니다 — 3~4초는 `echo`, 10초는 API 조회입니다.
+
+| PR | job id | 결론 | 실행 시각 | 소요 | 세대 |
+| --- | --- | --- | --- | --- | --- |
+| #59 | `95467498879` | success | 2026-08-17T18:46:42Z | 3초 | **no-op stub** |
+| #51 | `95715500577` | success | 2026-08-18T12:49:36Z | 4초 | **no-op stub** |
+| #35 | `95568388849` | success | 2026-08-18T01:45:56Z | 4초 | **no-op stub** |
+| #81 | `99291035386` | **failure** | 2026-08-30T17:01:50Z | 10초 | fail-closed 게이트 |
+
+`#51`은 stub 실행이 3건 있고 그중 가장 최근 것이 그 PR 전체에서 가장 새로운 check run입니다(2026-08-18T12:49:36Z). 즉 이후에 새 세대가 덮어쓴 적이 없습니다.
+
+**둘째, 초록 자체가 3주 지난 것입니다.** `#51`의 최신 check run은 2026-08-18, `#59`는 2026-08-17입니다. 이 문서의 측정일(2026-09-07)보다 3주 앞섭니다. 그 사이에 취약점 DB도, 게이트 세대도 바뀌었습니다. 실측 근거는 `#79`에 있습니다 — 같은 main 계보인데 2026-09-01 스캔에서 `trivy-fs`가 이렇게 떨어졌습니다(job `99954799788`).
+
+```
+Trivy filesystem scan reported 1 finding(s):
+  [HIGH (security-severity=8.0)] CVE-2026-69247 requirements.txt:125 - Package: cryptography
+Remediate each finding at the shared base branch so open PRs inherit the fix.
+```
+
+`#35`·`#59`는 `requirements.txt`를 건드리지 않으므로 지금 다시 돌리면 같은 finding을 상속할 것으로 예상됩니다. 옛 초록은 "통과"가 아니라 "그때는 통과했다"입니다.
+
+**따라서 우선순위 판단이 뒤집힙니다.** 이 문서는 `#81`을 가장 막힌 PR로, `#35`를 가장 풀기 쉬운 PR로 적어 왔습니다. 실제로는 반대입니다. `#81`은 리뷰 게이트가 **실제로 돌아서** 빠진 판정을 정확히 보고하는 유일한 PR이고, `#35`·`#51`·`#59`는 게이트가 **돈 적이 없는** PR입니다. 검증되지 않은 초록을 검증된 빨강보다 앞세우지 마십시오.
+
+### 판정을 읽는 규칙 (2026-09-09)
+
+이 문서가 과거에 승인을 잘못 기록한 경로가 셋 있었습니다. 같은 실수를 막기 위해 규칙으로 고정합니다.
+
+1. **요청 코멘트는 판정이 아닙니다.** `@opencode-agent Please APPROVE ...`는 issue comment이며 리뷰가 아닙니다. `#81`의 comment 5469292683이 이 경우입니다.
+2. **리뷰 본문 산문은 판정이 아닙니다.** `#58`의 head-matching 리뷰는 본문에 `- Result: APPROVE`가 적혀 있으나 API `state`는 `DISMISSED`입니다. 판정은 `state`로만 읽습니다.
+3. **`commit_id`가 현재 head와 같아야 합니다.** 본문이 주장하는 SHA와 리뷰 자신의 `commit_id`가 다른 사례가 실재합니다(`#58`).
+4. **초록 check에는 실행 시각과 잡 세대를 함께 확인합니다.** 3~4초 `opencode-review`는 no-op입니다.
+
+확인 명령은 이것 하나입니다. 표시(라벨·본문·코멘트)가 아니라 이 응답이 근거입니다.
+
+```
+gh api repos/ContextualWisdomLab/semantic-data-portal/pulls/<번호>/reviews \
+  --jq '.[] | select(.user.login|test("opencode-agent")) | {state, commit_id, submitted_at}'
+```
+
+2026-09-09 기준 `#51`·`#58`·`#35`·`#32`·`#73`·`#79`·`#102` 일곱 건 전수 대조 결과, **어떤 리뷰어의 `APPROVED`도 0건**입니다. `opencode-agent`가 남긴 상태는 `DISMISSED`와 `CHANGES_REQUESTED`뿐입니다. 그중 현재 head에 붙은 `CHANGES_REQUESTED`는 `#32` `76fcfb6`와 `#73` `1681a7f` 두 건이며, 이 둘은 "승인 대기"가 아니라 **요청된 수정이 남은 상태**입니다.
+
+### `opencode-review` dispatch의 owner는 이 저장소가 아닙니다
+
+`#81`에서 실패한 것은 검증 쪽 절반입니다. 판정을 실제로 생성해 게시하는 dispatch 절반은 `ContextualWisdomLab/.github`의 중앙 워크플로에 있고, 그쪽에 수리 PR이 이미 떠 있습니다 — `ContextualWisdomLab/.github#2040`(exchanged target app token으로 required job 깨우기), `#2051`(실패 job wake 1회 조정), `#2056`(exact dispatch wakeup 직렬화).
+
+포털에서 우회하지 마십시오. 게이트를 약화하거나, stub 세대로 되돌리거나, 판정 없이 승인 라벨을 붙이는 조치는 모두 금지입니다. 포털 쪽 조치는 owner 수리를 기다리는 것과, 그동안 `#32`·`#73`처럼 **이미 받은 `CHANGES_REQUESTED`를 해소하는 것**입니다. 후자는 dispatch가 고쳐지기를 기다릴 필요가 없는 독립 작업입니다.
+
 ### 승인은 "오지 않는" 것이 아니라 2026-08-13에 멈췄습니다
 
 병합된 PR의 리뷰 이력을 보면 승인 기구는 정상 작동한 적이 있습니다. `opencode-agent[bot]`이 2026-07-11부터 2026-08-13까지 승인을 냈고(병합된 PR 10건에 18건), 그 뒤로 **어떤 PR에도 `APPROVED`가 붙지 않았습니다.**
@@ -359,6 +427,20 @@ Head SHA와 draft 여부는 2026-09-07 GitHub API 응답에서 그대로 옮겼�
 - **태그·릴리즈가 한 번도 없습니다.** 버전 문자열만 있고 그 버전에 대응하는 불변 아티팩트가 없습니다. 어떤 커밋이 `0.3.0`인지 지금은 아무도 지목할 수 없습니다.
 
 두 항목 모두 CVE 해소 뒤 첫 릴리즈를 끊을 때 함께 만드는 것이 자연스럽습니다. CVE가 열려 있는 동안 태그부터 만들지 마십시오.
+
+## 검증 기록 (2026-09-09)
+
+2026-09-09 재검증입니다. `#81`이 왜 Draft에 머무는지 추적하다가 이 문서 자체의 증거 오류를 찾았습니다.
+
+| 검사 | 방법 | 결과 |
+| --- | --- | --- |
+| `#81`의 승인 존재 여부 | `GET /pulls/81/reviews` 전수 | **오류 발견** — `opencode-agent[bot]` 리뷰 0건. 병합 순서 1번이 근거로 인용한 comment 5469292683은 승인이 아니라 승인 **요청** 코멘트였습니다. 정정 완료 |
+| `#58`의 "이전 APPROVE" | 같은 API의 `state`/`commit_id` 대조 | **오류 발견** — head-matching 리뷰의 `state`는 `DISMISSED`인데 본문에 `- Result: APPROVE`가 적혀 있었습니다. 본문과 `commit_id`도 불일치. 정정 완료 |
+| `opencode-review` 초록의 의미 | 잡 로그 4건 직접 확인(`95467498879`·`95715500577`·`95568388849`·`99291035386`) | **오류 발견** — `#51`·`#35`·`#59`의 초록은 `echo` 한 줄짜리 no-op 세대(3~4초). `#81`의 빨강만 실제 API 조회 세대(10초). "승인만 있으면 풀리는 세 건" 권고 철회 |
+| 초록 check의 신선도 | 각 PR의 최신 `completed_at` | **오류 발견** — `#51` 2026-08-18, `#59` 2026-08-17로 측정일보다 3주 낡음. `#79`는 2026-09-01 재스캔에서 `trivy-fs`가 CVE-2026-69247로 실패(job `99954799788`) |
+| `#73` head SHA | `GET /pulls/73` | **오류 발견** — 병합 순서 5번과 PR 표가 `311668e`로 낡아 있었습니다(203행은 이미 `1681a7f`로 갱신됨). 정정 완료. 새 head에 `CHANGES_REQUESTED` 있음 |
+| 일곱 PR 승인 전수 | `#51`·`#58`·`#35`·`#32`·`#73`·`#79`·`#102` | **확인** — 어떤 리뷰어의 `APPROVED`도 0건. 이 축에 대한 기존 서술(16/16 승인 0건)은 유지됩니다 |
+| `opencode-review` dispatch owner | `.github` 열린 PR 조회 | **확인** — 수리는 `ContextualWisdomLab/.github#2040`/`#2051`/`#2056`에서 진행 중. 포털에서 우회하지 않습니다 |
 
 ## 검증 기록 (2026-09-07)
 
