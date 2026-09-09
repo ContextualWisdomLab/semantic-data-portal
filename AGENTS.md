@@ -48,12 +48,18 @@ Claude, Codex, Cursor, opencode, …). This repo is a Python / FastAPI MVP
 - **Reference implementation:** xtrmLLMBatchPython's pgcrypto-encrypted Postgres
   credential registry (`get_credential(name)`). Reuse that pattern (a DB-backed KV
   is fine) unless a dedicated KV is adopted.
-- **Status in this repo:** the service is an in-memory MVP that reads **no**
-  runtime secrets today — no `os.getenv`, no DB credentials, no external API keys,
-  nothing in CI. So there is no deviation to migrate; this rule is forward-looking.
-  The moment real credentials appear — e.g. wiring `/llm/*` to an actual LLM
-  provider, or `orchestrator`/`browse` to a real database — pull them from the KV
-  via `get_credential(...)`, **not** `os.getenv`.
+- **Status in this repo:** OIDC application policy now uses the database-backed
+  configuration boundary. Bootstrap transport coordinates are the only allowed
+  environment reads for reaching that boundary. When real credentials appear —
+  e.g. wiring `/llm/*` to an actual LLM provider — pull them from the KV via
+  `get_credential(...)`, **not** `os.getenv`.
+
+- **OIDC policy configuration:** issuer, audience, JWKS URL, JWKS timeout,
+  group-to-role mapping, and the demo subject-header switch are application
+  policy in versioned `config_entries`. `BootstrapSettings` may read only the
+  database transport coordinates required to reach that store. Tests should
+  use `override_app_config` at the configuration seam; do not reintroduce
+  request-path OIDC environment reads.
 
 ### This repo's role in the ecosystem
 - **`semantic-data-portal`** is the higher-level ontology-driven dataset catalog /

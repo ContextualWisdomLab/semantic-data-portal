@@ -7,6 +7,13 @@ import json
 import pytest
 
 from sdp import authz
+from sdp.config import override_app_config
+
+
+def _configuration(**overrides):
+    """Build a versioned-config stand-in for OIDC boundary tests."""
+
+    return override_app_config(**overrides)
 
 
 def test_load_jwks_from_url_rejects_non_http_schemes(monkeypatch):
@@ -48,18 +55,19 @@ def test_load_jwks_from_url_fetches_over_https(monkeypatch):
         captured["timeout"] = timeout
         return _FakeResponse()
 
-    monkeypatch.delenv("SDP_OIDC_JWKS_TIMEOUT_SECONDS", raising=False)
     monkeypatch.setattr(authz, "urlopen", _fake_urlopen)
-    result = authz._load_jwks_from_url("https://idp.example/.well-known/jwks.json")
+    result = authz._load_jwks_from_url(
+        "https://idp.example/.well-known/jwks.json",
+        timeout_seconds=2.0,
+    )
 
     assert result == payload
     assert captured["url"] == "https://idp.example/.well-known/jwks.json"
     assert captured["timeout"] == pytest.approx(2.0)
 
 
-def test_load_jwks_from_url_honours_timeout_override(monkeypatch):
-    """The JWKS fetch timeout is configurable via SDP_OIDC_JWKS_TIMEOUT_SECONDS."""
-    monkeypatch.setenv("SDP_OIDC_JWKS_TIMEOUT_SECONDS", "5")
+def test_load_jwks_from_url_honours_configured_timeout(monkeypatch):
+    """The JWKS fetch timeout comes from the versioned configuration boundary."""
 
     class _FakeResponse:
         def __enter__(self):
@@ -77,6 +85,8 @@ def test_load_jwks_from_url_honours_timeout_override(monkeypatch):
         seen["timeout"] = timeout
         return _FakeResponse()
 
+    configuration = _configuration(oidc_jwks_timeout_seconds=5.0)
+    monkeypatch.setattr(authz, "get_app_config", lambda: configuration)
     monkeypatch.setattr(authz, "urlopen", _fake_urlopen)
     assert authz._load_jwks_from_url("http://localhost:8080/jwks") == {}
     assert seen["timeout"] == pytest.approx(5.0)
@@ -97,15 +107,11 @@ def test_claim_values_handles_str_list_none_and_scalar():
 
 
 def test_load_oidc_role_map_default_and_override(monkeypatch):
-    monkeypatch.delenv("SDP_OIDC_GROUP_ROLE_MAP", raising=False)
-    assert authz.load_oidc_role_map() == authz._DEFAULT_OIDC_GROUP_ROLE_MAP
+    assert authz.load_oidc_role_map() == _configuration().oidc_group_role_map
 
-    monkeypatch.setenv("SDP_OIDC_GROUP_ROLE_MAP", '{"grp": ["data-analyst"]}')
+    configuration = _configuration(oidc_group_role_map={"grp": ["data-analyst"]})
+    monkeypatch.setattr(authz, "get_app_config", lambda: configuration)
     assert authz.load_oidc_role_map() == {"grp": ["data-analyst"]}
-
-    monkeypatch.setenv("SDP_OIDC_GROUP_ROLE_MAP", "[]")
-    with pytest.raises(ValueError):
-        authz.load_oidc_role_map()
 
 
 def _valid_claims(**overrides):
@@ -144,9 +150,7 @@ def test_select_jwk_guard_branches():
 
 
 def test_verify_oidc_jwks_token_config_and_alg_guards(monkeypatch):
-    monkeypatch.delenv("SDP_OIDC_ISSUER", raising=False)
-    monkeypatch.delenv("SDP_OIDC_AUDIENCE", raising=False)
-    monkeypatch.delenv("SDP_OIDC_JWKS_URL", raising=False)
+    monkeypatch.setattr(authz, "get_app_config", lambda: _configuration())
     with pytest.raises(ValueError):  # missing issuer
         authz.verify_oidc_jwks_token("t", jwks={"keys": []})
     with pytest.raises(ValueError):  # missing audience
@@ -160,15 +164,17 @@ def test_verify_oidc_jwks_token_config_and_alg_guards(monkeypatch):
         authz.verify_oidc_jwks_token(hs_token, issuer="iss", audience="aud", jwks={"keys": []})
 
 
-def test_verify_oidc_jwks_token_loads_jwks_from_env_url(monkeypatch):
-    monkeypatch.setenv("SDP_OIDC_JWKS_URL", "https://idp.example/jwks")
+def test_verify_oidc_jwks_token_loads_jwks_from_config_url(monkeypatch):
+    configuration = _configuration(oidc_jwks_url="https://idp.example/jwks")
+    monkeypatch.setattr(authz, "get_app_config", lambda: configuration)
 
-    def _fake_load(url):
+    def _fake_load(url, *, timeout_seconds):
         assert url == "https://idp.example/jwks"
+        assert timeout_seconds == pytest.approx(2.0)
         return {"keys": []}
 
     monkeypatch.setattr(authz, "_load_jwks_from_url", _fake_load)
-    # Unsupported alg is rejected after the env JWKS is loaded -> wrapped ValueError,
+    # Unsupported alg is rejected after the configured JWKS is loaded -> wrapped ValueError,
     # which exercises the `jwks = _load_jwks_from_url(jwks_url)` branch.
     hs_token = _jwt.encode({"sub": "s"}, "synthetic-test-key-at-least-32-bytes", algorithm="HS256")
     with pytest.raises(ValueError):

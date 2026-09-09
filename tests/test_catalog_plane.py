@@ -326,9 +326,14 @@ def test_plane_rejects_relative_path_and_http_provenance():
 def test_plane_rejects_subject_header_when_jwks_is_configured(monkeypatch):
     """A self-asserted admin header is not auth once Keyverse JWKS is configured."""
 
-    monkeypatch.setenv("SDP_OIDC_ISSUER", "https://idp.example.com/")
-    monkeypatch.setenv("SDP_OIDC_AUDIENCE", "semantic-data-portal")
-    monkeypatch.setenv("SDP_OIDC_JWKS_URL", "https://idp.example.com/jwks")
+    from sdp.config import override_app_config
+
+    configuration = override_app_config(
+        oidc_issuer="https://idp.example.com/",
+        oidc_audience="semantic-data-portal",
+        oidc_jwks_url="https://idp.example.com/jwks",
+    )
+    monkeypatch.setattr("sdp.tenant_binding.get_app_config", lambda: configuration)
     response = client.get("/plane/catalog-objects", headers=_headers(subject="admin", purpose="catalog_browse"))
     assert response.status_code == 401
     assert response.json()["detail"]["error"] == "oidc_subject_header_rejected"
@@ -365,9 +370,6 @@ def test_plane_oidc_bearer_matches_tenant_claim(monkeypatch):
         algorithm="RS256",
         headers={"kid": "plane-key-1"},
     )
-    monkeypatch.setenv("SDP_OIDC_ISSUER", "https://idp.example.com/")
-    monkeypatch.setenv("SDP_OIDC_AUDIENCE", "semantic-data-portal")
-
     def _verify(token_value: str, **_kwargs):
         from sdp.authz import resolve_oidc_actor_context
 

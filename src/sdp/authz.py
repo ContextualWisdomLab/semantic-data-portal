@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlsplit
@@ -11,6 +10,8 @@ import jwt
 from jwt import InvalidTokenError, PyJWK
 from sdp_core import ActorContext
 
+from .config import get_app_config
+
 
 _SUBJECTS = {
     "admin": ActorContext(subject="admin", tenant_id="demo", roles=["admin", "data-analyst", "platform-admin"]),
@@ -19,13 +20,6 @@ _SUBJECTS = {
     "analyst": ActorContext(subject="analyst", tenant_id="demo", roles=["data-analyst"]),
     "data-analyst": ActorContext(subject="data-analyst", tenant_id="demo", roles=["data-analyst"]),
     "external-analyst": ActorContext(subject="external-analyst", tenant_id="external", roles=["data-analyst"]),
-}
-
-_DEFAULT_OIDC_GROUP_ROLE_MAP = {
-    "sdp-admins": ["admin", "data-analyst"],
-    "sdp-analysts": ["data-analyst"],
-    "sdp-platform-admins": ["platform-admin", "admin", "data-analyst"],
-    "sdp-security": ["security"],
 }
 
 _SUBJECT_CLAIMS = ("preferred_username", "email", "sub")
@@ -62,14 +56,12 @@ def oidc_role_claims(claims: dict[str, Any]) -> list[str]:
 
 
 def load_oidc_role_map() -> dict[str, list[str]]:
-    raw = os.getenv("SDP_OIDC_GROUP_ROLE_MAP")
-    if not raw:
-        return _DEFAULT_OIDC_GROUP_ROLE_MAP
+    """Read the verified group-to-role policy from application configuration."""
 
-    parsed = json.loads(raw)
-    if not isinstance(parsed, dict):
-        raise ValueError("SDP_OIDC_GROUP_ROLE_MAP must be a JSON object")
-    return {str(group): _claim_values(roles) for group, roles in parsed.items()}
+    return {
+        str(group): _claim_values(roles)
+        for group, roles in get_app_config().oidc_group_role_map.items()
+    }
 
 
 def validate_oidc_claim_shape(claims: dict[str, Any]) -> None:
@@ -115,7 +107,7 @@ def resolve_oidc_actor_context(
 _ALLOWED_JWKS_SCHEMES = frozenset({"https", "http"})
 
 
-def _load_jwks_from_url(jwks_url: str) -> dict[str, Any]:
+def _load_jwks_from_url(jwks_url: str, *, timeout_seconds: float | None = None) -> dict[str, Any]:
     # Restrict the JWKS fetch to HTTP(S). urllib honours file:// (and other
     # schemes), so without this guard a misconfigured SDP_OIDC_JWKS_URL such as
     # "file:///etc/passwd" would turn an operator misconfiguration into local
@@ -123,7 +115,7 @@ def _load_jwks_from_url(jwks_url: str) -> dict[str, Any]:
     scheme = urlsplit(jwks_url).scheme.lower()
     if scheme not in _ALLOWED_JWKS_SCHEMES:
         raise ValueError("OIDC JWKS URL must use the http or https scheme")
-    timeout = float(os.getenv("SDP_OIDC_JWKS_TIMEOUT_SECONDS", "2"))
+    timeout = timeout_seconds if timeout_seconds is not None else get_app_config().oidc_jwks_timeout_seconds
     # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected -- scheme is allow-listed to http(s) above; JWKS URL is operator config, not request input
     with urlopen(jwks_url, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
@@ -149,9 +141,10 @@ def verify_oidc_jwks_token(
     jwks: dict[str, Any] | None = None,
     role_map: dict[str, list[str]] | None = None,
 ) -> tuple[ActorContext, dict[str, Any]]:
-    expected_issuer = issuer or os.getenv("SDP_OIDC_ISSUER")
-    expected_audience = audience or os.getenv("SDP_OIDC_AUDIENCE")
-    jwks_url = os.getenv("SDP_OIDC_JWKS_URL")
+    configuration = get_app_config()
+    expected_issuer = issuer or configuration.oidc_issuer
+    expected_audience = audience or configuration.oidc_audience
+    jwks_url = configuration.oidc_jwks_url
 
     if not expected_issuer:
         raise ValueError("missing OIDC issuer")
@@ -160,7 +153,10 @@ def verify_oidc_jwks_token(
     if jwks is None:
         if not jwks_url:
             raise ValueError("missing OIDC JWKS")
-        jwks = _load_jwks_from_url(jwks_url)
+        jwks = _load_jwks_from_url(
+            jwks_url,
+            timeout_seconds=configuration.oidc_jwks_timeout_seconds,
+        )
 
     try:
         header = jwt.get_unverified_header(token)

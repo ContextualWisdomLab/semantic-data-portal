@@ -14,7 +14,7 @@ from typing import Mapping
 from sdp_core.catalog_plane import ACCESS_PURPOSES, AccessPurpose, PlaneActor
 
 from .authz import resolve_actor_context, verify_oidc_jwks_token
-from .config import load_bootstrap
+from .config import get_app_config
 
 TENANT_HEADER = "X-CWL-Tenant-Reference"
 SUBJECT_HEADER = "X-CWL-Oidc-Subject"
@@ -144,11 +144,11 @@ def _oidc_verification_required() -> bool:
     rejects ``X-CWL-Oidc-Subject`` so a client cannot self-assert ``admin``.
     """
 
-    bootstrap = load_bootstrap()
+    configuration = get_app_config()
     return bool(
-        bootstrap.oidc_issuer
-        and bootstrap.oidc_audience
-        and bootstrap.oidc_jwks_url
+        configuration.oidc_issuer
+        and configuration.oidc_audience
+        and configuration.oidc_jwks_url
     )
 
 
@@ -159,7 +159,7 @@ def _unverified_subject_header_allowed() -> bool:
     is disabled, including when the variable is missing, blank, or misspelled.
     """
 
-    return load_bootstrap().allow_unverified_subject_header
+    return get_app_config().allow_unverified_subject_header
 
 
 def _actor_from_subject_header(subject: str) -> tuple[str, str, list[str]]:

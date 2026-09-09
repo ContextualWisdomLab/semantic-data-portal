@@ -99,6 +99,41 @@ def test_from_mapping_rejects_invalid_graph_backend() -> None:
         cfg.AppConfig.from_mapping({"graph_backend": "cassandra"}, source="kv")
 
 
+def test_from_mapping_keeps_oidc_policy_in_versioned_configuration() -> None:
+    """OIDC policy is application configuration, not request-path environment state."""
+
+    configuration = cfg.AppConfig.from_mapping(
+        {
+            "oidc_issuer": "https://idp.example.test/",
+            "oidc_audience": "semantic-data-portal",
+            "oidc_jwks_url": "https://idp.example.test/jwks",
+            "oidc_jwks_timeout_seconds": 5,
+            "oidc_group_role_map": {"stewards": ["data-analyst"]},
+            "allow_unverified_subject_header": False,
+        },
+        source="config_entries",
+    )
+
+    assert configuration.oidc_issuer == "https://idp.example.test/"
+    assert configuration.oidc_jwks_timeout_seconds == 5.0
+    assert configuration.oidc_group_role_map == {"stewards": ["data-analyst"]}
+
+
+def test_from_mapping_rejects_invalid_oidc_policy_values() -> None:
+    """Malformed policy rows fail before a request can rely on them."""
+
+    with pytest.raises(ValueError, match="values must be arrays"):
+        cfg.AppConfig.from_mapping(
+            {"oidc_group_role_map": {"stewards": "data-analyst"}},
+            source="config_entries",
+        )
+    with pytest.raises(ValueError, match="must be positive"):
+        cfg.AppConfig.from_mapping(
+            {"oidc_jwks_timeout_seconds": 0},
+            source="config_entries",
+        )
+
+
 def test_default_config_seed_returns_a_defaults_copy() -> None:
     """default_config_seed returns the bundled defaults as an independent copy."""
     seed = cfg.default_config_seed()

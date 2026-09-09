@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from sdp.api import app
+from sdp.config import override_app_config
 from sdp.tenant_binding import PURPOSE_HEADER, SUBJECT_HEADER, TENANT_HEADER
 
 
@@ -21,19 +22,11 @@ def _headers() -> dict[str, str]:
     }
 
 
-def _clear_jwks(monkeypatch) -> None:
-    """Remove production OIDC coordinates so only the demo boundary is tested."""
-
-    monkeypatch.delenv("SDP_OIDC_ISSUER", raising=False)
-    monkeypatch.delenv("SDP_OIDC_AUDIENCE", raising=False)
-    monkeypatch.delenv("SDP_OIDC_JWKS_URL", raising=False)
-
-
 def test_subject_header_is_rejected_without_explicit_demo_opt_in(monkeypatch) -> None:
     """A directly reachable deployment must not trust a raw subject header by default."""
 
-    _clear_jwks(monkeypatch)
-    monkeypatch.delenv("SDP_ALLOW_UNVERIFIED_SUBJECT_HEADER", raising=False)
+    configuration = override_app_config(allow_unverified_subject_header=False)
+    monkeypatch.setattr("sdp.tenant_binding.get_app_config", lambda: configuration)
 
     response = client.get("/plane/catalog-objects", headers=_headers())
 
@@ -46,8 +39,8 @@ def test_subject_header_is_rejected_without_explicit_demo_opt_in(monkeypatch) ->
 def test_subject_header_is_accepted_with_explicit_demo_opt_in(monkeypatch) -> None:
     """Local demo and CI may opt in without weakening the production default."""
 
-    _clear_jwks(monkeypatch)
-    monkeypatch.setenv("SDP_ALLOW_UNVERIFIED_SUBJECT_HEADER", "true")
+    configuration = override_app_config(allow_unverified_subject_header=True)
+    monkeypatch.setattr("sdp.tenant_binding.get_app_config", lambda: configuration)
 
     response = client.get("/plane/catalog-objects", headers=_headers())
 
