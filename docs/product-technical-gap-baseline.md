@@ -364,7 +364,53 @@ gh api repos/ContextualWisdomLab/semantic-data-portal/pulls/<번호>/reviews \
 
 `#81`에서 실패한 것은 검증 쪽 절반입니다. 판정을 실제로 생성해 게시하는 dispatch 절반은 `ContextualWisdomLab/.github`의 중앙 워크플로에 있고, 그쪽에 수리 PR이 이미 떠 있습니다 — `ContextualWisdomLab/.github#2040`(exchanged target app token으로 required job 깨우기), `#2051`(실패 job wake 1회 조정), `#2056`(exact dispatch wakeup 직렬화).
 
-포털에서 우회하지 마십시오. 게이트를 약화하거나, stub 세대로 되돌리거나, 판정 없이 승인 라벨을 붙이는 조치는 모두 금지입니다. 포털 쪽 조치는 owner 수리를 기다리는 것과, 그동안 `#32`·`#73`처럼 **이미 받은 `CHANGES_REQUESTED`를 해소하는 것**입니다. 후자는 dispatch가 고쳐지기를 기다릴 필요가 없는 독립 작업입니다.
+포털에서 우회하지 마십시오. 게이트를 약화하거나, stub 세대로 되돌리거나, 판정 없이 승인 라벨을 붙이는 조치는 모두 금지입니다.
+
+### 현재 head `CHANGES_REQUESTED`에는 코드 지적이 없습니다
+
+`#32`와 `#73`이 받은 현재-head `CHANGES_REQUESTED`를 "요청된 수정"으로 읽으면 안 됩니다. 본문을 열어 보면 둘 다 같은 한 문장입니다.
+
+```
+OpenCode could not approve from deterministic current-head evidence
+because GitHub Checks have failed.
+```
+
+지적 항목은 `1. HIGH Current-head GitHub Checks - Fix failed required checks before approval` 하나뿐이고, 조치는 "실패한 check를 고치고 재실행하라"입니다. 코드 findings는 없습니다. 실제로 미해결 리뷰 스레드도 0건입니다 — `#73`은 스레드 31건 전부 resolved, `#32`는 3건 전부 resolved입니다. 즉 **구현할 리뷰 지적이 남아 있지 않습니다.**
+
+`#32`의 두 `CHANGES_REQUESTED`(4940679912 / 4941269691)는 같은 head·같은 본문·같은 실패 check로 87분 간격을 두고 중복 게시된 것입니다. 한 건을 고치면 둘 다 풀립니다.
+
+### 실패 check의 원인을 끝까지 따라가면 포털이 소유한 것은 하나뿐입니다
+
+각 실패 check의 잡 로그를 직접 읽은 결과입니다.
+
+| 실패 check | 나타나는 PR | 로그가 말하는 원인 | 수리 owner |
+| --- | --- | --- | --- |
+| `opencode-review` | `#81` | `No APPROVED or CHANGES_REQUESTED from opencode-agent on the current head` — 검증 절반이 dispatch 절반의 판정을 기다리다 fail-closed | `.github` `#2040`/`#2051`/`#2056` |
+| `CodeQL compatibility analysis` (actions·python) | `#73` | `VERDICT_STATE: pending` → `CodeQL scan dispatched. The dispatch workflow will rerun this exact failed CodeQL job after publishing its terminal verdict.` dispatch는 성공했는데 되돌아와 job을 재실행하는 wake가 오지 않습니다 | `.github` `#2040`/`#2051`/`#2056` |
+| `noema-review` | `#73`, `#79` | 게이트웨이 라우팅 결함 — 아래 참조 | `contextual-orchestrator` `#971` |
+| `trivy-fs` | `#32`, `#79` 외 | `[HIGH] CVE-2026-69247 requirements.txt:125 - Package: cryptography` | **이 저장소** (`#81`) |
+
+`noema-review`(job `102406024468`, 2026-09-09)는 특히 분명한 상류 결함입니다. 같은 잡의 preflight가 후보 24건 중 16건을 probe해 `ready` 4건과 `deferred` 4건을 이미 구분해 두었습니다.
+
+```
+"ready_count": 4, "deferred_count": 4, "rejected_count": 8, "target_ready": 8
+...
+{ "agent_id": "openrouter_dots_studio_dots_3_note_preview_free",
+  "http_status": 429, "status": "deferred" }
+```
+
+그런데 실제 호출은 `ready` 4건을 두고 방금 `deferred`로 표시한 그 429 라우트를 골랐고, 366.4초를 쓴 뒤 같은 429로 죽었습니다.
+
+```
+##[error]Noema gateway transport failed: HTTPError: HTTP Error 429: Too Many Requests;
+caller attempts=1, duration=366.4s, phase=response_error,
+served_model=dots-studio/dots-3-note-preview:free
+##[warning]... caller attempts=1 (gateway owns repair/failover).
+```
+
+경고문이 스스로 밝히듯 failover 책임은 게이트웨이에 있습니다. 호출자(포털·noema)가 재시도로 덮을 문제가 아니며, `contextual-orchestrator#971`(free model group 선택 수리)이 바로 이 lane입니다.
+
+**정리하면, 포털이 자기 저장소에서 고칠 수 있는 실패 check는 `trivy-fs` 하나이고 그 single writer는 `#81`입니다.** 나머지 세 종류는 전부 `.github`와 `contextual-orchestrator`의 제어면 결함입니다. 따라서 "포털에서 할 수 있는 독립 작업"으로 `#32`·`#73`의 리뷰 지적을 해소한다는 계획은 성립하지 않습니다 — 해소할 지적이 없습니다. 큐 전체가 상류 수리에 걸려 있다는 사실을 그대로 기록해 두는 편이, 없는 포털 작업을 만들어 내는 것보다 정확합니다.
 
 ### 승인은 "오지 않는" 것이 아니라 2026-08-13에 멈췄습니다
 
@@ -441,6 +487,9 @@ gh api repos/ContextualWisdomLab/semantic-data-portal/pulls/<번호>/reviews \
 | `#73` head SHA | `GET /pulls/73` | **오류 발견** — 병합 순서 5번과 PR 표가 `311668e`로 낡아 있었습니다(203행은 이미 `1681a7f`로 갱신됨). 정정 완료. 새 head에 `CHANGES_REQUESTED` 있음 |
 | 일곱 PR 승인 전수 | `#51`·`#58`·`#35`·`#32`·`#73`·`#79`·`#102` | **확인** — 어떤 리뷰어의 `APPROVED`도 0건. 이 축에 대한 기존 서술(16/16 승인 0건)은 유지됩니다 |
 | `opencode-review` dispatch owner | `.github` 열린 PR 조회 | **확인** — 수리는 `ContextualWisdomLab/.github#2040`/`#2051`/`#2056`에서 진행 중. 포털에서 우회하지 않습니다 |
+| `#32`·`#73`의 `CHANGES_REQUESTED` 내용 | 리뷰 본문 + 스레드 전수 | **확인** — 코드 findings 0건, 미해결 스레드 0건(`#73` 31건·`#32` 3건 모두 resolved). 전부 check-rollup 사유이며 `#32`의 두 건은 같은 head 중복 |
+| `#73` 실패 check 3건의 원인 | 잡 로그 `102406319401`·`102406024468` 직접 확인 | **상류 결함** — CodeQL은 `VERDICT_STATE: pending`으로 dispatch wake 대기, noema는 게이트웨이가 자기 preflight에서 `deferred`(429)로 표시한 라우트를 골라 366.4초 뒤 429. 각각 `.github`, `contextual-orchestrator#971` 소관 |
+| 포털이 자체 수리 가능한 실패 check | 위 원인 대조 | **1종뿐** — `trivy-fs`(CVE-2026-69247), single writer는 `#81` |
 
 ## 검증 기록 (2026-09-07)
 
