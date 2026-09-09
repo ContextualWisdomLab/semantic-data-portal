@@ -47,7 +47,7 @@ Council of Europe. (2020). *Common European Framework of Reference for Languages
 
 ## 병합 순서 (steward)
 
-1. PR `#81` `ce40bd8` — cryptography 49.0.0 → 50.0.0 (CVE-2026-69247 / GHSA-g6cj-pr64-35w5). trivy-fs는 merge ref를 스캔하므로 이 PR이 main에 올리면 모든 열린 PR이 상속해 풀립니다. **정정(2026-09-09): 이 자리에 있던 “OpenCode exact-head APPROVE 확인(comment 5469292683)” 지시는 틀렸습니다.** comment 5469292683은 승인 receipt가 아니라 seonghobae가 `@opencode-agent`에게 승인을 **요청한** 코멘트입니다(2026-08-30T14:33:54Z, 본문 첫 줄 `Please APPROVE exact current head ce40bd8...`). `GET /repos/ContextualWisdomLab/semantic-data-portal/pulls/81/reviews`는 `opencode-agent[bot]`의 리뷰를 **어느 커밋에서도 0건** 반환합니다. 즉 이 PR에는 승인은 물론 `CHANGES_REQUESTED`조차 없습니다. 요청 코멘트를 승인 증거로 읽지 마십시오 — squash 조건은 여전히 미충족입니다. 3초 `opencode-review` stub는 receipt가 아닙니다. `#51`과 섞지 마십시오.
+1. PR `#81` `ce40bd8` — cryptography 49.0.0 → 50.0.0 (CVE-2026-69247 / GHSA-g6cj-pr64-35w5). trivy-fs는 merge ref를 스캔하므로 이 PR이 main에 올리면 모든 열린 PR이 상속해 풀립니다. **정정(2026-09-09): 이 자리에 있던 “OpenCode exact-head APPROVE 확인(comment 5469292683)” 지시는 틀렸습니다.** comment 5469292683은 승인 receipt가 아니라 seonghobae가 `@opencode-agent`에게 승인을 **요청한** 코멘트입니다(2026-08-30T14:33:54Z, 본문 첫 줄 `Please APPROVE exact current head ce40bd8...`). `GET /repos/ContextualWisdomLab/semantic-data-portal/pulls/81/reviews`는 `opencode-agent[bot]`의 리뷰를 **어느 커밋에서도 0건** 반환합니다. 즉 이 PR에는 승인은 물론 `CHANGES_REQUESTED`조차 없습니다. 요청 코멘트를 승인 증거로 읽지 마십시오 — squash 조건은 여전히 미충족입니다. **그리고 이 PR은 Draft인 한 그 조건을 충족할 수 없습니다** — 스케줄러가 Draft PR을 skip하므로 리뷰 dispatch 자체가 발행되지 않습니다(아래 "`#81`은 Draft라서 판정을 받을 수 없고…" 절). 먼저 필요한 것은 승인이 아니라 **Ready 전환**입니다. 3초 `opencode-review` stub는 receipt가 아닙니다. `#51`과 섞지 마십시오.
    **상태 변경(2026-09-07): 이 PR은 현재 Draft입니다.** head는 `ce40bd8` 그대로지만 본문이 `Draft / source+lock repair present`로 바뀌었습니다. 즉 unlock stack의 1번 항목이 스스로 merge 대기열에서 빠진 상태이며, repo-wide trivy-fs unlock은 이 PR이 Ready로 돌아올 때까지 열리지 않습니다. Draft를 우회하려고 다른 PR에 cryptography bump를 복제하지 마십시오 — single writer는 `#81`입니다. 조치는 `#81`의 repair를 끝내고 Ready 전환하는 것이며, 그 전까지 2번 이하 항목의 trivy-fs 상속 실패는 예상된 상태입니다.
 2. PR `#51` `558dd2f` — outbound URL harden + security lock (cryptography 부분은 `#81`이 흡수). Frozen. 이 head를 push하지 마십시오. 이 SHA에 OpenCode APPROVE가 붙은 뒤 Product Manager squash.
 3. PR `#58` `0ce6d1f` — bounded Keyverse claim aliases. Frozen (strix fail on this head). extra-push 금지. **정정(2026-09-09): 이 줄의 “이전 APPROVE” 표현은 API 상태와 어긋납니다.** 현재 head `0ce6d1f`에 붙은 `opencode-agent[bot]` 리뷰는 존재하지만 API `state`가 `DISMISSED`입니다. 그 리뷰 **본문** 끝에 `- Result: APPROVE`와 `- Head SHA: 80966ae...`가 적혀 있어 승인처럼 보이지만, 본문이 주장하는 SHA는 그 리뷰 자신의 `commit_id`(`0ce6d1f`)와도 다릅니다. 판정은 리뷰 본문 산문이 아니라 API의 `state` + `commit_id`로만 읽으십시오.
@@ -360,6 +360,35 @@ gh api repos/ContextualWisdomLab/semantic-data-portal/pulls/<번호>/reviews \
 
 2026-09-09 기준 `#51`·`#58`·`#35`·`#32`·`#73`·`#79`·`#102` 일곱 건 전수 대조 결과, **어떤 리뷰어의 `APPROVED`도 0건**입니다. `opencode-agent`가 남긴 상태는 `DISMISSED`와 `CHANGES_REQUESTED`뿐입니다. 그중 현재 head에 붙은 `CHANGES_REQUESTED`는 `#32` `76fcfb6`와 `#73` `1681a7f` 두 건이며, 이 둘은 "승인 대기"가 아니라 **요청된 수정이 남은 상태**입니다.
 
+### `#81`은 Draft라서 판정을 받을 수 없고, 판정이 없어서 Draft를 벗어날 수 없습니다
+
+`#81`만 유독 `opencode-agent` 판정이 0건인 이유를 중앙 워크플로 소스에서 확인했습니다. 교착입니다.
+
+판정을 만들어 내는 dispatch를 보내는 주체는 PR Review Merge Scheduler입니다 — `ContextualWisdomLab/.github`의 `scripts/ci/pr_review_merge_scheduler.py:2205`가 `"event_type": "opencode-review"`로 `repository_dispatch`를 발행하고, 그것을 `opencode-review-dispatch.yml`이 받아 리뷰를 실행·게시합니다. 저장소 쪽 `opencode-review` check는 그 결과를 조회하는 검증 절반일 뿐입니다.
+
+그런데 같은 스크립트의 PR 단위 판단 함수는 **첫 동작으로 Draft를 걸러냅니다.**
+
+```python
+if pr.get("isDraft"):
+    return Decision(number, "skip", "draft PR")
+```
+
+이 `return`은 `cancel_stale_pr_runs`보다, base_ref 분기보다, 그리고 dispatch에 닿는 모든 경로보다 앞섭니다. 즉 **Draft PR에는 리뷰 dispatch가 발행되지 않습니다.**
+
+여기에 `#81` 본문의 Promotion acceptance 4번이 겹칩니다 — "a qualifying independent non-author approval is current". 정리하면 이렇습니다.
+
+1. `#81`이 Draft다 → 2. 스케줄러가 skip한다 → 3. dispatch가 발행되지 않는다 → 4. `opencode-agent` 판정이 생기지 않는다 → 5. 승격 조건 4번이 충족되지 않는다 → 6. Draft로 남는다 → 1로 돌아갑니다.
+
+관측된 비대칭이 이것으로 설명됩니다. `#73`은 Draft가 아니고 2026-09-09에 판정(`CHANGES_REQUESTED`)을 받았습니다. `#81`은 Draft이고 판정이 0건입니다. 리뷰 기구 자체는 이 저장소에서 살아 있습니다 — `#81`에만 닿지 않을 뿐입니다.
+
+**mention 경로는 현재 대안이 못 됩니다.** `agent-mention-opencode-dispatch.yml`에는 Draft 필터가 없으므로 원리상 `@opencode-agent` 멘션으로 우회할 수 있어야 합니다. 그러나 `#81`에는 2026-08-25·08-26·08-30·08-31 네 번의 승인 요청 멘션이 있고 어느 것도 판정을 만들지 못했습니다. 그 경로 자체가 수리 중입니다 — `ContextualWisdomLab/.github#2058`(review-agent mention을 native로 라우팅)이 2026-09-09 현재 열려 있습니다.
+
+**조치는 사람 몫이며 한 가지입니다.** `#81`을 Ready for review로 되돌리면 `opencode-review.yml`의 `ready_for_review` 트리거가 걸리고 스케줄러가 더 이상 skip하지 않으므로, 판정을 받을 수 있는 상태가 됩니다. 그 판정이 `APPROVED`일지 `CHANGES_REQUESTED`일지는 별개이며, 어느 쪽이든 지금처럼 무한정 대기하는 것보다 낫습니다.
+
+**agent가 이 전환을 대신 하지 않습니다.** Draft 전환은 `#81` 저자가 본문에 승격 조건을 명시하며 의도적으로 내린 결정이고, 그 결정을 제3자가 뒤집는 것은 이 문서의 다른 모든 절이 금지하는 종류의 행위입니다. 여기서는 교착의 존재와 해제 지점만 기록합니다.
+
+부수적으로 같은 함수의 non-draft 경로에 이런 주석이 있습니다 — "Stacked/cascade PR (base is another feature branch). Org required workflows are only injected for default-branch-target PRs, so these PRs never receive an OpenCode review on their own — dispatch one here." 이 문서를 담은 `#102`도 base가 `#79`의 브랜치인 stacked PR이므로 같은 경로에 해당합니다. `#102`에 check가 2건(fuzz)만 붙어 있는 것은 이 구조 때문이며 결함이 아닙니다.
+
 ### `opencode-review` dispatch의 owner는 이 저장소가 아닙니다
 
 `#81`에서 실패한 것은 검증 쪽 절반입니다. 판정을 실제로 생성해 게시하는 dispatch 절반은 `ContextualWisdomLab/.github`의 중앙 워크플로에 있고, 그쪽에 수리 PR이 이미 떠 있습니다 — `ContextualWisdomLab/.github#2040`(exchanged target app token으로 required job 깨우기), `#2051`(실패 job wake 1회 조정), `#2056`(exact dispatch wakeup 직렬화).
@@ -529,6 +558,7 @@ owner lane은 `ContextualWisdomLab/contextual-orchestrator` issue `#1106`(free-p
 | `#32`·`#73`의 `CHANGES_REQUESTED` 내용 | 리뷰 본문 + 스레드 전수 | **확인** — 코드 findings 0건, 미해결 스레드 0건(`#73` 31건·`#32` 3건 모두 resolved). 전부 check-rollup 사유이며 `#32`의 두 건은 같은 head 중복 |
 | `#73` 실패 check 3건의 원인 | 잡 로그 `102406319401`·`102406024468` 직접 확인 | **상류 결함** — CodeQL은 `VERDICT_STATE: pending`으로 dispatch wake 대기, noema는 게이트웨이가 자기 preflight에서 `deferred`(429)로 표시한 라우트를 골라 366.4초 뒤 429. 각각 `.github`, `contextual-orchestrator#971` 소관 |
 | 포털이 자체 수리 가능한 실패 check | 위 원인 대조 | **1종뿐** — `trivy-fs`(CVE-2026-69247), single writer는 `#81` |
+| `#81`만 판정 0건인 이유 | `.github`의 `scripts/ci/pr_review_merge_scheduler.py` 소스 확인 | **교착 발견** — 리뷰 dispatch를 보내는 것이 이 스케줄러(`:2205`)인데 PR 판단 함수가 첫 줄에서 Draft를 skip합니다(`:2383`). Draft → dispatch 없음 → 판정 없음 → 승격 조건 미충족 → Draft 유지. 해제 지점은 Ready 전환이며 사람 결정입니다 |
 
 ## 검증 기록 (2026-09-07)
 
