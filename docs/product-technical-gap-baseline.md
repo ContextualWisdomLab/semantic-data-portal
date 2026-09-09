@@ -66,6 +66,63 @@ Council of Europe. (2020). *Common European Framework of Reference for Languages
 
 PR `#51` security-lock 파일을 catalog/docs PR에 섞지 마십시오. 이 문서 PR(`#79`)도 보안 unlock stack 뒤에서 squash하십시오. `#80`은 `#51` security-lock과 별개이며 squash는 현재 SHA OpenCode APPROVE 뒤에만 합니다. (`#90`은 closed되어 이 순서에서 빠졌고, 그 landing delta는 `#72`가 잇습니다.)
 
+## 병합 순서 그림 (위 목록과 같은 내용)
+
+위 15개 항목을 그림으로 옮긴 것입니다. 문장이 규범이고 그림은 그 요약입니다 — 둘이 어긋나면 문장을 따르십시오.
+
+```mermaid
+flowchart TD
+  subgraph unlock["1. 보안 unlock"]
+    P81["#81 Draft<br/>cryptography 50.0.0<br/>Draft라서 판정 불가"]
+    P51["#51 outbound URL harden"]
+    P58["#58 Keyverse claim aliases"]
+  end
+  subgraph plane["2. catalog plane"]
+    P35["#35 SQL allowlist"]
+    P32["#32 SQL gate"]
+    P73["#73 catalog plane<br/>cryptography 50.0.1<br/>trivy-fs / strix success"]
+    P75["#75 Draft"]
+    P92["#92 Draft"]
+  end
+  subgraph docs["3. 문서"]
+    P79["#79 이 문서의 single writer"]
+    P102["#102 이 문서의 delta"]
+  end
+  subgraph om["4. OpenMetadata, 모두 Draft"]
+    P96["#96 read-only 정규화 경계"]
+    P97["#97 admission receipt"]
+    P99["#99 receipt repair"]
+  end
+  P88["#88 measurement context registry"]
+  P93["#93 / #100 CI 겹침, 정리 전 병합 금지"]
+
+  P81 --> P51 --> P58
+  P51 --> P79 --> P102
+  P32 --> P73
+  P35 --> P73
+  P73 --> P75
+  P73 --> P92
+  P73 --> P88
+  P58 --> P88
+  P96 --> P97
+  P96 --> P99
+  P97 -. "승계 미완 · test 3건 누락" .-> P99
+```
+
+`#81`이 root인 이유는 trivy-fs가 merge ref를 스캔하기 때문입니다. 다만 `#73`이 자기 head에서 같은 CVE를 `50.0.1`로 이미 해소했으므로, **root를 어느 PR이 맡을지는 아직 정해지지 않았습니다**(아래 해당 절).
+
+### 실패 check의 소유자
+
+```mermaid
+flowchart LR
+  T["trivy-fs"] --> TO["포털 소유<br/>#81 또는 #73이 해소"]
+  OR["opencode-review"] --> GO[".github<br/>#2040 / #2051 / #2056"]
+  CQ["CodeQL compatibility analysis"] --> GO
+  NR["noema-review"] --> CO["contextual-orchestrator<br/>#1106 free pool admission"]
+```
+
+네 종류 중 포털이 자기 저장소에서 고칠 수 있는 것은 `trivy-fs` 하나입니다. 나머지 셋은 상류 제어면 수리를 기다리는 lane이며 포털에서 우회하지 않습니다.
+
 ## 열린 PR과 각 PR이 닫는 격차
 
 Head SHA와 draft 여부는 2026-09-07 GitHub API 응답에서 그대로 옮겼습니다. 열린 PR은 35건입니다.
