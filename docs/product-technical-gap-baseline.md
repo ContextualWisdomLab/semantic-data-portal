@@ -2,7 +2,7 @@
 
 **제품 홈:** ContextualWisdomLab/semantic-data-portal (ontology 기반 semantic catalog).
 **독자:** catalog steward / tenant operator.
-**다음 행동:** 아래 병합 순서로 unlock stack을 올리고, 이 저장소에 local IdP나 policy registry를 만들지 마십시오.
+**다음 행동:** 병합 순서 1번(`#81`)부터 막혀 있으므로 순서를 그대로 걷는 것으로는 진행되지 않습니다. **먼저 필요한 단 하나의 조치는 `#81`을 Ready for review로 되돌리는 것**입니다 — Draft인 동안에는 스케줄러가 skip해 리뷰 dispatch가 발행되지 않고, 따라서 `#81`이 스스로 내건 승격 조건(현재 head 판정)을 영원히 충족할 수 없습니다. 자세한 근거는 아래 "`#81`은 Draft라서 판정을 받을 수 없고…" 절에 있습니다. 그 전환 뒤에야 2번 이하가 의미를 가집니다. 이 저장소에 local IdP나 policy registry를 만들지 마십시오.
 **기준일:** 2026-09-09 (main `e48aa13`, 변동 없음). 2026-09-09에 리뷰 판정 증거를 전수 재검증했고, 그 결과 병합 순서 1번·3번의 승인 근거와 "승인만 있으면 풀리는 세 건" 권고를 정정했습니다 — 아래 "정정(2026-09-09)" 절을 먼저 읽으십시오.
 **Figma file ID:** `JjYSqr6nWxpARUjaVKhG16` (KRDS 기반 디자인 시스템; `docs/design-tokens.md:3`의 토큰 계약과 동일 파일). 새 Figma 파일을 만들지 말고 이 파일을 소비하십시오.
 
