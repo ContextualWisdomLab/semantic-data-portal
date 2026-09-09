@@ -468,6 +468,22 @@ owner lane은 `ContextualWisdomLab/contextual-orchestrator` issue `#1106`(free-p
 - single writer 지정을 다시 봐야 합니다. `#81`은 Draft이고 `50.0.0`이며 자기 승격에 필요한 판정을 받을 수 없습니다(위 절). `#73`은 non-draft이고 `50.0.1`이며, **그 pin이 check를 실제로 초록으로 만든 것이 관측되었습니다.** 어느 PR을 CVE 수리의 writer로 삼을지는 owner 결정이지만, "`#81`이 올라야 trivy-fs가 풀린다"는 전제는 더 이상 측정과 맞지 않습니다.
 - `#73`에 남은 실패 4건은 전부 `.github`·`contextual-orchestrator` 제어면 lane입니다. 포털에서 고칠 것이 없습니다.
 
+### 상류 수리 lane은 살아 있습니다 (2026-09-09 14:52Z 확인)
+
+이 문서가 지목한 `.github` 세 lane은 **전부 열려 있고 같은 시간대에 갱신되고 있습니다.**
+
+| lane | 제목 | 최종 갱신 |
+| --- | --- | --- |
+| `.github` `#2056` | `fix(codeql): serialize exact dispatch wakeups` | 2026-09-09 14:52Z |
+| `.github` `#2051` | `fix(codeql): coordinate failed-job wake once` | 2026-09-09 14:29Z |
+| `.github` `#2040` | `fix(codeql): wake required jobs with the exchanged target app token` | 2026-09-09 14:09Z |
+
+즉 "상류가 방치되어 있다"고 읽으면 안 됩니다. `.github`는 이 lane에서 계속 병합도 하고 있습니다 — `#2008`·`#2009`(2026-09-07), `#2028`(2026-09-08, `status publish 403` 시 dispatch scan을 깨끗하게 유지)까지 이미 main에 올라 있습니다.
+
+그런데 **그 병합들이 이 저장소의 증상을 아직 없애지 못했습니다.** `#73`의 `CodeQL compatibility analysis`는 `#2028` 병합(09-08 03:07Z) 이후인 **2026-09-09 09:18Z에도 실패**했고, 같은 실행에서 `Dispatch current-head CodeQL scan`은 success였습니다. dispatch는 나가는데 실패한 job을 되돌아와 깨우는 절반이 아직 닫히지 않았다는 뜻이며, 그것이 정확히 `#2040`/`#2051`/`#2056`이 다루는 부분입니다.
+
+포털에서 할 일은 여전히 없습니다. 이 절은 대기의 성격을 기록하기 위한 것입니다 — 이것은 방치가 아니라 진행 중인 수리이고, 우회하거나 재촉해서 해결할 대상이 아닙니다.
+
 ### `opencode-review`가 코드 지적을 내지 못한 이유가 자기 로그에 있습니다
 
 `opencode-agent[bot]`이 `#73`에 남긴 현재-head overview(2026-09-09 09:52 갱신)는 다음을 함께 적고 있습니다.
