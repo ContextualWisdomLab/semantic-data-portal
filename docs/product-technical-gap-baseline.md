@@ -385,6 +385,8 @@ if pr.get("isDraft"):
 
 **조치는 사람 몫이며 한 가지입니다.** `#81`을 Ready for review로 되돌리면 `opencode-review.yml`의 `ready_for_review` 트리거가 걸리고 스케줄러가 더 이상 skip하지 않으므로, 판정을 받을 수 있는 상태가 됩니다. 그 판정이 `APPROVED`일지 `CHANGES_REQUESTED`일지는 별개이며, 어느 쪽이든 지금처럼 무한정 대기하는 것보다 낫습니다.
 
+owner lane은 `ContextualWisdomLab/.github` issue `#2045`(Ready 전환 뒤 exact-head 리뷰 job 재생성)입니다. 다만 그 issue의 canary 두 건(html4tree#600, wardnet#130)은 Draft→Ready를 **건넌 뒤** 옛 GREEN이 남는 반대 방향입니다. `#81`은 전환 자체를 못 건너는 쪽이라 세 번째 canary로 [코멘트](https://github.com/ContextualWisdomLab/.github/issues/2045#issuecomment-5601146614)에 기록했습니다. issue의 수리 계약 2번이 "Ready 전환 **또는** 중앙 reconciliation"으로 쓰여 있는데, 전환이 막힌 PR에는 앞쪽 절반이 도움이 되지 않으므로 뒤쪽 절반이 Draft 상태의 PR에도 닿거나, 판정이 Draft 탈출의 선행조건이 아님을 계약에 명시해야 한다는 점을 덧붙였습니다.
+
 **agent가 이 전환을 대신 하지 않습니다.** Draft 전환은 `#81` 저자가 본문에 승격 조건을 명시하며 의도적으로 내린 결정이고, 그 결정을 제3자가 뒤집는 것은 이 문서의 다른 모든 절이 금지하는 종류의 행위입니다. 여기서는 교착의 존재와 해제 지점만 기록합니다.
 
 부수적으로 같은 함수의 non-draft 경로에 이런 주석이 있습니다 — "Stacked/cascade PR (base is another feature branch). Org required workflows are only injected for default-branch-target PRs, so these PRs never receive an OpenCode review on their own — dispatch one here." 이 문서를 담은 `#102`도 base가 `#79`의 브랜치인 stacked PR이므로 같은 경로에 해당합니다. `#102`에 check가 2건(fuzz)만 붙어 있는 것은 이 구조 때문이며 결함이 아닙니다.
