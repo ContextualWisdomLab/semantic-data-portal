@@ -799,6 +799,7 @@ owner lane은 `ContextualWisdomLab/contextual-orchestrator` issue `#1106`(free-p
 | CVE 수리의 실제 writer | `#81`·`#57`·`#73` 세 head 대조 | **전제 오류** — `#81`(Draft·`50.0.0`)은 판정을 받을 수 없고, `#73`(non-draft·`50.0.1`)은 이미 check를 초록으로 만들었습니다. "`#81`이 올라야 풀린다"는 서술 철회. 버전·writer 선택은 owner 결정 |
 | `opencode-review`의 빈 `CHANGES_REQUESTED` 사유 | 해당 bot의 현재-head overview 본문 | **원인 확인** — `Model pool: exhausted`. 모델을 얻지 못해 결정론적 경로만으로 판정. 조직 규칙대로 유료 우회 없이 fail closed 한 것이며 free pool 용량 lane(`contextual-orchestrator#1106`)의 증거 |
 | 판정과 게이트 job의 순서 | job `102407231836` 종료시각 대 overview 갱신시각 | **경합 확인** — job 09:26:46 실패, 판정 게시 09:52. 판정이 게이트보다 늦게 도착해 check는 이미 fail-closed. 재실행 wake는 `.github` lane 소관 |
+| `#102` head의 test suite (CI가 돌리지 않는 게이트) | 로컬에서 CI와 같은 절차 재현 — `requirements-test.txt` 설치 후 `PYTHONPATH=src python -m pytest` | **256 passed, 8 skipped** (head `86d18ce`). stacked PR이라 CI에서는 이 suite가 돌지 않으므로 직접 실행했습니다. 주의: `python -m pytest`여야 합니다 — `pytest` 콘솔 스크립트는 CWD를 `sys.path`에 넣지 않아 `tests.fuzz` import가 깨집니다 |
 | `#81`만 판정 0건인 이유 | `.github`의 `scripts/ci/pr_review_merge_scheduler.py` 소스 확인 | **교착 발견** — 리뷰 dispatch를 보내는 것이 이 스케줄러(`:2205`)인데 PR 판단 함수가 첫 줄에서 Draft를 skip합니다(`:2383`). Draft → dispatch 없음 → 판정 없음 → 승격 조건 미충족 → Draft 유지. 해제 지점은 Ready 전환이며 사람 결정입니다 |
 
 ## 검증 기록 (2026-09-07)
