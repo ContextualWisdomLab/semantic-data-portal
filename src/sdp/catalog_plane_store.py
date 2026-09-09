@@ -29,11 +29,12 @@ from sdp_core.catalog_plane import (
 )
 
 try:
-    from sqlalchemy import create_engine, event, text
+    from sqlalchemy import bindparam, create_engine, event, text
     from sqlalchemy.engine import Connection, Engine
     from sqlalchemy.exc import IntegrityError
 except ImportError:  # pragma: no cover - optional graph extra
     create_engine = None  # type: ignore[assignment]
+    bindparam = None  # type: ignore[assignment]
     event = None  # type: ignore[assignment]
     text = None  # type: ignore[assignment]
     Connection = Any  # type: ignore[misc,assignment]
@@ -539,16 +540,11 @@ class RelationalCatalogPlaneStore(CatalogPlaneStore):
                         {"tenant_reference": tenant_reference},
                     ).mappings()
                 )
-            loaded: list[CatalogObjectRecord] = []
-            for row in rows:
-                record = self._load_record(
-                    conn,
-                    tenant_reference=tenant_reference,
-                    catalog_object_id=row["catalog_object_id"],
-                )
-                if record is not None:
-                    loaded.append(record)
-            return loaded
+            return self._load_records(
+                conn,
+                tenant_reference=tenant_reference,
+                catalog_object_ids=[row["catalog_object_id"] for row in rows],
+            )
 
     def get_catalog_object(
         self,
@@ -743,16 +739,203 @@ class RelationalCatalogPlaneStore(CatalogPlaneStore):
                     {"tenant_reference": tenant_reference, "needle": needle},
                 ).mappings()
             )
-            loaded: list[CatalogObjectRecord] = []
-            for row in rows:
-                record = self._load_record(
-                    conn,
-                    tenant_reference=tenant_reference,
+            return self._load_records(
+                conn,
+                tenant_reference=tenant_reference,
+                catalog_object_ids=[row["catalog_object_id"] for row in rows],
+            )
+
+    def _load_records(
+        self,
+        conn: Connection,
+        *,
+        tenant_reference: str,
+        catalog_object_ids: list[str],
+    ) -> list[CatalogObjectRecord]:
+        """Hydrate an ordered catalog-object batch with one query per table."""
+        if not catalog_object_ids:
+            return []
+        if bindparam is None:  # pragma: no cover - SQLAlchemy is a dev extra
+            raise RuntimeError(_GRAPH_EXTRA_HINT)
+
+        ordered_ids = list(dict.fromkeys(catalog_object_ids))
+        bound_ids = bindparam("catalog_object_ids", expanding=True)
+        parameters = {
+            "catalog_object_ids": ordered_ids,
+            "tenant_reference": tenant_reference,
+        }
+
+        def child_rows(statement: str) -> list[Any]:
+            return list(
+                conn.execute(text(statement).bindparams(bound_ids), parameters).mappings()
+            )
+
+        parents = {
+            row["catalog_object_id"]: row
+            for row in child_rows(
+                """
+                SELECT catalog_object_id, tenant_reference, object_kind, object_slug,
+                       display_title, object_status, created_by_subject, created_at, updated_at
+                FROM catalog_objects
+                WHERE tenant_reference = :tenant_reference
+                  AND catalog_object_id IN :catalog_object_ids
+                """
+            )
+        }
+        # ``tenant_reference`` remains a separately bound predicate; child IDs
+        # are sourced only from this tenant-scoped parent selection.
+        parents = {
+            object_id: row
+            for object_id, row in parents.items()
+            if row["tenant_reference"] == tenant_reference
+        }
+        if len(parents) != len(ordered_ids):
+            raise RuntimeError("catalog object batch changed during hydration")
+
+        definitions: dict[str, Any] = {}
+        for row in child_rows(
+            """
+            SELECT definition_id, catalog_object_id, definition_text,
+                   preferred_language, definition_status, recorded_at
+            FROM object_definitions
+            WHERE catalog_object_id IN :catalog_object_ids
+            ORDER BY catalog_object_id ASC, recorded_at ASC
+            """
+        ):
+            definitions.setdefault(row["catalog_object_id"], row)
+        stewards: dict[str, Any] = {}
+        for row in child_rows(
+            """
+            SELECT steward_record_id, catalog_object_id, steward_subject,
+                   steward_display_name, recorded_at
+            FROM object_stewards
+            WHERE catalog_object_id IN :catalog_object_ids
+            ORDER BY catalog_object_id ASC, recorded_at ASC
+            """
+        ):
+            stewards.setdefault(row["catalog_object_id"], row)
+        if any(object_id not in definitions or object_id not in stewards for object_id in ordered_ids):
+            raise RuntimeError(
+                "catalog object is missing required 0002 definition or steward rows"
+            )
+
+        aliases: dict[str, list[ObjectAliasRecord]] = {
+            object_id: [] for object_id in ordered_ids
+        }
+        for row in child_rows(
+            """
+            SELECT alias_id, catalog_object_id, alias_text, alias_language
+            FROM object_aliases
+            WHERE catalog_object_id IN :catalog_object_ids
+            """
+        ):
+            aliases[row["catalog_object_id"]].append(
+                ObjectAliasRecord(
+                    alias_id=row["alias_id"],
                     catalog_object_id=row["catalog_object_id"],
+                    alias_text=row["alias_text"],
+                    alias_language=row["alias_language"],
                 )
-                if record is not None:
-                    loaded.append(record)
-            return loaded
+            )
+        links: dict[str, list[DocumentKgLinkRecord]] = {
+            object_id: [] for object_id in ordered_ids
+        }
+        for row in child_rows(
+            """
+            SELECT document_kg_link_id, catalog_object_id, source_system,
+                   source_object_kind, source_object_id, provenance_uri,
+                   link_status, recorded_at
+            FROM document_kg_links
+            WHERE catalog_object_id IN :catalog_object_ids
+            ORDER BY catalog_object_id ASC, recorded_at ASC
+            """
+        ):
+            links[row["catalog_object_id"]].append(
+                DocumentKgLinkRecord(
+                    document_kg_link_id=row["document_kg_link_id"],
+                    catalog_object_id=row["catalog_object_id"],
+                    source_system=row["source_system"],
+                    source_object_kind=row["source_object_kind"],
+                    source_object_id=row["source_object_id"],
+                    provenance_uri=row["provenance_uri"],
+                    link_status=row["link_status"],
+                    recorded_at=_as_datetime(row["recorded_at"]),
+                )
+            )
+        bindings: dict[str, list[ConceptBindingRecord]] = {
+            object_id: [] for object_id in ordered_ids
+        }
+        for row in child_rows(
+            """
+            SELECT binding_id, catalog_object_id, concept_key, binding_role, recorded_at
+            FROM concept_object_bindings
+            WHERE catalog_object_id IN :catalog_object_ids
+            ORDER BY catalog_object_id ASC, recorded_at ASC
+            """
+        ):
+            bindings[row["catalog_object_id"]].append(
+                ConceptBindingRecord(
+                    binding_id=row["binding_id"],
+                    catalog_object_id=row["catalog_object_id"],
+                    concept_key=row["concept_key"],
+                    binding_role=row["binding_role"],
+                    recorded_at=_as_datetime(row["recorded_at"]),
+                )
+            )
+        scores: dict[str, list[ScoreReferenceRecord]] = {
+            object_id: [] for object_id in ordered_ids
+        }
+        for row in child_rows(
+            """
+            SELECT score_reference_id, catalog_object_id, score_system, score_endpoint, recorded_at
+            FROM commons_score_references
+            WHERE catalog_object_id IN :catalog_object_ids
+            ORDER BY catalog_object_id ASC, recorded_at ASC
+            """
+        ):
+            scores[row["catalog_object_id"]].append(
+                ScoreReferenceRecord(
+                    score_reference_id=row["score_reference_id"],
+                    catalog_object_id=row["catalog_object_id"],
+                    score_system=row["score_system"],
+                    score_endpoint=row["score_endpoint"],
+                    recorded_at=_as_datetime(row["recorded_at"]),
+                )
+            )
+
+        return [
+            CatalogObjectRecord(
+                catalog_object_id=object_id,
+                tenant_reference=parents[object_id]["tenant_reference"],
+                object_kind=parents[object_id]["object_kind"],
+                object_slug=parents[object_id]["object_slug"],
+                display_title=parents[object_id]["display_title"],
+                object_status=parents[object_id]["object_status"],
+                created_by_subject=parents[object_id]["created_by_subject"],
+                created_at=_as_datetime(parents[object_id]["created_at"]),
+                updated_at=_as_datetime(parents[object_id]["updated_at"]),
+                definition=ObjectDefinitionRecord(
+                    definition_id=definitions[object_id]["definition_id"],
+                    catalog_object_id=object_id,
+                    definition_text=definitions[object_id]["definition_text"],
+                    preferred_language=definitions[object_id]["preferred_language"],
+                    definition_status=definitions[object_id]["definition_status"],
+                    recorded_at=_as_datetime(definitions[object_id]["recorded_at"]),
+                ),
+                steward=ObjectStewardRecord(
+                    steward_record_id=stewards[object_id]["steward_record_id"],
+                    catalog_object_id=object_id,
+                    steward_subject=stewards[object_id]["steward_subject"],
+                    steward_display_name=stewards[object_id]["steward_display_name"],
+                    recorded_at=_as_datetime(stewards[object_id]["recorded_at"]),
+                ),
+                aliases=aliases[object_id],
+                document_kg_links=links[object_id],
+                concept_bindings=bindings[object_id],
+                score_references=scores[object_id],
+            )
+            for object_id in ordered_ids
+        ]
 
     def _load_record(
         self,

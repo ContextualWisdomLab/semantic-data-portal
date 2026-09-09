@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 
 from sdp.catalog_plane import create_catalog_object, reset_catalog_plane
 from sdp.catalog_plane_store import (
@@ -169,6 +169,40 @@ def test_relational_query_treats_like_metacharacters_literally(tmp_path):
             tenant_reference="demo", query_text=r"_100%\\"
         )
     ] == [literal.catalog_object_id]
+
+
+def test_relational_list_and_query_hydrate_multiple_records(tmp_path):
+    """Batch reads preserve each object's required and optional child rows."""
+
+    store = RelationalCatalogPlaneStore(_sqlite_dsn(tmp_path))
+    first = _sample_record(object_slug="renewal-risk", source_object_id="catalog:renewal")
+    second = _sample_record(object_slug="renewal-opportunity", source_object_id="catalog:renewal")
+    store.insert_catalog_object(first)
+    store.insert_catalog_object(second)
+
+    statement_count = 0
+
+    def count_statements(*_args) -> None:
+        nonlocal statement_count
+        statement_count += 1
+
+    event.listen(store._engine, "before_cursor_execute", count_statements)
+    try:
+        listed = store.list_catalog_objects(tenant_reference="demo")
+    finally:
+        event.remove(store._engine, "before_cursor_execute", count_statements)
+    queried = store.query_catalog_objects(tenant_reference="demo", query_text="catalog:renewal")
+
+    assert {record.catalog_object_id for record in listed} == {
+        first.catalog_object_id,
+        second.catalog_object_id,
+    }
+    assert {record.catalog_object_id for record in queried} == {
+        first.catalog_object_id,
+        second.catalog_object_id,
+    }
+    assert all(record.aliases and record.concept_bindings for record in queried)
+    assert statement_count == 8
 
 
 def test_in_memory_insert_detaches_the_callers_record():
