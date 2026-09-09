@@ -468,6 +468,37 @@ owner lane은 `ContextualWisdomLab/contextual-orchestrator` issue `#1106`(free-p
 - single writer 지정을 다시 봐야 합니다. `#81`은 Draft이고 `50.0.0`이며 자기 승격에 필요한 판정을 받을 수 없습니다(위 절). `#73`은 non-draft이고 `50.0.1`이며, **그 pin이 check를 실제로 초록으로 만든 것이 관측되었습니다.** 어느 PR을 CVE 수리의 writer로 삼을지는 owner 결정이지만, "`#81`이 올라야 trivy-fs가 풀린다"는 전제는 더 이상 측정과 맞지 않습니다.
 - `#73`에 남은 실패 4건은 전부 `.github`·`contextual-orchestrator` 제어면 lane입니다. 포털에서 고칠 것이 없습니다.
 
+### `#99`는 `#97`을 완전히 승계하지 않습니다 (2026-09-09 확인)
+
+이 문서는 `#97`/`#99`를 두고 "`#99`가 `#97`의 repair successor로 보임; delta 승계 확인 전 어느 쪽도 닫지 말 것"이라고만 적어 두었습니다. 확인했습니다. **완전 승계가 아닙니다.**
+
+두 PR의 변경 파일을 대조하면 `#99`에 없는 `#97` 파일이 정확히 하나 있습니다.
+
+| 항목 | 값 |
+| --- | --- |
+| `#97`에만 있는 파일 | `tests/test_openmetadata_admission_evidence_verification.py` (+90) |
+| 그 파일이 정의하는 test | `test_receipt_verification_recomputes_source_and_projection_evidence`, `test_receipt_verification_rejects_another_source_snapshot`, `test_receipt_verification_rejects_another_safe_projection` |
+| `#99` 전체 diff에서 세 이름의 등장 | **3건 모두 없음** |
+
+`#99`가 새로 더한 것도 있습니다 — `README.md`, `docs/implementation-compliance.md`, `src/sdp/openmetadata/admission_identity.py`, `tests/test_openmetadata_admission_receipt_repair.py`, `tests/test_openmetadata_receipt_assurance.py`. 즉 두 PR은 포함 관계가 아니라 **양방향으로 서로에게 없는 delta를 가집니다.**
+
+따라서 `#97`을 superseded로 닫으면 receipt 검증 test 3건이 사라집니다. 이 저장소의 close 기준은 완전 승계이므로 **지금 상태에서 `#97`을 닫으면 안 됩니다.** 먼저 그 3건을 `#99`로 옮기거나, 다른 이름의 test가 같은 보장을 이미 덮는다는 것을 successor 쪽에서 입증해야 합니다.
+
+한계도 적어 둡니다 — 확인한 것은 **함수 이름의 부재**입니다. 다른 이름으로 동일한 보장을 덮고 있을 가능성까지 배제하지는 못했습니다. 입증 책임은 승계를 주장하는 쪽에 있습니다.
+
+### 이 문서의 single writer가 네 명이 되었습니다 (repair finding, 2026-09-09)
+
+`docs/product-technical-gap-baseline.md`는 `#79`를 single writer로 두고 `#102`가 그 브랜치 위에 delta를 쌓는 구조입니다. 그런데 OpenMetadata lane의 두 PR도 같은 파일을 고칩니다.
+
+| PR | 이 파일 변경량 |
+| --- | --- |
+| `#79` | single writer (원본) |
+| `#102` | `#79` 브랜치 위 delta |
+| `#97` | +28 / -8 |
+| `#99` | **+154 / -134** |
+
+`#99`의 변경은 절 단위 재작성 규모입니다. `#79`·`#102`와 같은 파일을 동시에 다시 쓰고 있으므로, 어느 쪽이 먼저 main에 오르든 나머지에 충돌이 남습니다. 이것은 close 사유가 아니라 **repair finding**입니다 — adapter lane의 PR이 기준선 문서를 함께 고쳐야 할 이유가 있다면 그 delta를 `#79` 쪽으로 옮기고, adapter PR은 자기 경계(`src/sdp/openmetadata/`, `docs/integrations/`)만 건드리게 하십시오.
+
 ### 상류 수리 lane은 살아 있습니다 (2026-09-09 14:52Z 확인)
 
 이 문서가 지목한 `.github` 세 lane은 **전부 열려 있고 같은 시간대에 갱신되고 있습니다.**
