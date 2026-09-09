@@ -52,7 +52,7 @@ Council of Europe. (2020). *Common European Framework of Reference for Languages
 2. PR `#51` `558dd2f` — outbound URL harden + security lock (cryptography 부분은 `#81`이 흡수). Frozen. 이 head를 push하지 마십시오. 이 SHA에 OpenCode APPROVE가 붙은 뒤 Product Manager squash.
 3. PR `#58` `0ce6d1f` — bounded Keyverse claim aliases. Frozen (strix fail on this head). extra-push 금지. **정정(2026-09-09): 이 줄의 “이전 APPROVE” 표현은 API 상태와 어긋납니다.** 현재 head `0ce6d1f`에 붙은 `opencode-agent[bot]` 리뷰는 존재하지만 API `state`가 `DISMISSED`입니다. 그 리뷰 **본문** 끝에 `- Result: APPROVE`와 `- Head SHA: 80966ae...`가 적혀 있어 승인처럼 보이지만, 본문이 주장하는 SHA는 그 리뷰 자신의 `commit_id`(`0ce6d1f`)와도 다릅니다. 판정은 리뷰 본문 산문이 아니라 API의 `state` + `commit_id`로만 읽으십시오.
 4. PR `#35` `9c12f5d` **그리고** PR `#32` `76fcfb6` (SQL gate). 둘 다 catalog plane SQL 표면의 전제입니다. **`#32`는 non-blocking이 아닙니다. `#73`보다 먼저** 병합하십시오. Frozen heads는 push하지 마십시오.
-5. PR `#73` `1681a7f` — catalog/ontology plane (#13). Frozen. trivy-fs inherit + strix fail. `#84` corporate-master 구현은 이 PR 뒤; extra-push 금지. **`#75`는 `#73`이 main에 올 때까지 Draft.** **정정(2026-09-09): head가 `311668e` → `1681a7f`로 이동했고(같은 날 203행이 이미 기록), 이 문서의 5번·PR 표는 옛 SHA로 남아 있었습니다.** 새 head `1681a7f`에는 `opencode-agent[bot]`의 `CHANGES_REQUESTED`(review id 5152624078)가 붙어 있습니다. 즉 이 PR은 “승인 대기”가 아니라 **요청된 수정이 남은 상태**입니다.
+5. PR `#73` `1681a7f` — catalog/ontology plane (#13). Frozen. **정정(2026-09-09): `trivy-fs`와 `strix`는 현재 head에서 모두 success입니다** — 이 줄의 "trivy-fs inherit + strix fail"은 옛 head 기준이었습니다(아래 전수 측정 절). `#84` corporate-master 구현은 이 PR 뒤; extra-push 금지. **`#75`는 `#73`이 main에 올 때까지 Draft.** **정정(2026-09-09): head가 `311668e` → `1681a7f`로 이동했고(같은 날 203행이 이미 기록), 이 문서의 5번·PR 표는 옛 SHA로 남아 있었습니다.** 새 head `1681a7f`에는 `opencode-agent[bot]`의 `CHANGES_REQUESTED`(review id 5152624078)가 붙어 있습니다. 즉 이 PR은 “승인 대기”가 아니라 **요청된 수정이 남은 상태**입니다.
 6. PR `#28` after PR `#37` — trusted document deps 위의 hybrid file ontology.
 7. PR `#59` / `#61` — DiskSage ingest and preview boundary.
 8. PR `#64` product names after `#51`, then PR `#65` setuptools, then Dependabot.
@@ -77,7 +77,7 @@ Head SHA와 draft 여부는 2026-09-07 GitHub API 응답에서 그대로 옮겼�
 | #58 | `0ce6d1f` | Keyverse claim aliases fail-closed | Keyverse 소비, adapter는 여기 | HOLD. strix fail. extra-push 금지. |
 | #35 | `9c12f5d` | SQL comma-join allowlist bypass | Yes | HOLD. extra-push 금지. |
 | #32 | `76fcfb6` | SELECT..INTO / volatile SQL bypass | Yes | #73 전제. #35/#51 뒤. |
-| #73 | `1681a7f` | Catalog plane above the document KG (#13). ADR 0002 / stacked #83 already on this branch | Yes | HOLD. trivy-fs + strix fail. 현재 head에 `opencode-agent` `CHANGES_REQUESTED`. `#84` extra-push 금지. |
+| #73 | `1681a7f` | Catalog plane above the document KG (#13). ADR 0002 / stacked #83 already on this branch | Yes | HOLD. **`trivy-fs`·`strix`는 현재 head에서 success**(2026-09-09 측정); 남은 실패 4건은 전부 중앙 제어면. 현재 head에 `opencode-agent` `CHANGES_REQUESTED`. `#84` extra-push 금지. |
 | #75 | `6cba648` Draft | Framework-neutral data-management evidence *profiles* (GRC registry 아님). issue #74 구현 | Yes (catalog evidence shape) | Draft. base가 main이 아니라 `#73`의 브랜치(`cursor/ontology-catalog-plane-90aa…`)이므로 `#73` 뒤에서만 의미가 있습니다. dirty. Ready로 돌아가면 다시 Draft. |
 | #82 | `a797e30` | customer-next-action copy, hide internal boundaries | Yes (UX copy) | `#81` 뒤. |
 | #88 | `8e281de` | Measurement Context Registry (Draft/Published/Superseded) | Yes (catalog aggregate) | Ready. `#81`/`#51`/`#58`/`#73` 뒤. 점수·응답·판정 없음. |
@@ -206,7 +206,7 @@ Head SHA와 draft 여부는 2026-09-07 GitHub API 응답에서 그대로 옮겼�
    | --- | --- | --- |
    | #81 `ce40bd8` | `50.0.0` | Draft |
    | #57 `fb48fc9` | `50.0.0` | 제목 불일치, check 통과 |
-   | #73 `1681a7f` | **`50.0.1`** | non-draft, check 4건 실패 |
+   | #73 `1681a7f` | **`50.0.1`** | non-draft. 이 pin으로 `trivy-fs`가 **초록**이 되었습니다. 남은 실패 4건은 전부 중앙 제어면 |
 
    즉 CVE-2026-69247 수정이 세 PR에 복제돼 있고 **목표 버전이 두 갈래**입니다. 먼저 병합되는 쪽이 나머지 둘에 `requirements.txt` 충돌을 남기며, `50.0.0`이 먼저 오르면 `#73`은 곧바로 다시 bump하는 PR이 됩니다. 이 문서가 `#81` 행에 "bump를 다른 PR로 복제하지 말 것"이라고 적어 둔 상태에서 이미 복제가 셋입니다. **어느 버전을 쓸지부터 정한 뒤 writer를 하나로 좁히십시오** — 버전 선택은 owner 결정이며, 여기서는 세 갈래가 존재한다는 사실만 기록합니다.
 3. **동시성 파일 충돌은 2자가 아니라 3자입니다.** `#57`도 `fuzz.yml`의 concurrency group을 바꿉니다. 그런데 세 번째 변형이며 조직 계약을 지키지 않습니다.
@@ -419,7 +419,7 @@ because GitHub Checks have failed.
 | `opencode-review` | `#81` | `No APPROVED or CHANGES_REQUESTED from opencode-agent on the current head` — 검증 절반이 dispatch 절반의 판정을 기다리다 fail-closed | `.github` `#2040`/`#2051`/`#2056` |
 | `CodeQL compatibility analysis` (actions·python) | `#73` | `VERDICT_STATE: pending` → `CodeQL scan dispatched. The dispatch workflow will rerun this exact failed CodeQL job after publishing its terminal verdict.` dispatch는 성공했는데 되돌아와 job을 재실행하는 wake가 오지 않습니다 | `.github` `#2040`/`#2051`/`#2056` |
 | `noema-review` | `#73`, `#79` | 게이트웨이 라우팅 결함 — 아래 참조 | `contextual-orchestrator` issue `#1106` (PR `#971`은 넓은 라우팅 lane) |
-| `trivy-fs` | `#32`, `#79` 외 | `[HIGH] CVE-2026-69247 requirements.txt:125 - Package: cryptography` | **이 저장소** (`#81`) |
+| `trivy-fs` | `#32`, `#79` 외 | `[HIGH] CVE-2026-69247 requirements.txt:125 - Package: cryptography` | **이 저장소** — 단, `#73`은 자체 `50.0.1` pin으로 이미 초록입니다(아래 절). 나머지는 취약한 main을 상속 |
 
 `noema-review`(job `102406024468`, 2026-09-09)는 특히 분명한 상류 결함입니다. 같은 잡의 preflight가 후보 24건 중 16건을 probe해 `ready` 4건과 `deferred` 4건을 이미 구분해 두었습니다.
 
@@ -443,7 +443,48 @@ served_model=dots-studio/dots-3-note-preview:free
 
 owner lane은 `ContextualWisdomLab/contextual-orchestrator` issue `#1106`(free-pool admission을 게이트웨이가 소유하고 leaf heuristic preflight를 제거)입니다. 그 issue는 2026-09-08자 실패 3건을 이미 기록하고 있고, 위 2026-09-09 건을 네 번째 사례로 [코멘트](https://github.com/ContextualWisdomLab/contextual-orchestrator/issues/1106#issuecomment-5601096976)에 붙였습니다. 이번 건이 더한 사실은 **preflight가 `deferred`로 표시한 라우트를 같은 실행이 그대로 서빙했다**는 점입니다 — issue에 적힌 `REVIEW_PREFLIGHT_DEFERRED_PRIORITY_PENALTY = 1000`이 배제가 아니라 순위 감점이라서 deferred 라우트가 계속 후보로 남습니다. PR `#971`은 같은 저장소의 넓은 라우팅/선택 lane이며, 이 결함의 추적 대상은 `#1106`입니다. 포털에서는 재시도·우회를 넣지 않습니다.
 
-**정리하면, 포털이 자기 저장소에서 고칠 수 있는 실패 check는 `trivy-fs` 하나이고 그 single writer는 `#81`입니다.** 나머지 세 종류는 전부 `.github`와 `contextual-orchestrator`의 제어면 결함입니다. 따라서 "포털에서 할 수 있는 독립 작업"으로 `#32`·`#73`의 리뷰 지적을 해소한다는 계획은 성립하지 않습니다 — 해소할 지적이 없습니다. 큐 전체가 상류 수리에 걸려 있다는 사실을 그대로 기록해 두는 편이, 없는 포털 작업을 만들어 내는 것보다 정확합니다.
+**정리하면, 포털이 자기 저장소에서 고칠 수 있는 실패 check는 `trivy-fs` 하나입니다.** **정정(2026-09-09): 그 writer가 `#81`이라는 전제는 측정과 어긋납니다** — `#73`이 `50.0.1`로 같은 CVE를 고쳐 자기 head에서 `trivy-fs`를 초록으로 만든 것이 관측되었습니다(아래 절). `#81`은 Draft이고 `50.0.0`입니다. 나머지 세 종류는 전부 `.github`와 `contextual-orchestrator`의 제어면 결함입니다. 따라서 "포털에서 할 수 있는 독립 작업"으로 `#32`·`#73`의 리뷰 지적을 해소한다는 계획은 성립하지 않습니다 — 해소할 지적이 없습니다. 큐 전체가 상류 수리에 걸려 있다는 사실을 그대로 기록해 두는 편이, 없는 포털 작업을 만들어 내는 것보다 정확합니다.
+
+### `#73`의 포털 소유 실패는 사라졌습니다 (2026-09-09 09:2x 전수 측정)
+
+`#73` head `1681a7f`의 check run 38건을 전부 확인했습니다. 실패는 4건이고 **`trivy-fs`는 그 안에 없습니다.**
+
+| check | 결론 | 시각 |
+| --- | --- | --- |
+| `trivy-fs` | **success** | 09:15:18 |
+| `strix` | **success** | 09:28:23 |
+| `osv-scan`·`dependency-review`·`Semgrep`·`CodeQL Analyze`·`coverage-evidence`·fuzz 2건 | success | — |
+| `opencode-review` | failure | 09:26:46 |
+| `CodeQL compatibility analysis (actions)` | failure | 09:18:10 |
+| `CodeQL compatibility analysis (python)` | failure | 09:20:24 |
+| `noema-review` | failure | 09:27:36 |
+
+원인은 이 PR이 스스로 CVE를 고쳤기 때문입니다. maintainer가 같은 날 [09:11 코멘트](https://github.com/ContextualWisdomLab/semantic-data-portal/pull/73#issuecomment-5599388802)에서 밝힌 대로 `1681a7f`는 `cryptography==50.0.1`을 고정하고 hash-locked 산출물 3건을 재생성했습니다.
+
+이것이 바꾸는 것:
+
+- 이 문서의 병합 순서 5번과 PR 표는 `#73`을 "trivy-fs inherit + strix fail"로 적어 두었습니다. **둘 다 현재 head에서 초록입니다.** 정정했습니다.
+- 위 owner 표의 "포털이 고칠 수 있는 실패 check는 `trivy-fs` 하나"는 저장소 전체로는 여전히 맞습니다. `#32`·`#79` 등은 아직 취약한 main을 상속합니다. 그러나 **`#73`에서는 이미 해소되었습니다.**
+- single writer 지정을 다시 봐야 합니다. `#81`은 Draft이고 `50.0.0`이며 자기 승격에 필요한 판정을 받을 수 없습니다(위 절). `#73`은 non-draft이고 `50.0.1`이며, **그 pin이 check를 실제로 초록으로 만든 것이 관측되었습니다.** 어느 PR을 CVE 수리의 writer로 삼을지는 owner 결정이지만, "`#81`이 올라야 trivy-fs가 풀린다"는 전제는 더 이상 측정과 맞지 않습니다.
+- `#73`에 남은 실패 4건은 전부 `.github`·`contextual-orchestrator` 제어면 lane입니다. 포털에서 고칠 것이 없습니다.
+
+### `opencode-review`가 코드 지적을 내지 못한 이유가 자기 로그에 있습니다
+
+`opencode-agent[bot]`이 `#73`에 남긴 현재-head overview(2026-09-09 09:52 갱신)는 다음을 함께 적고 있습니다.
+
+```text
+- Head SHA: 1681a7f28adc86b4aa6db48d05b20535fa5dc499
+- Gate result: REQUEST_CHANGES
+- Coverage gate: success
+- Model pool: exhausted
+- Verdict: REQUEST_CHANGES
+```
+
+`Model pool: exhausted`는 리뷰어가 **모델을 하나도 얻지 못했다**는 뜻입니다. 위에서 "현재 head `CHANGES_REQUESTED`에는 코드 지적이 없습니다"라고 기록한 현상의 원인이 이것입니다 — 지적을 생성할 모델이 없었고, 남은 결정론적 경로(실패 check 유무)만으로 판정이 나왔습니다.
+
+조직 규칙상 이 상황의 옳은 동작은 유료 우회 없이 fail closed 하는 것이고, 실제로 그렇게 동작했습니다. 따라서 이것은 포털이 고칠 결함이 아니라 free pool 용량 lane의 증거 한 건입니다. noema의 429 deferred-route 사례(`contextual-orchestrator` `#1106`)와 같은 뿌리를 가리킵니다.
+
+순서도 함께 기록해 둡니다. `opencode-review` job은 **09:26:46에 실패**했고, 그 판정(review `5152624078`)을 담은 overview는 **09:52에 갱신**되었습니다. 즉 현재 head에는 판정이 존재하는데, 그것을 읽어야 할 check는 판정이 도착하기 전에 이미 fail-closed로 끝나 있습니다. maintainer의 [09:28 코멘트](https://github.com/ContextualWisdomLab/semantic-data-portal/pull/73#issuecomment-5599598492)도 같은 시점을 "판정이 아직 없어 fail closed"로 기록하고 있습니다. 이 job을 다시 깨우는 것이 `.github` `#2040`/`#2051`/`#2056` lane이며, 포털에서 재실행하거나 우회하지 않습니다.
 
 ### 승인은 "오지 않는" 것이 아니라 2026-08-13에 멈췄습니다
 
@@ -559,7 +600,11 @@ owner lane은 `ContextualWisdomLab/contextual-orchestrator` issue `#1106`(free-p
 | `opencode-review` dispatch owner | `.github` 열린 PR 조회 | **확인** — 수리는 `ContextualWisdomLab/.github#2040`/`#2051`/`#2056`에서 진행 중. 포털에서 우회하지 않습니다 |
 | `#32`·`#73`의 `CHANGES_REQUESTED` 내용 | 리뷰 본문 + 스레드 전수 | **확인** — 코드 findings 0건, 미해결 스레드 0건(`#73` 31건·`#32` 3건 모두 resolved). 전부 check-rollup 사유이며 `#32`의 두 건은 같은 head 중복 |
 | `#73` 실패 check 3건의 원인 | 잡 로그 `102406319401`·`102406024468` 직접 확인 | **상류 결함** — CodeQL은 `VERDICT_STATE: pending`으로 dispatch wake 대기, noema는 게이트웨이가 자기 preflight에서 `deferred`(429)로 표시한 라우트를 골라 366.4초 뒤 429. 각각 `.github`, `contextual-orchestrator#971` 소관 |
-| 포털이 자체 수리 가능한 실패 check | 위 원인 대조 | **1종뿐** — `trivy-fs`(CVE-2026-69247), single writer는 `#81` |
+| 포털이 자체 수리 가능한 실패 check | 위 원인 대조 | **1종뿐** — `trivy-fs`(CVE-2026-69247). **writer가 `#81`이라는 판단은 아래 행에서 정정됨** |
+| `#73` 현재-head check 전수 | `GET /pulls/73` check runs 38건 | **정정** — 실패는 4건뿐이고 `trivy-fs`·`strix`는 **success**입니다. 이 문서가 `#73`을 "trivy-fs inherit + strix fail"로 적어 둔 것은 옛 head 기준이었습니다. `1681a7f`가 `cryptography==50.0.1`을 고정해 스스로 초록으로 만들었습니다 |
+| CVE 수리의 실제 writer | `#81`·`#57`·`#73` 세 head 대조 | **전제 오류** — `#81`(Draft·`50.0.0`)은 판정을 받을 수 없고, `#73`(non-draft·`50.0.1`)은 이미 check를 초록으로 만들었습니다. "`#81`이 올라야 풀린다"는 서술 철회. 버전·writer 선택은 owner 결정 |
+| `opencode-review`의 빈 `CHANGES_REQUESTED` 사유 | 해당 bot의 현재-head overview 본문 | **원인 확인** — `Model pool: exhausted`. 모델을 얻지 못해 결정론적 경로만으로 판정. 조직 규칙대로 유료 우회 없이 fail closed 한 것이며 free pool 용량 lane(`contextual-orchestrator#1106`)의 증거 |
+| 판정과 게이트 job의 순서 | job `102407231836` 종료시각 대 overview 갱신시각 | **경합 확인** — job 09:26:46 실패, 판정 게시 09:52. 판정이 게이트보다 늦게 도착해 check는 이미 fail-closed. 재실행 wake는 `.github` lane 소관 |
 | `#81`만 판정 0건인 이유 | `.github`의 `scripts/ci/pr_review_merge_scheduler.py` 소스 확인 | **교착 발견** — 리뷰 dispatch를 보내는 것이 이 스케줄러(`:2205`)인데 PR 판단 함수가 첫 줄에서 Draft를 skip합니다(`:2383`). Draft → dispatch 없음 → 판정 없음 → 승격 조건 미충족 → Draft 유지. 해제 지점은 Ready 전환이며 사람 결정입니다 |
 
 ## 검증 기록 (2026-09-07)
