@@ -329,6 +329,34 @@ Head SHA와 draft 여부는 2026-09-07 GitHub API 응답에서 그대로 옮겼�
 
 **조치: 어느 쪽도 닫지 마십시오.** 단일 writer를 정하고 나머지 delta를 그 PR로 합치는 것이 규약입니다(폐기가 아니라 통합). `#93`이 상위 집합에 가까우므로 `#93`을 동시성 계약 파일의 writer로 두고 `#100`의 Draft/closed 가드를 `#93`으로 옮기는 편이 충돌 표면이 작습니다. 반대로 정하려면 `#93`의 Scorecard·ghost workflow·docs-only skip delta가 통째로 승계되어야 합니다. 어느 쪽이든 `tests/test_workflow_concurrency_contract.py`는 최종적으로 한 PR에서만 추가되어야 합니다.
 
+### stacked PR은 fuzz 말고 아무 게이트도 돌지 않습니다 (2026-09-09 측정)
+
+이 저장소의 두 워크플로는 PR 트리거 범위가 다릅니다.
+
+| 워크플로 | PR 트리거 | 결과 |
+| --- | --- | --- |
+| `tests.yml` | `pull_request: branches: [main]` | base가 `main`인 PR에서만 실행 |
+| `fuzz.yml` | `pull_request:` (필터 없음) | 모든 PR에서 실행 |
+
+따라서 **base가 feature 브랜치인 PR은 API integration suite도, coverage 게이트도 돌지 않습니다.** 측정으로 확인했습니다.
+
+| PR | base | check run 총계 | 내역 |
+| --- | --- | --- | --- |
+| `#99` | `feat/openmetadata-2-read-adapter` | **2** | Atheris, Hypothesis뿐 |
+| `#75` | `cursor/ontology-catalog-plane-90aa` | **2** | Atheris, Hypothesis뿐 |
+| `#97` | `feat/openmetadata-2-read-adapter` | 같은 규칙 적용 | 위 규칙에서 따름 |
+| `#102` | `docs/product-technical-gap-baseline` | **2** | 문서 전용이라 영향 작음 |
+
+`#99`는 파일 21건에 신규 소스 모듈 5개와 신규 test 파일 7개를 담고 있습니다. **그 test들은 자기 PR에서 한 번도 실행되지 않습니다.** 그런데 checks 목록에는 초록 2건만 보이므로, 리뷰어에게는 "CI 통과"로 읽힙니다.
+
+정확히 적어 둡니다 — 이것이 "검증 안 된 코드가 main에 오른다"는 뜻은 **아닙니다.** 부모 PR(`#96`, `#73`)의 base는 `main`이므로, 자식이 부모 브랜치에 병합되면 부모 PR의 checks가 `synchronize`로 다시 돌아 그 코드를 덮습니다. 실제 문제는 다른 데 있습니다.
+
+1. **자식 PR의 승인 근거가 비어 있습니다.** 자기 diff의 test를 한 번도 돌리지 않은 초록 2건 위에서 리뷰·병합 판단이 이뤄집니다.
+2. **저장소가 하드 게이트라고 선언한 것들이 자식 PR에서 실행되지 않습니다** — 100% coverage와 docstring 게이트가 그렇습니다.
+3. **결함 발견이 부모로 밀립니다.** 부모에서 잡히면 diff가 훨씬 크고 어느 자식이 원인인지 귀속하기 어렵습니다.
+
+조치는 `tests.yml`의 `branches: [main]` 제한을 푸는 것이지만, 그 파일은 이미 `#93`/`#100`/`#57` 세 PR이 동시에 고치고 있는 대상입니다(위 절). **새 writer를 더하지 마십시오** — 동시성 정리를 하는 쪽에서 base 필터까지 함께 정하는 것이 맞습니다.
+
 ## 무엇이 실제로 막고 있는가 (2026-09-07 측정)
 
 열린 PR 16건을 표본으로 head SHA 기준 check run과 review를 전수 대조했습니다. 승인 부재는 예외가 없고, 그와 별개로 실패 중인 check가 다수 존재합니다.
