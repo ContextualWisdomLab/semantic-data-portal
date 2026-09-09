@@ -27,17 +27,20 @@ Claude, Codex, Cursor, opencode, …). This repo is a Python / FastAPI MVP
 - **Reproduce locally correctly**: a stale local DB misses findings. Refresh the
   DB first, then scan the **merge ref** (not just the PR head), e.g.
   `trivy fs --format table .` to read the exact rule id / severity / file.
+- When a CVE is found in a hash-pinned requirements file, update its source pin
+  first, regenerate every consuming lockfile, then run `trivy fs` locally.
+  `requirements-test.in` is the source for `requirements-test.txt`; it must stay
+  aligned with `pyproject.toml` so the test workflow cannot retain a vulnerable
+  transitive pin.
 - The org `code_scanning` ruleset is intentionally **CodeQL-only** — multiple
   code-scanning tools can't converge on one PR ref. Gating is by the Security
   Scan **job result**, not the `code_scanning` rule. **Do not add tools to that
   rule.**
 
 ### Code exploration
-- There is **no `.codegraph/` index** in this repo, so use normal search
-  (grep/find/ripgrep) to locate and understand code. If a `.codegraph/` directory
-  is later added at the repo root, prefer CodeGraph
+- This repository has a `.codegraph/` index. Prefer CodeGraph
   (`codegraph explore "<query>"`, or the code-review-graph MCP tools) **before**
-  grep/find — it surfaces callers/callees/impact that text search misses.
+  broad grep/find; it surfaces callers/callees/impact that text search misses.
 
 ### Config & secrets (KV, not env)
 - **Org rule: do NOT read runtime config/secrets via `os.getenv()` / raw

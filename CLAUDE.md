@@ -41,11 +41,16 @@ docker compose --profile postgres up --build
 
 ## 의존성 변경 절차
 
-`pyproject.toml`이 원천이고, `requirements.txt` / `requirements-dev.txt`는 uv로 hash와 함께 컴파일된 산출물이다. 의존성을 바꾸면 반드시 두 파일을 재생성해야 한다 (`--require-hashes` 설치가 깨진다):
+`pyproject.toml`과 `requirements-test.in`이 원천이다. `requirements.txt` /
+`requirements-dev.txt` / `requirements-test.txt`는 uv가 hash와 함께 만든
+산출물이다. 의존성을 바꾸면 세 파일을 모두 다시 생성한다. 특히
+`requirements-test.in`은 테스트 CI가 쓰는 독립 원천이므로 `pyproject.toml`과
+같은 runtime pin을 유지해야 한다 (`--require-hashes` 설치가 깨진다):
 
 ```bash
 uv pip compile pyproject.toml --generate-hashes -o requirements.txt
 uv pip compile pyproject.toml --extra dev --generate-hashes -o requirements-dev.txt
+uv pip compile --generate-hashes --universal --python-version 3.12 requirements-test.in -o requirements-test.txt
 ```
 
 supply-chain 하드닝 유지: base image는 digest-pinned(`python:3.12-slim@sha256:...`), 컨테이너는 non-root(uid 10001), GitHub Actions는 commit SHA로 pin. Dockerfile/requirements/workflow를 수정할 때 이 속성을 되돌리지 말 것.
