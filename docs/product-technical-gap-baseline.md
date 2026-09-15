@@ -371,6 +371,14 @@ Head SHA와 draft 여부는 2026-09-07 GitHub API 응답에서 그대로 옮겼�
 
 진단은 여전히 하지 않습니다. 다만 "그날의 단발성 기록"이 아니라 **2026-09-14 06:54Z부터 2026-09-15 07:15Z까지 하루를 넘겨 이어진 조건**으로 읽으십시오. 다시 관측되면 이 표에 행을 더하십시오.
 
+**이 현상에는 조직 차원의 주인이 있습니다 (2026-09-15 확인).** `ContextualWisdomLab/.github`에 Actions 큐 적체를 전담하는 owner lane([`.github#1150`](https://github.com/ContextualWisdomLab/.github/pull/1150), "read-only Actions queue health evidence")이 열려 있고, 여기서 분류하는 사건 유형 중 하나가 **job은 만들어졌는데 러너가 배정되지 않는 상태**입니다. 위 네 건이 정확히 그 유형입니다. 따라서 이 절은 포털만의 기이한 현상이 아니라 **조직 전반에서 재현되는 알려진 유형**으로 읽으십시오.
+
+다만 **포털은 그 lane의 allowlist에 없습니다.** `config/actions_queue_health_repositories.json`에 등재된 것은 `.github`·`ConceptWeave`·`ELUNVERA`·`TEPP`·`contextual-orchestrator`·`fast-mlsirm`·`naruon` 일곱 곳뿐입니다. 등재는 `.github` 쪽에서 allowlist 한 줄과 대응 contract test만 담은 bounded child PR로 진행하는 것이 그 lane의 관례이며(disksage·Pingora가 그렇게 처리되었습니다), **포털에서 폴링·분류 로직을 자체 구현하지 마십시오.** 등재되더라도 관측일 뿐이고 포털의 막힌 PR에 GREEN을 옮겨 주지 않습니다.
+
+위 네 건의 측정값은 [해당 lane에 보고했습니다](https://github.com/ContextualWisdomLab/.github/pull/1150#issuecomment-5676434919). 보고에 담긴 요지는 측정 그 자체보다 **판정 기준에 대한 것**입니다. 그 lane의 RED 정의는 "러너 배정·checkout 신원·step이 없는 materialized job"인데, 위 네 건은 대기 중에 정확히 그렇게 보였다가 스스로 러너를 받아 SUCCESS로 끝났습니다. 즉 **어느 한 시점의 관측만으로는 RED와 "길지만 회복할 대기"를 구분할 수 없습니다.** 대기 시간으로도 구분되지 않습니다 — 4시간 08분에서 6시간 01분 사이로 흩어져 임계값을 세울 수 없기 때문입니다. 판정은 종료 결과를 보거나 그 외의 판별자를 써야 합니다.
+
+포털 입장에서 실무적으로 달라지는 것은 없습니다. 여기서 고칠 것은 여전히 없고, checks가 비어 있는 동안은 여전히 대기로 읽으면 됩니다. 달라지는 것은 **이 절을 원인 미상의 관측으로 남겨 두지 않아도 된다는 점**입니다.
+
 ### stacked PR은 fuzz 말고 아무 게이트도 돌지 않습니다 (2026-09-09 측정)
 
 이 저장소의 두 워크플로는 PR 트리거 범위가 다릅니다.
