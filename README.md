@@ -8,8 +8,8 @@
 
 - **엔진**: 단일 Postgres 인스턴스에서 **Apache AGE**(property graph, openCypher 그래프 순회)
   + **pgvector**(임베딩 KNN 시맨틱 검색)를 함께 사용합니다.
-- **영속성(persistence)**: 모듈 전역 dict 대신 DB 백엔드로 이전. 마이그레이션(`migrations/`)이
-  그래프/벡터 스키마를 생성하고, 시드(seed)가 카탈로그 + 5개 온톨로지 개념을 멱등(idempotent)하게 적재합니다.
+- **영속성(persistence)**: 모듈 전역 dict 대신 DB 백엔드로 이전. 마이그레이션이
+  그래프/벡터 스키마를 생성하고, 시드가 카탈로그 + 온톨로지 개념을 멱등(idempotent)하게 적재합니다.
 - **폴백(fallback)**: DB DSN이 없으면 의존성 없는 in-memory 백엔드로 동일 API가 동작하여
   CI/서브모듈 환경에서도 그대로 실행됩니다.
 
@@ -25,11 +25,6 @@
 - 브라우징: 스키마 조회, 샘플 미리보기, 민감 컬럼 마스킹
 - 거버넌스: 정책 판단(PERMISSION), 샘플 정책 근거(Decision/Omission) 노출
 - 오케스트레이션: 자연어 질문 기반 질의 후보 추천 + SQL draft 제시
-
-첨부 문서는 다음 경로에 보관됩니다.
-
-- `docs/prd-trd.md`
-- `docs/papers/` — 지식그래프/온톨로지/그래프+벡터 하이브리드 검색 논문(인용/요약)
 
 ## 로컬 실행
 
@@ -105,7 +100,7 @@ SDP_DATABASE_DSN='postgresql+psycopg://sdp_graph_app:<url-encoded-password>@loca
 - `GET  /ontology/term/{term}/graph` — 개념 그래프 (그래프 스토어 백엔드)
 - `POST /search/semantic` — pgvector KNN 시맨틱 검색 (kind 필터)
 
-### Catalog / governance / enterprise (기존)
+### Catalog / governance / enterprise
 
 - `GET /health`
 - `GET /metrics`
@@ -138,6 +133,18 @@ SDP_DATABASE_DSN='postgresql+psycopg://sdp_graph_app:<url-encoded-password>@loca
 - `POST /enterprise/auth/oidc-verify`
 - `GET /enterprise/connectors/{connector_id}/probe`
 
+## What you can do
+
+- **Catalog**: search datasets, fetch JSON-LD, and run semantic validation for a dataset id.
+- **Ontology**: resolve terms, inspect concepts, and walk the concept graph.
+- **Browse**: inspect schema and preview rows with sensitive-column masking.
+- **Policy**: request a permission decision and list prior decisions with Decision/Omission evidence.
+- **LLM assist**: ask for search candidates and a SQL draft from a natural-language question.
+- **Enterprise surface**: readiness, demo plan, KPIs, controls, RBAC matrix, observability, evidence pack, SHACL-compatible validation, steward review queue, OIDC preview/verify, and connector probe.
+
+Seeded demo datasets, governance questions, and connector probe fixtures share one catalog contract so `/enterprise/demo-plan`, connector probes, and smoke readiness stay aligned.
+SHACL-compatible validation and the steward review queue expose the same validation pass rate used by smoke readiness, so operators can clear mapping issues before a handoff.
+
 ## 테스트
 
 ```bash
@@ -145,23 +152,11 @@ PYTHONPATH=src pytest
 PYTHONPATH=src python -m sdp.demo_smoke
 ```
 
-## 구현 대응 요약
+## Project Status
 
-| PRD/TRD 항목 | 구현 |
-|---|---|
-| Catalog Service | `src/sdp/catalog.py`, `/catalog/*` |
-| Ontology / Terminology | `src/sdp/ontology.py`, `/ontology/*` |
-| Browse/Query | `src/sdp/browse.py`, `/browse/*` |
-| Policy Service | `src/sdp/policy.py`, `/policy/decision` |
-| LLM Orchestrator | `src/sdp/orchestrator.py`, `/llm/*` |
-| JSON-LD Export | `/catalog/datasets/{id}/jsonld` |
-| Enterprise Core Contracts | `src/sdp_core/contracts.py`, `src/sdp_core/readiness.py`, `src/sdp_core/demo_seed.py`, `src/sdp_core/enterprise.py`, `src/sdp_core/rbac.py`, `src/sdp/enterprise_evidence.py`, `src/sdp/semantic_validation.py`, `src/sdp/steward_review.py`, `src/sdp/observability.py`, `/enterprise/*` |
+`semantic-data-portal` is an alpha catalog service for ontology-backed graph and
+vector search. Releases are verified by the pytest suite and smoke checks above.
+Public documentation describes caller-facing jobs and HTTP routes; internal
+module paths and PRD/TRD working records stay out of the package description.
 
-`src/sdp_core/demo_seed.py`는 buyer demo domain, SQL/RDF/file/API seed dataset, analyst/governance question을 catalog seed, `/enterprise/demo-plan`, connector probe가 함께 쓰는 단일 계약으로 둡니다.
-`src/sdp/semantic_validation.py`는 현재 metadata gate와 approved mapping을 SHACL 호환 리포트 형태로 노출해 `/enterprise/shacl-validation`과 smoke readiness가 같은 validation pass rate를 쓰게 합니다.
-`src/sdp/steward_review.py`는 SHACL 호환 validation report와 ontology patch queue를 `/enterprise/steward-review`에 모아 buyer handoff 전 검토 대기열을 확인하게 합니다.
-
-## 요구사항 대응 증적
-
-- PRD/TRD: `docs/prd-trd.md`
-- 요구사항 대응 매트릭스: `docs/implementation-compliance.md`
+- [Security policy](https://github.com/ContextualWisdomLab/semantic-data-portal/blob/main/SECURITY.md)
