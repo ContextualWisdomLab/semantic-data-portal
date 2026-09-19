@@ -133,17 +133,17 @@ SDP_DATABASE_DSN='postgresql+psycopg://sdp_graph_app:<url-encoded-password>@loca
 - `POST /enterprise/auth/oidc-verify`
 - `GET /enterprise/connectors/{connector_id}/probe`
 
-## What you can do
+## 할 수 있는 작업
 
-- **Catalog**: search datasets, fetch JSON-LD, and run semantic validation for a dataset id.
-- **Ontology**: resolve terms, inspect concepts, and walk the concept graph.
-- **Browse**: inspect schema and preview rows with sensitive-column masking.
-- **Policy**: request a permission decision and list prior decisions with Decision/Omission evidence.
-- **LLM assist**: ask for search candidates and a SQL draft from a natural-language question.
-- **Enterprise surface**: readiness, demo plan, KPIs, controls, RBAC matrix, observability, evidence pack, SHACL-compatible validation, steward review queue, OIDC preview/verify, and connector probe.
+- **Catalog**: 데이터셋을 검색하고 JSON-LD를 조회하며 데이터셋 ID별 semantic validation을 실행합니다.
+- **Ontology**: 용어를 해석하고 개념을 조회하며 concept graph를 탐색합니다.
+- **Browse**: 스키마를 확인하고 민감 컬럼을 마스킹한 행을 미리 봅니다.
+- **Policy**: permission decision을 요청하고 Decision/Omission 근거와 함께 이전 판단을 조회합니다.
+- **LLM assist**: 자연어 질문에서 검색 후보와 SQL draft를 요청합니다.
+- **Enterprise surface**: readiness, demo plan, KPI, control, RBAC matrix, observability, evidence pack, SHACL-compatible validation, steward review queue, OIDC preview/verify, connector probe를 제공합니다.
 
-Seeded demo datasets, governance questions, and connector probe fixtures share one catalog contract so `/enterprise/demo-plan`, connector probes, and smoke readiness stay aligned.
-SHACL-compatible validation and the steward review queue expose the same validation pass rate used by smoke readiness, so operators can clear mapping issues before a handoff.
+Seeded demo dataset, governance question, connector probe fixture는 하나의 catalog contract를 공유하므로 `/enterprise/demo-plan`, connector probe, smoke readiness가 같은 상태를 나타냅니다.
+SHACL-compatible validation과 steward review queue는 smoke readiness와 같은 validation pass rate를 노출하므로 운영자가 인계 전에 mapping 문제를 해소할 수 있습니다.
 
 ## 테스트
 
@@ -152,11 +152,10 @@ PYTHONPATH=src pytest
 PYTHONPATH=src python -m sdp.demo_smoke
 ```
 
-## Project Status
+## 프로젝트 상태
 
-`semantic-data-portal` is an alpha catalog service for ontology-backed graph and
-vector search. Releases are verified by the pytest suite and smoke checks above.
-Public documentation describes caller-facing jobs and HTTP routes; internal
-module paths and PRD/TRD working records stay out of the package description.
+`semantic-data-portal`은 ontology-backed graph 및 vector search를 제공하는 alpha catalog service입니다.
+위 pytest suite와 smoke check는 로컬에서 검증할 수 있습니다.
+공개 문서는 호출자가 사용하는 작업과 HTTP route만 설명하며, 내부 module path와 PRD/TRD 작업 기록은 package description에 포함하지 않습니다.
 
 - [Security policy](https://github.com/ContextualWisdomLab/semantic-data-portal/blob/main/SECURITY.md)
