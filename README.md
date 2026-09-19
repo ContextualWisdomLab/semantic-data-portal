@@ -159,3 +159,8 @@ PYTHONPATH=src python -m sdp.demo_smoke
 공개 문서는 호출자가 사용하는 작업과 HTTP route만 설명하며, 내부 module path와 PRD/TRD 작업 기록은 package description에 포함하지 않습니다.
 
 - [Security policy](https://github.com/ContextualWisdomLab/semantic-data-portal/blob/main/SECURITY.md)
+
+## 라이선스
+
+ContextualWisdomLab가 소유한 이 저장소의 원본 소스는 [MIT License](https://github.com/ContextualWisdomLab/semantic-data-portal/blob/main/LICENSE)로 제공됩니다.
+제3자 의존성은 각 라이선스를 유지합니다. 현재 runtime dependency graph에는 LGPL-3.0-only로 보고된 Psycopg 3.3.4가 포함되어 있어 상업적 배포 acceptance가 완료되지 않았으며, [교체 작업 #91](https://github.com/ContextualWisdomLab/semantic-data-portal/issues/91)과 최종 SBOM·NOTICE·provenance 검증 전에는 license-clean release로 간주하지 않습니다.
