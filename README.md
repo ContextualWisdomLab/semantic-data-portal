@@ -8,8 +8,8 @@
 
 - **엔진**: 단일 Postgres 인스턴스에서 **Apache AGE**(property graph, openCypher 그래프 순회)
   + **pgvector**(임베딩 KNN 시맨틱 검색)를 함께 사용합니다.
-- **영속성(persistence)**: 모듈 전역 dict 대신 DB 백엔드로 이전. 마이그레이션(`migrations/`)이
-  그래프/벡터 스키마를 생성하고, 시드(seed)가 카탈로그 + 5개 온톨로지 개념을 멱등(idempotent)하게 적재합니다.
+- **영속성(persistence)**: 모듈 전역 dict 대신 DB 백엔드로 이전. 마이그레이션이
+  그래프/벡터 스키마를 생성하고, 시드가 카탈로그 + 온톨로지 개념을 멱등(idempotent)하게 적재합니다.
 - **폴백(fallback)**: DB DSN이 없으면 의존성 없는 in-memory 백엔드로 동일 API가 동작하여
   CI/서브모듈 환경에서도 그대로 실행됩니다.
 
@@ -25,11 +25,6 @@
 - 브라우징: 스키마 조회, 샘플 미리보기, 민감 컬럼 마스킹
 - 거버넌스: 정책 판단(PERMISSION), 샘플 정책 근거(Decision/Omission) 노출
 - 오케스트레이션: 자연어 질문 기반 질의 후보 추천 + SQL draft 제시
-
-첨부 문서는 다음 경로에 보관됩니다.
-
-- `docs/prd-trd.md`
-- `docs/papers/` — 지식그래프/온톨로지/그래프+벡터 하이브리드 검색 논문(인용/요약)
 
 ## 로컬 실행
 
@@ -105,7 +100,7 @@ SDP_DATABASE_DSN='postgresql+psycopg://sdp_graph_app:<url-encoded-password>@loca
 - `GET  /ontology/term/{term}/graph` — 개념 그래프 (그래프 스토어 백엔드)
 - `POST /search/semantic` — pgvector KNN 시맨틱 검색 (kind 필터)
 
-### Catalog / governance / enterprise (기존)
+### Catalog / governance / enterprise
 
 - `GET /health`
 - `GET /metrics`
@@ -138,6 +133,18 @@ SDP_DATABASE_DSN='postgresql+psycopg://sdp_graph_app:<url-encoded-password>@loca
 - `POST /enterprise/auth/oidc-verify`
 - `GET /enterprise/connectors/{connector_id}/probe`
 
+## 할 수 있는 작업
+
+- **Catalog**: 데이터셋을 검색하고 JSON-LD를 조회하며 데이터셋 ID별 semantic validation을 실행합니다.
+- **Ontology**: 용어를 해석하고 개념을 조회하며 concept graph를 탐색합니다.
+- **Browse**: 스키마를 확인하고 민감 컬럼을 마스킹한 행을 미리 봅니다.
+- **Policy**: permission decision을 요청하고 Decision/Omission 근거와 함께 이전 판단을 조회합니다.
+- **LLM assist**: 자연어 질문에서 검색 후보와 SQL draft를 요청합니다.
+- **Enterprise surface**: readiness, demo plan, KPI, control, RBAC matrix, observability, evidence pack, SHACL-compatible validation, steward review queue, OIDC preview/verify, connector probe를 제공합니다.
+
+Seeded demo dataset, governance question, connector probe fixture는 하나의 catalog contract를 공유하므로 `/enterprise/demo-plan`, connector probe, smoke readiness가 같은 상태를 나타냅니다.
+SHACL-compatible validation과 steward review queue는 smoke readiness와 같은 validation pass rate를 노출하므로 운영자가 인계 전에 mapping 문제를 해소할 수 있습니다.
+
 ## 테스트
 
 ```bash
@@ -145,23 +152,15 @@ PYTHONPATH=src pytest
 PYTHONPATH=src python -m sdp.demo_smoke
 ```
 
-## 구현 대응 요약
+## 프로젝트 상태
 
-| PRD/TRD 항목 | 구현 |
-|---|---|
-| Catalog Service | `src/sdp/catalog.py`, `/catalog/*` |
-| Ontology / Terminology | `src/sdp/ontology.py`, `/ontology/*` |
-| Browse/Query | `src/sdp/browse.py`, `/browse/*` |
-| Policy Service | `src/sdp/policy.py`, `/policy/decision` |
-| LLM Orchestrator | `src/sdp/orchestrator.py`, `/llm/*` |
-| JSON-LD Export | `/catalog/datasets/{id}/jsonld` |
-| Enterprise Core Contracts | `src/sdp_core/contracts.py`, `src/sdp_core/readiness.py`, `src/sdp_core/demo_seed.py`, `src/sdp_core/enterprise.py`, `src/sdp_core/rbac.py`, `src/sdp/enterprise_evidence.py`, `src/sdp/semantic_validation.py`, `src/sdp/steward_review.py`, `src/sdp/observability.py`, `/enterprise/*` |
+`semantic-data-portal`은 ontology-backed graph 및 vector search를 제공하는 alpha catalog service입니다.
+위 pytest suite와 smoke check는 로컬에서 검증할 수 있습니다.
+공개 문서는 호출자가 사용하는 작업과 HTTP route만 설명하며, 내부 module path와 PRD/TRD 작업 기록은 package description에 포함하지 않습니다.
 
-`src/sdp_core/demo_seed.py`는 buyer demo domain, SQL/RDF/file/API seed dataset, analyst/governance question을 catalog seed, `/enterprise/demo-plan`, connector probe가 함께 쓰는 단일 계약으로 둡니다.
-`src/sdp/semantic_validation.py`는 현재 metadata gate와 approved mapping을 SHACL 호환 리포트 형태로 노출해 `/enterprise/shacl-validation`과 smoke readiness가 같은 validation pass rate를 쓰게 합니다.
-`src/sdp/steward_review.py`는 SHACL 호환 validation report와 ontology patch queue를 `/enterprise/steward-review`에 모아 buyer handoff 전 검토 대기열을 확인하게 합니다.
+- [Security policy](https://github.com/ContextualWisdomLab/semantic-data-portal/blob/e48aa13c4af7a4875d4b53e6a60b50405c265a2f/SECURITY.md)
 
-## 요구사항 대응 증적
+## 라이선스
 
-- PRD/TRD: `docs/prd-trd.md`
-- 요구사항 대응 매트릭스: `docs/implementation-compliance.md`
+ContextualWisdomLab가 소유한 이 저장소의 원본 소스는 [MIT License](https://github.com/ContextualWisdomLab/semantic-data-portal/blob/e48aa13c4af7a4875d4b53e6a60b50405c265a2f/LICENSE)로 제공됩니다.
+제3자 의존성은 각 라이선스를 유지합니다. 현재 runtime dependency graph에는 LGPL-3.0-only로 보고된 Psycopg 3.3.4가 포함되어 있어 상업적 배포 acceptance가 완료되지 않았으며, [교체 작업 #91](https://github.com/ContextualWisdomLab/semantic-data-portal/issues/91)과 최종 SBOM·NOTICE·provenance 검증 전에는 license-clean release로 간주하지 않습니다.
