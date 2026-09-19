@@ -123,6 +123,21 @@ flowchart LR
 
 네 종류 중 포털이 자기 저장소에서 고칠 수 있는 것은 `trivy-fs` 하나입니다. 나머지 셋은 상류 제어면 수리를 기다리는 lane이며 포털에서 우회하지 않습니다.
 
+### CVE가 큐 전체를 막는 것은 아닙니다 — docs-only PR은 게이트를 통과합니다 (2026-09-19 측정)
+
+이 문서는 여러 곳에서 "상속된 CVE-2026-69247이 큐를 막고 있다"고 적었습니다. **그 서술은 너무 넓습니다.** `#104`(`docs/readme-public-package-boundary`, README 한 파일만 변경)의 현재 head `1badc79`에는 check run이 **34건** 붙어 있고, 결과는 전부 `success` 아니면 `skipped`입니다. **실패가 하나도 없습니다.**
+
+핵심은 `trivy-fs`가 **`skipped`**라는 점입니다 — 실패가 아니라 아예 실행되지 않았습니다. 같은 Security Scan 실행(`35289642492`)에서 `osv-scan`·`scorecard`·`dependency-review`도 함께 skip되었고, 앞선 `Detect changed scope` job은 success입니다. 즉 이 게이트들은 **변경 범위에 따라 조건부로 실행**되며, 문서만 바뀐 PR에서는 돌지 않습니다.
+
+그래서 정확한 서술은 이렇습니다. `trivy-fs`는 저장소 전체를 스캔하므로 **실행되기만 하면** 상속된 CVE를 집어 실패합니다(`#80`·`#82`·`#32`·`#64`·`#65`의 census가 그 결과입니다). 하지만 **실행 여부 자체가 변경 범위에 달려 있고, docs-only 변경은 그 조건을 만족하지 않습니다.** 따라서 CVE는 소스·의존성을 건드리는 PR을 막지, 문서 PR을 막지 않습니다.
+
+실무적으로 두 가지가 따라옵니다.
+
+- **문서 작업에는 merge 경로가 있습니다.** CVE 해소를 기다리지 않아도 됩니다. `#104`가 그 첫 사례입니다.
+- **`#104`가 여전히 `blocked`인 이유는 checks가 아니라 승인입니다.** 리뷰를 전수 확인하면 `coderabbitai[bot]`의 `COMMENTED` 한 건뿐이고(actionable 2건), `APPROVED`는 없습니다. `opencode-review`는 **check로는 success**지만 승인 리뷰를 남기지 않았습니다 — 이 문서가 다른 곳에 적은 "2026-08-13 이후 어떤 head에도 APPROVED가 없다"와 일치합니다. **check success를 승인으로 읽지 마십시오.**
+
+`#102`와 대조하면 범위 조건이 더 분명합니다. `#102`는 `main`이 아니라 `#79`의 브랜치를 base로 하므로 check가 **2건**(fuzz)뿐이고, `#104`는 `main`을 base로 하므로 **34건**을 받습니다. 위 "stacked PR은 fuzz 말고 아무 게이트도 돌지 않습니다" 절의 측정과 같은 결론입니다.
+
 ## 열린 PR과 각 PR이 닫는 격차
 
 Head SHA와 draft 여부는 2026-09-07 GitHub API 응답에서 그대로 옮겼습니다. 열린 PR은 35건입니다.
