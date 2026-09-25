@@ -558,6 +558,37 @@ Failed checks:
 
 (참고로 `#27`의 옛 head `a45ab73`에서는 실패가 `Semgrep (multi-language SAST)`였습니다. 즉 이 PR은 blocker가 한 번 바뀌었고, 지금 것은 CVE입니다.)
 
+#### owner가 같은 결론을 job id로 확인했습니다 (2026-09-24)
+
+**이 절의 판단은 owner 확인으로 뒷받침됩니다.** seonghobae가 `#27`의 exact head `8aad3b4`에 fleet review를 남겼습니다([comment 5811276019](https://github.com/ContextualWisdomLab/semantic-data-portal/pull/27#issuecomment-5811276019), 2026-09-24 09:12:11Z). 요지는 이 절이 적은 것과 같고, 근거가 더 구체적입니다.
+
+- exact-head Security Scan `31738229231`이 GREEN이 아니고, **`trivy-fs` job `94574949718`이 `requirements.txt:125`에서 실패**합니다. 원인은 protected/base가 여전히 `cryptography==49.0.0`을 고르기 때문이며 CVE-2026-69247로 보고됩니다.
+- 같은 head에서 Tests·fuzz·Semgrep은 GREEN입니다. 즉 **setup-python v7 delta 자체에는 결함이 없습니다.** 실패를 setup-python 탓으로 돌리거나 waive하지 마십시오.
+- `#27`은 이 리뷰와 함께 **Draft로 전환되었습니다**(이 문서가 2026-09-21에 Ready로 기록한 상태에서 바뀌었습니다). head는 여전히 `8aad3b4`입니다.
+
+**`#27`의 수락 조건이 owner 표현으로 고정되었습니다.** `#81`(또는 검증된 successor)이 coherent lock security repair를 protected `main`에 올리고, 그 뒤 `#27` 브랜치를 **force·destructive rebase 없이** 일반 Dependabot 경로로 refresh해 새 descendant에서 exact-head 필수 check를 자연히 재실행하는 것입니다. 금지 사항도 명시되었습니다 — **Trivy 억제, finding 무시, `#81`/`#106` receipt를 이 SHA로 옮기는 것**은 모두 안 됩니다.
+
+#### `#106`이 새로 열렸습니다 — CVE 수리가 실제로 trivy-fs를 통과한다는 첫 증거
+
+**[`#106`](https://github.com/ContextualWisdomLab/semantic-data-portal/pull/106) `fix(deps): patch cryptography CVE-2026-69247`** (2026-09-23 09:18:52Z 생성, **Draft**, head `8bcf9b2`, base `main@e48aa13`, `requirements.txt` 한 파일 50+/50−). 이 문서의 PR 표에 없던 PR이므로 여기 기록합니다.
+
+**중요한 것은 그 exact head의 check 결과입니다.** PR 본문이 적은 바로는 `8bcf9b2`에서 **Tests·SAST Semgrep·Security Scan·fuzz가 terminal SUCCESS**이고, CodeQL PR은 nonterminal, 독립 리뷰는 0건입니다. 즉 **이 계보에서 Security Scan이 GREEN으로 끝난 head가 처음 존재합니다.** 이 문서가 여러 곳에서 "CVE가 main에 오르면 풀린다"고 적어 온 것이 이제 추론이 아니라 관측입니다. 다만 그 receipt는 `8bcf9b2`의 것이고, 아래 이유로 **다른 head에 옮겨 쓸 수 없습니다.**
+
+**`#106`은 부분 수리입니다.** `requirements.txt`만 재생성했고, `requirements-dev.txt`와 `requirements-test.txt`는 그 head에서 여전히 `cryptography==49.0.0`·`anyio==4.14.1`입니다. PR 본문이 스스로 이전 서술을 두 군데 정정하고 있습니다 — "모든 무관한 pin을 유지했다"와 "repository-wide Trivy repair"는 둘 다 과했다는 것입니다. 따라서 `#106`을 두 번째 dependency owner로 병합하지 말고 **canonical lane(`#81`)을 수리하십시오.**
+
+**CVE가 하나가 아닙니다 — anyio 축이 추가됩니다.** 이 문서는 지금까지 cryptography/CVE-2026-69247만 적었습니다. `#106`의 재생성은 `anyio 4.14.1 → 4.14.2`도 함께 옮기며, 그것은 무관한 pin이 아니라 **현재 보안 수리**입니다(4.14.2가 CVE-2026-64847·CVE-2026-63349 등을 고칩니다). 열린 PR 중 [`#105`](https://github.com/ContextualWisdomLab/semantic-data-portal/pull/105) `chore(deps): bump anyio from 4.14.1 to 4.14.2`가 정확히 그 축의 Dependabot lane입니다. 즉 lock 수리는 **두 floor를 동시에** 만족해야 합니다.
+
+**다음 canonical descendant가 만족해야 할 floor**(owner가 `#106` 본문에 적은 것):
+
+- `cryptography >= 50.0.0` (현재 생성 후보는 `50.0.1`을 선택합니다 — 이 문서가 "목표 버전이 두 갈래(50.0.0 / 50.0.1)"라고 적어 둔 분기가 여기서 `50.0.1` 쪽으로 수렴합니다)
+- resolver가 AnyIO를 고르는 곳에서 `anyio >= 4.14.2`
+- 세 lock projection을 **같은 source graph에서 함께 재생성**하고, 완전한 generated hash set과 기존 lock-order/duplicate 계약을 유지
+
+**hash를 손으로 맞추지 마십시오.** 저장소의 `uv pip compile ... --generate-hashes` 명령을 쓰고, 결과 exact head에서 install·test·security 동작을 증명해야 합니다. 이 문서의 CLAUDE.md 요약("의존성을 바꾸면 두 파일을 재생성")과 같은 규칙이며, 대상이 세 파일로 늘어난 것입니다.
+
+**이 문서의 관측 방법이 또 한 번 새는 것을 여기서 발견했습니다.** 위 두 항목(`#106` 생성 2026-09-23, owner fleet review 2026-09-24 09:12Z)은 하루 넘게 이 세션에 보이지 않았습니다. `#27`의 코멘트 목록을 **고정된 페이지 번호**(`page=30, perPage=1`)로 폴링했기 때문입니다 — 새 코멘트가 들어오면 꼬리가 다음 페이지로 밀리므로 고정 페이지는 조용히 꼬리 추적을 멈춥니다. 앞서 기록한 검색 색인 문제에 이어 **두 번째 폴링 결함**입니다. 교훈은 같습니다: **"변화 없음"은 관측 방법이 꼬리를 실제로 보고 있을 때만 의미가 있습니다.** 페이지를 고정하지 말고 마지막 페이지를 매번 다시 찾으십시오.
+
+
 리뷰어 구성에도 비대칭이 있습니다 — bot이 작성한 PR은 CodeRabbit이 건너뜁니다(`#102`에 `Review skipped / Bot user detected`가 그대로 게시되었습니다). 그래서 `#27` 같은 Dependabot PR과 `#102`의 리뷰어 집합은 `opencode-agent` 중심으로 좁습니다. 위 census 표의 `review 총계`를 PR 간에 그대로 비교하지 마십시오 — 작성자 종류에 따라 리뷰어 수가 구조적으로 다릅니다.
 
 ## 무엇이 실제로 막고 있는가 (2026-09-07 측정)
