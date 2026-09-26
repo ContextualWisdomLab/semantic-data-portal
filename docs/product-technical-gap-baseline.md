@@ -700,6 +700,8 @@ Remediate each finding at the shared base branch so open PRs inherit the fix.
 2. **리뷰 본문 산문은 판정이 아닙니다.** `#58`의 head-matching 리뷰는 본문에 `- Result: APPROVE`가 적혀 있으나 API `state`는 `DISMISSED`입니다. 판정은 `state`로만 읽습니다.
 3. **`commit_id`가 현재 head와 같아야 합니다.** 본문이 주장하는 SHA와 리뷰 자신의 `commit_id`가 다른 사례가 실재합니다(`#58`).
 4. **초록 check에는 실행 시각과 잡 세대를 함께 확인합니다.** 3~4초 `opencode-review`는 no-op입니다.
+5. **초록의 *이유*를 읽습니다 — 과금·자격 상태로 얻은 초록이 있습니다.** 2026-09-26 `#102` head `42a06df`의 commit status 두 건은 모두 `success`인데, `description`이 각각 `Full review skipped: trial expired and no credits remaining`(Devin Review)과 `Review skipped: bot user not eligible for review`(CodeRabbit)입니다. 앞의 것은 **체험판 만료와 크레딧 소진이 초록의 이유**입니다 — 코드에 대해 아무것도 말하지 않습니다. `state`만 읽으면 둘 다 통과로 보입니다. 이런 context가 required로 지정되면 결제 상태가 게이트를 만족시키게 됩니다.
+6. **commit status 집계는 check run 결과가 아닙니다.** 같은 head에서 status 집계는 `state: success`, `total_count: 2`를 돌려주는데, 같은 시점 check run 두 건(`Hypothesis property tests`, `Atheris coverage-guided (bounded)`)은 **모두 `queued`**였습니다. 두 API는 별개 목록이므로 한쪽의 초록을 전체 CI 통과로 읽지 말고 양쪽을 따로 조회하십시오.
 
 확인 명령은 이것 하나입니다. 표시(라벨·본문·코멘트)가 아니라 이 응답이 근거입니다.
 
@@ -759,6 +761,12 @@ because GitHub Checks have failed.
 지적 항목은 `1. HIGH Current-head GitHub Checks - Fix failed required checks before approval` 하나뿐이고, 조치는 "실패한 check를 고치고 재실행하라"입니다. 코드 findings는 없습니다. 실제로 미해결 리뷰 스레드도 0건입니다 — `#73`은 스레드 31건 전부 resolved, `#32`는 3건 전부 resolved입니다. 즉 **구현할 리뷰 지적이 남아 있지 않습니다.**
 
 `#32`의 두 `CHANGES_REQUESTED`(4940679912 / 4941269691)는 같은 head·같은 본문·같은 실패 check로 87분 간격을 두고 중복 게시된 것입니다. 한 건을 고치면 둘 다 풀립니다.
+
+**2026-09-26 갱신 — 표본 밖 PR 두 건에서 같은 구조가 확인되고, 위 서술 하나는 좁혀야 합니다.** 저장소 owner가 `#62`·`#63`에 exact-head admission 감사를 게시하고 두 PR을 Draft로 전환했습니다(blocker로 `terminal Security Scan failure + active CHANGES_REQUESTED`를 적고, open 상태와 유효 delta·review·thread는 보존하며 Close·bypass·Force Push·synthetic evidence·review dismissal은 하지 않는다고 명시). 감사가 인용한 head는 로컬 ref 스냅샷과 일치합니다 — `#62` `8d1c6c07`, `#63` `3de25626`.
+
+`#62`의 리뷰를 직접 열어 확인한 내용은 이 절의 결론을 표본 밖에서 재확인합니다. `CHANGES_REQUESTED` 두 건이 **같은 head(`8d1c6c07`)·같은 본문**으로 2시간 21분 간격(11:43:46Z → 14:04:47Z, 2026-08-18) 중복 게시되어 있고, 지적 항목은 역시 `1. HIGH Current-head GitHub Checks` 하나이며, 이름이 적힌 실패 check는 `Security Scan/trivy-fs`(job `94689091343`)입니다. 즉 이 문서가 "포털이 자기 저장소에서 고칠 수 있는 실패 check는 `trivy-fs` 하나"라고 적은 판단이, 당시 표본에 없던 PR에서도 같게 나옵니다.
+
+**다만 "둘 다 같은 한 문장입니다"는 일반화하지 마십시오.** `#62`의 본문은 한 문장이 아니라 `## Findings` 절과 mermaid evidence map을 갖춘 구조적 본문입니다. 실질은 같습니다 — diff에 대한 지적은 0건이고 유일한 finding이 "실패한 required check"입니다. 정확한 일반화는 분량이 아니라 **판정의 출처**입니다: 이 `CHANGES_REQUESTED`들은 diff에서 유도된 것이 아니라 check 상태에서 유도된 것입니다. 한 문장 형태는 그 변종 중 하나일 뿐입니다.
 
 ### 실패 check의 원인을 끝까지 따라가면 포털이 소유한 것은 하나뿐입니다
 
