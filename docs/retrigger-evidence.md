@@ -6,3 +6,11 @@
 - Added this trace update to align implementation matrix with branch head `e981dca`; current OpenCode workflow status is expected to clear stale run comment linkage after synchronized completion.
 - Added a follow-up retrigger marker on 2026-06-29 at 21:32:30 local time to force a single fresh pull_request_target OpenCode run for branch head 1ea432de350594e0ae9ca2c3b6c849c2ae215cff.
 - On 2026-07-02, merged current `origin/main` into the PR repair branch, kept the main-branch removal of repo-local central review workflow files, and verified `PYTHONPATH=src python3 -m pytest -q` passes 22 tests locally.
+
+## 2026-09-27 dependency-check RCA
+
+- Security Scan run `36244212573` on downstream PR #37 reported `anyio==4.14.1` and `cryptography==49.0.0` from the shared runtime/development lock lineage, plus a downstream-only `pypdf==6.15.0` finding.
+- PR #81 is the canonical repository-wide lock owner for the shared cryptography remediation. Its exact predecessor head was `ce40bd89e803642d62268bfab13a831171f2bc62`; it already carried `cryptography==50.0.0`, but runtime and development locks still retained vulnerable `anyio==4.14.1` while the test lock carried `4.14.2`.
+- The repair adds an executable cross-lock anyio invariant and regenerates runtime, development, and test lock artifacts with `uv pip compile --upgrade-package anyio`, selecting `anyio==4.15.1` while preserving `cryptography==50.0.0`. Hash-required dry-run installs validate every regenerated lock.
+- PR #37 must consume the ordinary PR #81 history before its downstream-only pypdf repair; this preserves one shared dependency writer and avoids duplicating the cryptography/anyio fix.
+- PR #37 then advances its directly declared document parser from `pypdf==6.15.0` to the first release covering all three observed findings, `pypdf==6.16.1` (CVE-2026-84309, CVE-2026-84310, and CVE-2026-84311), and regenerates all hash-locked projections while retaining PR #81's `anyio==4.15.1` and `cryptography==50.0.0` decisions.

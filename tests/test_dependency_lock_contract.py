@@ -6,10 +6,10 @@ from pathlib import Path
 import tomllib
 
 _ROOT = Path(__file__).resolve().parents[1]
-_PYPDF_VERSION = "6.15.0"
+_PYPDF_VERSION = "6.16.1"
 _PYPDF_HASHES = {
-    "14e001d6504822cb1ca9c7ed9a69bccb320f59b320730f55af804361abe4d5ee",
-    "d39c4d955a76409284a905e2d65b40076d77ab76129e0faaeeb6612403ecfc79",
+    "63fec31c4092ae50b6729beedcb469055b60d20c834bde1c402df241f371f644",
+    "c4d1b43ddae921387321cf63936cd16a7743b91d2da92f165c149a195c972ba9",
 }
 
 
