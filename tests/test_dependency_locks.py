@@ -13,6 +13,7 @@ LOCK_FILES = (
     "requirements-test.txt",
 )
 CRYPTOGRAPHY_VERSION = "50.0.0"
+ANYIO_VERSION = "4.15.1"
 _HASH_LINE = re.compile(r"^\s+--hash=sha256:([0-9a-f]{64})(?: \\)?$")
 
 
@@ -34,6 +35,25 @@ def _cryptography_hashes(lock_file: str) -> list[str]:
             break
         hashes.append(match.group(1))
     assert hashes, f"{lock_file} must include generated cryptography hashes"
+    return hashes
+
+
+def _anyio_hashes(lock_file: str) -> list[str]:
+    """Return the anyio SHA-256 hashes in their generated-file order."""
+    lines = (REPOSITORY_ROOT / lock_file).read_text(encoding="utf-8").splitlines()
+    package_line = f"anyio=={ANYIO_VERSION} \\"
+    try:
+        start = lines.index(package_line) + 1
+    except ValueError as exc:
+        raise AssertionError(f"{lock_file} must pin anyio=={ANYIO_VERSION}") from exc
+
+    hashes: list[str] = []
+    for line in lines[start:]:
+        match = _HASH_LINE.fullmatch(line)
+        if match is None:
+            break
+        hashes.append(match.group(1))
+    assert hashes, f"{lock_file} must include generated anyio hashes"
     return hashes
 
 
@@ -59,4 +79,13 @@ def test_cryptography_hash_set_matches_across_lock_files() -> None:
     for lock_file in LOCK_FILES[1:]:
         assert _cryptography_hashes(lock_file) == expected, (
             f"{lock_file} cryptography hashes drifted from {LOCK_FILES[0]}"
+        )
+
+
+def test_anyio_security_pin_matches_across_lock_files() -> None:
+    """Require the patched anyio release and hashes in every install surface."""
+    expected = _anyio_hashes(LOCK_FILES[0])
+    for lock_file in LOCK_FILES[1:]:
+        assert _anyio_hashes(lock_file) == expected, (
+            f"{lock_file} anyio hashes drifted from {LOCK_FILES[0]}"
         )
