@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-import tomllib
 
 _ROOT = Path(__file__).resolve().parents[1]
 _PYPDF_VERSION = "6.16.1"
@@ -16,9 +15,8 @@ _PYPDF_HASHES = {
 def test_pypdf_security_floor_is_identical_in_source_and_hash_locks() -> None:
     """The fixed pypdf version and both PyPI artifact hashes stay synchronized."""
 
-    project = tomllib.loads((_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    dependencies = project["project"]["dependencies"]
-    assert f"pypdf=={_PYPDF_VERSION}" in dependencies
+    project_source = (_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert project_source.count(f'"pypdf=={_PYPDF_VERSION}",') == 1
 
     test_input = (_ROOT / "requirements-test.in").read_text(encoding="utf-8")
     assert test_input.count(f"pypdf=={_PYPDF_VERSION}") == 1
