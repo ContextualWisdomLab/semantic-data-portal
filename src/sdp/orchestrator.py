@@ -267,7 +267,7 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
         return response(
             dataset_id=dataset_id,
             status="REJECTED",
-            warnings=["unsupported_language"],
+            warnings=["unsupported_language: set language to SQL and resend the query"],
         )
 
     lowered = req.query.lower()
@@ -276,7 +276,9 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
         return response(
             dataset_id=dataset_id,
             status="REJECTED",
-            warnings=["forbidden_keyword_detected"],
+            warnings=[
+                "forbidden_keyword_detected: remove DML/DDL keywords; only read-only SELECT queries are permitted"
+            ],
         )
 
     if len(req.dataset_ids) > 1:
@@ -284,7 +286,10 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
         return response(
             dataset_id=dataset_id,
             status="REJECTED",
-            warnings=["cross_source_join_not_supported"],
+            warnings=[
+                "cross_source_join_not_supported: send one dataset_id per query "
+                "and combine results outside the portal"
+            ],
         )
 
     dataset = get_dataset(dataset_id)
@@ -293,7 +298,9 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
         return response(
             dataset_id=dataset_id,
             status="REJECTED",
-            warnings=["dataset_not_found"],
+            warnings=[
+                "dataset_not_found: check the dataset_id with GET /catalog/search and retry"
+            ],
         )
 
     decision = evaluate(subject=req.user, resource=dataset_id, action="query", purpose=req.purpose)

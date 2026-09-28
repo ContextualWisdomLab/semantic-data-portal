@@ -1607,3 +1607,31 @@ def test_browse_query_denied_without_user():
         and event["actor"] == "guest"
         for event in events.json()
     )
+
+
+@pytest.mark.parametrize(
+    ("overrides", "code"),
+    [
+        ({"language": "SPARQL"}, "unsupported_language"),
+        ({"query": "DROP TABLE crm"}, "forbidden_keyword_detected"),
+        ({"dataset_ids": ["crm-event", "crm-event"]}, "cross_source_join_not_supported"),
+        ({"dataset_ids": ["missing-dataset"]}, "dataset_not_found"),
+    ],
+)
+def test_browse_query_early_rejections_state_next_action(overrides, code):
+    payload = {
+        "user": "analyst",
+        "purpose": "analysis",
+        "dataset_ids": ["crm-event"],
+        "language": "SQL",
+        "query": "SELECT count(*) AS active_count FROM crm",
+        **overrides,
+    }
+    response = client.post("/browse/query", json=payload)
+
+    assert response.status_code == 400
+    warnings = response.json()["detail"]["warnings"]
+    assert len(warnings) == 1
+    prefix, _, guidance = warnings[0].partition(": ")
+    assert prefix == code
+    assert guidance.strip()
