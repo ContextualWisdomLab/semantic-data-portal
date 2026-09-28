@@ -57,6 +57,7 @@ def test_validate_sql_query_accepts_clean_single_select() -> None:
         ("SELECT 'x' FROM customer", "literal_values_not_allowed"),
         ("SELECT customer_id FROM customer WHERE a AND b", "boolean_operator_not_allowed"),
         ("SELECT drop FROM customer", "forbidden_keyword_detected"),
+        ("SELECT 1union FROM customer", "forbidden_keyword_detected"),
         ("SELECT 1", "missing_source_table"),
         ("SELECT customer_id FROM other_table", "unauthorized_table_reference"),
     ],
@@ -86,6 +87,10 @@ def test_draft_sql_rejects_missing_schema() -> None:
 
 def test_draft_sql_rejects_forbidden_keyword_in_question() -> None:
     assert _draft(question="please drop the table")["error"] == "policy_denied"
+
+
+def test_draft_sql_allows_keyword_inside_word() -> None:
+    assert "error" not in _draft(question="show recently updated customers")
 
 
 def test_draft_sql_rejects_unknown_columns() -> None:

@@ -10,6 +10,15 @@ from .domain import QueryExecutionResponse
 
 
 _FORBIDDEN_KEYWORDS = {"drop", "delete", "truncate", "alter", "insert", "update", "merge", "exec", "union"}
+_FORBIDDEN_KEYWORD_RE = re.compile(
+    rf"(?<![a-z_])({'|'.join(sorted(_FORBIDDEN_KEYWORDS))})(?![a-z0-9_])", re.IGNORECASE
+)
+
+
+def _has_forbidden_keyword(text: str) -> bool:
+    # Keyword tokens only, so identifiers such as updated_at pass. A leading digit
+    # still counts as a boundary because MySQL parses "1union" as "1 union".
+    return _FORBIDDEN_KEYWORD_RE.search(text) is not None
 
 
 def _safe_identifier(value: str) -> str:
@@ -40,10 +49,8 @@ def validate_sql_query(sql: str, *, source_system: str) -> list[str]:
     if re.search(r"\b(and|or)\b", lowered):
         warnings.append("boolean_operator_not_allowed")
 
-    for token in _FORBIDDEN_KEYWORDS:
-        if re.search(rf"\b{re.escape(token)}\b", lowered):
-            warnings.append("forbidden_keyword_detected")
-            break
+    if _has_forbidden_keyword(lowered):
+        warnings.append("forbidden_keyword_detected")
 
     referenced = [
         next(value for value in match if value)
@@ -78,7 +85,7 @@ def draft_sql(req: QueryDraftRequest) -> dict:
         return {"error": "policy_denied", "reason": decision.reason}
 
     question = req.question.strip().lower()
-    if any(token in question for token in _FORBIDDEN_KEYWORDS):
+    if _has_forbidden_keyword(question):
         return {"error": "policy_denied", "reason": "허용되지 않은 키워드가 질의에 포함되었습니다."}
 
     allowed_columns = {column.name for column in dataset.schema if column.datatype}
@@ -217,7 +224,7 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
         )
 
     lowered = req.query.lower()
-    if any(token in lowered for token in _FORBIDDEN_KEYWORDS):
+    if _has_forbidden_keyword(lowered):
         audit(dataset_id=dataset_id, result="rejected", reason="forbidden_keyword_detected")
         return response(
             dataset_id=dataset_id,

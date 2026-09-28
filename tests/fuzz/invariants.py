@@ -8,6 +8,7 @@ drives the code under test.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from sdp import catalog, evidence, observability, ontology, orchestrator
@@ -131,7 +132,7 @@ def check_execute_query(req: QueryExecutionRequest) -> None:
     assert isinstance(resp, QueryExecutionResponse)
     assert resp.status in {"SUCCEEDED", "REJECTED", "DENIED"}
     lowered = req.query.lower()
-    if any(tok in lowered for tok in FORBIDDEN_KEYWORDS):
+    if any(re.search(rf"\b{re.escape(tok)}\b", lowered) for tok in FORBIDDEN_KEYWORDS):
         assert resp.status == "REJECTED", "forbidden keyword was not rejected"
     if resp.status == "SUCCEEDED":
         assert resp.row_count >= 0
