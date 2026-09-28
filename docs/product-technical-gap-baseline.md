@@ -810,6 +810,20 @@ because GitHub Checks have failed.
 | `noema-review` | `#73`, `#79` | 게이트웨이 라우팅 결함 — 아래 참조 | `contextual-orchestrator` issue `#1106` (PR `#971`은 넓은 라우팅 lane) |
 | `trivy-fs` | `#32`, `#79` 외 | `[HIGH] CVE-2026-69247 requirements.txt:125 - Package: cryptography` | **이 저장소** — 단, `#73`은 자체 `50.0.1` pin으로 이미 초록입니다(아래 절). 나머지는 취약한 main을 상속 |
 
+**2026-09-28 재확인 — 두 상류 패턴이 그날 만들어진 PR에서 그대로 재현됩니다.** owner가 2026-09-28 15:32Z에 `#107`(`fix(sdp): match forbidden SQL keywords as tokens, not substrings`)을 열었고, 네 시간 뒤 head `6ace6aff`에서 실패 세 건이 나왔습니다. 세 건 모두 이 PR의 diff와 무관하며, 잡 로그를 직접 읽어 확인했습니다.
+
+| 실패 check | job id | 로그가 말하는 원인 | owner |
+| --- | --- | --- | --- |
+| `opencode-review` | `109053356706` | `No APPROVED or CHANGES_REQUESTED from opencode-agent on the current head. The dispatch workflow will rerun this failed job after publishing an authenticated exact-head verdict.` | `.github` |
+| `CodeQL compatibility analysis (python)` | `109052935410` | `DISPATCH_OUTCOME: success` / `VERDICT_STATE: pending` → `CodeQL scan dispatched. The dispatch workflow will rerun this exact failed CodeQL job after publishing its terminal verdict.` | `.github` |
+| `CodeQL compatibility analysis (actions)` | `109052935298` | 같은 패턴(같은 run `36444353130`) | `.github` |
+
+**즉 2026-09-09에 기록한 두 패턴이 19일 뒤에도 살아 있습니다.** 그때는 `#81`·`#73`처럼 오래 열려 있던 PR에서 관측했으므로 "낡은 head라서 그렇다"는 설명이 가능했지만, `#107`은 당일 생성된 새 PR의 첫 head입니다. head의 나이가 원인이 아님이 이것으로 드러납니다.
+
+`#107` 자체는 검토했고 문제를 찾지 못했습니다. `_FORBIDDEN_KEYWORD_RE`(`(?<![a-z_])(...)(?![a-z0-9_])`)를 옛 `\b...\b` 술어와 무작위 문자열 20만 건으로 대조한 결과 **옛 술어가 잡던 것을 새 술어가 놓치는 사례는 0건**이었습니다 — `validate_sql_query`에서는 같거나 더 엄격합니다. 나머지 두 호출 지점(`draft_sql`·`audit`)은 순수 substring에서 완화된 것이 맞지만, 그 완화가 허용하는 것은 `updated_at`·`union1`처럼 실제 식별자입니다. 한 가지만 적어 둡니다 — `tests/fuzz/invariants.py`가 `\b...\b`로 갱신되어 production보다 약한 술어가 되었습니다. 그래서 거짓 실패는 나지 않지만(위 20만 건이 그 증거), 이 PR이 새로 잡기로 한 `1union` 부류를 property lane이 더는 누르지 않습니다. 단위 테스트가 그 부류를 덮고 있습니다.
+
+**`#82`에 대한 직전 기록을 좁힙니다.** 2026-09-28 06:41Z에 Draft였던 `#82`는 같은 날 15:5x Z 조회에서 head `53805c8d`로 움직이며 다시 `ready`가 되었습니다. 즉 그 Draft는 `#62`·`#63`처럼 판정을 기다리는 보류가 아니라 작업 중 표시였습니다. Draft 상태만으로 두 종류를 구분하지 마십시오.
+
 `noema-review`(job `102406024468`, 2026-09-09)는 특히 분명한 상류 결함입니다. 같은 잡의 preflight가 후보 24건 중 16건을 probe해 `ready` 4건과 `deferred` 4건을 이미 구분해 두었습니다.
 
 ```
