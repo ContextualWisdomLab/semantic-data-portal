@@ -634,6 +634,30 @@ Failed checks:
 
 **hash를 손으로 맞추지 마십시오.** 저장소의 `uv pip compile ... --generate-hashes` 명령을 쓰고, 결과 exact head에서 install·test·security 동작을 증명해야 합니다. 이 문서의 CLAUDE.md 요약("의존성을 바꾸면 두 파일을 재생성")과 같은 규칙이며, 대상이 세 파일로 늘어난 것입니다.
 
+### `main`의 취약점은 넷이고, 그중 하나는 이 문서가 기록하지 않은 CRITICAL입니다 (2026-09-29)
+
+`#107`의 `trivy-fs`(job `109353653399`)가 실패하며 찍은 목록입니다. `#107`은 `src/`와 `tests/`만 건드리는 PR이고 의존성 파일을 전혀 수정하지 않았는데도 `requirements.txt`에서 넷이 나왔습니다 — 즉 **`main`의 파일이 그대로 스캔된 것**입니다.
+
+| 심각도 | CVE | 위치 | 패키지 |
+| --- | --- | --- | --- |
+| **CRITICAL (9.5)** | `CVE-2026-63374` | `requirements.txt:11` | anyio |
+| HIGH (8.0) | `CVE-2026-63349` | `requirements.txt:11` | anyio |
+| MEDIUM (5.5) | `CVE-2026-64847` | `requirements.txt:11` | anyio |
+| HIGH (8.0) | `CVE-2026-69247` | `requirements.txt:125` | cryptography |
+
+**이 문서를 정정합니다.** 지금까지 차단 요인을 `CVE-2026-69247`(cryptography, HIGH) 하나로 서술하고 anyio는 "`>= 4.14.2`가 필요한 축" 정도로만 적었습니다. 실제로 **가장 높은 심각도는 anyio의 `CVE-2026-63374`(CRITICAL, security-severity 9.5)이며 이 CVE 번호는 이 문서에 단 한 번도 등장하지 않았습니다.** anyio 한 pin에 CVE 세 건이 걸려 있습니다.
+
+**상속은 추론이 아니라 워크플로 자신의 지시입니다.** 잡이 실패하며 출력한 마지막 줄이 이것입니다.
+
+```
+Remediate each finding at the shared base branch so open PRs inherit the fix.
+```
+
+스캔 설정은 `TRIVY_IGNORE_UNFIXED: true`, 심각도 `CRITICAL,HIGH,MEDIUM`입니다. 즉 **네 건 모두 수정 버전이 존재하는 findings**이고, 무시 정책으로 가려진 것이 아닙니다.
+
+**`#81`의 수리가 이 CRITICAL까지 덮는지는 확인하지 못했습니다.** `#81`은 세 lock 모두 `anyio==4.15.1`로 올렸고 `4.14.1`보다 한참 위이므로 덮을 가능성이 높지만, 이 문서는 `4.15.1`이 `CVE-2026-63374`를 해소한다는 증거를 갖고 있지 않습니다. 확인하는 방법은 `#81` head에서 `trivy-fs`를 돌려 보는 것 하나인데, **그 check가 정확히 24시간 큐 대기 후 취소된 그 check입니다.** 저장소 최고 심각도 취약점의 해소 여부가, 판정을 낼 수 없는 것과 같은 이유로 미확인입니다.
+
+
 ### 위 수리가 실제로 올라왔습니다 (2026-09-27, `#81` head `e4291e89`) — 단, 판정은 아직입니다
 
 이 절이 요구한 수리가 `#81`의 새 head로 들어왔습니다. 파일 목록과 diff를 직접 확인한 내용입니다.
