@@ -1121,6 +1121,37 @@ owner lane은 `ContextualWisdomLab/contextual-orchestrator` issue `#1106`(free-p
 
 3번은 이 문서가 계속 1번 항목으로 적어 온 것과 같지만, 이제 대기 비용이 측정됩니다 — 취약한 main으로 23일, 그 뒤에 35건이 줄 서 있습니다.
 
+## 이 문서를 싣고 있는 `#102`가 docs-only PR이 아닙니다 (repair finding, 2026-09-30)
+
+2026-09-30 06:08Z에 `#102`가 Draft로 내려갔고, 근거는 exact-head 감사 코멘트입니다 — head `03241c46`, 판정은 `stack depends on predecessor #79`. Close도 force push도 없었고 delta는 보존되었습니다. **이 판정은 맞습니다.** 그리고 이 문서와 이 세션이 `#102`를 여러 차례 "docs PR"이라고 적어 온 것이 틀렸습니다.
+
+`main`(`e48aa13`) 기준 three-dot diff입니다.
+
+| 경로 | 변화 | 출처 |
+| --- | --- | --- |
+| `docs/product-technical-gap-baseline.md` | +1216 (main에 없는 새 파일) | `#79` 120행 + 이 브랜치 71커밋 |
+| `requirements.txt` | 94행 | **`#79`** |
+| `requirements-dev.txt` | 94행 | **`#79`** |
+| `requirements-test.txt` | 94행 | **`#79`** |
+| `tests/test_dependency_locks.py` | +62 (새 파일) | **`#79`** |
+
+`#79`의 head `2181681`은 이 브랜치의 **조상**이고(확인: `merge-base --is-ancestor`), 이 브랜치는 그 위에 71커밋을 더 얹어 문서를 120행에서 1216행으로 키운 것입니다. `#81`의 head `e4291e89`는 조상이 아닙니다. 즉 **`#102`를 병합하면 문서만 들어오는 것이 아니라 `#79`의 lock delta가 문서 PR의 부수효과로 함께 들어옵니다.** 감사가 막은 것이 정확히 이것입니다.
+
+**동시에 lock의 single writer 서술도 고쳐야 합니다.** 이 문서는 cryptography lock 수리의 single writer를 `#81`이라고 반복해 적었습니다. 실제 pin은 이렇습니다.
+
+| | cryptography | anyio |
+| --- | --- | --- |
+| `main` | 49.0.0 | 4.14.1 |
+| `#79` | **50.0.0** | 4.14.1 |
+| `#81` | **50.0.0** | **4.15.1** |
+| `#102` head | 50.0.0 | 4.14.1 (`#79`에서 상속) |
+
+`#79`가 cryptography 49 → 50의 writer이고(head 커밋 메시지도 `merge: inherit canonical cryptography security owner`), `#81`은 그 위에 anyio 4.14.1 → 4.15.1을 더한 상위집합입니다. anyio 3건 — CRITICAL `CVE-2026-63374` 포함 — 을 겨냥하는 부분은 `#81`에만 있습니다. **열린 PR 두 개가 같은 hash-pinned lock 세 파일을 쓰고 있고**, 그중 하나가 이 문서 PR 아래에 깔려 있습니다. `#81` 하나만 single writer로 적은 것은 부정확했습니다.
+
+**이 세션은 base를 고치지 못합니다.** 처방은 `main`에서 바로 갈라져 문서 delta만 싣는 successor exact head이고, 검증은 successor와 원본의 diff로 문서 delta가 빠짐없이 옮겨졌음을 보이는 것입니다(narrowing은 delta를 자동으로 옮기지 않습니다). 그런데 successor는 **다른 브랜치로의 push**이고, 이 브랜치를 `main`으로 리셋해 문서만 다시 얹는 방법은 **force push**입니다. 두 경로 모두 이 세션의 권한 밖입니다 — 지정 브랜치는 `claude/semantic-portal-pr-merge-e5a48k`이며 다른 브랜치 push에는 명시적 허가가 필요하고, force push는 금지되어 있습니다. 그래서 `#102`는 Draft로 두고 Ready로 되돌리지 않았습니다.
+
+**이 결함의 성질을 분명히 해 둡니다.** 이 문서는 "stale PR의 충돌 범위는 스냅샷"이나 "narrowing은 delta를 자동으로 옮기지 않는다" 같은 교훈을 남 얘기로 적어 왔는데, 이번 것은 같은 계열의 자기 결함입니다 — **자기 PR을 `main`과 한 번도 three-dot로 대조하지 않았습니다.** 위 대기 표의 표본 범위 오류와 같은 종류이고, 두 번 모두 "이미 열어 본 자리에 답이 있었는데 읽지 않았다"입니다.
+
 ## 중앙 autofix가 `#28`에 존재하지 않는 버전을 적었습니다 (repair finding, 2026-09-30)
 
 이 세션이 이 저장소에서 처음으로 관측한 **외부 head 이동**이고, 내용이 좋지 않습니다. 2026-09-30 05:03:53Z에 `github-actions[bot]`이 `#28`(branch `codex/standards-file-ontology`)에 `8aefd06`을 push했습니다 — 메시지는 `fix(pr-28): address review feedback`, 변경은 `requirements.txt` 한 줄입니다.
