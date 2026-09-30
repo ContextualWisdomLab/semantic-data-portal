@@ -1171,6 +1171,47 @@ owner lane은 `ContextualWisdomLab/contextual-orchestrator` issue `#1106`(free-p
 
 **이 결함의 성질을 분명히 해 둡니다.** 이 문서는 "stale PR의 충돌 범위는 스냅샷"이나 "narrowing은 delta를 자동으로 옮기지 않는다" 같은 교훈을 남 얘기로 적어 왔는데, 이번 것은 같은 계열의 자기 결함입니다 — **자기 PR을 `main`과 한 번도 three-dot로 대조하지 않았습니다.** 위 대기 표의 표본 범위 오류와 같은 종류이고, 두 번 모두 "이미 열어 본 자리에 답이 있었는데 읽지 않았다"입니다.
 
+## owner가 의존성 보안 스택을 세 단으로 수리했습니다 (2026-09-30 10:52Z 확인)
+
+head 세 개가 동시에 움직였고, 확인해 보니 owner의 계획된 스택 수리입니다. 순서는 **`#81` → `#37` → `#28`**이며 세 head는 엄격한 조상 관계입니다(`merge-base --is-ancestor` 양쪽 확인).
+
+| PR | 새 head | 커밋 | 시각(KST) |
+| --- | --- | --- | --- |
+| `#81` | `4f83feb` | `fix(security): complete generated dependency lock repair` | 19:26:41 |
+| `#37` | `3384004` | `merge: integrate dependency security owner #81` | 19:33:40 |
+| `#28` | `103c9eb` | `merge: integrate dependency security stack #37` | 19:42:13 |
+
+### `#28`의 autofix 결함은 수리되었습니다 — 제 제안보다 낫습니다
+
+위 절에 적은 존재하지 않는 `annotated-types==0.7.1`이 사라졌습니다. 새 head `103c9eb`는 세 공용 lock 모두 `annotated-types==0.8.0`이고, hash도 PyPI와 대조해 정확합니다 — sdist `13b2beaa…`, wheel `f072f4d8…`로 PyPI의 0.8.0 digest와 한 글자도 다르지 않습니다. **이 문서가 제안한 "0.7.0으로 한 줄 되돌리기"보다 나은 수리입니다** — 실재하는 상위 버전으로 올리면서 세 projection에 일관되게 적용했습니다. 따라서 그 조치 요청은 종결하고, 위 절은 발생한 사실의 기록으로만 남깁니다.
+
+### `#81`의 lock 수리는 완결되었고 hash까지 맞습니다
+
+| 패키지 | `main` | `#81` `4f83feb` |
+| --- | --- | --- |
+| anyio | 4.14.1 / 4.14.1 / **4.14.2** / 4.14.1 | **4.15.1** (네 projection 전부) |
+| cryptography | 49.0.0 | **50.0.0** |
+| pyjwt | **2.13.0** | **2.14.0** |
+| annotated-types | 0.7.0 | 0.7.0 (변화 없음) |
+
+`anyio==4.15.1`의 hash도 대조했습니다 — wheel `6152fdbb…`, sdist `9f283060…`로 PyPI와 일치합니다. `main`의 `requirements-test.txt`만 `anyio==4.14.2`였던 불일치도 여기서 해소됩니다.
+
+### 이 문서가 lock 개수를 잘못 세고 PyJWT를 빠뜨렸습니다
+
+이 문서는 lock projection을 **세 개**로 다뤄 왔지만 실제로는 **네 개**입니다 — `requirements.txt`, `requirements-dev.txt`, `requirements-test.txt`, 그리고 **`requirements-graph.txt`**. 넷 다 `--require-hashes`이고, `Dockerfile`은 그중 runtime과 graph 둘을 설치합니다(19–20행). `main`의 graph lock은 `anyio==4.14.1`을 그대로 들고 있었습니다.
+
+그리고 **`main`의 세 공용 lock에 `pyjwt==2.13.0`이 있는데 이 문서는 한 번도 적지 않았습니다.** 위 CVE 4건(anyio 3건 + cryptography 1건)은 `#107`의 `trivy-fs` 출력에서 읽은 것이고, 그 출력이 취약점의 전체 목록이라고 가정한 것이 잘못이었습니다. `#81`의 문서가 PyJWT와 graph lock을 함께 적고 있고 양쪽 다 트리에서 확인됩니다. `#37`이 소유한 `pypdf==6.16.1` delta도 같은 맥락이며 `main`의 lock에는 pypdf가 없습니다.
+
+### `docs/product-technical-gap-baseline.md`의 writer가 둘입니다 (repair finding)
+
+**`#81`은 이 파일을 새 파일로 만듭니다** — 16행, `## Dependency security admission` 한 절입니다. 그런데 `#79`(그리고 그 위의 `#102`)도 같은 경로를 새 파일로 만듭니다 — 현재 1267행입니다. 즉 **어느 쪽이 먼저 병합되든 나머지는 add/add 충돌**입니다. 두 문서는 중복이 아닙니다: `#81`의 것이 훨씬 좁고 최신이며, 위에 적은 PyJWT·graph lock·pypdf 순서·네 lock의 hash-required dry-run 같은 사실은 **이 문서에 없던 것들**입니다.
+
+`#81`의 acceptance evidence가 순서를 이미 정해 두었습니다 — `#81`을 먼저 넣고, `#37`·`#28`은 갱신된 head가 required Checks를 통과할 때까지 Draft로 둡니다. 그러면 `#102`는 `#81` 위로 rebase해 두 문서를 합쳐야 합니다. **이 세션은 그것을 하지 못합니다** — 다른 브랜치 push이거나 force push이기 때문입니다. 이 충돌은 `#102`의 base 의존성(`#79`)과는 별개의 두 번째 정리 항목입니다.
+
+### 덧붙임 — 이 세션의 push 간격이 `#102`의 현재-head 증거를 지우고 있었습니다
+
+`#102`의 fuzz 실행 세 건(`a33d563`·`b42532f` 및 그 앞)이 연달아 다음 push에 취소되었습니다. 두 사이클 push를 멈추자 `c8e083f`에서 **처음으로 완료**됐고 두 job 모두 success입니다(Hypothesis 9초, Atheris 4분 38초). 대기는 큐 진입 07:54:36Z → 시작 10:32:22Z = 2시간 37분 46초로 위 표 범위 안이므로 **행은 추가하지 않았습니다.** 남는 교훈은 분포가 아니라 운영입니다 — 매 시간 push하면 어떤 head도 현재-head 판정을 모으지 못하고, 그것은 큐가 아니라 간격이 만든 차단입니다.
+
 ## 중앙 autofix가 `#28`에 존재하지 않는 버전을 적었습니다 (repair finding, 2026-09-30)
 
 이 세션이 이 저장소에서 처음으로 관측한 **외부 head 이동**이고, 내용이 좋지 않습니다. 2026-09-30 05:03:53Z에 `github-actions[bot]`이 `#28`(branch `codex/standards-file-ontology`)에 `8aefd06`을 push했습니다 — 메시지는 `fix(pr-28): address review feedback`, 변경은 `requirements.txt` 한 줄입니다.
