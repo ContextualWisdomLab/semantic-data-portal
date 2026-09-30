@@ -1271,6 +1271,25 @@ head 세 개가 동시에 움직였고, 확인해 보니 owner의 계획된 스�
 
 대기도 한 줄 적어 둡니다 — `trivy-fs` job은 큐 진입 11:47:00Z → 시작 12:42:51Z로 **55분 51초**입니다. fuzz 레인이 아니므로 위 표에는 넣지 않았고, 같은 날 세 번째 한 시간 미만 관측입니다.
 
+## `#81`의 본문이 자기 head보다 낡았습니다 (2026-09-30 13:52Z)
+
+`#81`은 owner가 정한 병합 순서의 첫 번째이므로 그 PR 본문을 읽었습니다. 본문은 스스로를 "Current authority — 2026-09-24"로 선언하고 이렇게 적고 있습니다.
+
+| 본문이 말하는 것 | 실제 head `4f83feb` |
+| --- | --- |
+| exact head `ce40bd89…` | `4f83feb959cb85a2ab61869202095cade9714644` |
+| 영향 범위 = lock 3개 + `tests/test_dependency_locks.py` | **11개 파일** (lock 4개, `requirements-test.in`, `pyproject.toml`, `constraints-graph.txt`, `CHANGELOG.md`, 문서 2개, 테스트) |
+| anyio 보안 하한 = **4.14.2** (CVE-2026-64847, CVE-2026-63349 인용) | **4.15.1** (하한보다 위) |
+| lock projection 3개 | **4개** (graph lock 포함) |
+
+즉 2026-09-30의 재생성이 본문에 반영되지 않았습니다. 본문 자체가 "lifecycle: Draft / needs current regeneration"이라고 적고 있으니 그 재생성이 이미 일어났다는 사실만 뒤늦은 것이고, 내용이 틀린 것은 아닙니다. **다만 이 PR의 authority 블록을 현재 상태로 읽으면 안 됩니다.**
+
+한 가지는 방향이 다릅니다. 본문은 anyio 하한을 **4.14.2**로 잡고 그 근거로 CVE-2026-64847과 CVE-2026-63349를 듭니다. 그런데 이 문서가 `#107`의 `trivy-fs`에서 읽은 anyio 관련 findings에는 **CRITICAL `CVE-2026-63374`**도 있었고 본문은 그것을 언급하지 않습니다. 적용된 pin이 4.15.1이라 실무적으로는 덮였지만, **본문이 선언한 하한(4.14.2)만 지켰다면 그 CRITICAL이 남았을지 이 문서는 알지 못합니다.** 어느 쪽도 단정하지 않고, 하한 선언과 관측된 findings 목록이 어긋난다는 사실만 적습니다.
+
+**`#28`의 green은 `#81`의 수락 조건을 대신하지 못합니다.** 본문의 required repair 5번은 "하나의 변하지 않은 exact head에서 frozen/hash-checked 설치, 전체 테스트, 현재 Trivy/Security, SAST, CodeQL, 저장소 required gate 전부"를 요구합니다. 위 절에 적은 green은 `#28` head `103c9eb`의 것이고 `#81` head `4f83feb`의 것이 아닙니다. `4f83feb`의 required check 결과는 이 세션이 읽지 못했습니다 — 최근 실행 목록에 나타나지 않지만, **그것을 "없다"는 증거로 쓰지 않습니다.** 같은 착오를 `#107`의 `trivy-fs`에서 한 번 했고(생성 전이었을 뿐), 영 결과는 부재의 증거가 아닙니다.
+
+덧붙여 `103c9eb`에서 **`Strix Security Scan`도 success**입니다. `#107` `6ace6aff`에서 실패했던 그 check인데, head가 다르므로 이것이 `#107`의 실패를 설명하거나 닫지는 않습니다 — 수리된 head에서 통과한다는 사실만 추가합니다.
+
 ## 릴리즈 준비 상태 (2026-09-07): 아직 아닙니다
 
 | 항목 | 상태 |
