@@ -1121,6 +1121,35 @@ owner lane은 `ContextualWisdomLab/contextual-orchestrator` issue `#1106`(free-p
 
 3번은 이 문서가 계속 1번 항목으로 적어 온 것과 같지만, 이제 대기 비용이 측정됩니다 — 취약한 main으로 23일, 그 뒤에 35건이 줄 서 있습니다.
 
+## 중앙 autofix가 `#28`에 존재하지 않는 버전을 적었습니다 (repair finding, 2026-09-30)
+
+이 세션이 이 저장소에서 처음으로 관측한 **외부 head 이동**이고, 내용이 좋지 않습니다. 2026-09-30 05:03:53Z에 `github-actions[bot]`이 `#28`(branch `codex/standards-file-ontology`)에 `8aefd06`을 push했습니다 — 메시지는 `fix(pr-28): address review feedback`, 변경은 `requirements.txt` 한 줄입니다.
+
+```
+-annotated-types==0.7.0 \
++annotated-types==0.7.1 \
+     --hash=sha256:1f02e8b43a8fbbc3f3e0d4f0f4bfc8131bcb4eebe8849b8e5c773f3a1c582a53 \
+     --hash=sha256:aff07c09a53a08bc8cfccb9c85b05f1aa9a2a6f23728d790723543408344ce89
+```
+
+세 가지를 확인했습니다.
+
+| 확인 | 결과 |
+| --- | --- |
+| PyPI에 `annotated-types 0.7.1`이 있는가 | **없습니다.** 공개된 릴리즈는 `0.1.0`·`0.2.0`·`0.3.0`·`0.3.1`·`0.4.0`·`0.5.0`·`0.6.0`·`0.7.0`·`0.8.0` — `0.7.1`은 그 사이에 없습니다 |
+| 남겨진 두 hash는 어느 버전의 것인가 | **`0.7.0`의 것입니다.** PyPI JSON의 `0.7.0` wheel `1f02e8b4…`, sdist `aff07c09…`와 한 글자도 다르지 않습니다 |
+| 다른 lock projection도 같이 바뀌었는가 | **아닙니다.** 같은 head의 `requirements-dev.txt`와 `main`의 `requirements.txt`는 둘 다 `0.7.0` + 같은 hash 그대로입니다 |
+
+그래서 결함이 둘 겹쳐 있습니다. **버전이 존재하지 않으므로** `pip install --require-hashes -r requirements.txt`는 hash 검증에 닿기도 전에 resolution에서 멈춥니다. 설령 존재했더라도 **hash가 옛 버전의 것이므로** `--require-hashes`가 다시 막습니다. 그리고 세 projection 중 하나만 손으로 고쳐졌으므로, `#81`이 수리 중인 것과 **같은 종류의 lock 불일치**가 하나 더 생겼습니다. 이 저장소의 절차는 `pyproject.toml`을 고치고 `uv pip compile --generate-hashes`로 두 파일을 **함께** 재생성하는 것인데(CLAUDE.md), 이 커밋은 한 파일의 한 줄을 직접 편집했습니다.
+
+설치를 실제로 실행해 보지는 않았습니다 — 위 판단의 근거는 PyPI 인덱스에 그 버전이 없다는 사실과 hash 대조이며, 그 둘로 실패는 확정됩니다.
+
+**이 bump가 무엇을 고치려던 것인지는 알 수 없습니다.** 위 절의 CVE 4건은 anyio 3건과 cryptography 1건이고 annotated-types는 거기 없습니다. 즉 보안 수리로 보기도 어렵습니다.
+
+**조치는 한 줄 되돌리기입니다** — `0.7.1` → `0.7.0`. 그러면 파일에 이미 들어 있는 hash, 같은 head의 `requirements-dev.txt`, 그리고 `main`과 모두 바이트 단위로 맞습니다. 다만 **이 세션은 그 push를 하지 않았습니다.** 지정 브랜치가 `claude/semantic-portal-pr-merge-e5a48k`이고 다른 브랜치로의 push는 명시적 허가가 있어야 하기 때문입니다. `#28`의 head는 같은 저장소 브랜치이므로 기술적으로는 가능하지만, 권한 경계를 루프 편의로 넘기지 않습니다.
+
+**병합 사고로 번질 위험은 낮습니다.** `refs/pull/28/merge`가 존재하므로 충돌은 아니고, 깨진 lock은 설치 단계에서 fail closed로 막힙니다. 즉 이 결함의 비용은 잘못된 병합이 아니라 **`#28`의 추가 지연**이고, 더 중요한 것은 **편집 권한이 있는 자동 수리가 존재하지 않는 의존성 버전을 만들어 냈다**는 사실 자체입니다. `.github`의 governance 서술은 결정론적 코드가 "관측 결과를 발명하지 않는다"고 적고 있는데, 이 커밋은 그 경계 밖에 있습니다. 소관은 중앙 autofix(`pr-review-autofix.yml` / `scripts/ci/pr_review_fix_scheduler.py`)이며, 포털이 고칠 수 있는 것은 자기 파일의 한 줄뿐입니다.
+
 ## 릴리즈 준비 상태 (2026-09-07): 아직 아닙니다
 
 | 항목 | 상태 |
