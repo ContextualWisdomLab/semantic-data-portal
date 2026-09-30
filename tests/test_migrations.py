@@ -59,3 +59,34 @@ def test_render_sql_substitutes_configured_embedding_dimension():
 def test_embedding_dimension_reads_config_default():
     runner = _load_runner()
     assert runner._embedding_dimension() == 128
+
+
+def test_file_copy_lineage_migration_defines_normalized_fk_graph():
+    sql = (MIGRATIONS_DIR / "0002_file_copy_lineage.sql").read_text(
+        encoding="utf-8"
+    )
+    for table in [
+        "file_asset_records",
+        "file_distribution_records",
+        "cloud_copy_receipts",
+        "file_metadata_evidence_records",
+        "cloud_sync_evidence_records",
+    ]:
+        assert f"CREATE TABLE IF NOT EXISTS {table}" in sql
+    assert sql.count("REFERENCES") == 7
+    assert sql.count("ON DELETE RESTRICT") == 7
+    assert "source_locator_sha256" in sql
+    assert "source_relative_path" not in sql
+    assert "provider_sync_confirmed" in sql
+    assert "local_copy_verified" in sql
+    assert "content_blake3" in sql
+    assert "production_time_source" in sql
+    assert "file_metadata_evidence_selected_idx" in sql
+
+
+def test_all_migration_files_are_statement_splitter_compatible():
+    runner = _load_runner()
+    for path in sorted(MIGRATIONS_DIR.glob("*.sql")):
+        statements = runner._statements(path.read_text(encoding="utf-8"))
+        assert statements, f"migration {path.name} must contain executable statements"
+        assert statements[-1].startswith("INSERT INTO schema_migrations")

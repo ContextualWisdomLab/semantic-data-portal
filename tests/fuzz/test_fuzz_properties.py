@@ -20,6 +20,8 @@ import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
+import sdp.catalog as app_catalog
+import sdp.evidence as app_evidence
 from sdp.domain import (
     DatasetCreateRequest,
     QueryDraftRequest,
@@ -158,6 +160,28 @@ exec_request = st.builds(
 @given(exec_request)
 def test_execute_query_holds_invariants(req):
     invariants.check_execute_query(req)
+
+
+def test_execute_query_keeps_fallback_audit_log_bounded():
+    previous_store = app_evidence.configure_evidence_store(None)
+    previous_events = list(app_catalog._AUDIT_LOG)
+    app_catalog._AUDIT_LOG.clear()
+    req = QueryExecutionRequest(
+        language="python",
+        user="analyst",
+        purpose="analysis",
+        dataset_ids=["crm-customer-master"],
+        query="x",
+        dry_run=True,
+    )
+    try:
+        for _ in range(1001):
+            invariants.check_execute_query(req)
+        assert len(app_catalog._AUDIT_LOG) <= 1000
+    finally:
+        app_catalog._AUDIT_LOG.clear()
+        app_catalog._AUDIT_LOG.extend(previous_events)
+        app_evidence.configure_evidence_store(previous_store)
 
 
 # --------------------------------------------------------------------------- #

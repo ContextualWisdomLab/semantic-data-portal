@@ -24,6 +24,86 @@ def _has_reader_role(subject: str) -> bool:
     return has_role(subject, "data-analyst", "admin", "platform-admin", "security")
 
 
+def evaluate_file_asset_access(
+    actor_context: object,
+    resource: str,
+    action: str,
+    resource_tenant_id: str,
+) -> PolicyDecision:
+    """Evaluate and record resource-scoped policy for one governed file asset."""
+
+    subject = str(getattr(actor_context, "subject", "anonymous"))
+    actor_tenant_id = str(getattr(actor_context, "tenant_id", ""))
+    roles = set(getattr(actor_context, "roles", []))
+    action_key = action.lower()
+    decision_base = {
+        "subject": subject,
+        "resource": resource,
+        "action": action,
+        "decision_id": str(uuid4()),
+    }
+    obligations = {
+        "tenant_id": resource_tenant_id,
+        "actor_tenant_id": actor_tenant_id,
+    }
+    if "platform-admin" not in roles and actor_tenant_id != resource_tenant_id:
+        return _decision(
+            **decision_base,
+            effect="deny",
+            reason="tenant boundary denied",
+            obligations=obligations,
+        )
+    if action_key == "create_file_asset":
+        allowed = bool({"admin", "platform-admin"}.intersection(roles))
+        required_role = "admin"
+    elif action_key == "read_file_locations":
+        allowed = bool({"admin", "platform-admin"}.intersection(roles))
+        required_role = "admin"
+    else:
+        allowed = bool(
+            {"data-analyst", "admin", "platform-admin", "security"}.intersection(roles)
+        )
+        required_role = "data-analyst"
+    if not allowed:
+        return _decision(
+            **decision_base,
+            effect="deny",
+            reason="file asset policy denied",
+            obligations={**obligations, "required_role": required_role},
+        )
+    return _decision(
+        **decision_base,
+        effect="allow",
+        reason="file asset tenant and role policy satisfied",
+        obligations=obligations,
+    )
+
+
+def evaluate_graph_access(
+    actor_context: object,
+    resource: str,
+    action: str,
+) -> PolicyDecision:
+    """Evaluate and record OIDC-derived access to the generic graph surface."""
+
+    subject = str(getattr(actor_context, "subject", "anonymous"))
+    roles = set(getattr(actor_context, "roles", []))
+    write = action.lower() == "write_graph"
+    allowed = bool(
+        ({"admin", "platform-admin"} if write else {"data-analyst", "admin", "platform-admin", "security"})
+        .intersection(roles)
+    )
+    return _decision(
+        subject=subject,
+        resource=resource,
+        action=action,
+        decision_id=str(uuid4()),
+        effect="allow" if allowed else "deny",
+        reason="graph role policy satisfied" if allowed else "graph role policy denied",
+        obligations={"required_role": "admin" if write else "data-analyst"},
+    )
+
+
 def evaluate(subject: str, resource: str, action: str, purpose: str) -> PolicyDecision:
     action_key = action.lower()
     decision_id = str(uuid4())

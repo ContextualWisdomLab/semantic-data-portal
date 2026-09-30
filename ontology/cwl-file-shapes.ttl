@@ -1,0 +1,73 @@
+@prefix cwl: <https://contextualwisdomlab.github.io/semantic-data-portal/ontology/file#> .
+@prefix dcat: <http://www.w3.org/ns/dcat#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix spdx: <http://spdx.org/rdf/terms#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+cwl:FileAssetShape a sh:NodeShape ;
+    sh:targetClass cwl:FileAsset ;
+    sh:property [
+        sh:path dcterms:identifier ; sh:minCount 1 ; sh:maxCount 1 ;
+        sh:pattern "^urn:sha256:[0-9a-f]{64}$"
+    ] ;
+    sh:property [ sh:path dcterms:title ; sh:minCount 1 ; sh:maxCount 1 ; sh:minLength 1 ] ;
+    sh:property [ sh:path cwl:tenantId ; sh:minCount 1 ; sh:maxCount 1 ; sh:minLength 1 ] ;
+    sh:property [ sh:path dcterms:format ; sh:minCount 1 ; sh:maxCount 1 ; sh:minLength 1 ] ;
+    sh:property [ sh:path dcat:byteSize ; sh:minCount 1 ; sh:maxCount 1 ; sh:minInclusive 0 ] ;
+    sh:property [ sh:path spdx:checksum ; sh:minCount 1 ; sh:maxCount 1 ; sh:node cwl:ChecksumShape ] ;
+    sh:property [ sh:path dcat:distribution ; sh:minCount 1 ; sh:node cwl:DistributionShape ] ;
+    sh:property [ sh:path cwl:assertion ; sh:node cwl:SemanticAssertionShape ] .
+
+cwl:ChecksumShape a sh:NodeShape ;
+    sh:property [
+        sh:path spdx:checksumValue ; sh:minCount 1 ; sh:maxCount 1 ;
+        sh:pattern "^[0-9a-f]{64}$"
+    ] .
+
+cwl:DistributionShape a sh:NodeShape ;
+    sh:targetClass dcat:Distribution ;
+    sh:property [
+        sh:path cwl:storageProvider ; sh:minCount 1 ; sh:maxCount 1 ;
+        sh:in ( "filesystem" "s3" "s3_compatible" "azure_blob" )
+    ] ;
+    sh:property [ sh:path cwl:endpointId ; sh:minCount 1 ; sh:maxCount 1 ; sh:minLength 1 ] ;
+    sh:property [ sh:path dcat:accessURL ; sh:minCount 1 ; sh:maxCount 1 ] .
+
+cwl:SemanticAssertionShape a sh:NodeShape ;
+    sh:targetClass cwl:SemanticAssertion ;
+    sh:property [
+        sh:path cwl:relation ; sh:minCount 1 ; sh:maxCount 1 ;
+        sh:in (
+            cwl:belongsToProject cwl:usesSystem cwl:hasWorkPhase
+            cwl:hasArtifactType cwl:hasTopic cwl:wasDerivedFrom cwl:previousVersion
+        )
+    ] ;
+    sh:property [ sh:path cwl:target ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [
+        sh:path cwl:targetKind ; sh:minCount 1 ; sh:maxCount 1 ;
+        sh:in (
+            "business_project" "system" "work_phase"
+            "artifact_type" "topic" "file_asset"
+        )
+    ] ;
+    sh:property [
+        sh:path cwl:confidence ; sh:minCount 1 ; sh:maxCount 1 ;
+        sh:minInclusive 0 ; sh:maxInclusive 1
+    ] ;
+    sh:property [
+        sh:path cwl:reviewStatus ; sh:minCount 1 ; sh:maxCount 1 ;
+        sh:in ( "proposed" "approved" "rejected" )
+    ] ;
+    sh:property [
+        sh:path cwl:evidenceChunkSha256 ; sh:minCount 1 ; sh:maxCount 1 ;
+        sh:pattern "^[0-9a-f]{64}$"
+    ] ;
+    sh:property [
+        sh:path cwl:evidenceStart ; sh:minCount 1 ; sh:maxCount 1 ;
+        sh:minInclusive 0 ; sh:lessThan cwl:evidenceEnd
+    ] ;
+    sh:property [
+        sh:path cwl:evidenceEnd ; sh:minCount 1 ; sh:maxCount 1 ; sh:minInclusive 1
+    ] ;
+    sh:property [ sh:path cwl:extractionMethod ; sh:minCount 1 ; sh:maxCount 1 ; sh:minLength 1 ] .
