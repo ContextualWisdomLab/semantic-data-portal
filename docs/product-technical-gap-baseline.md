@@ -1121,6 +1121,25 @@ owner lane은 `ContextualWisdomLab/contextual-orchestrator` issue `#1106`(free-p
 
 3번은 이 문서가 계속 1번 항목으로 적어 온 것과 같지만, 이제 대기 비용이 측정됩니다 — 취약한 main으로 23일, 그 뒤에 35건이 줄 서 있습니다.
 
+### 정정 — 깨진 runtime lock은 PR 게이트에 보이지 않습니다 (2026-09-30 07:52Z)
+
+바로 위에서 "깨진 lock은 설치 단계에서 fail closed로 막히므로 병합 위험은 낮다"고 적었습니다. **실행 증거가 그 반대입니다.**
+
+`#28`의 `Tests`(run `36671696817`, job `109747873606`)가 `8aefd06`에서 **success**로 끝났습니다. step 4 `Install dependencies`가 12초에 green입니다. 이유는 설치 대상이 다르기 때문입니다.
+
+| 레인 | 설치하는 파일 | `8aefd06`의 annotated-types pin |
+| --- | --- | --- |
+| `tests.yml` → `Tests` | `requirements-test.txt` | `0.7.0` (정상) |
+| `Dockerfile` (CI 아님) | `requirements.txt` | **`0.7.1` (존재하지 않음)** |
+
+그리고 `main`의 저장소 로컬 워크플로는 `fuzz.yml`·`scorecard-analysis.yml`·`tests.yml` **셋뿐이며 이미지를 빌드하는 것은 하나도 없습니다.** `requirements.txt`를 `--require-hashes`로 설치하는 곳은 `Dockerfile` 19행뿐입니다.
+
+**따라서 이 저장소의 어떤 PR check도 `requirements.txt`를 설치하지 않습니다.** 깨진 runtime lock은 게이트 전체에 보이지 않고, 깨끗해 보이는 병합을 지나 **이미지 빌드 시점에야** 드러납니다. 위의 "fail closed" 서술은 설치가 어딘가에서 일어난다는 가정 위에 있었고 그 가정이 틀렸습니다.
+
+중앙 check가 알아챌지는 **확인하지 못했습니다.** `Security Scan`의 trivy는 `requirements.txt`를 읽지만 manifest를 파싱할 뿐 PyPI에 해석을 요청하지 않으므로, 존재하지 않는 버전은 오류가 아니라 **취약점 데이터 없음**으로 지나갈 가능성이 큽니다. 그 job은 아직 queued여서 결과를 보지 못했으므로 추정으로만 남깁니다.
+
+부수적으로 레인 간 대기 관측이 하나 더 나왔습니다 — 이 `Tests` job은 큐 진입 05:04:01Z → 실제 시작 07:28:15Z로 **2시간 24분 14초**입니다. 위 대기 표(fuzz 레인)에는 넣지 않았습니다. 같은 저장소에서 Strix 레인 18시간 17분과 이 레인 2시간 24분이 같은 날 관측된다는 점만 적어 둡니다.
+
 ## 이 문서를 싣고 있는 `#102`가 docs-only PR이 아닙니다 (repair finding, 2026-09-30)
 
 2026-09-30 06:08Z에 `#102`가 Draft로 내려갔고, 근거는 exact-head 감사 코멘트입니다 — head `03241c46`, 판정은 `stack depends on predecessor #79`. Close도 force push도 없었고 delta는 보존되었습니다. **이 판정은 맞습니다.** 그리고 이 문서와 이 세션이 `#102`를 여러 차례 "docs PR"이라고 적어 온 것이 틀렸습니다.
@@ -1179,7 +1198,7 @@ owner lane은 `ContextualWisdomLab/contextual-orchestrator` issue `#1106`(free-p
 
 **조치는 한 줄 되돌리기입니다** — `0.7.1` → `0.7.0`. 그러면 파일에 이미 들어 있는 hash, 같은 head의 `requirements-dev.txt`, 그리고 `main`과 모두 바이트 단위로 맞습니다. 다만 **이 세션은 그 push를 하지 않았습니다.** 지정 브랜치가 `claude/semantic-portal-pr-merge-e5a48k`이고 다른 브랜치로의 push는 명시적 허가가 있어야 하기 때문입니다. `#28`의 head는 같은 저장소 브랜치이므로 기술적으로는 가능하지만, 권한 경계를 루프 편의로 넘기지 않습니다.
 
-**병합 사고로 번질 위험은 낮습니다.** `refs/pull/28/merge`가 존재하므로 충돌은 아니고, 깨진 lock은 설치 단계에서 fail closed로 막힙니다. 즉 이 결함의 비용은 잘못된 병합이 아니라 **`#28`의 추가 지연**이고, 더 중요한 것은 **편집 권한이 있는 자동 수리가 존재하지 않는 의존성 버전을 만들어 냈다**는 사실 자체입니다. `.github`의 governance 서술은 결정론적 코드가 "관측 결과를 발명하지 않는다"고 적고 있는데, 이 커밋은 그 경계 밖에 있습니다. 소관은 중앙에 있습니다 — 커밋 author는 `github-actions[bot]`이고 그 head의 check를 띄운 triggering actor는 `opencode-agent[bot]`입니다. 다만 **어느 워크플로 파일이 이 커밋을 만들었는지는 확인하지 않았으므로** `pr-review-autofix.yml`이나 `scripts/ci/pr_review_fix_scheduler.py`를 범인으로 지목하지 않습니다(둘은 후보입니다). 포털이 고칠 수 있는 것은 자기 파일의 한 줄뿐입니다.
+**"병합 위험은 낮다"고 적은 것은 틀렸습니다 (2026-09-30 07:52Z 정정).** 아래 절이 실행 증거로 이를 뒤집습니다. 이 결함의 비용은 지연이 아니라 **PR 게이트를 그대로 통과한다는 것**이고, 더 중요한 것은 **편집 권한이 있는 자동 수리가 존재하지 않는 의존성 버전을 만들어 냈다**는 사실 자체입니다. `.github`의 governance 서술은 결정론적 코드가 "관측 결과를 발명하지 않는다"고 적고 있는데, 이 커밋은 그 경계 밖에 있습니다. 소관은 중앙에 있습니다 — 커밋 author는 `github-actions[bot]`이고 그 head의 check를 띄운 triggering actor는 `opencode-agent[bot]`입니다. 다만 **어느 워크플로 파일이 이 커밋을 만들었는지는 확인하지 않았으므로** `pr-review-autofix.yml`이나 `scripts/ci/pr_review_fix_scheduler.py`를 범인으로 지목하지 않습니다(둘은 후보입니다). 포털이 고칠 수 있는 것은 자기 파일의 한 줄뿐입니다.
 
 ## 릴리즈 준비 상태 (2026-09-07): 아직 아닙니다
 
