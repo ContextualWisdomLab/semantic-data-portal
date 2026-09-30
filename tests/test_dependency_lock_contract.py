@@ -21,7 +21,12 @@ def test_pypdf_security_floor_is_identical_in_source_and_hash_locks() -> None:
     test_input = (_ROOT / "requirements-test.in").read_text(encoding="utf-8")
     assert test_input.count(f"pypdf=={_PYPDF_VERSION}") == 1
 
-    for lock_name in ("requirements.txt", "requirements-dev.txt", "requirements-test.txt"):
+    for lock_name in (
+        "requirements.txt",
+        "requirements-dev.txt",
+        "requirements-test.txt",
+        "requirements-graph.txt",
+    ):
         lock = (_ROOT / lock_name).read_text(encoding="utf-8")
         assert lock.count(f"pypdf=={_PYPDF_VERSION}") == 1
         for digest in _PYPDF_HASHES:

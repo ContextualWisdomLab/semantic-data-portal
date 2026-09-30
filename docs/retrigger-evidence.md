@@ -14,3 +14,10 @@
 - The repair adds an executable cross-lock anyio invariant and regenerates runtime, development, and test lock artifacts with `uv pip compile --upgrade-package anyio`, selecting `anyio==4.15.1` while preserving `cryptography==50.0.0`. Hash-required dry-run installs validate every regenerated lock.
 - PR #37 must consume the ordinary PR #81 history before its downstream-only pypdf repair; this preserves one shared dependency writer and avoids duplicating the cryptography/anyio fix.
 - PR #37 then advances its directly declared document parser from `pypdf==6.15.0` to the first release covering all three observed findings, `pypdf==6.16.1` (CVE-2026-84309, CVE-2026-84310, and CVE-2026-84311), and regenerates all hash-locked projections while retaining PR #81's `anyio==4.15.1` and `cryptography==50.0.0` decisions.
+
+## 2026-09-30 dependency-check follow-up RCA
+
+- Security Scan run `36671696821` on downstream PR #28 at exact head `8aefd06df864e07d9a2f40de687ffcfa6082ed36` failed dependency-review job `109784585922`, Trivy job `109784585930`, and OSV job `109784586129` for the same install surfaces.
+- The earlier PR #81 repair at exact predecessor head `e4291e89805078a71d0b6ee1047091e178750a67` covered AnyIO and cryptography in the runtime, development, and test locks, but omitted `requirements-graph.txt` and retained `PyJWT==2.13.0` across the source contract and generated locks.
+- A RED lock-contract test reproduced both omissions. The owner repair pins `PyJWT==2.14.0`, adds AnyIO and cryptography security constraints to the Python 3.12 graph lock, and regenerates all four hash-locked install surfaces without suppressing the security gate.
+- Integration order remains PR #81 → PR #37 → PR #28. PR #37 retains its downstream-only `pypdf==6.16.1` repair; PR #28 retains its ontology delta. Each successor is revalidated only after ordinary non-force history integration.

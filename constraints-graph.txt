@@ -1,2 +1,4 @@
 # Keep the Docker lock file installable on Linux/CPython 3.12.
+anyio==4.15.1
+cryptography==50.0.0
 greenlet==3.2.5
