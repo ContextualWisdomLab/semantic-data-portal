@@ -112,7 +112,10 @@ def get_join_candidates(dataset_id: str, *, limit: int = 10) -> list[dict[str, A
                 "score": score,
                 "overlap_terms": overlap_terms,
                 "overlap_columns": overlap_columns,
-                "recommended_because": "business term / schema overlap",
+                "recommended_because": (
+                    "business term and schema overlap; preview this dataset via "
+                    "POST /browse/{candidate_dataset_id}/preview to validate the join before relying on it"
+                ),
             }
         )
 
@@ -275,7 +278,10 @@ def get_dataset(dataset_id: str) -> Dataset | None:
 def get_dataset_or_404(dataset_id: str) -> Dataset:
     dataset = _DATA.get(dataset_id)
     if not dataset:
-        raise KeyError("dataset not found")
+        raise KeyError(
+            "dataset not found. Verify the dataset_id against GET /catalog/datasets "
+            "(or search GET /catalog/search?q=<term>) and retry with a valid id."
+        )
     return dataset
 
 
@@ -287,7 +293,10 @@ def get_dataset_schema_history(dataset_id: str) -> dict[str, Any]:
     get_dataset_or_404(dataset_id)
     history = _SCHEMA_HISTORY.get(dataset_id, [])
     if not history:
-        raise KeyError("no schema history found")
+        raise KeyError(
+            "no schema history found. List recorded versions via "
+            "GET /catalog/datasets/{dataset_id}/schema-versions and retry with a versioned dataset."
+        )
     return {
         "dataset_id": dataset_id,
         "history": history,
@@ -308,7 +317,8 @@ def get_dataset_schema_diff(dataset_id: str, from_version: str, to_version: str)
     if not from_snapshot or not to_snapshot:
         available = sorted(history.keys())
         raise ValueError(
-            f"schema_version not found: requested ({from_version}, {to_version}), available={available}"
+            f"schema_version not found: requested ({from_version}, {to_version}), "
+            f"available={available}. Retry using two versions from the available list."
         )
 
     before_names = {column["name"]: column for column in from_snapshot.get("schema", [])}
@@ -383,7 +393,10 @@ def register_dataset(
         dataset_id = payload.id
 
     if dataset_id in _DATA:
-        raise ValueError("dataset already exists")
+        raise ValueError(
+            "dataset already exists. To change it, send PATCH /catalog/datasets/{dataset_id} "
+            "with the fields to update, or register a different id."
+        )
 
     now = datetime.now(timezone.utc)
     dataset = Dataset(
@@ -465,7 +478,11 @@ def publish_dataset(
     dataset = get_dataset_or_404(dataset_id)
     validation = validate_metadata(dataset)
     if not validation["is_valid"]:
-        raise ValueError("cannot publish dataset: metadata validation failed")
+        raise ValueError(
+            "cannot publish dataset: metadata validation failed. "
+            "Call GET /catalog/datasets/{dataset_id}/validate to see the missing required fields, "
+            "fill them via PATCH /catalog/datasets/{dataset_id}, then publish again."
+        )
 
     if dataset.status == "published":
         _record_audit_event(

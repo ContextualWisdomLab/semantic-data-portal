@@ -83,7 +83,10 @@ def preview(dataset_id: str, user: str, purpose: str, limit: int = 100, offset: 
         "offset": offset,
         "masking_summary": {"masked_columns": decision.obligations.get("masking", [])},
         "has_more": offset + len(masked) < len(rows),
-        "sampling_note": "샘플 결과이며 전체 데이터 대표성을 보장하지 않습니다.",
+        "sampling_note": (
+            "샘플 결과이며 전체 데이터 대표성을 보장하지 않습니다. "
+            "더 확인하려면 같은 dataset_id로 offset/limit 값을 조정해 이 preview 엔드포인트를 다시 호출하세요."
+        ),
         "policy_decision_id": decision.decision_id,
         "applied_row_filter": decision.obligations.get("row_filter"),
     }
