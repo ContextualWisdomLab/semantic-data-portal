@@ -2,7 +2,7 @@
 # pyproject.toml; keep them in sync when bumping versions there.
 fastapi==0.139.0
 psycopg[binary]==3.3.4
-PyJWT[crypto]==2.13.0
+PyJWT[crypto]==2.15.0
 pydantic==2.13.4
 uvicorn==0.51.0
 pytest==9.1.1
