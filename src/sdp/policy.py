@@ -88,7 +88,6 @@ def evaluate(subject: str, resource: str, action: str, purpose: str) -> PolicyDe
             effect="deny",
             reason=(
                 "tenant boundary denied. 이 데이터셋은 접근 권한이 없는 테넌트에 속해 있습니다. "
-                "올바른 테넌트 참조(X-CWL-Tenant-Reference 헤더)로 요청하거나 "
                 "데이터 거버넌스 담당자에게 해당 테넌트 접근을 요청하세요."
             ),
             obligations={"tenant_id": dataset.tenant_id, "actor_tenant_id": actor_context.tenant_id},
@@ -111,8 +110,8 @@ def evaluate(subject: str, resource: str, action: str, purpose: str) -> PolicyDe
             effect="deny",
             reason=(
                 "외부 반출 목적(external-export)은 admin 권한이 필요합니다. "
-                "분석 목적(purpose=analysis 등)으로 다시 요청하거나 "
-                "admin/platform-admin 역할로 재요청하세요."
+                "admin/platform-admin 역할로 재요청하거나 "
+                "데이터 거버넌스 담당자에게 외부 반출 권한을 요청하세요."
             ),
             obligations={"required_role": "admin"},
         )
