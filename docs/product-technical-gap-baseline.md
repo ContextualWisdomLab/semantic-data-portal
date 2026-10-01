@@ -1290,6 +1290,29 @@ head 세 개가 동시에 움직였고, 확인해 보니 owner의 계획된 스�
 
 덧붙여 `103c9eb`에서 **`Strix Security Scan`도 success**입니다. `#107` `6ace6aff`에서 실패했던 그 check인데, head가 다르므로 이것이 `#107`의 실패를 설명하거나 닫지는 않습니다 — 수리된 head에서 통과한다는 사실만 추가합니다.
 
+## dependabot `#109`은 조용한 부분 수리이고, lock의 다섯 번째 writer입니다 (repair finding, 2026-10-01)
+
+2026-10-01 16:13:07Z에 `dependabot[bot]`이 `#109` `409ae68`을 열었습니다 — `chore(deps): bump pyjwt from 2.13.0 to 2.15.0`, base는 `main`(`e48aa13`) 직접, 4개 파일입니다.
+
+| 파일 | `#109` | `#81` |
+| --- | --- | --- |
+| `pyproject.toml` | `PyJWT[crypto]==2.15.0` | — |
+| `requirements-test.in` | `PyJWT[crypto]==2.15.0` | `PyJWT[crypto]==2.14.0` |
+| `requirements.txt` | `pyjwt==2.15.0` | `pyjwt==2.14.0` |
+| `requirements-dev.txt` | `pyjwt==2.15.0` | `pyjwt==2.14.0` |
+| **`requirements-test.txt`** | **`pyjwt==2.13.0` — 손대지 않았습니다** | `pyjwt==2.14.0` |
+| `requirements-graph.txt` | pyjwt 없음(`main`과 같음) | `pyjwt[crypto]==2.14.0` |
+
+**입력은 올리고 컴파일된 lock은 올리지 않았습니다.** `requirements-test.in`은 2.15.0인데 거기서 생성되는 `requirements-test.txt`는 2.13.0 그대로입니다. 그리고 `requirements-test.txt`는 **`tests.yml`이 `--require-hashes`로 설치하는 바로 그 파일**입니다(위 절). 즉 manifest는 2.15.0을 주장하는데 테스트 레인은 취약한 2.13.0을 계속 설치합니다.
+
+**실패하지 않는다는 점이 더 나쁩니다.** `#28`의 autofix 결함은 존재하지 않는 버전이어서 resolution에서 멈췄지만, 이쪽은 lock 내부가 정합합니다(2.13.0 + 2.13.0 hash). 그래서 설치는 성공하고 **수리가 되지 않은 사실만 조용히 남습니다.**
+
+**그 tree에는 drift를 잡을 장치도 없습니다.** `tests/test_dependency_locks.py`는 `main`에도 `#109`에도 **없습니다** — `#79`/`#81` 계열 브랜치에만 있습니다. 즉 prod/dev/test 불일치를 deterministic RED로 만드는 가드가 정확히 그것이 필요한 PR에는 빠져 있습니다.
+
+**그리고 같은 파일의 writer가 하나 더 늘었습니다.** `#81`은 pyjwt를 네 projection 전부 **2.14.0**으로 올리고(그 과정에서 `main`에는 없는 pyjwt를 graph lock에 추가), `#109`는 같은 파일들을 **2.15.0**으로 올립니다. 목표 버전이 다르고 범위도 다릅니다. `#28`·`#37`이 `#81`을 상속하므로 이 lock 세트를 건드리는 열린 PR은 이제 `#79`·`#81`·`#37`·`#28`·`#109`입니다.
+
+**조치는 포털 소관이지만 이 세션 소관은 아닙니다.** 올바른 수리는 `requirements-test.txt`를 자기 `.in`에서 재생성해 네 projection을 한 버전으로 맞추는 것이고, 순서상 `#81`이 먼저 들어간 뒤 dependabot이 그 위에서 다시 열리는 편이 깔끔합니다. `#109`의 head는 dependabot 브랜치이므로 이 세션은 push하지 않았습니다.
+
 ## 릴리즈 준비 상태 (2026-09-07): 아직 아닙니다
 
 | 항목 | 상태 |
