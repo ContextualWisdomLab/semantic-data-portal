@@ -1547,3 +1547,34 @@ def test_browse_query_denied_without_user():
         and event["actor"] == "guest"
         for event in events.json()
     )
+
+
+def test_browse_query_allows_keyword_inside_identifier():
+    response = client.post(
+        "/browse/query",
+        json={
+            "user": "analyst",
+            "purpose": "analysis",
+            "dataset_ids": ["crm-event"],
+            "language": "SQL",
+            "query": "SELECT updated_at FROM crm",
+        },
+    )
+
+    assert response.status_code == 200, response.json()
+
+
+def test_browse_query_still_rejects_standalone_keyword():
+    response = client.post(
+        "/browse/query",
+        json={
+            "user": "analyst",
+            "purpose": "analysis",
+            "dataset_ids": ["crm-event"],
+            "language": "SQL",
+            "query": "SELECT count(*) FROM crm UNION SELECT count(*) FROM crm",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["warnings"] == ["forbidden_keyword_detected"]

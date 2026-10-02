@@ -8,6 +8,7 @@ drives the code under test.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from sdp import catalog, evidence, observability, ontology, orchestrator
@@ -131,7 +132,13 @@ def check_execute_query(req: QueryExecutionRequest) -> None:
     assert isinstance(resp, QueryExecutionResponse)
     assert resp.status in {"SUCCEEDED", "REJECTED", "DENIED"}
     lowered = req.query.lower()
-    if any(tok in lowered for tok in FORBIDDEN_KEYWORDS):
+    # Independently encode the executor's asymmetric boundary contract: digits
+    # may precede a keyword (1union), but ASCII identifier suffixes may not.
+    # Unicode word boundaries (\b) are broader than these policy boundaries.
+    if any(
+        re.search(rf"(?<![a-z_]){re.escape(tok)}(?![a-z0-9_])", lowered, re.IGNORECASE)
+        for tok in FORBIDDEN_KEYWORDS
+    ):
         assert resp.status == "REJECTED", "forbidden keyword was not rejected"
     if resp.status == "SUCCEEDED":
         assert resp.row_count >= 0

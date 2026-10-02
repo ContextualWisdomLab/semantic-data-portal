@@ -9,9 +9,11 @@ description = "Ontology-driven, graph-backed semantic data catalog with vector r
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+  "anyio>=4.14.2",
+  "cryptography>=50.0.0",
   "fastapi==0.139.0",
   "psycopg[binary]==3.3.4",
-  "PyJWT[crypto]==2.13.0",
+  "PyJWT[crypto]==2.15.0",
   "pydantic==2.13.4",
   "uvicorn==0.51.0",
 ]
