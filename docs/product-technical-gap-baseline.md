@@ -1353,6 +1353,37 @@ head 세 개가 동시에 움직였고, 확인해 보니 owner의 계획된 스�
 
 같은 조심이 `#109`에도 적용됩니다 — 거기서는 `requirements-test.in`이 pyjwt를 **직접** 2.15.0으로 올렸는데 `requirements-test.txt`가 2.13.0이므로, 그쪽은 입력과 출력의 직접 불일치입니다. anyio 쪽과 성질이 다르니 두 사례를 한 묶음으로 읽지 마십시오.
 
+## `#110`이 CI를 self-hosted로 옮기려 합니다 — 그리고 제 앞선 기록 두 건을 정정합니다 (2026-10-03)
+
+2026-10-03 12:44:23 KST에 `#110` `f035b10`이 열렸습니다 — `ci: stage isolated self-hosted routing for all workflow jobs`, 18개 파일입니다. **`#107`의 후손입니다**(`merge-base --is-ancestor` 확인), 즉 경쟁하는 writer가 아니라 같은 레인의 다음 단계입니다.
+
+변경의 핵심은 네 product CI job의 실행 위치입니다.
+
+```
+-    runs-on: ubuntu-latest
++    runs-on: [self-hosted, linux, x64, cwlab-ci-isolated]
+```
+
+`fuzz.yml`의 두 job, `tests.yml`, `scorecard-analysis.yml` 전부이고, `tests/test_self_hosted_ci_contract.py`가 `runs-on:` 선언이 **정확히 네 개**이며 모두 그 라벨이어야 한다고 못 박습니다.
+
+**이 문서가 3주간 21회 측정한 큐 대기와 직접 닿는 변경입니다.** 다만 **지금 이것이 대기를 줄인다고 읽으면 안 됩니다.** `docs/self-hosted-ci-migration.md`가 스스로 적고 있습니다 — "This is a staged source change, not verified runtime activation. **No registered runner carried `cwlab-ci-isolated` in the preparation API read.**" 즉 라벨을 받을 러너가 아직 없으므로, 이 상태로 병합되면 네 job은 **영구히 큐에 남습니다.** 문서는 그래서 isolated capacity와 canary 증거가 생길 때까지 Draft를 유지하라고 하고, 유혹적인 우회를 명시적으로 금지합니다 — "do not add this label to an existing privileged host solely to release the queue." 순서도 적혀 있습니다: `#82`와 `#107`이 병합되기 전에 issue108을 시작하지 말 것.
+
+### 정정 1 — `tests/test_dependency_advisories.py`의 add/add 충돌은 해소되었습니다
+
+어제 적은 "`#82`(52행, blob `b0127a93`)와 `#107`(69행, blob `bce98356`)이 서로 다른 내용으로 같은 파일을 만든다"는 관측은 **더 이상 유효하지 않습니다.** 지금 세 PR이 같은 blob을 들고 있습니다.
+
+| PR | blob | 행 |
+| --- | --- | --- |
+| `#82` | `c15f19f6` | 108 |
+| `#107` | `c15f19f6` | 108 |
+| `#110` | `c15f19f6` | 108 |
+
+**이것은 owner가 수렴시킨 것이고, 제 쪽 실수도 하나 있습니다.** `#82`는 그 뒤 `93321a9`로 head가 움직였는데 저는 그 시점에 pin만 다시 읽고 advisories 파일은 옛 head의 값을 그대로 들고 있었습니다. 이 문서가 다른 PR에 대해 반복해 적어 온 규칙 — head가 움직이면 다시 읽어라 — 을 제 기록에 적용하지 않은 것입니다. add/add 충돌 건수는 둘에서 **하나**로 줄었고, 남은 것은 `docs/product-technical-gap-baseline.md`(`#81` 16행 vs `#79`/`#102`)입니다.
+
+### 정정 2 — lock writer는 여덟이 아니라 그대로 일곱입니다
+
+`#110`도 네 lock을 모두 건드리지만 pin은 `#107`과 동일하고(cryptography 50.0.2, pyjwt 2.15.0, anyio 4.15.1 / test 4.14.2) 그 조상입니다. 따라서 **독립 writer가 늘어난 것이 아닙니다.** 앞 절의 일곱(`#79`·`#81`·`#37`·`#28`·`#82`·`#107`·`#109`)에 `#110`을 더해 여덟이라고 세지 마십시오 — `#110`은 `#107` 계보 안입니다.
+
 ## 릴리즈 준비 상태 (2026-09-07): 아직 아닙니다
 
 | 항목 | 상태 |
