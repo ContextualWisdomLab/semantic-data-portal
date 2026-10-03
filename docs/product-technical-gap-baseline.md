@@ -1451,6 +1451,33 @@ cron 시각과 실제 run 생성 시각을 대조했습니다. **수 주에 걸�
 
 **오늘 야간 `fuzz` 예정 실행은 아직 생성되지 않았습니다.** 06:52Z 기준 예정 실행 목록의 최신값은 10-02 09:03이고, 위 지연 패턴(약 +6시간)대로라면 09:00Z 무렵에 나타날 수 있습니다. **"누락"이라고 적지 않습니다** — 아직 지연 창 안입니다.
 
+### 거절된 두 체크를 로컬에서 CI와 같은 방식으로 재현했습니다 — 내용은 깨끗합니다 (2026-10-03 07:5xZ)
+
+과금 잠금은 체크를 **실패로 기록**하지만 그 실패는 코드에 대해 아무것도 말하지 않습니다. 그 공백을 메우기 위해 거절된 두 job을 **CI의 설치 명령과 인터프리터를 그대로 써서** 로컬에서 돌렸습니다. head는 `2bdd3c6`입니다.
+
+재현 조건은 워크플로 파일에서 그대로 옮겼습니다 — Python 3.12, `python -m pip install --require-hashes -r requirements-test.txt`(`tests.yml`·`fuzz.yml` 공통), Atheris job은 추가로 `fuzz-requirements.txt`, 실행은 `PYTHONPATH=src`(Atheris는 `src:.`), `FUZZ_SECONDS=60`(CI의 PR 예산).
+
+| 체크 | CI에서 | 로컬 재현 결과 |
+| --- | --- | --- |
+| `Tests` (API integration suite) | Draft라 생성되지 않음 | **258 passed, 8 skipped** / exit 0 |
+| `Hypothesis property tests` | **과금 거절**(step 0) | **10 passed** / exit 0 |
+| `Atheris coverage-guided (bounded)` | **과금 거절**(step 0) | **4 harness 전부 61초 완주, exit 0, reproducer 0건** |
+
+설치된 pin도 이 브랜치의 test lock과 일치했습니다 — cryptography 50.0.0, anyio 4.14.2, pyjwt 2.13.0, hypothesis 6.156.6.
+
+Atheris 실행량은 harness별로 다음과 같습니다. `crash-*`·`oom-*`·`timeout-*` 파일은 하나도 생성되지 않았고 작업 트리도 깨끗했습니다(로그에서 `crash`에 걸리는 네 줄은 libFuzzer의 무해한 `__sanitizer_acquire_crash_state` 경고입니다).
+
+| harness | 실행 횟수 (61초) |
+| --- | --- |
+| `fuzz_draft_sql` | 2,276,110 |
+| `fuzz_execute_query` | 584,996 |
+| `fuzz_resolve_terms` | 307,010 |
+| `fuzz_search_catalog` | 136,200 |
+
+8건 skip은 전부 `tests/test_integration_age.py`의 `SDP_DATABASE_DSN not set`입니다 — CI 러너에도 DSN이 없으므로 녹색이던 시절에도 같은 8건이 skip되었습니다.
+
+**이것이 무엇을 말하고 무엇을 말하지 않는지 적습니다.** 말하는 것: 지금 PR에 붙어 있는 두 `failure`는 **코드 결함의 신호가 아니며**, 잠금이 품질 문제를 가리고 있는 것이 아닙니다. 말하지 않는 것: **로컬 통과는 병합 증거가 아닙니다.** GitHub 기록에 check run이 없고 formal approval도 없으며, `merge_approval_block_reason`은 현재-head 독립 승인과 체크 결과를 모두 요구합니다. 또한 재현은 설치 명령과 인터프리터만 같고 러너 이미지는 다릅니다(위 sanitizer 경고가 그 차이의 흔적입니다). Atheris 예산도 PR용 60초이며 야간 300초가 아닙니다. 그리고 이 결과는 head `2bdd3c6` 한 지점에 대한 것이고, 다른 PR의 head에 대해서는 아무 말도 하지 않습니다.
+
 ## 열린 PR을 전수 세어 보니 lock writer는 일곱이 아니라 스물여섯입니다 (repair finding, 2026-10-03 05:53Z)
 
 **먼저 제 방법의 결함을 적습니다.** 이 세션은 `git ls-remote origin 'refs/pull/*/head'` 스냅샷을 매 주기 비교해 **움직인 head만** 추적했습니다. 그 probe는 **한 번도 움직이지 않은 PR을 보지 못합니다.** 아래 26건 중 19건이 세션 내내 head가 고정이었고, 그래서 diff에 한 번도 나타나지 않았습니다. 열린 PR 42건을 전수 측정한 결과 lock writer 수가 제가 적어 온 일곱이 아니라 **스물여섯**이었습니다.
