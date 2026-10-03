@@ -1532,6 +1532,28 @@ main은 runtime 4.14.1 / test 4.14.2입니다. `#57`은 test를 **4.14.1로 내�
 
 **따라서 single writer 후보는 조합 G(`#82`·`#107`·`#110`)입니다.** 세 pin 중 `cryptography`와 `anyio`가 최신이고 `pyjwt`만 한 단계(2.15.0 vs 2.15.1) 뒤입니다. 다만 **50.0.1·50.0.2가 50.0.0 위에 어떤 보안 수정을 더 담는지는 이 측정으로 확인되지 않았습니다.** 확인에 쓸 저장소 Dependabot alert은 `403 Resource not accessible by integration`으로 읽을 수 없었습니다. 즉 "G가 가장 높다"는 것은 버전 순서의 사실이고, "G만이 CVE를 닫는다"는 주장은 하지 않습니다.
 
+### 정정 — 위 "신규 결함" 두 건 중 하나는 결함이 아니고, `#71`에 대한 제 의심은 틀렸습니다 (2026-10-03 09:5xZ)
+
+앞 절을 쓴 뒤 세 PR의 **본문·커밋·전체 diff를 직접 읽었고**, 제 기록 세 곳을 고칩니다. 앞 절은 lock 파일의 pin 값만 보고 쓴 것이었습니다.
+
+**정정 1 — `#106`을 결함으로 적은 것은 부당합니다.** 관측 자체(runtime lock 50.0.1 / test lock 49.0.0)는 맞습니다. 그러나 `#106`은 **스스로 그 한계를 선언하고 있습니다.** 본문에 이렇게 적혀 있습니다 — "lifecycle: Draft / **partial generated-lock candidate / do not merge independently**", 그리고 "canonical repository-wide cryptography owner: `#81`". 즉 부분 수리임을 밝히고 단독 병합을 금지하며 정식 owner까지 지목합니다. 바꾸는 파일도 `requirements.txt` 하나뿐입니다(50+/50−). 커밋은 둘(`8424e57` cryptography, `8bcf9b2` AnyIO)이고 diff는 anyio 4.14.1→4.14.2, cryptography 49.0.0→50.0.1입니다. **"제목이 약속한 수리를 절반만 한다"는 제 표현을 철회합니다** — 제목이 두 번째 커밋(AnyIO)을 반영하지 못해 낡은 것은 사실이지만, 그것은 결함이 아니라 라벨 지연입니다.
+
+**정정 2 — `#109`은 반대로 더 날카롭게 적어야 합니다.** `#109`는 **Draft가 아니고**(병합 가능한 상태로 제시됨) dependabot 본문은 릴리즈 노트 덤프이며 **test lock에 대한 언급이 없습니다.** 바꾸는 파일은 넷 — `pyproject.toml`, `requirements.txt`, `requirements-dev.txt`, 그리고 **`requirements-test.in`**(입력 파일을 `PyJWT[crypto]==2.15.0`으로 올림)입니다. 그런데 **컴파일된 `requirements-test.txt`는 손대지 않아 `pyjwt==2.13.0`에 남아 있습니다.** 즉 이 PR의 test lock은 **자기 자신이 선언한 입력과 모순**합니다 — 누가 `.in`에서 다시 컴파일하면 2.15.0이 나오는데, CI(`tests.yml`)가 설치하는 것은 2.13.0입니다. `#106`과 `#109`를 "같은 결함군"으로 묶은 것은 과했습니다: 모양은 비슷하지만 `#106`은 한계를 문서화하고 단독 병합을 막았고, `#109`는 그러지 않은 채 non-draft입니다.
+
+**정정 3 — `#71`에 대한 제 의심을 철회합니다.** 앞 절에서 "제목은 hypothesis 범프인데 test lock의 pyjwt를 `pyjwt[crypto]`로 바꾸고 658→733행 재컴파일한다 — 제목이 알리지 않는 범위"라고 적었습니다. **확인해 보니 `#71`은 제목 그대로의 일을 합니다.**
+
+| 확인 항목 | 결과 |
+| --- | --- |
+| hypothesis pin | main `6.156.6` → `#71` **`6.165.8`** (제목과 일치) |
+| 바꾸는 파일 | `requirements-test.txt` **한 개** |
+| compile 명령 | main과 **동일**(`uv pip compile --generate-hashes --universal --python-version 3.12 requirements-test.in`) |
+| `cryptography` 존재 | `#71`에도 `49.0.0` **그대로 있음** |
+| 패키지 집합 차이 | `-colorama` `-tzdata` `+exceptiongroup` `+tomli` (마커 차이) |
+
+`pyjwt[crypto]`·`psycopg[binary]` 형태는 **main의 `requirements-test.in`이 이미 그렇게 선언**하고 있고(`PyJWT[crypto]==2.13.0`, `psycopg[binary]==3.3.4`), 같은 명령의 출력이 한쪽은 extra를 인라인으로, 한쪽은 분리해 적은 것입니다 — **uv 버전 차이로 생긴 표기 차이**이며 의존성이 사라지거나 추가된 것이 아닙니다. 행 수 증가도 그 표기와 마커 네 건의 결과입니다.
+
+**교훈을 적어 둡니다.** 앞 절은 lock 파일의 **값**만 읽고 썼습니다. 값은 의도를 말하지 않습니다 — PR 본문의 lifecycle 선언, 커밋 분할, 바꾸는 파일의 범위, 그리고 lock의 **입력 파일**(`.in`)까지 읽어야 "부분 수리"와 "선언된 부분 수리"를 구별할 수 있습니다. 이 문서가 다른 PR에 대해 반복해 적어 온 "head가 움직이면 다시 읽어라"의 자매 규칙입니다: **값이 같아 보이면 의도를 읽어라.**
+
 ## 릴리즈 준비 상태 (2026-09-07): 아직 아닙니다
 
 | 항목 | 상태 |
