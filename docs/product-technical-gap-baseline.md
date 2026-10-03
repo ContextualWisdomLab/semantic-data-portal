@@ -1615,6 +1615,33 @@ main은 runtime 4.14.1 / test 4.14.2입니다. `#57`은 test를 **4.14.1로 내�
 
 부수적으로 중앙 워크플로의 유지보수 항목 하나를 기록해 둡니다(이 저장소 소유가 아님): noema 리뷰 job의 annotation에 `actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020`가 Node.js 20을 타깃하여 Node.js 24로 강제 실행된다는 deprecation 경고가 남아 있습니다.
 
+## `#104` 하나는 이미 전부 녹색입니다 — 막는 것은 승인 한 건뿐입니다 (2026-10-03 11:5xZ)
+
+53일 동안 아무것도 병합되지 않은 이 저장소에서, **열린 PR 42건 중 한 건은 자기 head에서 모든 체크가 끝나 있습니다.**
+
+| `#104` (`docs(readme): keep internal implementation paths out of the package description`) | 값 |
+| --- | --- |
+| head | `2856e91f` (non-draft) |
+| 바꾸는 것 | **`README.md` 한 파일** (docs-only) |
+| main과의 거리 | **ahead 4 / behind 0** — 업데이트 불필요 |
+| check run | **34건: success 25, skipped 9, 실패 0** |
+| `mergeable` / `mergeable_state` | `true` / **`blocked`** |
+| 현재-head 승인 | **없음.** 리뷰 5건은 모두 `COMMENTED`이고 그중 최신도 낡은 커밋 `837b17bd` 기준 |
+
+성공한 25건에는 **리뷰 게이트가 포함됩니다** — `opencode-review` **success**, `noema-review` **success**, 그리고 `CodeQL compatibility analysis (python)`·`(actions)`도 **success**입니다. skip된 9건은 docs-only diff라 changed-scope 게이트가 건너뛴 보안 스캔들입니다(`trivy-fs`, `osv-scan`, `dependency-review`, `scorecard`, `gitleaks`, `strix`, `Dispatch current-head CodeQL scan` 등).
+
+**이것이 두 가지를 증명합니다.** 첫째, 파이프라인은 근본적으로 고장난 것이 아닙니다 — PR은 두 리뷰 에이전트를 포함해 모든 게이트를 통과할 수 있습니다. 둘째, `#107`에서 끝내 오지 않았던 **`CodeQL compatibility analysis`의 닫는 재실행이 여기서는 실제로 왔습니다** — 즉 그 메커니즘은 작동하며 `#107`의 두 실패는 메커니즘 부재가 아니라 그 head에서 재실행이 오지 않은 사건입니다.
+
+### 막는 것은 하나이고, 제가 할 수 없는 일입니다
+
+모든 체크가 녹색인데 `mergeable_state`가 `blocked`이므로 남은 조건은 **현재-head 승인**입니다. 그리고 **이 세션의 GitHub 신원은 `seonghobae`**(`gh api user`로 확인: login `seonghobae`, id 8172694)이고 `#104`의 작성자도 같은 계정입니다. GitHub는 자기 PR에 `event=APPROVE`를 거부하므로(422) **제가 승인할 수 없습니다.** 이는 중앙 `.github`의 CLAUDE.md가 적어 둔 "에이전트 세션이 하나의 신원을 공유하므로 서로의 PR을 승인할 수 없다"는 조건이 이 저장소에서 그대로 확인된 것입니다. 저장소 branch protection 규칙 자체는 읽지 못했습니다 — `branches/main/protection`이 이 integration에 `403 Resource not accessible by integration`입니다. 따라서 "승인 요구"는 규칙을 읽어서가 아니라 **전부 녹색 + `blocked`** 조합에서 좁힌 결론입니다.
+
+### 시급한 경고 — 지금 `#104`의 브랜치를 건드리면 유일한 녹색을 잃습니다
+
+`#104`는 `behind 0`이므로 **업데이트가 필요 없습니다.** 그리고 지금 업데이트해서는 안 됩니다. 새 커밋이나 base 병합으로 head가 움직이면 현재-head 체크가 전부 무효가 되고, 다시 만들어야 하는 체크들(`API integration suite`, `Hypothesis property tests`, `Atheris coverage-guided (bounded)`, CodeQL 계열)은 **`ubuntu-latest`이므로 과금 잠금이 풀리기 전에는 배정 전에 거절됩니다.** 즉 **head를 건드리는 순간 `#104`는 "전부 녹색"에서 "복구 불가하게 막힌" 상태로 바뀝니다.** 머지 스케줄러의 자동 branch update 대상이 되지 않도록 주의가 필요합니다(이 문서가 기록해 온 스케줄러는 승인 이후와 dispatch 이전 두 경우에 branch를 업데이트합니다).
+
+**권고: 잠금 해제를 기다리지 말고, 다른 신원의 승인 한 건으로 `#104`를 지금 병합하십시오.** 1파일 README 변경이라 위험이 가장 낮고, 53일 만의 첫 병합으로 파이프라인 전 구간을 실증하게 됩니다. 제가 직접 병합하지 않은 이유는 두 가지입니다 — `blocked` 상태에서 GitHub가 거부하며, 우회 병합은 branch protection 우회이므로 하지 않습니다.
+
 ## 릴리즈 준비 상태 (2026-09-07): 아직 아닙니다
 
 | 항목 | 상태 |
