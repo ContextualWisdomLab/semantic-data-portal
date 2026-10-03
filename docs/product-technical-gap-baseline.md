@@ -1384,6 +1384,54 @@ head 세 개가 동시에 움직였고, 확인해 보니 owner의 계획된 스�
 
 `#110`도 네 lock을 모두 건드리지만 pin은 `#107`과 동일하고(cryptography 50.0.2, pyjwt 2.15.0, anyio 4.15.1 / test 4.14.2) 그 조상입니다. 따라서 **독립 writer가 늘어난 것이 아닙니다.** 앞 절의 일곱(`#79`·`#81`·`#37`·`#28`·`#82`·`#107`·`#109`)에 `#110`을 더해 여덟이라고 세지 마십시오 — `#110`은 `#107` 계보 안입니다.
 
+## 큐 대기의 끝은 러너 부족이 아니라 계정 과금 잠금이었습니다 (2026-10-03 03:54Z)
+
+이 문서가 3주간 21회 측정한 큐 대기에 종착지가 생겼습니다. **GitHub-hosted job은 더 이상 대기하지 않고 즉시 거절됩니다.** 2026-10-03 03:54:33Z에 이 PR의 head `fa957b4`로 생성된 `fuzz` run `37094749626`의 두 job이 GitHub 자신의 annotation으로 이유를 적었습니다.
+
+```
+The job was not started because your account is locked due to a billing issue.
+```
+
+| 측정 | 값 |
+| --- | --- |
+| job `111122277682` / `111122277879` | `created_at` = `started_at` = 03:54:34Z, `completed_at` = 03:54:37Z |
+| 실행된 step | **0개** (`steps: []`) |
+| 배정된 러너 | 없음 (`runner_name` 빈 문자열) |
+| 라벨 | `ubuntu-latest` |
+| annotation level | `failure`, 위 문장 그대로 |
+
+**한 번 재실행했고 동일하게 재현되었습니다.** `rerun-failed-jobs`로 attempt 2를 띄웠더니 job `111123086499`/`111123086695`가 03:59:29Z에 생성·시작되어 03:59:33Z에 같은 annotation으로 끝났습니다 — step 0, 러너 없음. 일시적 장애가 아니라 03:59:33Z 시점에 활성인 상태입니다.
+
+### 이것은 이 PR의 결함도, 이 저장소의 결함도 아닙니다
+
+같은 문장이 다른 저장소에서도 나옵니다. `noema`의 job `111063753435`(2026-10-02T22:58:50Z)과 중앙 `.github`의 job `111123489781`(2026-10-03T04:01:47Z)이 글자 그대로 같은 annotation을 들고 있습니다. 계정 단위이므로 어떤 PR의 diff로도 고칠 수 없습니다.
+
+시작 시점은 두 관측 사이로 좁혀집니다. 마지막으로 **실제 배정된** hosted job은 `contextual-orchestrator` `110974297309`입니다 — 러너 `GitHub Actions 1002242315`를 받아 18:31:59Z에 시작해 step 16개를 수행하고 18:44:07Z에 끝났습니다. 처음 **즉시 거절된** job은 같은 저장소 `111056099003`으로, 22:30:34Z에 생성·시작되어 step 0·러너 없음으로 22:30:38Z에 끝났습니다. 즉 잠금은 **2026-10-02 18:44Z ~ 22:30Z**(KST 10-03 03:44~07:30) 사이에 걸렸습니다. 그 사이에 생성된 run이 없어 더 좁힐 수는 없습니다.
+
+### 레인이 셋이고, 셋의 운명이 다릅니다
+
+15분 안에 같은 조직에서 측정한 세 가지입니다. **이 구분이 조치를 정합니다.**
+
+| 레인 (labels) | 배정 | 결과 | 증거 |
+| --- | --- | --- | --- |
+| `ubuntu-latest` / `ubuntu-24.04` (GitHub-hosted) | 배정 전 거절, 러너 없음, step 0 | 3~5초 `failure` + 과금 annotation | sdp `111122277682`, `.github` `111123489781` |
+| `[self-hosted, linux, x64]`, `+cwlab-control` | **약 3초에 배정** | 정상 실행 (step 9·6·26개 수행) | `.github` `111121081820`(`cwlab-s1-05`), `111121081851`(`cwlab-s1-07`), `111121123986`(`cwlab-s1-02`) |
+| `[self-hosted, linux, x64, cwlab-ci-isolated]` | 거절되지 않음, 러너 없음 | **무한 큐** | `.github` `111121080117`(03:46:56Z 큐), sdp `#110` `111121092591`(03:47:01Z 큐) |
+
+두 가지를 분명히 해야 합니다. **첫째, 중앙 리뷰 레인은 살아 있습니다.** `cwlab-s1-01/02/05/07`이 `[self-hosted, linux, x64]`를 받아 지금도 OpenCode·Noema 판정을 수행합니다. 막힌 것은 리뷰가 아니라 product CI입니다. **둘째, `semantic-data-portal`의 product CI job 네 개는 전부 `ubuntu-latest`입니다**(`fuzz.yml` 2개, `tests.yml`, `scorecard-analysis.yml`). 따라서 **이 저장소의 어떤 head도 지금은 product check를 green으로 만들 수 없습니다.** 이 문서가 PR별 조치에 적어 온 "체크 재검증"은 전부 현재 실행 불가이며, 그것은 해당 PR의 결함이 아닙니다.
+
+### `#110`의 평가를 고칩니다 — staged가 아니라 복구 경로이고, 러너 라벨 하나가 비어 있습니다
+
+앞 절에서 `#110`을 "지금 대기를 줄인다고 읽으면 안 되는 staged 변경"으로 적었습니다. 그 경고는 유효하지만 **이유가 바뀌었습니다.** hosted 레인이 닫힌 지금 `#110`의 방향(self-hosted로 옮기기)은 이 저장소 CI를 되살릴 수 있는 경로이고, 막는 것은 단 하나 — `cwlab-ci-isolated`를 가진 러너가 없다는 사실입니다. 그리고 이 공백은 이 저장소만의 것이 아닙니다: **중앙 `.github` 자신이 PR 2565에서 같은 함정에 빠져 있습니다**(Security Scan run `37094344655`, 03:46:56Z 이후 큐 유지).
+
+살아 있는 `[self-hosted, linux, x64]` 풀이 바로 옆에 있으므로 **가장 유혹적인 우회가 지금 가장 위험합니다.** `docs/self-hosted-ci-migration.md`가 그것을 정확히 금지합니다 — "do not add this label to an existing privileged host solely to release the queue." 큐를 풀기 위해 `cwlab-s1-0x`에 `cwlab-ci-isolated`를 붙이면 격리 전제가 사라집니다. 올바른 조치는 **격리된 capacity를 새로 등록해 그 라벨을 주는 것**이거나 **과금 잠금을 해제해 hosted 레인을 되살리는 것**이며, 둘 중 하나 없이는 어떤 PR도 병합 증거를 만들 수 없습니다.
+
+### 21행 dwell 표를 다시 읽는 방법 (가설로 표시합니다)
+
+hosted job이 수 시간 큐에 머무르다 결국 하드 거절로 끝났고, 같은 시각 self-hosted job은 3초에 배정됩니다. 이 대비는 **"대기의 원인이 조직의 러너 용량이 아니라 hosted 자격의 저하였다"**는 읽기를 강하게 지지합니다. 다만 **확인된 관측이 아니라 가설로 표시합니다.** 잠금은 마지막 dwell 측정 이후에 걸렸고, 그 이전 대기가 같은 과금 조건의 전단계였는지는 증명되지 않았습니다. 확인에 필요한 것은 계정의 billing 상태이며 이 세션에서는 읽을 수 없습니다 — `orgs/ContextualWisdomLab/settings/billing/actions`와 사용자 billing endpoint 모두 proxy가 403으로 막고(저장소 범위 바인딩), `repos/.../actions/runners`도 403입니다. 따라서 러너 인벤토리는 job 레코드에 남은 이름·라벨로만 관측했습니다.
+
+**조치는 owner만 할 수 있습니다.** (1) Actions를 소유한 계정의 과금 잠금 해제, 또는 (2) `cwlab-ci-isolated` 격리 러너 등록 후 `#110` 계열 병합. 그 전까지 이 문서의 모든 "check 재검증" 행은 보류이고, 거절된 check를 PR의 품질 신호로 읽어서는 안 됩니다.
+
 ## 릴리즈 준비 상태 (2026-09-07): 아직 아닙니다
 
 | 항목 | 상태 |
