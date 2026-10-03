@@ -1554,6 +1554,50 @@ main은 runtime 4.14.1 / test 4.14.2입니다. `#57`은 test를 **4.14.1로 내�
 
 **교훈을 적어 둡니다.** 앞 절은 lock 파일의 **값**만 읽고 썼습니다. 값은 의도를 말하지 않습니다 — PR 본문의 lifecycle 선언, 커밋 분할, 바꾸는 파일의 범위, 그리고 lock의 **입력 파일**(`.in`)까지 읽어야 "부분 수리"와 "선언된 부분 수리"를 구별할 수 있습니다. 이 문서가 다른 PR에 대해 반복해 적어 온 "head가 움직이면 다시 읽어라"의 자매 규칙입니다: **값이 같아 보이면 의도를 읽어라.**
 
+## 단일 writer 후보 `#107`을 끝까지 검증했습니다 — 막는 것은 product CI가 아니라 리뷰 레인입니다 (2026-10-03 09:5xZ)
+
+앞 절은 "조합 G(`#82`·`#107`·`#110`)가 single writer 후보"라고 버전 순서만 근거로 적었습니다. 이번에는 **`#107` head `742e7a7e`를 실행해서** 확인했습니다 — 로컬 CI 동등 재현과 GitHub가 그 head에 남긴 40건의 check run 양쪽입니다.
+
+### 로컬 CI 동등 재현 (`#107` 자신의 test lock으로 설치)
+
+설치된 pin은 cryptography **50.0.2**, pyjwt **2.15.0**, anyio 4.14.2, hypothesis 6.156.6입니다.
+
+| 체크 | 로컬 결과 |
+| --- | --- |
+| `Tests` (API integration suite) | **819 passed, 8 skipped** / exit 0 |
+| `Hypothesis property tests` | **10 passed** / exit 0 |
+| `Atheris coverage-guided (bounded)` | **4 harness 전부 61초 완주, exit 0, reproducer 0건** (draft_sql 2,308,139 / execute_query 767,719 / resolve_terms 276,368 / search_catalog 138,117 runs) |
+
+**819라는 수를 분해해 둡니다** — `#102` 쪽 258건에서 늘어난 561건은 `#107`이 추가한 두 파일의 파라미터화입니다: `tests/fuzz/test_execute_query_oracle.py` **528건**, `tests/test_dependency_advisories.py` **31건**(lock 4종 × 패키지 × python 3.10/3.12). 258 + 528 + 31 = 817, 기존 파일에 추가된 2건을 더해 819로 맞습니다. 274행 추가가 561 테스트가 된 이유를 세어 확인한 것입니다.
+
+**이 로컬 결과는 GitHub 자신의 기록과 일치합니다.** 같은 head `742e7a7e`에서 `API integration suite`·`Hypothesis property tests`·`Atheris coverage-guided (bounded)` 셋 모두 CI가 `success`로 기록해 두었습니다(잠금 이전 2026-10-02 05:48 실행). 서로 독립적인 두 경로가 같은 답을 냈습니다.
+
+### 그 head의 40개 check run을 읽으면 막는 것이 분명합니다
+
+| 구분 | check |
+| --- | --- |
+| **녹색 (product CI)** | `API integration suite`, `Hypothesis property tests`, `Atheris coverage-guided (bounded)` |
+| **녹색 (보안·증거)** | `trivy-fs`, `osv-scan`, `osv-scanner`, `dependency-review`, `Trivy`, `Semgrep (multi-language SAST)`, `Semgrep OSS`, `CodeQL`, `Analyze (python)`, `Analyze (actions)`, `scorecard`, `coverage-evidence`, `coverage-source-tree` |
+| **실패** | `opencode-review`, `noema-review`, `continue-noema-transport`, `CodeQL compatibility analysis (python)`, `CodeQL compatibility analysis (actions)` |
+| **취소/중립** | `strix`(cancelled), `Scorecard`(neutral) |
+
+`mergeable_state`는 `blocked`이고 non-draft입니다. **즉 `#107`을 막는 것은 테스트도 보안 스캔도 아니라 리뷰 레인입니다.**
+
+`opencode-review`의 실패 지점은 단계 이름이 그대로 말해 줍니다. job `110723606649`(러너 `cwlab-s1-05`)의 4단계 중 2단계 `Request current-head OpenCode review execution`은 **success**이고, 3단계 **`Fail closed without a current-head OpenCode verdict`**가 failure입니다(15초). 즉 dispatch는 나갔고 **현재-head 판정이 끝내 생기지 않아** 설계대로 fail closed한 것입니다 — 코드 결함이 아닙니다. 중앙 `.github`의 `opencode-review.yml` 511행에서 그 단계 정의를 확인했습니다.
+
+### 새 구조적 사실 — 리뷰 레인이 러너 종류로 갈립니다
+
+| 리뷰 워크플로 | 러너 | 잠금 중 운명 |
+| --- | --- | --- |
+| `opencode-review` | **self-hosted** (`cwlab-s1-01`/`-05`/`-07`, `[self-hosted, linux, x64]`) | **실행됨.** 단 현재-head 판정이 없어 fail closed |
+| `noema-review`, `continue-noema-transport` | **GitHub-hosted** (`ubuntu-24.04`, `GitHub Actions 10022405xx`) | **시작 자체가 불가.** 과금 거절 대상 |
+
+`noema-review`의 본 job은 잠금 이전에 57분 46초(28단계) 돌고 실패했습니다. 지금은 그 재시도조차 배정 전에 거절됩니다. 따라서 **`noema-review`를 필수로 요구하는 PR은 과금 잠금이 풀리기 전까지 구조적으로 녹색이 될 수 없습니다** — 리뷰 레인이 전부 살아 있다고 읽으면 틀립니다. 앞 절에서 "중앙 리뷰 레인은 살아 있습니다"라고 쓴 것은 `.github`에서 관측한 self-hosted job들에 근거한 것이었고, 이 저장소의 `noema-review`는 hosted이므로 **그 문장은 워크플로별로 제한해 읽어야 합니다.**
+
+### 한계
+
+로컬 통과는 병합 증거가 아닙니다 — GitHub 기록상 판정도 승인도 생기지 않습니다. 재현은 설치 명령과 인터프리터만 CI와 같고 러너 이미지는 다르며, Atheris 예산은 PR용 60초입니다. 그리고 이 절은 **`CodeQL compatibility analysis` 두 건과 `strix` 취소의 원인을 규명하지 않았습니다** — 로컬에서 재현할 수 없는 게이트이고, job 로그는 이 세션에서 받을 수 없습니다(`gh`가 blob 호스트 리다이렉트를 거부하고, 해당 호스트는 egress 차단입니다). 즉 "`#107`은 product CI가 깨끗하다"까지가 증명된 범위이고, "병합 가능하다"는 주장은 하지 않습니다.
+
 ## 릴리즈 준비 상태 (2026-09-07): 아직 아닙니다
 
 | 항목 | 상태 |
