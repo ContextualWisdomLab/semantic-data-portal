@@ -1659,6 +1659,47 @@ main은 runtime 4.14.1 / test 4.14.2입니다. `#57`은 test를 **4.14.1로 내�
 
 **따라서 순서 규칙은 하나입니다 — `#104`를 main에 들어가는 첫 번째로 병합하십시오.** `#104`보다 먼저 다른 것을 병합하면, 이 저장소에서 유일하게 완성된 현재-head 증거를 잠금이 풀릴 때까지 복구할 수 없습니다. 반대로 `#104`가 먼저 들어가면 그 뒤에 무엇이 병합되어도 잃을 것이 없습니다.
 
+## `#82`는 실패 하나뿐이고, 그 하나는 `#107`과 **다른** 원인입니다 (2026-10-03 13:5xZ)
+
+`#82`(non-draft, head `93321a98`, 17파일)의 현재-head check run 39건을 읽었습니다.
+
+| 구분 | 수 | 비고 |
+| --- | --- | --- |
+| success | 23 | product CI·보안 스캔 포함 |
+| skipped | 14 | `opencode-review`, `strix`, `gitleaks (secret scan)`, `Dispatch current-head CodeQL scan`, `continue-noema-transport`, `CodeQL compatibility analysis (${{ matrix.language }})` 등 |
+| neutral | 1 | `Scorecard` |
+| **failure** | **1** | **`noema-review`** |
+
+**그 하나의 원인은 `#107`의 것과 다릅니다.** annotation 원문입니다.
+
+| PR | noema 실패 원문 | 분류 |
+| --- | --- | --- |
+| `#107` | `HTTPError: HTTP Error 429: Too Many Requests; duration=2615.5s, served_model=google/gemma-4-31b-it:free, outcome=provider_capacity_unavailable` | 용량 소진 |
+| `#82` | `HTTPError: HTTP Error 400: Bad Request; duration=362.7s, served_model=meta/llama-3.2-90b-vision-instruct` | **요청 거부** |
+
+즉 "noema가 불안정하다"로 뭉개면 안 됩니다. 한쪽은 무료 풀의 용량이 없어서 실패하고, 다른 한쪽은 **vision-instruct 모델이 선택되어 요청이 400으로 거부**되었습니다. 코드 리뷰 요청에 `llama-3.2-90b-vision-instruct`가 배정된 것 자체가 게이트웨이의 모델 선택 문제를 가리킵니다. 두 사례는 각각 다른 수리를 요구합니다.
+
+**다만 `#82`를 "체크 하나만 남았다"로 읽으면 안 됩니다.** `opencode-review`가 **success가 아니라 skipped**이고, 현재-head 승인도 없습니다. 머지 게이트는 체크 결론과 별개로 `reviewDecision == APPROVED`와 현재-head 독립 승인을 요구합니다. 또한 skip된 14건 중 `CodeQL compatibility analysis (${{ matrix.language }})`는 **matrix 표현식이 전개되지 않은 이름 그대로** 기록되어 있습니다 — 이름만으로는 어떤 언어의 자리였는지 알 수 없습니다.
+
+## 제품 자체의 ready gate는 통과합니다 — 다만 스스로 두 가지 갭을 보고합니다 (2026-10-03 13:5xZ)
+
+CI가 증거를 만들지 못하는 동안, 저장소가 정의한 **구매자 데모 readiness gate**를 로컬에서 직접 돌렸습니다. `PYTHONPATH=src python -m sdp.demo_smoke`, head `52bc571`, **exit 0 · `"ready": true`** 입니다. 이 head는 main과 `src/`가 동일합니다(차이는 문서 1건·lock 3건·`tests/test_dependency_locks.py`뿐이므로 제품 코드 결과는 main에 그대로 적용됩니다).
+
+| gate 출력 | 값 |
+| --- | --- |
+| `ready` | **true** |
+| `metadata_validation_pass_rate` / `shacl_validation_pass_rate` | 1.0 / 1.0 |
+| `ontology_mapping_coverage` | 0.917 |
+| `steward_review_queue_count` / `steward_buyer_handoff_ready` | 0 / true |
+| `production_current_stage` | `pilot_candidate` |
+| `production_demo_release_ready` / `production_paid_pilot_ready` / blockers | true / true / 0 |
+| **`enterprise_controls` / `implemented_enterprise_controls`** | **7 / 5** |
+| **`rest_connector_probe_status`** | **`contract_only`** (sql·rdf·file_lake는 `ready_for_demo`) |
+
+**gate는 통과하지만 두 숫자가 구매자 체감 갭을 그대로 가리킵니다** — enterprise control 7개 중 **2개 미구현**, 그리고 네 커넥터 중 REST만 **계약만 있고 데모 준비는 아님**(어댑터는 `implemented`). 이 둘은 제 판단이 아니라 제품이 자기 gate에서 스스로 보고하는 값입니다. 과금 잠금이 풀린 뒤 다음 개발 대상을 고를 때 이 두 항목이 가장 먼저 봐야 할 자리입니다.
+
+**한계:** 로컬 gate 통과는 배포 증거가 아니고, 이 측정에는 DB가 없으므로 `tests/test_integration_age.py`가 요구하는 `SDP_DATABASE_DSN` 경로(AGE 그래프 통합)는 포함되지 않습니다.
+
 ## 릴리즈 준비 상태 (2026-09-07): 아직 아닙니다
 
 | 항목 | 상태 |
