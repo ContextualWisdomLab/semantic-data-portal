@@ -1700,6 +1700,39 @@ CI가 증거를 만들지 못하는 동안, 저장소가 정의한 **구매자 �
 
 **한계:** 로컬 gate 통과는 배포 증거가 아니고, 이 측정에는 DB가 없으므로 `tests/test_integration_age.py`가 요구하는 `SDP_DATABASE_DSN` 경로(AGE 그래프 통합)는 포함되지 않습니다.
 
+### 정정 — 방금 적은 "구매자 갭 둘"은 둘 다 성격을 잘못 적었습니다 (2026-10-03 14:5xZ)
+
+직전 절에서 ready gate 출력만 보고 "enterprise control 7개 중 2개 미구현"과 "REST 커넥터는 계약만 있다"로 적었습니다. **레지스트리와 probe를 직접 읽으니 둘 다 틀렸습니다.**
+
+**정정 1 — 미구현은 2개가 아니라 1개입니다.** `sdp_core.enterprise.enterprise_controls_manifest()`는 7개를 `implemented 5 / planned 1 / external 1`로 분류합니다.
+
+| 상태 | control id | label |
+| --- | --- | --- |
+| implemented | `tenant_authorization` | Tenant authorization boundary |
+| implemented | `local_evidence_retention` | Local evidence retention |
+| implemented | `rbac_matrix` | RBAC matrix |
+| implemented | `deployment_template` | Deployment template |
+| implemented | `operational_observability` | Operational observability |
+| **planned** | **`sso_oidc_adapter`** | **SSO/OIDC adapter** |
+| **external** | `central_workflow_due_diligence` | Central workflow due diligence |
+
+**실제 제품 갭은 `sso_oidc_adapter` 하나입니다.** 그 release criteria가 무엇을 요구하는지도 레지스트리에 적혀 있습니다 — ① OIDC issuer·audience·JWKS를 환경에서 구성, ② **group-to-role 매핑이 tenant scoped이고 감사 가능**, ③ preview가 누락·만료 claim을 거부하고 직접적인 role escalation claim을 무시. 즉 `POST /enterprise/auth/oidc-preview`까지는 있고 매핑이 1급 control로 승격되지 않은 상태입니다.
+
+나머지 하나는 **미구현이 아니라 의도적으로 외부 소유**입니다(`external`). 그리고 그 control의 release criteria가 공교롭습니다 — "Required checks pass on current head"와 "Open PR queue has no source-code blocker". **지금 과금 잠금이 막고 있는 바로 그 두 조건입니다.** 제품의 enterprise-control 매니페스트가 자기 항목 하나를 통해 이 사태를 가리키고 있습니다.
+
+**정정 2 — REST 커넥터는 코드 갭이 아니라 설정 갭입니다.** `connector_probe("rest_connector", "marketing-campaign")`를 직접 돌려 미충족 control을 특정했습니다.
+
+```
+UNSATISFIED: control=credential_vault status=implemented secret_present=False
+             ref=SDP_CONNECTOR_SECRET_REST_CONNECTOR_MARKETING_CAMPAIGN_TOKEN
+```
+
+`connectors.py` 312행의 판정은 `adapter_status == "implemented" and satisfied_controls == len(required_controls)`이고, REST는 adapter가 **implemented**이며 3개 control 중 `credential_vault`만 미충족입니다. 그 control은 **코드가 구현되어 있고**(`status=implemented`) 다만 이 측정 환경에 secret 참조가 없어 `secret_present=False`가 된 것입니다. 다른 세 커넥터(`sql`·`rdf`·`file_lake`)는 미충족 control이 없어 `ready_for_demo`입니다.
+
+**따라서 "REST는 데모 준비가 안 됐다"가 아니라 "그 환경에 `SDP_CONNECTOR_SECRET_REST_CONNECTOR_MARKETING_CAMPAIGN_TOKEN`이 없으면 `contract_only`로 보고된다"가 맞습니다.** owner의 실제 데모 환경이 그 참조를 설정하는지는 여기서 관측할 수 없습니다 — 제 컨테이너에 없다는 것만 확인했습니다.
+
+**교훈을 하나 더 적습니다.** 앞 절은 gate의 **집계 숫자**만 읽고 갭의 성격을 추정했습니다. `7 / 5`는 "2개 미구현"이 아니었고, `contract_only`는 "미구현"이 아니었습니다. 이 문서가 이미 두 번 적은 규칙 — 값이 같아 보이면 의도를 읽어라 — 의 세 번째 사례입니다: **집계를 읽었으면 항목을 펼쳐 보라.**
+
 ## 릴리즈 준비 상태 (2026-09-07): 아직 아닙니다
 
 | 항목 | 상태 |
