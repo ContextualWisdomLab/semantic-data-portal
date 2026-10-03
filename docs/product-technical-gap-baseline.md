@@ -1598,6 +1598,23 @@ main은 runtime 4.14.1 / test 4.14.2입니다. `#57`은 test를 **4.14.1로 내�
 
 로컬 통과는 병합 증거가 아닙니다 — GitHub 기록상 판정도 승인도 생기지 않습니다. 재현은 설치 명령과 인터프리터만 CI와 같고 러너 이미지는 다르며, Atheris 예산은 PR용 60초입니다. 그리고 이 절은 **`CodeQL compatibility analysis` 두 건과 `strix` 취소의 원인을 규명하지 않았습니다** — 로컬에서 재현할 수 없는 게이트이고, job 로그는 이 세션에서 받을 수 없습니다(`gh`가 blob 호스트 리다이렉트를 거부하고, 해당 호스트는 egress 차단입니다). 즉 "`#107`은 product CI가 깨끗하다"까지가 증명된 범위이고, "병합 가능하다"는 주장은 하지 않습니다.
 
+### `#107`을 막는 네 가지를 전부 규명했습니다 — 코드 결함은 하나도 없습니다 (2026-10-03 10:5xZ)
+
+앞 절은 `CodeQL compatibility analysis` 두 건과 `strix` 취소의 원인을 "규명하지 못했다"고 적어 두었습니다. **check run의 annotation으로 넷 모두 밝혀졌습니다.** job 로그는 여전히 받을 수 없지만(blob 호스트 리다이렉트 거부 + egress 차단) annotation은 API로 읽힙니다.
+
+| 막는 것 | 원인 (annotation 원문 근거) | 러너 |
+| --- | --- | --- |
+| `opencode-review` | 2단계 dispatch는 success, 3단계 **`Fail closed without a current-head OpenCode verdict`**가 failure — 판정이 생기지 않아 설계대로 닫힘 | **self-hosted** |
+| `noema-review` · `continue-noema-transport` | **"Noema gateway transport failed: HTTPError: HTTP Error 429: Too Many Requests; caller attempts=1, duration=2615.5s, phase=response_error, served_model=`google/gemma-4-31b-it:free`, outcome=provider_capacity_unavailable"** | GitHub-hosted |
+| `CodeQL compatibility analysis (python)` · `(actions)` | **"CodeQL scan dispatched. The dispatch workflow will rerun this exact failed CodeQL job after publishing its terminal verdict."** — 실패가 설계이고 재실행이 와야 닫히는데 그 재실행이 오지 않았습니다 | GitHub-hosted |
+| `strix` | job `110723570305`이 05:48:38Z→11:48:55Z, **21,617초(6시간 17초)** 뒤 cancelled. GitHub의 job 최대 실행시간 21,600초(360분)를 17초 넘긴 값입니다 | GitHub-hosted |
+
+네 가지 모두 **인프라·오케스트레이션 사정이고 코드 결함이 아닙니다.** 특히 둘은 이 저장소가 소유하지 않은 원인입니다 — noema의 429는 무료 모델 풀(`orchestrator/free`) 용량 소진이고, 이는 "capability가 없으면 유료 우회 없이 fail closed"라는 정책이 그대로 작동한 결과입니다. CodeQL 호환 분석은 **일부러 실패하도록 설계된 자리표시자**이며 dispatch가 terminal 판정을 발행한 뒤 같은 job을 재실행해 닫아야 합니다. 같은 head에서 `Dispatch current-head CodeQL scan`과 `CodeQL`·`Analyze (python)`·`Analyze (actions)`는 모두 `success`이므로 **스캔은 돌았고 닫는 재실행만 오지 않았습니다.**
+
+**그리고 과금 잠금이 이 셋을 얼어붙게 합니다.** 넷 중 **셋이 GitHub-hosted**이므로 지금은 재시도 자체가 배정 전에 거절됩니다. 즉 `#107`의 남은 블로커는 "원인을 알지만 잠금이 풀리기 전에는 손댈 수 없는" 상태입니다. self-hosted인 `opencode-review`만 지금도 실행되지만, 현재-head 판정을 발행하는 경로가 복구되지 않는 한 같은 자리에서 다시 fail closed합니다.
+
+부수적으로 중앙 워크플로의 유지보수 항목 하나를 기록해 둡니다(이 저장소 소유가 아님): noema 리뷰 job의 annotation에 `actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020`가 Node.js 20을 타깃하여 Node.js 24로 강제 실행된다는 deprecation 경고가 남아 있습니다.
+
 ## 릴리즈 준비 상태 (2026-09-07): 아직 아닙니다
 
 | 항목 | 상태 |
