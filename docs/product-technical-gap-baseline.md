@@ -1448,6 +1448,18 @@ hosted job이 수 시간 큐에 머무르다 결국 하드 거절로 끝났고, 
 
 즉 이 저장소는 지금 **PR 게이트도, main의 예정된 스캔도** 돌지 않습니다. `fuzz.yml`은 `0 3 * * *`(야간), `scorecard-analysis.yml`은 `30 1 * * 6`(주간) cron을 갖고 있고 둘 다 `ubuntu-latest`입니다. OpenSSF Scorecard 점수는 이번 주부터 갱신이 멈춥니다 — 구매자가 보는 외부 신호입니다.
 
+**그리고 이 사태를 알려 줄 감시 장치 자체가 같은 잠금에 걸려 있습니다 (2026-10-05 06:51Z).** `ContextualWisdomLab/.github`의
+`.github/workflows/actions-queue-health.yml`은 `event: schedule`로 돌는 큐 건강 감시 워크플로이고, 그 job 이름은 문자 그대로
+`Collect exact-head queue evidence`입니다. run `37274546730`의 job `111648593914`이 06:51:25Z에 시작해 4초에 끝났습니다 — step 0,
+러너 없음, annotation은 같은 `The job was not started because your account is locked due to a billing issue.`입니다. 같은 분
+`Organization Commercial Readiness`의 `coordinate` job(`111648346386`)도 같은 이유로 거절됐습니다.
+
+**이것이 이 사태의 가장 불편한 성질입니다.** 과금 잠금을 자동으로 알려 줄 장치는 hosted 러너에서 도는 감시 워크플로인데, 과금 잠금이
+hosted 러너를 거절하므로 **감시가 먼저 죽습니다.** 즉 owner는 자기 모니터링으로부터 이 조건에 대한 신호를 받지 못합니다 —
+조직의 commercial-readiness 리포팅도 같이 멈춰 있습니다. 이 저장소의 체크 실패만 보고 "PR 쪽 문제"로 좁혀 읽으면 안 되는 이유이고,
+해제 뒤에는 감시 워크플로를 self-hosted 레인으로 옮기는 것(또는 잠금에도 살아남는 외부 알림 경로를 두는 것)을 별도로 검토해야 하는
+이유입니다. 그 설계 판단은 `.github`의 소유이며 이 저장소에서 바꿀 것이 아닙니다.
+
 ### 예정 실행은 잠금 이전에도 몇 시간씩 늦게 생성되고 있었습니다 (가설의 두 번째 신호)
 
 cron 시각과 실제 run 생성 시각을 대조했습니다. **수 주에 걸쳐 일관되게 늦습니다.**
