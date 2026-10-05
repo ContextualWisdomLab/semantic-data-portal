@@ -1504,6 +1504,29 @@ Usage is recalculated every 6-12 hours.
 확보**(오래된 artifact 삭제 또는 한도 상향). (3)은 즉시 반영되지 않습니다 — annotation 자체가 `Usage is recalculated every 6-12 hours`라고
 적고 있으므로, 삭제 후에도 수 시간 뒤에야 업로드가 복구됩니다. 해제 작업을 계획할 때 이 지연을 앞에 두십시오.
 
+**그리고 self-hosted 레인에는 artifact 말고도 세 번째 실패 유형이 있습니다 — target별 dispatch 권한 (2026-10-05 11:25Z).**
+`ContextualWisdomLab/.github`의 `hourly-review-repair.yml` 실행 `37302726382`에서 `dispatch-review-repair (quarantine)` job
+(`111739122778`, `cwlab-s1-05`, 10 step)이 8번째 step `Dispatch review-feedback autofix`에서 실패했고 annotation은 이것입니다.
+
+```
+PR_REVIEW_MERGE_TOKEN, OPENCODE_APPROVE_TOKEN, or the exchanged OpenCode app token is required;
+github.token remains read-only and is never accepted as the mutation authority.
+```
+
+**그러나 같은 run의 3번째 step `Exchange OpenCode app token for scheduler mutations`는 성공했습니다.** 교환이 성공했는데 dispatch가
+권한 부재를 보고하므로 둘 중 하나는 실제 권한 상태를 반영하지 않습니다 — 어느 쪽인지는 확인하지 않았습니다.
+
+**세운 가설 하나는 증거로 기각했습니다.** 처음에는 "앞선 성공들이 할 일이 없어서 성공한 공허한 성공"이라고 의심했습니다. 틀렸습니다 —
+`37295716153`(10:18Z, target `originweave`)과 `37286291164`(08:51Z, target `psychometrics-commons`)는 둘 다 같은
+`dispatch-review-repair` job을 10 step 수행하고 **성공**했습니다. 즉 이 실패는 레인 전체의 성질이 아니라 **target별**입니다. 같은
+self-hosted 풀, 같은 워크플로, 같은 step 수인데 target이 `quarantine`일 때만 권한이 없습니다.
+
+**범위를 좁혀 적습니다.** 이것은 `ContextualWisdomLab/.github`가 소유한 제어면 결함이고 **대상 target은 semantic-data-portal이 아닙니다.**
+이 저장소의 병합 블로커 목록에 추가되지 않습니다. 이 문서에 남기는 이유는 단 하나 — 위에서 고친 레인 모델("self-hosted는 실행은 되지만
+artifact 업로드에서 실패")이 여전히 부족하다는 것입니다. **artifact를 올리지 않는 self-hosted job도 target별 권한 때문에 실패할 수
+있습니다.** 그러므로 self-hosted 성공 하나를 "레인이 건강하다"의 근거로 쓰지 마십시오 — 그 성공은 자기 target에 대해서만 말합니다.
+이 결함을 고치는 것은 `.github`의 일이며 이 세션은 손대지 않았습니다.
+
 ### 잠금은 PR 게이트만이 아니라 main의 예정된 보안 증거 생산도 멈춥니다 (2026-10-03 06:44Z)
 
 `scorecard-analysis.yml`의 주간 예정 실행이 처음으로 거절되었습니다. run `37104019217`은 `event: schedule`, 브랜치 `main`(`e48aa13c`)이고 job `111148946931`이 06:44:15Z에 생성·시작되어 06:44:18Z에 끝났습니다 — step 0, 러너 없음, **같은 과금 annotation**. 이 워크플로의 예정 실행 14건 중 앞선 13건은 전부 `success`였습니다.
