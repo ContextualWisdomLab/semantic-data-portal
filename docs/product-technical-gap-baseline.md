@@ -1524,6 +1524,28 @@ Usage is recalculated every 6-12 hours.
 확보**(오래된 artifact 삭제 또는 한도 상향). (3)은 즉시 반영되지 않습니다 — annotation 자체가 `Usage is recalculated every 6-12 hours`라고
 적고 있으므로, 삭제 후에도 수 시간 뒤에야 업로드가 복구됩니다. 해제 작업을 계획할 때 이 지연을 앞에 두십시오.
 
+**artifact 벽은 noema 하나가 아니라 OpenCode 리뷰 레인도 막고 있습니다 — 인과 사슬을 확인했습니다 (2026-10-05 23:08Z).**
+`.github`의 `opencode-review-dispatch.yml` 실행 `37386742068`(`event: repository_dispatch`, branch `main`)에서 job
+`validate-pr-metadata`(`112021736216`)가 self-hosted 러너 **`cwlab-s1-04`**(지금까지 보지 못한 호스트)에서 **7개 step을 수행한 뒤**
+같은 annotation으로 실패했습니다 — `Failed to CreateArtifact: Artifact storage quota has been hit.` 그 결과 같은 run의
+`coverage-evidence`와 **`opencode-review`가 둘 다 `skipped`·`steps: 0`**이 되었습니다.
+
+**사슬은 이렇습니다 — artifact 용량 초과 → `validate-pr-metadata` 실패 → `opencode-review` skip → 현재-head OpenCode 판정 없음.**
+이것은 `#107`의 기록된 블로커(`Fail closed without a current-head OpenCode verdict`)와 **형태가 일치합니다.** 이 문서는 그 블로커의
+원인을 적지 못한 상태로 남겨 두었고, `opencode-review`가 self-hosted라서 "지금도 실행된다"고 적었습니다. **그 서술은 불충분했습니다** —
+리뷰 job 자체는 실행 가능하더라도 그 앞의 metadata 검증이 artifact 업로드에서 죽으면 리뷰는 시작되지 않습니다.
+
+**범위를 좁혀 적습니다.** 이 실행은 `.github`의 `repository_dispatch`이고 `prs=[]`이므로 **어느 저장소의 PR을 위해 dispatch된 것인지
+확인하지 못했습니다.** 따라서 "`#107`의 OpenCode 블로커 원인이 artifact 용량이다"는 것은 **같은 중앙 워크플로의 같은 실패 지점에서
+나오는 강한 기계적 추론이지 확인된 인과가 아닙니다.** 확인에는 `#107`의 head에서 dispatch를 재실행해 그 run의
+`validate-pr-metadata`를 읽는 것이 필요하고, 지금은 수단이 없습니다.
+
+**그리고 artifact 블로커의 구간이 늘었습니다 — 최소 2026-10-03 17:38Z부터 2026-10-05 23:08:42Z까지 약 53시간 30분 연속입니다.**
+annotation이 `Usage is recalculated every 6-12 hours`라고 적는데 그 창이 네 번 이상 지나갔음에도 복구되지 않았습니다. 즉 **재계산을
+기다리는 것으로는 풀리지 않고, 실제로 artifact를 삭제하거나 한도를 올려야 합니다.** 그리고 이 둘을 합치면 **중앙 리뷰 레인(noema와
+OpenCode) 양쪽이 artifact 벽에 막혀 있으므로, 과금 잠금만 해제해도 판정은 생산되지 않을 가능성이 높습니다.** owner 조치 (3)은
+선택이 아니라 (2)와 함께 필요한 항목입니다.
+
 **그리고 self-hosted 레인에는 artifact 말고도 세 번째 실패 유형이 있습니다 — target별 dispatch 권한 (2026-10-05 11:25Z).**
 `ContextualWisdomLab/.github`의 `hourly-review-repair.yml` 실행 `37302726382`에서 `dispatch-review-repair (quarantine)` job
 (`111739122778`, `cwlab-s1-05`, 10 step)이 8번째 step `Dispatch review-feedback autofix`에서 실패했고 annotation은 이것입니다.
