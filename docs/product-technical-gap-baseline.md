@@ -2,11 +2,11 @@
 
 **제품 홈:** ContextualWisdomLab/semantic-data-portal (ontology 기반 semantic catalog).
 **독자:** catalog steward / tenant operator.
-**다음 행동 (2026-10-03 16:0xZ 갱신):** 상황이 바뀌었습니다 — 2026-10-02 18:44Z~22:30Z 사이에 **계정 과금 잠금**이 걸려 `ubuntu-latest` job이 배정 전에 거절되고 있습니다. 순서는 이렇습니다.
+**다음 행동 (2026-10-05 07:5xZ 갱신):** 이 저장소를 막고 있는 것은 **계정 수준 블로커 두 개**입니다. (가) 2026-10-02 18:44Z~22:30Z 사이에 걸린 **과금 잠금**이 `ubuntu-latest` job을 배정 전에 거절합니다. (나) 최소 2026-10-03 17:38Z부터 **Actions artifact 저장 용량 초과**가 self-hosted 레인의 artifact 업로드를 실패시킵니다 — 그 레인은 실행은 되지만 증거를 남기지 못합니다. 둘은 구간이 겹치지만 원인이 다르고, **둘 다 owner만 풀 수 있습니다.** 순서는 이렇습니다.
 
 1. **`#104`를 main에 들어가는 첫 번째로 병합하십시오.** 현재-head 체크 34건이 이미 끝났고(success 25·skipped 9·실패 0) `behind 0`이라 업데이트가 필요 없습니다. 남은 조건은 **다른 신원의 승인 1건**뿐입니다(`#104`의 작성자는 `seonghobae`이고 이 세션의 리뷰 신원도 같으므로 승인 불가 — 이 차단이 모든 PR에 같게 걸리지는 않습니다. 아래 "그런데 이 차단은 PR마다 같지 않습니다" 절을 보십시오). **다른 것을 먼저 병합하면 `#104`가 `behind ≥ 1`이 되어 스케줄러가 브랜치를 업데이트할 수 있고, 움직인 head의 체크는 잠금 중 재생성되지 않습니다.**
-2. **과금 잠금을 해제하십시오.** 그 전까지 이 저장소의 CI 증거 생산은 0입니다 — PR 게이트·주간 Scorecard·야간 fuzz 전부 거절됩니다. 대안은 `cwlab-ci-isolated` 격리 러너 등록(`#110` 계열)이며, 살아 있는 특권 풀에 그 라벨을 붙이는 우회는 금지되어 있습니다.
-3. **해제 후 조합 G(`#82`·`#107`·`#110`)를 단일 writer로 병합하십시오** — cryptography 50.0.2 / pyjwt 2.15.0으로 main의 미수정 두 항목을 한 번에 닫습니다. `#82`는 실패가 `noema-review` 하나(HTTP 400, vision 모델 배정)이고 `#107`은 product CI가 로컬·CI 양쪽에서 깨끗합니다.
+2. **과금 잠금을 해제하고, 함께 Actions artifact 저장 용량도 확보하십시오 — 블로커는 하나가 아니라 둘입니다.** 과금 잠금 전까지 이 저장소의 hosted CI 증거 생산은 0입니다(PR 게이트·주간 Scorecard·야간 fuzz 전부 거절). 그리고 **self-hosted 레인은 실행은 되지만 artifact 업로드에서 실패합니다** — 최소 10-03 17:38Z부터 `Artifact storage quota has been hit`이 연속 관측됩니다. 저장 용량 회복은 즉시가 아니라 6~12시간 뒤에 반영됩니다. 자세한 근거는 아래 "정정 — self-hosted 레인은 \"정상\"이 아닙니다" 절에 있습니다. `cwlab-ci-isolated` 격리 러너 등록은 별개의 대안이며, 살아 있는 특권 풀에 그 라벨을 붙이는 우회는 금지되어 있습니다.
+3. **해제 후 조합 G(`#82`·`#107`·`#110`)를 단일 writer로 병합하십시오** — cryptography 50.0.2 / pyjwt 2.15.0으로 main의 미수정 두 항목을 한 번에 닫습니다. `#82`는 실패가 `noema-review` 하나(HTTP 400, vision 모델 배정)이고 `#107`은 product CI가 로컬·CI 양쪽에서 깨끗합니다. **단, 과금 잠금 해제만으로 `noema-review`가 녹색이 된다고 가정하지 마십시오** — artifact 저장 용량이 두 번째 벽이고, 해제 후 가장 먼저 할 일은 `#82`의 `noema-review` 재실행으로 실패 원인이 HTTP 400인지 artifact quota인지 가르는 것입니다.
 4. **`#109`는 병합 대상이 아니라 수리 또는 승계 대상입니다** — `trivy-fs`가 실패 중이고 자기 lock 불일치와 상관합니다.
 5. **`sso_oidc_adapter`는 2026-10-05에 닫혔습니다** — group-to-role 매핑을 tenant scoped로 만들고 group별 binding을 audit event로 기록해 control을 `implemented`로 올렸습니다(`planned_controls` 1 → 0, manifest `status` `pilot_ready`). 근거와 한계는 아래 "`sso_oidc_adapter`를 닫았습니다" 절에 있습니다. **열린 제품 갭 중 코드 갭은 이제 0건이고**, 남은 하나(`central_workflow_due_diligence`)는 의도적 external이며 그 release criteria가 바로 과금 잠금이 막고 있는 두 조건입니다.
 
@@ -1441,6 +1441,46 @@ hosted job이 수 시간 큐에 머무르다 결국 하드 거절로 끝났고, 
 **조치는 owner만 할 수 있습니다.** (1) Actions를 소유한 계정의 과금 잠금 해제, 또는 (2) `cwlab-ci-isolated` 격리 러너 등록 후 `#110` 계열 병합. 그 전까지 이 문서의 모든 "check 재검증" 행은 보류이고, 거절된 check를 PR의 품질 신호로 읽어서는 안 됩니다.
 
 **잠금의 마지막 확인 시각을 갱신합니다 — 2026-10-05 05:52:48Z.** `ContextualWisdomLab/.github` PR `#2581`(head `9e482e14`)의 `Security Scan` 실행 `37269721729`에서 `gitleaks (secret scan)`과 `Detect changed scope` 두 job이 각각 2초에 끝났고, check-run annotation이 `The job was not started because your account is locked due to a billing issue.`를 그대로 담고 있습니다. 같은 배치에서 self-hosted `Required PR Review Merge Scheduler`는 성공했습니다. 즉 2026-10-02 18:44Z~22:30Z 사이 개시 이후 **약 59시간 연속 활성**이며, 세 레인 구분(hosted 거절 / self-hosted 정상 / `cwlab-ci-isolated` 무한 대기)도 그대로입니다. **지속 시간은 근거가 아닙니다** — 이 행도 annotation을 읽어 확인했습니다. 이 문서에서 2초~6초 hosted 실패를 과금 잠금으로 읽을 때는 항상 annotation을 확인하십시오.
+
+### 정정 — self-hosted 레인은 "정상"이 아닙니다. 두 번째 독립 블로커가 있습니다 (2026-10-05 07:00Z)
+
+**이 문서가 여러 곳에서 "self-hosted 레인은 정상"이라고 적은 것은 틀렸습니다.** 그 레인은 **실행은 되지만 artifact를 올리는 job을 끝내지 못합니다.**
+`ContextualWisdomLab/.github`의 `Required Noema Review` 실행 `37275376360`에서 `noema-review` job(`111651200610`)이 self-hosted
+러너 `cwlab-s1-06`에 배정되어 **28개 step을 모두 수행**한 뒤 340초 지점에서 실패했고, annotation은 과금 잠금이 아니라 이것입니다.
+
+```
+Failed to CreateArtifact: Artifact storage quota has been hit. Unable to upload any new artifacts.
+Usage is recalculated every 6-12 hours.
+```
+
+**일회성이 아닙니다.** 같은 annotation을 다섯 개 실행에서 확인했습니다 — `37141225499`(10-03 17:38Z, `cwlab-s1-06`),
+`37174635139`(10-04 03:38Z, `cwlab-s1-02`), `37203661799`(10-04 12:53Z, `cwlab-s1-02`), `37246380405`(10-05 00:09Z, `cwlab-s1-02`),
+`37271919729`(10-05 06:20Z, `cwlab-s1-02`). 전부 28 step 수행 후 artifact 업로드에서 실패했습니다. 즉 **최소 10-03 17:38Z부터 약 37시간
+연속**이고, 이것은 과금 잠금(10-02 18:44~22:30Z 개시)과 **구간이 겹치지만 원인이 다른 별개의 account 수준 블로커**입니다.
+
+**그래서 레인 그림을 이렇게 고쳐 읽으십시오.**
+
+| 레인 | 배정 | 실행 | artifact 업로드 |
+| --- | --- | --- | --- |
+| `ubuntu-latest` / `ubuntu-24.04` | **거절**(과금 잠금) | 없음 | 해당 없음 |
+| `[self-hosted, linux, x64]` + `cwlab-control` | 약 3초에 배정 | **정상** | **실패**(저장 용량 초과) |
+| `+cwlab-ci-isolated` | 무한 대기 | 없음 | 해당 없음 |
+
+**지속 시간 함정이 반대 방향으로도 성립합니다.** 이 문서는 "2~6초 hosted 실패를 과금 잠금으로 단정하지 말고 annotation을 읽으라"고
+적어 왔습니다. 이번 사례는 **긴 지속 시간도 같은 함정**임을 보여 줍니다 — `#82`의 `noema-review` 실패는 `HTTP Error 400 … duration=362.7s`
+(provider 쪽 원인)였고, 위 `37275376360`은 **363초**입니다. 지속 시간이 사실상 같은데 원인은 전혀 다릅니다. 긴 실행이라서 "진짜 리뷰가
+돌다가 모델 문제로 실패했다"고 읽으면 틀립니다.
+
+**이것이 병합 순서에 미치는 영향 — 과금 잠금 해제만으로는 `noema-review`가 녹색이 되지 않을 가능성이 큽니다.** 이 문서의 3번 권고
+(해제 후 조합 G 병합)는 리뷰 레인의 유일한 블로커가 과금 잠금이라는 전제에 서 있었습니다. 그 전제는 더 이상 유지되지 않습니다.
+**다만 범위를 정확히 적습니다** — 위 다섯 건은 모두 `.github` 저장소 자신의 noema 실행입니다. artifact 저장 용량은 account/org 수준
+자원이므로 semantic-data-portal의 `pull_request_target` noema 실행도 같은 벽에 부딪힐 것이라는 **강한 예상**이지만, 지금 그 실행을
+재시도할 수단이 없으므로 **확인된 관측이 아니라 예상으로 표시합니다.** 해제 후 가장 먼저 할 일은 `#82`의 `noema-review` 재실행이고,
+그 결과가 HTTP 400인지 artifact quota인지가 다음 조치를 가릅니다.
+
+**owner 조치가 하나 늘었습니다.** (1) 과금 잠금 해제, (2) `cwlab-ci-isolated` 격리 러너 등록, 그리고 **(3) Actions artifact 저장 용량
+확보**(오래된 artifact 삭제 또는 한도 상향). (3)은 즉시 반영되지 않습니다 — annotation 자체가 `Usage is recalculated every 6-12 hours`라고
+적고 있으므로, 삭제 후에도 수 시간 뒤에야 업로드가 복구됩니다. 해제 작업을 계획할 때 이 지연을 앞에 두십시오.
 
 ### 잠금은 PR 게이트만이 아니라 main의 예정된 보안 증거 생산도 멈춥니다 (2026-10-03 06:44Z)
 
