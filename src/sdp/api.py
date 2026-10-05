@@ -226,15 +226,26 @@ def enterprise_oidc_preview(payload: dict[str, Any]) -> dict[str, Any]:
 
     try:
         context = authz.resolve_oidc_actor_context(claims, role_map=role_map)
+        group_bindings = authz.oidc_group_role_bindings(claims, role_map=role_map)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+    ignored_role_claims = authz.oidc_role_claims(claims)
+    audit_event = authz.record_oidc_mapping_audit_event(
+        context,
+        group_bindings,
+        mapping_mode="claim_mapping_preview",
+        ignored_role_claims=ignored_role_claims,
+    )
 
     return {
         "mode": "claim_mapping_preview",
         "token_verification": "external_signature_required_claim_shape_validated",
         "actor_context": context.model_dump(),
         "groups": claims.get("groups", []),
-        "ignored_role_claims": authz.oidc_role_claims(claims),
+        "group_role_bindings": group_bindings,
+        "ignored_role_claims": ignored_role_claims,
+        "audit_event_id": audit_event.id,
     }
 
 
@@ -263,6 +274,15 @@ def enterprise_oidc_verify(payload: dict[str, Any]) -> dict[str, Any]:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
+    group_bindings = authz.oidc_group_role_bindings(claims, role_map=role_map)
+    ignored_role_claims = authz.oidc_role_claims(claims)
+    audit_event = authz.record_oidc_mapping_audit_event(
+        context,
+        group_bindings,
+        mapping_mode="jwks_signature_verification",
+        ignored_role_claims=ignored_role_claims,
+    )
+
     return {
         "mode": "jwks_signature_verification",
         "token_verification": "jwks_signature_verified",
@@ -270,7 +290,9 @@ def enterprise_oidc_verify(payload: dict[str, Any]) -> dict[str, Any]:
         "issuer": claims.get("iss"),
         "audience": claims.get("aud"),
         "groups": claims.get("groups", []),
-        "ignored_role_claims": authz.oidc_role_claims(claims),
+        "group_role_bindings": group_bindings,
+        "ignored_role_claims": ignored_role_claims,
+        "audit_event_id": audit_event.id,
     }
 
 

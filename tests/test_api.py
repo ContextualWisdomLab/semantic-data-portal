@@ -226,10 +226,13 @@ def test_enterprise_controls_expose_feature_gate_manifest():
 
     assert body["feature_gate"] == "sdp_enterprise"
     assert body["implemented_controls"] >= 2
-    assert body["planned_controls"] >= 1
+    assert body["planned_controls"] == 0
+    assert body["status"] == "pilot_ready"
     assert controls["tenant_authorization"]["status"] == "implemented"
     assert controls["local_evidence_retention"]["status"] == "implemented"
-    assert controls["sso_oidc_adapter"]["status"] == "planned"
+    assert controls["sso_oidc_adapter"]["status"] == "implemented"
+    assert "SDP_OIDC_GROUP_ROLE_MAP" in controls["sso_oidc_adapter"]["evidence"]
+    assert "POST /enterprise/auth/oidc-verify" in controls["sso_oidc_adapter"]["evidence"]
     assert controls["rbac_matrix"]["feature_gate"] == "sdp_enterprise"
     assert controls["rbac_matrix"]["status"] == "implemented"
     assert "GET /enterprise/rbac-matrix" in controls["rbac_matrix"]["evidence"]
@@ -1547,3 +1550,244 @@ def test_browse_query_denied_without_user():
         and event["actor"] == "guest"
         for event in events.json()
     )
+
+
+def test_oidc_preview_scopes_group_roles_to_claimed_tenant():
+    """A group that grants roles under one tenant must grant nothing under
+    another, so a shared identity provider group cannot cross a tenant
+    boundary."""
+    role_map = {
+        "demo": {"sdp-analysts": ["data-analyst"]},
+        "external": {"sdp-analysts": []},
+    }
+    granted = client.post(
+        "/enterprise/auth/oidc-preview",
+        json={
+            "claims": {
+                "email": "analyst@example.com",
+                "tenant_id": "demo",
+                "groups": ["sdp-analysts"],
+                "exp": int(time()) + 3600,
+            },
+            "role_map": role_map,
+        },
+    )
+    revoked = client.post(
+        "/enterprise/auth/oidc-preview",
+        json={
+            "claims": {
+                "email": "analyst@example.com",
+                "tenant_id": "external",
+                "groups": ["sdp-analysts"],
+                "exp": int(time()) + 3600,
+            },
+            "role_map": role_map,
+        },
+    )
+    unscoped = client.post(
+        "/enterprise/auth/oidc-preview",
+        json={
+            "claims": {
+                "email": "analyst@example.com",
+                "tenant_id": "unscoped-tenant",
+                "groups": ["sdp-analysts"],
+                "exp": int(time()) + 3600,
+            },
+            "role_map": role_map,
+        },
+    )
+
+    assert granted.status_code == 200
+    assert granted.json()["actor_context"]["roles"] == ["data-analyst"]
+    assert revoked.status_code == 200
+    assert revoked.json()["actor_context"]["roles"] == []
+    assert unscoped.status_code == 200
+    assert unscoped.json()["actor_context"]["roles"] == []
+
+
+def test_oidc_preview_reports_group_role_bindings_with_granting_scope():
+    """The preview must explain which tenant scope granted each role and must
+    list groups that no scope maps, so the mapping is reviewable."""
+    response = client.post(
+        "/enterprise/auth/oidc-preview",
+        json={
+            "claims": {
+                "email": "analyst@example.com",
+                "tenant_id": "demo",
+                "groups": ["sdp-analysts", "unknown-group"],
+                "exp": int(time()) + 3600,
+            },
+            "role_map": {"demo": {"sdp-analysts": ["data-analyst"]}},
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["group_role_bindings"] == [
+        {"group_name": "sdp-analysts", "tenant_scope": "demo", "granted_roles": ["data-analyst"]},
+        {"group_name": "unknown-group", "tenant_scope": "", "granted_roles": []},
+    ]
+    assert body["audit_event_id"]
+
+
+def test_oidc_preview_rejects_mixed_shape_role_map():
+    """A role map that mixes flat and tenant-scoped entries must fail the
+    request instead of silently reading a tenant identifier as a group."""
+    response = client.post(
+        "/enterprise/auth/oidc-preview",
+        json={
+            "claims": {
+                "email": "analyst@example.com",
+                "tenant_id": "demo",
+                "groups": ["sdp-analysts"],
+                "exp": int(time()) + 3600,
+            },
+            "role_map": {"demo": {"sdp-analysts": ["data-analyst"]}, "sdp-admins": ["admin"]},
+        },
+    )
+
+    assert response.status_code == 400
+    assert "must not mix flat and tenant-scoped" in response.json()["detail"]
+
+
+def test_oidc_mapping_audit_event_records_bindings_without_claim_leak(tmp_path):
+    """Every mapping must persist an audit event carrying the granting scope and
+    resolved roles, and must not persist the claim payload or the token."""
+    store = sdp_core.SQLiteEvidenceStore(tmp_path / "oidc-evidence.sqlite3")
+    previous = app_evidence.configure_evidence_store(store)
+    try:
+        response = client.post(
+            "/enterprise/auth/oidc-preview",
+            json={
+                "claims": {
+                    "email": "analyst@example.com",
+                    "tenant_id": "demo",
+                    "groups": ["sdp-analysts"],
+                    "roles": ["sdp-platform-admins"],
+                    "exp": int(time()) + 3600,
+                },
+                "role_map": {"demo": {"sdp-analysts": ["data-analyst"]}},
+            },
+        )
+        assert response.status_code == 200
+    finally:
+        app_evidence.configure_evidence_store(previous)
+
+    reopened = sdp_core.SQLiteEvidenceStore(tmp_path / "oidc-evidence.sqlite3")
+    events = reopened.list_events(resource="enterprise/auth/oidc", limit=10)
+    assert len(events) == 1
+    event = events[0]
+    assert event.action == "oidc_group_role_mapping"
+    assert event.result == "mapped"
+    assert event.actor == "analyst@example.com"
+    assert event.details["mapping_mode"] == "claim_mapping_preview"
+    assert event.details["tenant_id"] == "demo"
+    assert event.details["granted_roles"] == ["data-analyst"]
+    assert event.details["ignored_role_claims"] == ["sdp-platform-admins"]
+    assert event.details["group_bindings"] == [
+        {"group_name": "sdp-analysts", "tenant_scope": "demo", "granted_roles": ["data-analyst"]}
+    ]
+    assert set(event.details) == {
+        "mapping_mode",
+        "tenant_id",
+        "granted_roles",
+        "group_bindings",
+        "ignored_role_claims",
+    }
+
+
+def test_oidc_jwks_verification_records_group_role_bindings(tmp_path):
+    """The signature-verified path must produce the same auditable binding
+    evidence as the preview path, labelled with its own mapping mode."""
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    jwk = json.loads(RSAAlgorithm.to_jwk(private_key.public_key()))
+    jwk.update({"kid": "buyer-key-2", "alg": "RS256", "use": "sig"})
+    token = jwt.encode(
+        {
+            "iss": "https://idp.example.com/",
+            "aud": "semantic-data-portal",
+            "email": "analyst@example.com",
+            "tenant_id": "buyer-demo",
+            "groups": ["sdp-analysts"],
+            "exp": int(time()) + 3600,
+        },
+        private_key,
+        algorithm="RS256",
+        headers={"kid": "buyer-key-2"},
+    )
+
+    store = sdp_core.SQLiteEvidenceStore(tmp_path / "oidc-verify-evidence.sqlite3")
+    previous = app_evidence.configure_evidence_store(store)
+    try:
+        response = client.post(
+            "/enterprise/auth/oidc-verify",
+            json={
+                "token": token,
+                "issuer": "https://idp.example.com/",
+                "audience": "semantic-data-portal",
+                "jwks": {"keys": [jwk]},
+                "role_map": {"buyer-demo": {"sdp-analysts": ["data-analyst"]}},
+            },
+        )
+        assert response.status_code == 200
+    finally:
+        app_evidence.configure_evidence_store(previous)
+
+    body = response.json()
+    assert body["group_role_bindings"] == [
+        {
+            "group_name": "sdp-analysts",
+            "tenant_scope": "buyer-demo",
+            "granted_roles": ["data-analyst"],
+        }
+    ]
+    assert token not in json.dumps(body)
+
+    reopened = sdp_core.SQLiteEvidenceStore(tmp_path / "oidc-verify-evidence.sqlite3")
+    events = reopened.list_events(resource="enterprise/auth/oidc", limit=10)
+    assert len(events) == 1
+    assert events[0].details["mapping_mode"] == "jwks_signature_verification"
+    assert token not in json.dumps(events[0].model_dump(), default=str)
+
+
+def test_oidc_preview_rejects_non_object_claims_and_role_map():
+    """Both preview payload shapes must fail as bad requests, so a malformed
+    integration cannot reach claim validation with an unusable payload."""
+    non_object_claims = client.post("/enterprise/auth/oidc-preview", json={"claims": "analyst"})
+    non_object_role_map = client.post(
+        "/enterprise/auth/oidc-preview",
+        json={
+            "claims": {
+                "email": "analyst@example.com",
+                "tenant_id": "demo",
+                "exp": int(time()) + 3600,
+            },
+            "role_map": [["sdp-analysts", "data-analyst"]],
+        },
+    )
+
+    assert non_object_claims.status_code == 400
+    assert non_object_claims.json()["detail"] == "claims must be an object"
+    assert non_object_role_map.status_code == 400
+    assert non_object_role_map.json()["detail"] == "role_map must be an object"
+
+
+def test_oidc_verify_rejects_malformed_payload_fields():
+    """A missing token, a non-object JWKS, and a non-object role map must each
+    fail before any signature verification is attempted."""
+    missing_token = client.post("/enterprise/auth/oidc-verify", json={})
+    non_object_jwks = client.post(
+        "/enterprise/auth/oidc-verify",
+        json={"token": "header.payload.signature", "jwks": "keys"},
+    )
+    non_object_role_map = client.post(
+        "/enterprise/auth/oidc-verify",
+        json={"token": "header.payload.signature", "role_map": ["sdp-analysts"]},
+    )
+
+    assert missing_token.status_code == 400
+    assert missing_token.json()["detail"] == "token is required"
+    assert non_object_jwks.status_code == 400
+    assert non_object_jwks.json()["detail"] == "jwks must be an object"
+    assert non_object_role_map.status_code == 400
+    assert non_object_role_map.json()["detail"] == "role_map must be an object"

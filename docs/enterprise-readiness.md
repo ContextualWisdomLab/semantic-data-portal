@@ -30,7 +30,7 @@
 | Tenant authorization | actor tenant context와 dataset tenant가 맞지 않으면 preview/query/schema 접근 차단 | 구현됨 |
 | Buyer demo activation | 2주 안에 SQL/RDF/REST/file 중 하나로 priority domain 온보딩 | demo SQL/RDF/file fixture 구현됨, REST adapter는 env secret reference가 있으면 ready_for_demo |
 | Query safety | dataset-bound governed query만 허용하고 literal tautology/comment/multi-statement/forbidden keyword를 fail-closed 처리 | 구현됨 |
-| OIDC preview/JWKS guardrail | 만료/subject/tenant claim shape 검증, issuer/audience/JWKS 서명 검증, group-to-role allowlist mapping, 직접 roles claim 무시 | 구현됨 |
+| OIDC preview/JWKS guardrail | 만료/subject/tenant claim shape 검증, issuer/audience/JWKS 서명 검증, tenant scoped group-to-role mapping, group별 binding audit event, 직접 roles claim 무시 | 구현됨 |
 | Production integration | paid pilot 전 Postgres evidence store, OIDC JWKS verification, connector credential vault, request observability export 필요 항목을 숨기지 않고 manifest로 추적 | Postgres evidence store, OIDC JWKS verification, request observability export, connector credential vault 구현됨, paid pilot blocker 0건 |
 | Operational diligence | 중앙 required workflow, security scan, coverage evidence, OSSF baseline 통과 | PR #2/#4 병합됨, PR #5 보안 보강 후 중앙 체크 대기 |
 
@@ -47,8 +47,8 @@
 - `GET /enterprise/shacl-validation`: buyer priority dataset 전체의 SHACL 호환 validation pass rate와 shape/report 요약
 - `GET /enterprise/steward-review`: SHACL validation failure와 ontology patch proposal을 묶은 steward 검토 대기열 및 buyer handoff readiness 요약
 - `GET /enterprise/console`: evidence, KPI, control, connector status를 한 화면에서 확인하는 운영자 콘솔
-- `POST /enterprise/auth/oidc-preview`: 실제 JWKS token verification 전 단계에서 만료/subject/tenant claim shape를 검증하고, `groups` 기반 role mapping만 `ActorContext`로 검토하는 증빙 endpoint. 직접 `roles` claim은 권한으로 쓰지 않고 `ignored_role_claims`로 반환한다.
-- `POST /enterprise/auth/oidc-verify`: issuer, audience, expiry, token `kid`, JWKS 서명을 검증한 뒤 같은 group allow-list mapping으로 `ActorContext`를 생성한다. Raw token은 응답에 포함하지 않는다.
+- `POST /enterprise/auth/oidc-preview`: 실제 JWKS token verification 전 단계에서 만료/subject/tenant claim shape를 검증하고, `groups` 기반 role mapping만 `ActorContext`로 검토하는 증빙 endpoint. 직접 `roles` claim은 권한으로 쓰지 않고 `ignored_role_claims`로 반환한다. role 부여는 token tenant claim이 허용하는 scope에서만 이뤄지므로 한 tenant에서 role을 주는 group이 다른 tenant에서는 아무것도 주지 못한다.
+- `POST /enterprise/auth/oidc-verify`: issuer, audience, expiry, token `kid`, JWKS 서명을 검증한 뒤 같은 tenant scoped group mapping으로 `ActorContext`를 생성한다. Raw token은 응답에 포함하지 않는다. 두 endpoint 모두 group별 `group_role_bindings`와 `audit_event_id`를 반환하고 `enterprise/auth/oidc` resource audit event를 남긴다.
 - `GET /enterprise/connectors/{connector_id}/probe`: demo dataset 기준 connector contract, source metadata, control evidence, proof endpoint 확인
 - `GET /catalog/datasets/{dataset_id}/validate`: metadata quality
 - `GET /catalog/datasets/{dataset_id}/semantic-validation`: dataset 단위 SHACL 호환 shape, conformance, violation path 리포트
@@ -105,4 +105,5 @@ SDP_SQLITE_PATH=.local/sdp-evidence.sqlite3 uvicorn sdp.api:app --reload
 17. 완료: request observability export를 `SDP_LOG_SINK_URL=file://...` 또는 `http(s)://...` sink로 연결하고, request id, tenant, actor, route, status, latency, evidence ids만 body 없이 기록한다.
 18. 완료: connector credential vault를 `SDP_CONNECTOR_SECRET_REF_PREFIX` 기반 env provider로 구현하고, REST connector probe가 raw secret 없이 secret reference presence만 노출하게 한다.
 19. 완료: OIDC JWKS verification을 PyJWT crypto 기반으로 구현하고, 테스트 JWKS로 서명 검증 성공/잘못된 audience 거절/raw token 미노출을 검증한다.
-20. Figma/FigJam 산출물의 IA와 component state를 구현 backlog와 연결하되 Code Connect는 사용하지 않는다.
+20. 완료: group-to-role mapping을 tenant scoped 형태로 확장하고 group별 binding을 audit event로 기록해 `sso_oidc_adapter` control을 구현 상태로 올린다. wildcard/tenant scope 혼합 설정은 거절하고, tenant scope는 wildcard 부여를 회수할 수 있다.
+21. Figma/FigJam 산출물의 IA와 component state를 구현 backlog와 연결하되 Code Connect는 사용하지 않는다.

@@ -8,7 +8,7 @@
 2. **과금 잠금을 해제하십시오.** 그 전까지 이 저장소의 CI 증거 생산은 0입니다 — PR 게이트·주간 Scorecard·야간 fuzz 전부 거절됩니다. 대안은 `cwlab-ci-isolated` 격리 러너 등록(`#110` 계열)이며, 살아 있는 특권 풀에 그 라벨을 붙이는 우회는 금지되어 있습니다.
 3. **해제 후 조합 G(`#82`·`#107`·`#110`)를 단일 writer로 병합하십시오** — cryptography 50.0.2 / pyjwt 2.15.0으로 main의 미수정 두 항목을 한 번에 닫습니다. `#82`는 실패가 `noema-review` 하나(HTTP 400, vision 모델 배정)이고 `#107`은 product CI가 로컬·CI 양쪽에서 깨끗합니다.
 4. **`#109`는 병합 대상이 아니라 수리 또는 승계 대상입니다** — `trivy-fs`가 실패 중이고 자기 lock 불일치와 상관합니다.
-5. **그다음 제품 개발은 `sso_oidc_adapter`(SSO/OIDC adapter) 하나입니다** — enterprise control 7건 중 planned는 그 하나뿐이고, 나머지 하나는 의도적 external입니다.
+5. **`sso_oidc_adapter`는 2026-10-05에 닫혔습니다** — group-to-role 매핑을 tenant scoped로 만들고 group별 binding을 audit event로 기록해 control을 `implemented`로 올렸습니다(`planned_controls` 1 → 0, manifest `status` `pilot_ready`). 근거와 한계는 아래 "`sso_oidc_adapter`를 닫았습니다" 절에 있습니다. **열린 제품 갭 중 코드 갭은 이제 0건이고**, 남은 하나(`central_workflow_due_diligence`)는 의도적 external이며 그 release criteria가 바로 과금 잠금이 막고 있는 두 조건입니다.
 
 이전 판의 lead 권고였던 "`#81`을 Ready for review로 되돌리는 것"은 **여전히 유효한 개별 조치**이지만 더 이상 1번이 아닙니다 — 근거는 아래 "`#81`은 Draft라서 판정을 받을 수 없고…" 절에 그대로 있습니다. 이 저장소에 local IdP나 policy registry를 만들지 마십시오.
 **기준일:** 2026-10-03 (main `e48aa13`, 2026-08-09 `#34` 이후 변동 없음 — 54일). 2026-09-09에 리뷰 판정 증거를 전수 재검증했고, 그 결과 병합 순서 1번·3번의 승인 근거와 "승인만 있으면 풀리는 세 건" 권고를 정정했습니다 — 아래 "정정(2026-09-09)" 절을 먼저 읽으십시오.
@@ -1440,6 +1440,8 @@ hosted job이 수 시간 큐에 머무르다 결국 하드 거절로 끝났고, 
 
 **조치는 owner만 할 수 있습니다.** (1) Actions를 소유한 계정의 과금 잠금 해제, 또는 (2) `cwlab-ci-isolated` 격리 러너 등록 후 `#110` 계열 병합. 그 전까지 이 문서의 모든 "check 재검증" 행은 보류이고, 거절된 check를 PR의 품질 신호로 읽어서는 안 됩니다.
 
+**잠금의 마지막 확인 시각을 갱신합니다 — 2026-10-05 05:52:48Z.** `ContextualWisdomLab/.github` PR `#2581`(head `9e482e14`)의 `Security Scan` 실행 `37269721729`에서 `gitleaks (secret scan)`과 `Detect changed scope` 두 job이 각각 2초에 끝났고, check-run annotation이 `The job was not started because your account is locked due to a billing issue.`를 그대로 담고 있습니다. 같은 배치에서 self-hosted `Required PR Review Merge Scheduler`는 성공했습니다. 즉 2026-10-02 18:44Z~22:30Z 사이 개시 이후 **약 59시간 연속 활성**이며, 세 레인 구분(hosted 거절 / self-hosted 정상 / `cwlab-ci-isolated` 무한 대기)도 그대로입니다. **지속 시간은 근거가 아닙니다** — 이 행도 annotation을 읽어 확인했습니다. 이 문서에서 2초~6초 hosted 실패를 과금 잠금으로 읽을 때는 항상 annotation을 확인하십시오.
+
 ### 잠금은 PR 게이트만이 아니라 main의 예정된 보안 증거 생산도 멈춥니다 (2026-10-03 06:44Z)
 
 `scorecard-analysis.yml`의 주간 예정 실행이 처음으로 거절되었습니다. run `37104019217`은 `event: schedule`, 브랜치 `main`(`e48aa13c`)이고 job `111148946931`이 06:44:15Z에 생성·시작되어 06:44:18Z에 끝났습니다 — step 0, 러너 없음, **같은 과금 annotation**. 이 워크플로의 예정 실행 14건 중 앞선 13건은 전부 `success`였습니다.
@@ -1706,6 +1708,8 @@ CI가 증거를 만들지 못하는 동안, 저장소가 정의한 **구매자 �
 
 **gate는 통과하지만 두 숫자가 구매자 체감 갭을 그대로 가리킵니다** — enterprise control 7개 중 **2개 미구현**, 그리고 네 커넥터 중 REST만 **계약만 있고 데모 준비는 아님**(어댑터는 `implemented`). 이 둘은 제 판단이 아니라 제품이 자기 gate에서 스스로 보고하는 값입니다. 과금 잠금이 풀린 뒤 다음 개발 대상을 고를 때 이 두 항목이 가장 먼저 봐야 할 자리입니다.
 
+**이 문단의 두 숫자는 모두 이후에 정정되었습니다.** "2개 미구현"은 틀렸습니다(아래 "정정 1": planned 1 + 의도적 external 1), 그리고 그 planned 1건마저 2026-10-05에 닫혀 지금은 `implemented 6 / planned 0 / external 1`입니다. REST는 코드 갭이 아니라 secret reference 설정 갭입니다(아래 "정정 2"). 이 문단은 당시의 읽기를 보존하기 위해 남겨 두었을 뿐이므로, 현재 상태로 인용하지 마십시오.
+
 **한계:** 로컬 gate 통과는 배포 증거가 아니고, 이 측정에는 DB가 없으므로 `tests/test_integration_age.py`가 요구하는 `SDP_DATABASE_DSN` 경로(AGE 그래프 통합)는 포함되지 않습니다.
 
 ### 정정 — 방금 적은 "구매자 갭 둘"은 둘 다 성격을 잘못 적었습니다 (2026-10-03 14:5xZ)
@@ -1721,10 +1725,10 @@ CI가 증거를 만들지 못하는 동안, 저장소가 정의한 **구매자 �
 | implemented | `rbac_matrix` | RBAC matrix |
 | implemented | `deployment_template` | Deployment template |
 | implemented | `operational_observability` | Operational observability |
-| **planned** | **`sso_oidc_adapter`** | **SSO/OIDC adapter** |
+| implemented (2026-10-05 닫힘) | `sso_oidc_adapter` | SSO/OIDC adapter |
 | **external** | `central_workflow_due_diligence` | Central workflow due diligence |
 
-**실제 제품 갭은 `sso_oidc_adapter` 하나입니다.** 그 release criteria가 무엇을 요구하는지도 레지스트리에 적혀 있습니다 — ① OIDC issuer·audience·JWKS를 환경에서 구성, ② **group-to-role 매핑이 tenant scoped이고 감사 가능**, ③ preview가 누락·만료 claim을 거부하고 직접적인 role escalation claim을 무시. 즉 `POST /enterprise/auth/oidc-preview`까지는 있고 매핑이 1급 control로 승격되지 않은 상태입니다.
+**실제 제품 갭은 `sso_oidc_adapter` 하나였습니다(2026-10-05에 닫혔습니다).** 그 release criteria가 무엇을 요구하는지도 레지스트리에 적혀 있습니다 — ① OIDC issuer·audience·JWKS를 환경에서 구성, ② **group-to-role 매핑이 tenant scoped이고 감사 가능**, ③ preview가 누락·만료 claim을 거부하고 직접적인 role escalation claim을 무시. ①과 ③은 이미 구현되어 있었고 **②만 비어 있었습니다** — 매핑이 tenant 구분 없는 평면 map이었고 매핑 결과가 어디에도 기록되지 않았습니다. 그 한 칸을 닫은 기록이 아래 "`sso_oidc_adapter`를 닫았습니다" 절입니다. 이 표의 숫자는 그래서 `implemented 6 / planned 0 / external 1`이고 manifest `status`는 `pilot_ready`입니다.
 
 나머지 하나는 **미구현이 아니라 의도적으로 외부 소유**입니다(`external`). 그리고 그 control의 release criteria가 공교롭습니다 — "Required checks pass on current head"와 "Open PR queue has no source-code blocker". **지금 과금 잠금이 막고 있는 바로 그 두 조건입니다.** 제품의 enterprise-control 매니페스트가 자기 항목 하나를 통해 이 사태를 가리키고 있습니다.
 
@@ -1817,6 +1821,70 @@ UNSATISFIED: control=credential_vault status=implemented secret_present=False
 | 소스 라인 인용 정확성 | 이 문서가 인용한 `src/…:line`을 `origin/main`에서 대조 | **정확** — `catalog.py:25/414/445`, `evidence.py:37-48`, `api.py:804-814` 모두 일치 |
 
 마지막 항목의 확인 결과, `/browse/{dataset_id}/preview`가 `payload.get("user", "anonymous")`로 호출자가 준 문자열을 그대로 신뢰한다는 이 문서의 서술은 `e48aa13` 기준 사실입니다. 토큰 검증이 없으므로 호출자는 임의 신원을 주장할 수 있습니다.
+
+## `sso_oidc_adapter`를 닫았습니다 — 비어 있던 칸은 release criterion ②뿐이었습니다 (2026-10-05)
+
+이 문서가 "실제 제품 갭은 하나"라고 적어 온 control을 구현했습니다. 먼저 **무엇이 비어 있었는지 정확히** 적습니다. 레지스트리의 release criteria 세 개를
+코드와 대조하면 ①(issuer·audience·JWKS 환경 구성)은 `verify_oidc_jwks_token`이 `SDP_OIDC_ISSUER`/`SDP_OIDC_AUDIENCE`/`SDP_OIDC_JWKS_URL`로 이미
+만족하고 있었고, ③(누락·만료 claim 거부, 직접 role claim 무시)도 `validate_oidc_claim_shape`와 `oidc_role_claims`로 이미 만족하고 있었습니다.
+**②(group-to-role 매핑이 tenant scoped이고 감사 가능)만 비어 있었습니다** — 두 단어 모두 비어 있었습니다.
+
+- **tenant scoped가 아니었습니다.** `load_oidc_role_map()`이 돌려주는 것은 `{"group": ["role"]}` 평면 map이고 `resolve_oidc_actor_context()`는
+  token의 tenant claim과 무관하게 그 map을 적용했습니다. 즉 **IdP의 group 하나가 모든 tenant에서 같은 role을 부여**했습니다. 이 저장소가 `policy.evaluate`
+  단계에서 tenant 경계를 막고 있으므로 이것이 곧 cross-tenant 유출은 아니지만, control이 약속한 "tenant scoped 매핑"은 아니었습니다.
+- **감사 가능하지 않았습니다.** 매핑 결과는 응답의 `actor_context`로만 나가고 evidence store에는 아무것도 남지 않았습니다. 이 저장소의 governance
+  invariant는 "정책 판단과 audit event를 evidence store에 기록한다"인데, 신원→role 매핑은 그 기록에서 빠져 있었습니다.
+
+### 구현한 의미 (`src/sdp/authz.py`)
+
+`normalize_group_role_map()`이 설정을 하나의 형태로 정규화합니다. 평면 `{"group": ["role"]}`은 **모든 tenant에 적용되는 wildcard scope(`*`)**가 되고,
+`{"tenant": {"group": ["role"]}}`은 그 tenant에만 적용됩니다. `tenant_scoped_group_roles()`가 wildcard를 먼저 깔고 token tenant의 scope로
+**같은 group 키를 덮어씁니다.** 덮어쓰기(합집합이 아니라 교체)를 고른 이유는 그렇게 해야 **tenant scope에서 빈 role 목록으로 wildcard 부여를 회수**할 수
+있기 때문입니다. 합집합이면 회수가 표현 불가능합니다.
+
+두 형태를 한 map에 섞으면 `ValueError`로 거절합니다(HTTP 400). 섞인 map은 거의 항상 **tenant 식별자를 group 이름으로 잘못 읽는 설정 오류**이고, 그 오류의
+결과는 "의도하지 않은 role 부여"이므로 조용히 절반만 적용하는 쪽이 더 위험합니다. 빈 tenant scope 키도 같은 이유로 거절합니다 — 어떤 tenant claim과도
+매칭되지 않는 죽은 설정입니다. 그리고 **명시적으로 빈 `role_map`은 "아무것도 부여하지 않음"**입니다(이전의 `role_map or load_oidc_role_map()`은 빈 map을
+"설정을 읽어라"로 해석했습니다 — 명시적 거부가 묵시적 fallback으로 바뀌는 쪽이 더 위험합니다).
+
+감사 쪽은 `oidc_group_role_bindings()`가 **group마다 한 행**을 만듭니다 — `group_name`, 부여한 `tenant_scope`, `granted_roles`. 어떤 scope도
+매핑하지 않은 group은 `tenant_scope: ""`와 빈 role로 남깁니다. **거절을 보이게 남기는 것이 요점입니다**: 부여만 기록하면 "왜 이 사용자가 role을 못 받았는지"를
+사후에 읽을 수 없습니다. `record_oidc_mapping_audit_event()`가 그 행들을 `enterprise/auth/oidc` resource의 audit event로 기록하고, 두 endpoint는
+`group_role_bindings`와 `audit_event_id`를 응답에 함께 돌려줍니다.
+
+**기록되지 않는 것을 명시합니다.** event `details`의 키는 정확히 `mapping_mode`, `tenant_id`, `granted_roles`, `group_bindings`,
+`ignored_role_claims` 다섯 개입니다. token, 서명, raw claim payload는 응답에도 evidence store에도 들어가지 않습니다. 이 다섯 개라는 사실 자체를
+테스트가 집합 비교로 고정합니다(`test_oidc_mapping_audit_event_records_bindings_without_claim_leak`) — 나중에 claim을 하나 더 흘리면 그 테스트가 깨집니다.
+
+### 검증 (로컬 CI parity)
+
+| 항목 | 결과 |
+| --- | --- |
+| 전체 테스트 (`PYTHONPATH=src pytest`) | 277 passed, 8 skipped (기준선 258 + 신규 19) |
+| Hypothesis property suite (`tests/fuzz`) | 10 passed |
+| `src/sdp/authz.py` statement/branch coverage | 165/165, branch 64/64 — **100%** |
+| `src/sdp_core/enterprise.py` coverage | **100%** |
+| docstring coverage (AST 검사, private 포함) | 두 모듈 **100%** |
+| readiness gate (`python -m sdp.demo_smoke`) | `ready: true`, `implemented_enterprise_controls: 6`, exit 0 |
+
+신규 19건 중 12건은 `tests/test_authz.py`(정규화 네 형태, 혼합·빈 scope 거절, wildcard 회수, tenant claim 우선순위, 중복 group 축약, 빈 map,
+설정 fallback, unmapped audit), 7건은 `tests/test_api.py`(tenant scoping 3분기, binding 응답, 혼합 map 400, audit event 무유출, verify 경로 기록,
+그리고 이 두 endpoint에 **원래부터 커버되지 않았던 payload 검증 가드 5줄**). 마지막 항목은 제 변경이 만든 공백이 아니라 기존 공백인데, 같은 endpoint를
+건드리는 참에 닫았습니다 — 그 결과 OIDC 영역에는 커버되지 않은 줄이 남아 있지 않습니다. `api.py` 전체는 84%이고 나머지 공백은 이 변경과 무관한 다른
+route들입니다(이 저장소에는 coverage gate가 설정되어 있지 않습니다).
+
+### 이 증거의 한계
+
+**CI는 이 변경을 검증하지 않았습니다.** 과금 잠금이 hosted 레인을 전부 거절하므로 `API integration suite`·`Hypothesis property tests`·
+`Atheris coverage-guided (bounded)`·CodeQL 계열은 배정 전에 거절됩니다. 위 표는 **CI의 설치 명령과 인터프리터를 그대로 쓴 로컬 재현**이며, 이 문서가
+`#102`와 `#107`에 대해 같은 방식으로 만든 증거와 같은 등급입니다 — 즉 **required check의 대체물이 아닙니다.** 잠금이 풀리면 이 head의 체크를 먼저 돌려
+로컬 결과와 대조하십시오.
+
+그리고 이것은 **control 하나를 닫은 것이지 SSO 통합을 완성한 것이 아닙니다.** 이 저장소는 여전히 local IdP도 session 발급도 갖지 않습니다 — `preview`와
+`verify`는 외부 IdP의 claim을 검토·검증하는 증빙 endpoint이고, 실제 로그인 흐름·세션·token 갱신은 `keyverse`(cwl-idp)가 소유합니다. 여기에 IdP나
+policy registry를 만들지 마십시오. 또한 `/browse/{dataset_id}/preview`가 `payload.get("user", "anonymous")`로 호출자 주장 신원을 그대로 믿는
+문제는 **이 변경이 건드리지 않았습니다** — 그 둘을 잇는 것(검증된 `ActorContext`를 데이터 경로의 신원으로 쓰는 것)은 별개의 변경이고, 이 문서의 해당 절에
+그대로 남아 있습니다.
 
 ## 운영 메모
 
