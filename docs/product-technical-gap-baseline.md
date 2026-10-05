@@ -849,6 +849,26 @@ This required check is not a review and must not succeed until the authenticated
 | #35 | `95568388849` | success | 2026-08-18T01:45:56Z | 4초 | **no-op stub** |
 | #81 | `99291035386` | **failure** | 2026-08-30T17:01:50Z | 10초 | fail-closed 게이트 |
 
+**초록의 두 번째 형태 — 더 속기 쉬운 쪽입니다 (2026-10-05 17:38Z).** 위 표의 stub는 3~4초라서 의심하기 쉽습니다. 그런데 **수십 초 동안
+실제 job을 여러 개 성공시키고도 리뷰 job만 skip된 run**이 있습니다. 저는 이것을 하마터면 "리뷰 레인이 복구되었다"로 읽을 뻔했습니다.
+
+`ContextualWisdomLab/.github`의 닫힌 PR 브랜치 `palette/no-ux-changes-11982953672922892196`(`prs=[]`)에서 두 run이
+**`conclusion: success`**로 끝났습니다.
+
+| run | 워크플로 | 소요 | 성공한 job | **리뷰 job** |
+| --- | --- | --- | --- | --- |
+| `37349903461` | Required Noema Review | 33초 | `cancel-closed-pr-runs`(`cwlab-s1-05`, 3 step) | **`noema-review` skipped** |
+| `37349903181` | Required OpenCode Review | 36초 | `required-workflow-bootstrap`(9 step), `coverage-evidence`(3 step), `coverage-source-tree`(3 step) | **`opencode-review` skipped** |
+
+두 run 모두 **판정을 생산하는 job이 `skipped`·`steps: 0`**이고, run이 초록인 것은 **리뷰가 아닌 job들이 성공했기 때문**입니다. 중앙
+`.github`의 CLAUDE.md가 적은 설계 그대로입니다 — "always keep one job with no output-dependent `if:` so the run concludes `success`
+rather than `skipped`". 즉 **의도된 동작이고 결함이 아닙니다.** 결함은 읽는 쪽에 생깁니다.
+
+**그래서 규칙을 하나 더 붙입니다 — run의 `conclusion`을 리뷰 증거로 쓰지 마십시오.** 소요 시간도 근거가 아닙니다(3초 stub든 36초 run이든
+마찬가지). 확인해야 하는 것은 **판정 job 자신의 `conclusion`과 `steps` 수**이며, `skipped`·`steps: 0`은 "그 리뷰는 일어나지 않았다"입니다.
+그리고 이 두 run은 **닫힌 PR**(`prs=[]`)에서 나왔으므로 `cancel-closed-pr-runs` 경로였습니다 — 열린 PR의 복구와는 무관합니다.
+**2026-10-05 17:38Z 시점에도 이 저장소의 리뷰 레인은 복구되지 않았습니다.**
+
 `#51`은 stub 실행이 3건 있고 그중 가장 최근 것이 그 PR 전체에서 가장 새로운 check run입니다(2026-08-18T12:49:36Z). 즉 이후에 새 세대가 덮어쓴 적이 없습니다.
 
 **둘째, 초록 자체가 3주 지난 것입니다.** `#51`의 최신 check run은 2026-08-18, `#59`는 2026-08-17입니다. 이 문서의 측정일(2026-09-07)보다 3주 앞섭니다. 그 사이에 취약점 DB도, 게이트 세대도 바뀌었습니다. 실측 근거는 `#79`에 있습니다 — 같은 main 계보인데 2026-09-01 스캔에서 `trivy-fs`가 이렇게 떨어졌습니다(job `99954799788`).
