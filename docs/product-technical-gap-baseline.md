@@ -1875,10 +1875,17 @@ route들입니다(이 저장소에는 coverage gate가 설정되어 있지 않�
 
 ### 이 증거의 한계
 
-**CI는 이 변경을 검증하지 않았습니다.** 과금 잠금이 hosted 레인을 전부 거절하므로 `API integration suite`·`Hypothesis property tests`·
-`Atheris coverage-guided (bounded)`·CodeQL 계열은 배정 전에 거절됩니다. 위 표는 **CI의 설치 명령과 인터프리터를 그대로 쓴 로컬 재현**이며, 이 문서가
-`#102`와 `#107`에 대해 같은 방식으로 만든 증거와 같은 등급입니다 — 즉 **required check의 대체물이 아닙니다.** 잠금이 풀리면 이 head의 체크를 먼저 돌려
+**CI는 이 변경을 검증하지 않았습니다 — 추정이 아니라 관측입니다.** 커밋 `254054d`를 push하고 `#102`를 Ready로 올린 직후,
+이 저장소의 이 head에서 `Hypothesis property tests`(check run `111638403035`)와 `Atheris coverage-guided (bounded)`(`111638403487`)가
+2026-10-05 06:11:59Z에 시작해 각각 2~3초에 실패로 끝났고, 두 annotation 모두
+`The job was not started because your account is locked due to a billing issue.`입니다. 앞 절들의 잠금 증거는 `.github`의 다른 PR에서 온
+것이었지만 **이 행은 이 저장소·이 head의 1차 증거**입니다. 위 표는 **CI의 설치 명령과 인터프리터를 그대로 쓴 로컬 재현**이며, 이 문서가 `#102`와
+`#107`에 대해 같은 방식으로 만든 증거와 같은 등급입니다 — 즉 **required check의 대체물이 아닙니다.** 잠금이 풀리면 이 head의 체크를 먼저 돌려
 로컬 결과와 대조하십시오.
+
+**재실행하지 않았습니다.** 거절은 job 내용과 무관한 계정 상태이므로 재실행은 같은 annotation을 한 번 더 만들 뿐입니다 — 통과시킬 수단이 제게 없습니다.
+관측 시점에 이 head에는 check run이 두 건만 올라와 있었습니다(`#104`의 34건과 달리). 나머지가 아직 dispatch 전인지 injection이 생략된 것인지는
+확인하지 않았으므로 **"두 건뿐"을 이 head의 최종 체크 집합으로 읽지 마십시오.**
 
 그리고 이것은 **control 하나를 닫은 것이지 SSO 통합을 완성한 것이 아닙니다.** 이 저장소는 여전히 local IdP도 session 발급도 갖지 않습니다 — `preview`와
 `verify`는 외부 IdP의 claim을 검토·검증하는 증빙 endpoint이고, 실제 로그인 흐름·세션·token 갱신은 `keyverse`(cwl-idp)가 소유합니다. 여기에 IdP나
