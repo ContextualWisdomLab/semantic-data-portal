@@ -1,9 +1,13 @@
+"""Enterprise control registry and the manifest the API exposes."""
+
 from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
 
 class EnterpriseControl(BaseModel):
+    """One buyer-reviewable control, its evidence, and its release criteria."""
+
     id: str
     label: str
     feature_gate: str = "sdp_enterprise"
@@ -14,6 +18,8 @@ class EnterpriseControl(BaseModel):
 
 
 class EnterpriseControlsManifest(BaseModel):
+    """The control registry plus the counts a buyer review reads first."""
+
     feature_gate: str
     status: str
     implemented_controls: int
@@ -23,6 +29,7 @@ class EnterpriseControlsManifest(BaseModel):
 
 
 def enterprise_control_registry() -> list[EnterpriseControl]:
+    """Return every enterprise control in buyer-review order."""
     return [
         EnterpriseControl(
             id="tenant_authorization",
@@ -58,15 +65,26 @@ def enterprise_control_registry() -> list[EnterpriseControl]:
         EnterpriseControl(
             id="sso_oidc_adapter",
             label="SSO/OIDC adapter",
-            status="planned",
-            risk_reduced="Enterprise users can map identity provider groups to SDP roles without local code changes.",
+            status="implemented",
+            risk_reduced="Enterprise users map identity provider groups to tenant-scoped SDP roles without local code changes, and every mapping is auditable.",
             evidence=[
                 "sdp_core.ActorContext",
-                "sdp.authz",
+                "sdp.authz.normalize_group_role_map",
+                "sdp.authz.tenant_scoped_group_roles",
+                "sdp.authz.oidc_group_role_bindings",
+                "sdp.authz.record_oidc_mapping_audit_event",
+                "SDP_OIDC_ISSUER",
+                "SDP_OIDC_AUDIENCE",
+                "SDP_OIDC_JWKS_URL",
+                "SDP_OIDC_GROUP_ROLE_MAP",
                 "POST /enterprise/auth/oidc-preview",
+                "POST /enterprise/auth/oidc-verify",
                 "docs/enterprise-readiness.md",
                 "tests/test_api.py::test_oidc_preview_rejects_unverified_claim_shape",
                 "tests/test_api.py::test_oidc_preview_ignores_direct_role_escalation_claims",
+                "tests/test_api.py::test_oidc_preview_scopes_group_roles_to_claimed_tenant",
+                "tests/test_api.py::test_oidc_mapping_audit_event_records_bindings_without_claim_leak",
+                "tests/test_authz.py::test_tenant_scope_overrides_wildcard_group_entry",
             ],
             release_criteria=[
                 "OIDC issuer, audience, and JWKS are environment-configured.",
@@ -146,13 +164,14 @@ def enterprise_control_registry() -> list[EnterpriseControl]:
 
 
 def enterprise_controls_manifest() -> EnterpriseControlsManifest:
+    """Build the manifest, deriving its status from the planned control count."""
     controls = enterprise_control_registry()
     implemented = sum(1 for control in controls if control.status == "implemented")
     planned = sum(1 for control in controls if control.status == "planned")
     external = sum(1 for control in controls if control.status == "external")
     return EnterpriseControlsManifest(
         feature_gate="sdp_enterprise",
-        status="pilot_ready_with_planned_controls",
+        status="pilot_ready" if planned == 0 else "pilot_ready_with_planned_controls",
         implemented_controls=implemented,
         planned_controls=planned,
         external_controls=external,

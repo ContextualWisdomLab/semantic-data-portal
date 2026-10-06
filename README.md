@@ -47,6 +47,8 @@ PYTHONPATH=src uvicorn sdp.api:app --reload
 `SDP_LOG_SINK_URL=file://.local/sdp-requests.jsonl`과 `SDP_REQUEST_ID_HEADER=X-Request-Id`를 지정하면 request id, tenant, actor, route, status, latency, evidence ids만 body 없이 request observation log로 기록됩니다.
 REST connector secret은 `SDP_CONNECTOR_SECRET_REF_PREFIX=SDP_CONNECTOR_SECRET_` 기준의 env secret reference로 조회합니다. 예: `SDP_CONNECTOR_SECRET_REST_CONNECTOR_MARKETING_CAMPAIGN_TOKEN` 값은 presence만 검증하며 API 응답에는 노출하지 않습니다.
 OIDC token verification은 `SDP_OIDC_ISSUER`, `SDP_OIDC_AUDIENCE`, `SDP_OIDC_JWKS_URL`, `SDP_OIDC_GROUP_ROLE_MAP`를 사용합니다.
+`SDP_OIDC_GROUP_ROLE_MAP`은 두 가지 형태를 받습니다. flat `{"group": ["role"]}`은 모든 tenant에 적용되는 wildcard scope(`*`)가 되고, tenant scoped `{"tenant": {"group": ["role"]}}`은 해당 tenant에만 적용됩니다. 같은 group이 두 scope에 모두 있으면 tenant scope가 wildcard를 대체하므로, tenant scope에 빈 role 목록을 쓰면 wildcard 부여를 해당 tenant에서만 회수할 수 있습니다. 두 형태를 한 map에 섞으면 tenant 식별자를 group 이름으로 잘못 읽는 설정 오류이므로 요청이 400으로 거절됩니다.
+`POST /enterprise/auth/oidc-preview`와 `POST /enterprise/auth/oidc-verify`는 group별 `group_role_bindings`(group 이름, 부여한 tenant scope, 부여된 role)와 `audit_event_id`를 함께 반환하고, 같은 내용을 `enterprise/auth/oidc` resource의 audit event로 기록합니다. token과 raw claim payload는 응답에도 evidence store에도 기록되지 않습니다.
 
 Docker 기반 로컬 데모는 다음 명령으로 실행합니다.
 
