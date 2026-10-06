@@ -2072,6 +2072,58 @@ policy registry를 만들지 마십시오. 또한 `/browse/{dataset_id}/preview`
 문제는 **이 변경이 건드리지 않았습니다** — 그 둘을 잇는 것(검증된 `ActorContext`를 데이터 경로의 신원으로 쓰는 것)은 별개의 변경이고, 이 문서의 해당 절에
 그대로 남아 있습니다.
 
+## 중앙 schedule이 self-hosted로 이전되었습니다 — PR 게이트는 그대로입니다 (2026-10-06 21:5xZ)
+
+**나흘 만의 첫 외부 변화입니다.** `ContextualWisdomLab/.github`의 `main`이 2026-09-30 이후 처음 전진했고, 내용이 바로 이 사태에 대한
+대응입니다.
+
+| 커밋 | 시각 | 제목 |
+| --- | --- | --- |
+| `9a1aa120` | 10:51:34Z | `ci: run billing-locked central schedules on existing self-hosted runners` (PR #2586) |
+| `2161ef0c` | 11:07:07Z | `ci: attach trusted schedules to the MCP runner group` (PR #2590) |
+
+**효과는 관측됩니다.** 그 전까지 `steps: 0`·러너 없음·과금 annotation으로 거절되던 두 예정 워크플로가 이제 **실제로 실행됩니다** —
+`GitHub Actions queue health`(job `112512995452`, `cwlab-s1-02`, **9 step**)와 `Repository Metadata Reconcile`
+(job `112516836609`, `cwlab-s1-02`, **13 step**). 실패 메시지도 과금 문구가 아니라 `Process completed with exit code 1`/`2`입니다.
+
+**그래서 제 서술 하나의 함의를 정정합니다.** 이 문서는 "잠금을 알려 줄 감시 장치가 같은 잠금에 걸려 있어 owner가 자기 모니터링으로부터
+신호를 받지 못한다"고 적었습니다. 관측 사실(감시 워크플로가 거절되고 있었다)은 그대로 맞지만, **그로부터 "owner가 모른다"는 함의는
+틀렸습니다** — owner는 알고 있었고 같은 날 오전에 이전 작업을 병합했습니다. 감시가 죽은 것이 인지를 막지는 않았습니다.
+
+### 그러나 이 저장소의 블로커는 하나도 풀리지 않았습니다
+
+**첫째, 이전 대상은 schedule뿐입니다.** 커밋 제목이 그렇게 적고 있고(`central schedules`), 관측도 일치합니다 — 이전이 끝난
+11:07Z 이후로도 `pull_request` 트리거 실행은 계속 거절됩니다. `Security Scan`(`37523658515`)·`Python Security`·`SAST Semgrep`이
+**20:04:22Z**에, 즉 이전 9시간 뒤에 5초로 실패했고, 같은 계열의 17:52Z 배치는 annotation까지 읽어 과금 잠금임을 확인했습니다.
+**따라서 `#102`·`#104`·`#107`·`#82`의 PR 체크는 여전히 hosted이고 여전히 배정 전에 거절됩니다.**
+
+**둘째, 이전된 감시조차 아직 녹색이 아닙니다.** queue-health job의 step을 열어 보면 1~4번(`Set up job`, 러너 하드닝 ×2,
+`Checkout trusted queue-health source`)은 성공하고 **5번 `Collect read-only repository and runner evidence`에서 실패**하며,
+6번 `Upload queue-health evidence`는 **skip**됩니다. 즉 실행 자리는 생겼지만 증거 수집이 아직 깨져 있습니다.
+
+**셋째, 이전과 함께 네 번째 실패 유형이 나타났습니다 — self-hosted 러너의 통신 유실.** 21:26~21:44Z 구간에서 두 건이 각각 약 601초
+뒤 이 annotation으로 끝났습니다.
+
+```
+The self-hosted runner lost communication with the server. Verify the machine is running
+and has a healthy network connection.
+```
+
+`Organization Commercial Readiness`의 `coordinate`(job `112512790513`, **`cwlab-s1-06`**, 10 step)와
+`Daily Review Recovery`의 `Resolve target(s)`(job `112510056128`, **`cwlab-s1-01`**, 2 step)입니다. **서로 다른 두 러너**가 몇 분
+안에 같은 방식으로 떨어졌고 둘 다 ~601초에서 끊겼으므로, 단일 호스트의 일시적 장애보다는 **부하·네트워크·러너 그룹 재구성과 관련된
+문제**로 읽는 편이 자연스럽습니다. 다만 원인은 확인하지 못했습니다 — `actions/runners` 인벤토리가 이 proxy에서 403이고, 두 번째
+커밋(`attach trusted schedules to the MCP runner group`)이 러너 그룹을 건드렸다는 사실과 시간적으로 가깝다는 점만 적어 둡니다.
+**이전 작업이 원인이라고 단정하지 마십시오 — 상관만 관측했습니다.**
+
+### 그래서 owner 조치는 셋에서 줄지 않았습니다
+
+schedule 이전은 **PR 병합 경로에 대해서는 아무것도 바꾸지 않습니다.** 남은 것은 그대로입니다 — (1) artifact 저장 용량 확보
+(10-06 18:35:17Z에도 `Artifact storage quota has been hit` 확인, 6~12시간 지연), (2) **PR 게이트용 과금 잠금 해제**(또는 PR
+트리거 워크플로까지 self-hosted로 이전), (3) `#104`에 독립 승인 1건. 다만 이전 작업이 보여 준 길이 하나 있습니다 — **같은 방식으로
+`pull_request` 트리거 워크플로를 self-hosted로 옮기면 과금 해제 없이도 PR 게이트를 되살릴 수 있습니다.** 그 판단은 `.github`의
+소유이고 `pull_request_target` 신뢰 경계에 직접 닿으므로, 이 문서는 가능성만 적고 권고하지 않습니다.
+
 ## 운영 메모
 
 - Database objects: 두 단어 이상 `snake_case`, 3NF. Catalog plane 테이블은 #73의 `migrations/0002_ontology_catalog_plane.sql`.
