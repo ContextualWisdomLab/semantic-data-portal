@@ -2265,6 +2265,13 @@ non-draft, `behind 0`, 커밋 1개, 바뀐 파일은 `.github/dependabot.yml` �
   **277 passed, 8 skipped** (head `0b88fdb`, Python 3.12.3).
 - `PYTHONPATH=src python -m sdp.demo_smoke` → `"ready": true`.
 
+이 수리 자체에는 hosted 증거가 **없습니다.** cherry-pick을 올린 head `6e0eb766`의 `Hypothesis property tests`
+(job `114701908249`)와 `Atheris coverage-guided (bounded)`(job `114701908478`)는 2026-10-12T07:11:19Z → 07:11:22Z,
+`runner=""`, `steps: 0`, 3초로 같은 billing annotation을 답니다. 직전 head `1de2681c`(run `38215388598`)도 동일합니다.
+그래서 **잠금은 최소 2026-10-12 07:11Z까지 유효**하고, CRITICAL을 지우는 변경의 유일한 증거는 위 로컬 검증뿐입니다.
+승인자는 hosted 체크가 아니라 그 로컬 증거를 읽어야 합니다. 이 실패 유형은 `#102`에 이미 한 번 코멘트했으므로 다시
+코멘트하지 않았고, 재실행 수단도 없어 계속 관찰만 합니다.
+
 ### 남은 것 하나와, 하지 않은 것
 
 `requirements-graph.txt:15`는 아직 `anyio==4.14.1`입니다. 이 파일은 uv가 아니라 pip-compile 산출물이고
