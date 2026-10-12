@@ -2154,6 +2154,65 @@ schedule 이전은 **PR 병합 경로에 대해서는 아무것도 바꾸지 않
 `pull_request` 트리거 워크플로를 self-hosted로 옮기면 과금 해제 없이도 PR 게이트를 되살릴 수 있습니다.** 그 판단은 `.github`의
 소유이고 `pull_request_target` 신뢰 경계에 직접 닿으므로, 이 문서는 가능성만 적고 권고하지 않습니다.
 
+## 열린 non-draft PR이 5건에서 6건이 되었습니다 — 새 1건도 같은 자리에서 멈췄습니다 (2026-10-08 ~ 10-11 확인)
+
+`#111` `chore(dependabot): stop hosted-only version updates` 가 2026-10-08T04:02:30Z에 열렸습니다. owner `seonghobae`,
+non-draft, `behind 0`, 커밋 1개, 바뀐 파일은 `.github/dependabot.yml` 하나뿐이고 `+0 / −15`입니다. 코드는 한 줄도
+건드리지 않습니다.
+
+그 head(`7ec43999`)의 check run은 6건이고 **6건 전부 `failure`, 성공 0건**입니다. 여섯 모두 같은 annotation을 답니다 —
+`The job was not started because your account is locked due to a billing issue.`
+
+| check run | 시작 → 종료 | 결론 |
+| --- | --- | --- |
+| `API integration suite` | 04:02:34Z → 04:02:37Z | failure (billing) |
+| `Atheris coverage-guided (bounded)` | 04:02:33Z → 04:02:36Z | failure (billing) |
+| `Hypothesis property tests` | 04:02:33Z → 04:02:36Z | failure (billing) |
+| `Analyze (python)` ×2 · `Analyze (actions)` | 동일 분 | failure (billing) |
+
+읽을 것은 이것입니다. **설정 한 파일을 지우는, 제품 코드 위험이 0인 PR도 초록 체크를 한 건도 얻지 못합니다.** `#111`을
+막는 것은 내용이 아니라 레인입니다. 그리고 작성자가 `seonghobae` — 이 세션과 같은 identity — 이므로 이 세션은 `#111`을
+승인할 수 없습니다. `#82`·`#104`·`#107`과 정확히 같은 자리입니다.
+
+잠금은 아직 살아 있습니다. main의 일일 `fuzz` schedule이 10-07·10-08·10-09·10-10·10-11 전부 `failure`이고, 가장 최근
+중앙 주입 실행(`dynamic/github-code-scanning/codeql`, run `38162977170`, 2026-10-11T18:14:29Z → 18:14:35Z)의 두 job
+`114539597274`·`114539597474`는 `runner=""`, `steps: 0`, 3초, 같은 billing annotation입니다. 즉 **최소 2026-10-11
+18:14Z까지** 과금 잠금이 유효합니다. 현재 큐는 비어 있습니다(`status=queued` → 0).
+
+### 수리 PR이 수리 대상 게이트 뒤에 서 있습니다 — `#110`
+
+`#110` `ci: stage all workflows on isolated self-hosted runners` 는 2026-10-03T03:46:57Z에 만들어졌고
+10-03T04:01:27Z 이후 변동 없이 **9일째 draft**입니다. `behind 0`, 커밋 5개, 파일 6개 —
+`.github/workflows/tests.yml`, `.github/workflows/fuzz.yml`, `.github/workflows/scorecard-analysis.yml`,
+`.github/actionlint.yaml`, `docs/self-hosted-ci-migration.md`, `tests/test_self_hosted_ci_contract.py`.
+
+이 저장소 **자신의** 게이트(`Tests`, `fuzz`, `Scorecard analysis`)를 거절당하는 hosted 레인에서 빼내는 변경이 이미
+작성되어 있다는 뜻입니다. 그것이 머지되지 않았기 때문에 10-08의 `#111`에서도 `Tests`와 `fuzz`가 hosted에서 그대로
+거절됐습니다. 수리가 수리 대상 게이트 뒤에 서 있습니다.
+
+`#110`을 ready로 올리지 않았습니다. 이유는 둘입니다.
+
+- **isolated 레인 용량을 확인할 수 없습니다.** `#110`의 check run은 2건뿐이고 둘 다 `cancelled`(2026-10-03T03:47:01Z
+  시작) — draft 생성 직후 취소된 것이므로 `cwlab-ci-isolated` 용량에 대한 증거가 아닙니다. `actions/runners`(repo·org
+  모두)는 이 세션의 프록시에서 403이므로 등록 여부를 저는 읽을 수 없습니다. 기존 관측(`+cwlab-ci-isolated` = 무한 대기)이
+  아직 유효하다면 ready 전환은 체크를 영원히 대기 상태로 만들 뿐입니다.
+- **승인이 여전히 1건 필요하고 그 1건을 이 세션이 할 수 없습니다.** 작성자가 같은 identity입니다.
+
+둘 중 어느 것도 제가 못 바꾸는데 head만 흔드는 전환은 손해만 남습니다. 그래서 관측만 기록합니다.
+
+### 순서에 대한 정정
+
+`#110`은 `#104` 뒤에 줄 서는 항목이 **아닙니다.** 두 PR은 서로 독립입니다.
+
+- `#104`는 이미 완전한 현재-head 증거(25 success / 9 skipped / 0 failure, `behind 0`)를 들고 있어 **추가 체크가 필요
+  없습니다.** 필요한 것은 독립 승인 1건이고, 시한은 "main이 전진하기 전"입니다.
+- `#110`은 **앞으로의** 모든 PR이 증거를 만들 수 있게 하는 변경입니다. 필요한 것은 독립 승인 1건 + isolated 용량입니다.
+
+그래서 owner 조치 목록은 넷으로 늘었습니다 — (1) `#104`에 독립 승인 1건(선행 조건 없음, 시한 있음), (2) `#110`에
+독립 승인 1건 + isolated 용량 등록, (3) artifact 저장 용량 확보, (4) PR 게이트용 과금 잠금 해제. (2)가 서면
+(3)·(4) 없이도 이 저장소 자체 게이트는 되살아납니다. 중앙 required 워크플로(OpenCode·Noema·Strix·스케줄러)는 여전히
+`.github`의 소유이고 `pull_request_target` 신뢰 경계에 닿으므로 이 문서는 범위 밖으로 둡니다.
+
 ## 운영 메모
 
 - Database objects: 두 단어 이상 `snake_case`, 3NF. Catalog plane 테이블은 #73의 `migrations/0002_ontology_catalog_plane.sql`.
