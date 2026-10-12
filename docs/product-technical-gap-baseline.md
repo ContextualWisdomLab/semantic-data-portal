@@ -2349,6 +2349,35 @@ CVE-2026-63349 / CVE-2026-64847에 그대로 노출됩니다. 이 결함은 눈�
 - CI parity 전체 스위트: **278 passed, 8 skipped** (새 테스트 1건 포함).
 - `PYTHONPATH=src python -m sdp.demo_smoke` → `"ready": true`.
 
+### 이 브랜치의 보안 델타는 정확히 두 건이고, 네 건 전부 닫혔습니다 (2026-10-12 08:5xZ 확인)
+
+`origin/main...HEAD`에서 의존성 파일이 바뀐 범위를 pin 단위로 비교했습니다. 바뀐 것은 **보안 범프 두 개뿐이며 새로
+들어온 pin은 없습니다** — 즉 2026-10-01 실측 trivy 스캔이 보지 못한 패키지는 이 브랜치에 하나도 없습니다.
+
+| 락 파일 | main | 이 브랜치 |
+| --- | --- | --- |
+| `requirements.txt` | anyio 4.14.1 · cryptography 49.0.0 | anyio **4.14.2** · cryptography **50.0.0** |
+| `requirements-dev.txt` | anyio 4.14.1 · cryptography 49.0.0 | anyio **4.14.2** · cryptography **50.0.0** |
+| `requirements-test.txt` | anyio 4.14.2 · cryptography 49.0.0 | anyio 4.14.2 · cryptography **50.0.0** |
+| `requirements-graph.txt` | anyio 4.14.1 | anyio **4.14.2** |
+| `fuzz-requirements.txt` | — | main과 동일 |
+
+따라서 10-01 스캔의 발견 4건은 이미지가 설치하는 모든 파일에서 닫혔습니다 — anyio 세 건은 네 락 모두 4.14.2,
+cryptography 한 건은 세 락 모두 50.0.0(graph 락은 cryptography를 담지 않습니다). 남은 작업은 수리가 아니라
+**graph extra 락의 정식 재생성**이고, 그것은 커밋된 플랫폼 집합을 재현하는 owner 환경의 일입니다.
+
+### 열린 "7번째 control"은 갭이 아니라 외부 소유입니다 — 다만 지금 그 외부가 꺼져 있습니다
+
+`demo_smoke`의 `enterprise_controls: 7 / implemented_enterprise_controls: 6`을 미구현 1건으로 읽으면 틀립니다.
+manifest는 `planned_controls: 0`, `external_controls: 1`이고, 그 한 건은 `central_workflow_due_diligence`
+(status `external`)입니다. 이 저장소가 구현할 대상이 아닙니다.
+
+읽어 둘 것은 그 release criteria입니다 — "Required checks pass on current head", "Open PR queue has no
+source-code blocker". **두 조건 모두 지금 충족 불가능합니다**(과금 잠금으로 현재-head 체크가 증거를 만들지 못하고,
+PR 큐는 소스 결함이 아닌 이유로 멈춰 있습니다). 그렇다고 이 저장소가 외부 CI 상태를 스스로 보고하도록 바꾸지는
+않았습니다 — 포털은 org 파이프라인에 접근 권한이 없고, 접근 없이 외부 시스템의 상태를 단언하는 필드를 추가하는 것은
+정직한 증거가 아니라 추측을 계약으로 만드는 일입니다. 상태 보고의 위치는 이 문서이고, 조치 위치는 owner입니다.
+
 ## 운영 메모
 
 - Database objects: 두 단어 이상 `snake_case`, 3NF. Catalog plane 테이블은 #73의 `migrations/0002_ontology_catalog_plane.sql`.
