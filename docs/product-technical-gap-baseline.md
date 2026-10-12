@@ -2213,6 +2213,74 @@ non-draft, `behind 0`, 커밋 1개, 바뀐 파일은 `.github/dependabot.yml` �
 (3)·(4) 없이도 이 저장소 자체 게이트는 되살아납니다. 중앙 required 워크플로(OpenCode·Noema·Strix·스케줄러)는 여전히
 `.github`의 소유이고 `pull_request_target` 신뢰 경계에 닿으므로 이 문서는 범위 밖으로 둡니다.
 
+## main에 CRITICAL이 하나 서 있습니다 — `anyio` 세 건이고, 수리는 이미 draft `#105`에 있습니다 (2026-10-12)
+
+`#109`(dependabot, `pyjwt 2.13.0 → 2.15.0`)는 과금 잠금 **이전**인 2026-10-01에 돌았습니다. 그래서 이 저장소에서 실질
+증거를 가진 몇 안 되는 head 중 하나입니다 — success 23, skipped 7, neutral 2, failure 5(`trivy-fs`,
+`opencode-review`, `noema-review`, `CodeQL compatibility analysis (python)`/`(actions)`).
+
+그 `trivy-fs`(job `110464116105`, 2026-10-01T16:13:28Z → 16:13:48Z)는 플레이크가 아닙니다. 로그에 **진짜 발견 4건**이
+적혀 있습니다.
+
+| 심각도 | CVE | 위치 | 패키지 |
+| --- | --- | --- | --- |
+| CRITICAL (security-severity=9.5) | CVE-2026-63374 | `requirements.txt:11` | anyio |
+| HIGH (8.0) | CVE-2026-63349 | `requirements.txt:11` | anyio |
+| MEDIUM (5.5) | CVE-2026-64847 | `requirements.txt:11` | anyio |
+| HIGH (8.0) | CVE-2026-69247 | `requirements.txt:125` | cryptography |
+
+워크플로가 조치 위치까지 지시합니다 — `Remediate each finding at the shared base branch so open PRs inherit the fix.`
+
+수정 버전을 확인했습니다. anyio 세 건은 전부 **4.14.2**에서 고쳐졌고, cryptography CVE-2026-69247은 **50.0.0**
+(상류 권고 `GHSA-g6cj-pr64-35w5`)입니다.
+
+- `CVE-2026-63374` — `TLSStream`이 호스트명을 IDNA 2003으로 인코딩해 **위조된 TLS 인증서를 받아들일 수 있습니다.** 이
+  저장소의 런타임 경로(fastapi → starlette → anyio, httpx → anyio)가 그대로 지나갑니다.
+- `CVE-2026-63349` — `open_process()`가 `extra_groups`를 백엔드의 `group`으로 넘겨 자식 프로세스가 부모의 보조 그룹을
+  유지할 수 있습니다(권한 하강 실패).
+- `CVE-2026-64847` — 프로세스 풀 워커의 stderr 파이프를 부모가 읽지 않아, 워커가 충분히 쓰면 호출이 무한 블록됩니다(DoS).
+
+### 이 브랜치의 실제 상태와 조치
+
+조치 전 pin은 파일마다 달랐습니다 — `requirements.txt`·`requirements-dev.txt`·`requirements-graph.txt`가
+`anyio==4.14.1`, `requirements-test.txt`만 `anyio==4.14.2`. cryptography는 이 브랜치가 이미 `50.0.0`입니다(main은
+아직 `49.0.0`).
+
+`#105`(dependabot, 커밋 `be7799f`)가 정확히 그 수리입니다 — `requirements.txt`와 `requirements-dev.txt`의 anyio
+블록만 `+3/−3`으로 바꾸는 수술적 변경. 그래서 **같은 커밋을 그대로 cherry-pick했습니다**(`0b88fdb`, `-x`로 출처 기록,
+저자는 dependabot 유지). 해시를 손으로 만들지 않았습니다.
+
+이 환경에서 락을 재생성하지 않은 이유는 분명합니다. 이 컨테이너의 uv(0.8.17 / Linux / CPython 3.12)로
+`uv pip compile pyproject.toml --generate-hashes -o requirements.txt`를 그대로 돌리면 anyio 외에
+**`colorama`와 `tzdata` 두 항목이 사라집니다.** 커밋된 락은 이 둘을 환경 마커 없이 담고 있으므로, 재컴파일은 수리가
+아니라 플랫폼 지원 축소를 함께 싣는 변경이 됩니다. 그래서 재생성이 아니라 이전을 택했습니다.
+
+### 로컬 검증 — 죽은 hosted 레인이 만들 수 없는 증거
+
+- `python3.12 -m pip install --require-hashes -r requirements-dev.txt` → `anyio-4.14.2`, `cryptography-50.0.0`
+  설치 성공. `--require-hashes`가 받은 산출물과 해시를 대조하므로, **옮겨 온 해시가 진짜라는 것이 이 설치로
+  증명됩니다**(손으로 꾸민 값이면 설치가 실패합니다).
+- CI parity(`.github/workflows/tests.yml`와 동일한 경로):
+  `pip install --require-hashes -r requirements-test.txt` → `PYTHONPATH=src python -m pytest` →
+  **277 passed, 8 skipped** (head `0b88fdb`, Python 3.12.3).
+- `PYTHONPATH=src python -m sdp.demo_smoke` → `"ready": true`.
+
+### 남은 것 하나와, 하지 않은 것
+
+`requirements-graph.txt:15`는 아직 `anyio==4.14.1`입니다. 이 파일은 uv가 아니라 pip-compile 산출물이고
+(`pip-compile --constraint=constraints-graph.txt --extra=graph --generate-hashes ...`) 같은 플랫폼 해상도 문제를
+가지므로 이 컨테이너에서 충실히 재생성할 수 없습니다. 손으로 고치지 않았습니다. trivy는 같은 패키지·버전을 파일마다
+중복 보고하지 않으므로(4건 모두 `requirements.txt`만 가리켰습니다), `requirements.txt`가 고쳐진 뒤의 스캔에서 **이
+파일이 새로 드러날 수 있습니다.** graph extra 락의 재생성은 owner 환경에서 해야 합니다.
+
+`#105`를 승인하지 않았습니다. 저자가 dependabot이므로 GitHub의 "자기 PR 승인" 422에 걸리지 않고 이 세션이 기계적으로
+승인할 수는 있습니다. 하지만 (ㄱ) `#105`는 draft여서 병합 대상이 아니고, (ㄴ) 필수 체크가 과금 잠금으로 증거를 만들지
+못하는 상태에서 증거 기반 리뷰어를 제 판단으로 갈아끼우는 일이 됩니다. 그래서 승인 대신 위 검증 기록만 남깁니다.
+
+`#105`는 여전히 독립 carrier입니다. 이 cherry-pick이 `#105`를 superseded로 만들지 않습니다 — 같은 내용을 이 브랜치가
+들고 있을 뿐이고 **main은 아직 `anyio==4.14.1`입니다.** main에 먼저 닿는 쪽이 수리하는 쪽입니다. 그래서 owner 조치에
+하나가 더해집니다: **`#105`(또는 같은 내용을 담은 다른 PR) 하나가 main에 닿아야 CRITICAL이 사라집니다.**
+
 ## 운영 메모
 
 - Database objects: 두 단어 이상 `snake_case`, 3NF. Catalog plane 테이블은 #73의 `migrations/0002_ontology_catalog_plane.sql`.
