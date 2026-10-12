@@ -60,3 +60,46 @@ def test_cryptography_hash_set_matches_across_lock_files() -> None:
         assert _cryptography_hashes(lock_file) == expected, (
             f"{lock_file} cryptography hashes drifted from {LOCK_FILES[0]}"
         )
+
+
+IMAGE_LOCK_FILES = ("requirements.txt", "requirements-graph.txt")
+_PINNED_REQUIREMENT = re.compile(
+    r"^(?P<name>[A-Za-z0-9._-]+)(?:\[[A-Za-z0-9,._-]*\])?==(?P<version>[^\s\\]+)"
+)
+
+
+def _pinned_versions(lock_file: str) -> dict[str, str]:
+    """Return the normalized distribution-name to pinned-version map of a lock."""
+    pins: dict[str, str] = {}
+    for line in (REPOSITORY_ROOT / lock_file).read_text(encoding="utf-8").splitlines():
+        match = _PINNED_REQUIREMENT.match(line)
+        if match is not None:
+            name = match.group("name").lower().replace("_", "-")
+            pins[name] = match.group("version")
+    assert pins, f"{lock_file} must pin at least one distribution"
+    return pins
+
+
+def test_image_locks_agree_on_every_shared_pin() -> None:
+    """Keep the image's two sequential hash-pinned installs from downgrading.
+
+    ``Dockerfile`` installs ``requirements.txt`` and then
+    ``requirements-graph.txt``, both with ``--require-hashes``. pip honours the
+    second file's ``==`` pins, so any package pinned lower there is silently
+    downgraded in the built image after the first install already placed the
+    newer one. That is how a remediated CVE can reappear in the shipped image
+    while the runtime lock looks fixed, so every shared pin must match exactly.
+    """
+    runtime_pins = _pinned_versions(IMAGE_LOCK_FILES[0])
+    graph_pins = _pinned_versions(IMAGE_LOCK_FILES[1])
+    shared = sorted(set(runtime_pins) & set(graph_pins))
+    assert shared, "the image locks must share at least one pinned distribution"
+    conflicts = {
+        name: (runtime_pins[name], graph_pins[name])
+        for name in shared
+        if runtime_pins[name] != graph_pins[name]
+    }
+    assert not conflicts, (
+        "the image lock files disagree on shared pins, so the second "
+        f"--require-hashes install would change them in the image: {conflicts}"
+    )

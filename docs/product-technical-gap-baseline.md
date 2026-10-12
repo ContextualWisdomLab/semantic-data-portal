@@ -2288,6 +2288,67 @@ non-draft, `behind 0`, 커밋 1개, 바뀐 파일은 `.github/dependabot.yml` �
 들고 있을 뿐이고 **main은 아직 `anyio==4.14.1`입니다.** main에 먼저 닿는 쪽이 수리하는 쪽입니다. 그래서 owner 조치에
 하나가 더해집니다: **`#105`(또는 같은 내용을 담은 다른 PR) 하나가 main에 닿아야 CRITICAL이 사라집니다.**
 
+## 이미지는 `anyio` 수리를 조용히 되돌리고 있었습니다 — 재현하고 막았습니다 (2026-10-12)
+
+`requirements.txt`를 고치는 것만으로는 **빌드된 이미지가 고쳐지지 않습니다.** `Dockerfile`은 두 락을 순서대로
+설치합니다.
+
+```dockerfile
+RUN python -m pip install --require-hashes -r requirements.txt \
+  && python -m pip install --require-hashes -r requirements-graph.txt \
+```
+
+두 번째 파일이 `anyio==4.14.1`을 고정하고 있었으므로, pip은 첫 설치가 올려 둔 4.14.2를 **제거하고 4.14.1을 다시
+설치합니다.** 추측이 아니라 이 컨테이너에서 같은 순서로 재현했습니다.
+
+```text
+=== Dockerfile line 19 ===  Name: anyio / Version: 4.14.2
+=== Dockerfile line 20 ===  Found existing installation: anyio 4.14.2
+                            Uninstalling anyio-4.14.2: Successfully uninstalled anyio-4.14.2
+                            Successfully installed anyio-4.14.1 greenlet-3.2.5 sqlalchemy-2.0.51
+=== final ===               Name: anyio / Version: 4.14.1
+```
+
+읽을 것은 이것입니다. **`#105`만으로는 CRITICAL이 사라지지 않습니다.** `#105`는 `requirements.txt`와
+`requirements-dev.txt`만 바꾸므로, 그 수리가 머지되어도 이미지는 CVE-2026-63374(위조 TLS 인증서 수용) /
+CVE-2026-63349 / CVE-2026-64847에 그대로 노출됩니다. 이 결함은 눈에 띄지 않습니다 — trivy는 같은 패키지·버전을
+파일마다 중복 보고하지 않아 `requirements.txt` 한 줄만 가리키고, 빌드 로그의 downgrade는 성공 로그 사이에 섞입니다.
+
+### 조치 — 생성 블록 이전 + 회귀 테스트
+
+`requirements-graph.txt`의 anyio 블록을 `requirements.txt`의 것과 **바이트 동일하게** 옮겼습니다(버전 줄 + 해시 두
+줄). 해시를 손으로 만들지 않았고, 이 환경에서 pip-compile로 이 파일을 재생성하지 않은 이유는 측정해 두었습니다 —
+문서화된 명령 그대로 `--upgrade-package anyio==4.14.2`를 붙여 돌리면 diff가 195줄이 되고, anyio 외에 이런 변화가
+함께 실립니다.
+
+| 재생성이 함께 바꾸는 것 | 내용 |
+| --- | --- |
+| 추가 | `cryptography==50.0.2`, `cffi==2.1.1`, `pycparser==3.11`, `pyjwt[crypto]==2.13.0` |
+| 삭제 | `colorama==0.4.6`, `tzdata==2026.2` (커밋된 파일은 마커 없이 담고 있음) |
+
+추가분이 뜻하는 바가 하나 더 있습니다. **커밋된 `requirements-graph.txt`는 `pyproject.toml`보다 오래됐습니다** —
+`PyJWT[crypto]`가 `[project].dependencies`에 들어오기 전에 생성되어 pyjwt·cryptography·cffi·pycparser를 하나도
+담고 있지 않습니다. 이미지가 깨지지 않는 이유는 `Dockerfile`이 그 전에 `requirements.txt`를 설치하기 때문일
+뿐입니다. 또 `cryptography==50.0.2`는 `tests/test_dependency_locks.py`가 다른 세 락에 대해 고정한 `50.0.0`과
+어긋나므로, 재생성은 수리가 아니라 세 가지 변경을 한꺼번에 싣는 일이 됩니다. graph extra 락의 정식 재생성은 커밋된
+파일과 같은 플랫폼 집합을 재현하는 owner 환경에서 해야 합니다.
+
+대신 이 결함 유형이 다시는 조용히 지나가지 않도록 회귀 테스트를 넣었습니다 —
+`test_image_locks_agree_on_every_shared_pin`은 `Dockerfile`이 함께 설치하는 두 락이 **공유하는 모든 pin**에 대해
+버전 일치를 요구합니다(현재 공유 pin 17개). 범위를 이 두 파일로 한정한 것은 의도적입니다: `requirements-test.txt`는
+이미지에 들어가지 않고 `greenlet`(3.5.3 vs 3.2.5)·`tzdata`(2026.3 vs 2026.2)에서 이미 갈라져 있으므로, 전체 락에
+일괄 규칙을 걸면 보안과 무관한 이유로 실패합니다.
+
+### 검증 (로컬, head 반영)
+
+- **RED 확인**: graph 락을 4.14.1로 되돌리면 새 테스트가 정확히 그 충돌을 보고하며 실패합니다 —
+  `AssertionError: ... {'anyio': ('4.14.2', '4.14.1')}`. 되돌림을 취소하면 통과합니다.
+- `pip install --require-hashes -r requirements.txt` → `requirements-graph.txt` 순서 재현 결과 최종
+  `anyio 4.14.2`, `cryptography 50.0.0`. 두 번째 설치는 `greenlet`·`sqlalchemy`만 추가하고 아무것도 내리지 않습니다.
+  `--require-hashes`가 통과했으므로 **옮겨 온 해시가 graph 락에서도 진짜임이 증명**됩니다.
+- CI parity 전체 스위트: **278 passed, 8 skipped** (새 테스트 1건 포함).
+- `PYTHONPATH=src python -m sdp.demo_smoke` → `"ready": true`.
+
 ## 운영 메모
 
 - Database objects: 두 단어 이상 `snake_case`, 3NF. Catalog plane 테이블은 #73의 `migrations/0002_ontology_catalog_plane.sql`.
