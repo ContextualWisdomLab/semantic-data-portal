@@ -77,7 +77,10 @@ _logger = logging.getLogger(__name__)
 # rejected outright otherwise, so an arbitrary string (e.g. one carrying cypher
 # or SQL breakout characters) can never reach the statement text. Both backends
 # enforce this identically for behaviour parity.
-_AGE_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# \Z, not $: with $ the pattern also matches before a single trailing newline, so
+# "broader\n" passed this guard and then failed the _AGE_LABEL_CHARS lookup with a
+# KeyError instead of the documented ValueError - a 500 on POST /graph/edges.
+_AGE_IDENTIFIER_RE = re.compile(r"\A[A-Za-z_][A-Za-z0-9_]*\Z")
 
 # Fixed identifier alphabet used to rebuild validated labels character by
 # character. Every returned label is provably composed of these constant
@@ -98,7 +101,12 @@ def _relationship_label(edge_type: str) -> str:
 
     if not _AGE_IDENTIFIER_RE.match(edge_type):
         raise ValueError(f"invalid relationship type: {edge_type!r}")
-    return "".join(_AGE_LABEL_CHARS[ch] for ch in edge_type.upper())
+    try:
+        return "".join(_AGE_LABEL_CHARS[ch] for ch in edge_type.upper())
+    except KeyError as exc:  # pragma: no cover - defence in depth behind the regex
+        # The regex and the alphabet must agree; if they ever diverge again, fail
+        # with the documented type rather than a 500.
+        raise ValueError(f"invalid relationship type: {edge_type!r}") from exc
 
 
 # --- Backend contract ---------------------------------------------------------

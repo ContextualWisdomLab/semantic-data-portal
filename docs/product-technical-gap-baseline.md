@@ -2722,6 +2722,21 @@ endpoint 공개이고, `distributions`는 discovery view에도 의도적으로 �
 검증: RED 2건 선확인 → 수리, 대조군 1건(저장 snapshot 불변)도 함께. 전체 **337 passed / 8 skipped**,
 `tests/fuzz` 10 passed, `sdp.demo_smoke` ready=true, 11개 라우트 재측정으로 `pii` 소멸 확인.
 
+### 수리하지 않고 기록만 한 항목 — pgvector 빌드 입력 핀 (2026-10-14)
+
+`docker/postgres-age-pgvector.Dockerfile`은 pgvector를 **가변 GitHub 태그 URL**에서
+받아 체크섬·서명 검증 없이 root로 컴파일해 `make install`합니다(10, 19-25행, `USER root`는
+8행). 이 저장소에서 digest/commit SHA/hash로 고정되지 않은 **유일한 빌드 입력**입니다.
+governed 그래프와 증빙 데이터를 담는 Postgres 서버에 들어가는 확장이므로 공급망 관점에서
+실재하는 결함입니다.
+
+**고치지 않았습니다.** 이 컨테이너에서 해당 tarball을 받을 수 없습니다 —
+`curl https://github.com/pgvector/pgvector/archive/refs/tags/v0.7.4.tar.gz`가 프록시에서
+**403**입니다. 따라서 진짜 sha256을 계산할 수 없고, **검증하지 않은 해시를 적는 것은
+핀이 아니라 핀의 외관**입니다(그 쪽이 더 위험합니다 — 이후 아무도 다시 확인하지 않습니다).
+네트워크가 되는 환경에서 tarball을 받아 `sha256sum`으로 고정하거나, 특정 commit SHA를
+`git clone` 후 체크아웃하는 방식으로 교체해야 합니다.
+
 ### 병합 게이트 실측 (2026-10-14)
 
 감사 큐를 소진한 뒤 병합 가능성을 다시 측정했습니다. **열린 비-draft PR 7건 전부 APPROVED 리뷰가

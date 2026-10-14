@@ -971,17 +971,38 @@ def browse_schema(dataset_id: str, user: str = Query(default="anonymous"), purpo
         raise HTTPException(status_code=403, detail=str(exc))
 
 
+def _pagination_int(payload: dict[str, Any], field: str, default: int) -> int:
+    """Coerce one pagination field, refusing a non-numeric JSON value as a 400.
+
+    ``int()`` raises ``TypeError`` for a list, dict or ``None``, which is not in
+    the route's ``except`` list, so those bodies produced a 500.
+    """
+    value = payload.get(field, default)
+    if value is None:
+        return default
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        raise HTTPException(status_code=400, detail=f"{field} must be an integer")
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail=f"{field} must be an integer")
+
+
 @app.post("/browse/{dataset_id}/preview")
 def browse_preview(dataset_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     try:
         if "user" not in payload:
             raise HTTPException(status_code=400, detail="user is required")
+        # int() on a JSON array, object or null raises TypeError, which the
+        # handlers below do not catch - a 500 for what is plainly a bad request.
+        limit = _pagination_int(payload, "limit", 100)
+        offset = _pagination_int(payload, "offset", 0)
         return browse.preview(
             dataset_id=dataset_id,
             user=payload.get("user", "anonymous"),
             purpose=payload.get("purpose", "analysis"),
-            limit=min(int(payload.get("limit", 100)), 100),
-            offset=max(int(payload.get("offset", 0)), 0),
+            limit=min(limit, 100),
+            offset=max(offset, 0),
         )
     except KeyError:
         raise HTTPException(status_code=404, detail="dataset not found")

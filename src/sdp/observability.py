@@ -123,7 +123,13 @@ def _sink_status() -> dict[str, Any]:
     parsed = urlparse(sink_url)
     scheme = parsed.scheme or "file"
     if scheme == "file":
-        target = str(_file_sink_path(sink_url, parsed))
+        # A file sink published its absolute server path verbatim, and for the UNC
+        # form _file_sink_path deliberately supports (file://host/share/...) that
+        # path carries the sink's internal hostname - the same authority component
+        # _redacted_sink_target exists to suppress. The manifest is
+        # unauthenticated, so only the fact that a local sink is configured is
+        # published.
+        target = "local_file"
     else:
         target = _redacted_sink_target(parsed)
 
@@ -224,8 +230,23 @@ def list_request_observations(limit: int = 100) -> list[dict[str, Any]]:
     return list(_REQUEST_OBSERVATIONS)[-limit:]
 
 
+def count_request_observations() -> int:
+    """Return how many observations the ring buffer actually holds.
+
+    The gauges used ``len()`` of a *page*, so ``sdp_request_observations_total``
+    saturated at the page size (25) while the buffer held up to 500. A counter
+    that cannot exceed its page is not a counter.
+    """
+    return len(_REQUEST_OBSERVATIONS)
+
+
 def list_observability_export_errors(limit: int = 50) -> list[dict[str, Any]]:
     return list(_EXPORT_ERRORS)[-limit:]
+
+
+def count_observability_export_errors() -> int:
+    """Return how many export errors the ring buffer actually holds."""
+    return len(_EXPORT_ERRORS)
 
 
 def reset_request_observability() -> None:
@@ -268,8 +289,9 @@ def build_observability_manifest() -> dict[str, Any]:
             "enterprise_controls_implemented": controls.implemented_controls,
             "enterprise_controls_planned": controls.planned_controls,
             "enterprise_controls_external": controls.external_controls,
-            "request_observations_total": len(request_observations),
-            "observability_export_errors_total": len(export_errors),
+            # Real buffer occupancy, not the size of the page rendered below.
+            "request_observations_total": count_request_observations(),
+            "observability_export_errors_total": count_observability_export_errors(),
         },
         "recent_requests": request_observations[-10:],
         "export_errors": export_errors[-5:],
@@ -311,7 +333,7 @@ def prometheus_metrics_text() -> str:
         "# HELP sdp_enterprise_controls_planned Number of planned enterprise controls.",
         "# TYPE sdp_enterprise_controls_planned gauge",
         f"sdp_enterprise_controls_planned {metrics['enterprise_controls_planned']}",
-        "# HELP sdp_request_observations_total Number of request observations in the local ring buffer.",
+        "# HELP sdp_request_observations_total Request observations held in the local bounded ring buffer.",
         "# TYPE sdp_request_observations_total gauge",
         f"sdp_request_observations_total {metrics['request_observations_total']}",
         "# HELP sdp_observability_export_errors_total Number of request observation export errors.",

@@ -76,3 +76,47 @@ def test_entrypoint_starts_on_the_in_memory_backend_without_a_dsn(tmp_path: Path
     assert completed.returncode == 0, completed.stderr
     assert marker.read_text().strip() == "started"
     assert "in-memory backend" in completed.stdout
+
+
+# --- deployment posture contracts ----------------------------------------
+
+COMPOSE = Path(__file__).resolve().parents[1] / "docker-compose.yml"
+DOCKERFILE = Path(__file__).resolve().parents[1] / "Dockerfile"
+
+
+def test_healthchecks_probe_the_readiness_endpoint_not_the_constant() -> None:
+    """``/health`` returns a hardcoded ``{"status": "ok"}`` and touches no store;
+    ``/healthz`` calls ``get_store().readiness()`` and answers 503 when the backend
+    is unreachable. Every healthcheck probed the constant, so a container whose
+    graph or evidence backend was down still reported healthy — the same blind spot
+    the entrypoint fix above was about.
+    """
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+    compose = COMPOSE.read_text(encoding="utf-8")
+    assert "8000/health'" not in dockerfile, "Dockerfile HEALTHCHECK still probes /health"
+    assert "8000/healthz'" in dockerfile
+    assert "8000/health'" not in compose, "a compose healthcheck still probes /health"
+    assert compose.count("8000/healthz'") >= 2
+
+
+def test_application_ports_are_bound_to_loopback() -> None:
+    """The database services were deliberately restricted to 127.0.0.1 while the
+    application services published on every interface — and the API's only
+    identity material is a caller-supplied query parameter."""
+    compose = COMPOSE.read_text(encoding="utf-8")
+    published = [
+        line.strip().lstrip("- ").strip('"')
+        for line in compose.splitlines()
+        if line.strip().startswith('- "') and ":" in line and "urlopen" not in line
+    ]
+    for mapping in published:
+        assert mapping.startswith("127.0.0.1:"), f"{mapping} is published on all interfaces"
+
+
+def test_application_code_is_not_writable_by_the_serving_user() -> None:
+    """``chown -R sdp:sdp /app`` gave the request-handling uid ownership of the
+    code on its own ``PYTHONPATH``, so that uid could rewrite what it executes.
+    Only the data directory needs to be writable."""
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+    assert "chown -R sdp:sdp /app /data" not in dockerfile
+    assert "chown -R sdp:sdp /data" in dockerfile

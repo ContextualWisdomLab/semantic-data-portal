@@ -67,7 +67,7 @@ export SDP_DATABASE_URL='postgresql://sdp_app:<url-encoded-password>@postgres:54
 docker compose --profile postgres up --build
 ```
 
-이 프로파일은 `semantic-data-portal-postgres`를 `http://localhost:8001`에 열고, `SDP_DATABASE_URL`과 `POSTGRES_PASSWORD`를 필수 env로 요구합니다. `POSTGRES_USER`는 `sdp_app` 기본값이 있지만 명시 설정을 권장합니다. Postgres host port는 기본적으로 `127.0.0.1:54329`에만 바인딩되어 managed Postgres 경로와 동일한 store protocol을 로컬에서 검증합니다.
+이 프로파일은 `semantic-data-portal-postgres`를 `http://localhost:8001`에 열고(앱 서비스 host port는 세 개 모두 `127.0.0.1`에만 바인딩되며, 컨테이너 healthcheck는 상수를 돌려주는 `/health`가 아니라 백엔드 준비 상태를 보고 503을 내는 `/healthz`를 조회합니다), `SDP_DATABASE_URL`과 `POSTGRES_PASSWORD`를 필수 env로 요구합니다. `POSTGRES_USER`는 `sdp_app` 기본값이 있지만 명시 설정을 권장합니다. Postgres host port는 기본적으로 `127.0.0.1:54329`에만 바인딩되어 managed Postgres 경로와 동일한 store protocol을 로컬에서 검증합니다.
 
 그래프 엔진(Postgres + Apache AGE + pgvector) 프로파일은 다음 명령으로 실행합니다.
 
