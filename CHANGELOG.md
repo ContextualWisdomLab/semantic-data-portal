@@ -9,10 +9,10 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 82
     git log --format=%H origin/docs/product-technical-gap-baseline..HEAD \
       --name-only -- docs/product-technical-gap-baseline.md | grep -c '^[0-9a-f]\{40\}$'
 
-앞서 적혀 있던 164/112, 186/113, 199/122/77은 각각 그 시점의 값이고 이후 커밋을
-반영하지 않은 숫자였습니다 — 자기 문서의 수치도 측정해서 맞춰 둡니다. 199는 이 줄을
-쓴 뒤 3개 커밋이 더 쌓여 낡았고, 그것을 다시 측정해 203으로 고쳤습니다. 이 줄이 또
-낡으면 그것도 같은 결함입니다.
+앞서 적혀 있던 164/112, 186/113, 199/122/77, 203/122/81은 각각 그 시점의 값이고 이후
+커밋을 반영하지 않은 숫자였습니다 — 자기 문서의 수치도 측정해서 맞춰 둡니다. 199는 이
+줄을 쓴 뒤 3개 커밋이 더 쌓여 낡아 203으로, 203은 다음 커밋에서 낡아 204로 다시
+측정해 고쳤습니다. 이 줄이 또 낡으면 그것도 같은 결함입니다.
 
 형식은 [Keep a Changelog](https://keepachangelog.com/)를 따릅니다.
 
@@ -26,10 +26,16 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 82
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                    1112 passed, 11 skipped
-    pytest (역방향/난수 순서)  순서 무관 통과 (역순 + seed 11/707/31337)
-    pytest tests/fuzz          11 passed
-    python -m sdp.demo_smoke   exit 0, "ready": true
+    pytest                       1112 passed, 11 skipped
+    pytest (파일 순서 정/역/난수)  각 1101 passed, 11 skipped — 순서 무관
+                                 (정순 · 역순 · seed 11/707/31337)
+    pytest tests/fuzz            11 passed
+    python -m sdp.demo_smoke     exit 0, "ready": true
+
+`tests/fuzz`는 파일 순서 측정 대상(`tests/test_*.py`)에 포함되지 않으므로 1112 - 1101
+= 11건의 차이가 납니다. 트리를 **동결**한 상태에서만 측정합니다 — 이 세션에서 백그라운드
+측정 중에 트리를 고친 탓에 seed 11이 4건 실패로 나온 일이 있고, 그것은 결함이 아니라
+동시 편집이었습니다.
 
 ### Security — 정의 없는 개념이 공유 용어집에 게시될 수 있었습니다 (ONT-005)
 
