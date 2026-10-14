@@ -263,21 +263,44 @@ def enterprise_oidc_preview(payload: dict[str, Any]) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc))
 
     ignored_role_claims = authz.oidc_role_claims(claims)
-    audit_event = authz.record_oidc_mapping_audit_event(
-        context,
-        group_bindings,
-        mapping_mode="claim_mapping_preview",
-        ignored_role_claims=ignored_role_claims,
-    )
+    # An unauthenticated caller must not be able to write to the evidence
+    # ledger at all. This route is open (previewing a claim shape discloses
+    # nothing) and it was recording an audit event on every call, filed under
+    # the tenant the *unverified claims* named. Two consequences, both measured:
+    # an outsider could plant a row in any tenant's ledger claiming
+    # platform-admin had been granted, and 300 unauthenticated requests put 300
+    # rows into the persisted store, which has no cap.
+    #
+    # The preview still computes and still returns its mapping. The ledger write
+    # now needs an authenticated actor, and even then the row is marked
+    # unverified: this route does not check a signature, so its tenant is a
+    # claim rather than a fact.
+    actor_id = _actor(payload)
+    audit_event = None
+    if actor_id != "anonymous" and resolve_actor_context(actor_id).roles:
+        audit_event = authz.record_oidc_mapping_audit_event(
+            context,
+            group_bindings,
+            mapping_mode="claim_mapping_preview",
+            ignored_role_claims=ignored_role_claims,
+            tenant_verified=False,
+        )
 
     return {
         "mode": "claim_mapping_preview",
         "token_verification": "external_signature_required_claim_shape_validated",
+        # Stated rather than left to inference: an open preview records nothing.
+        "audit_recorded": audit_event is not None,
+        "audit_note": (
+            "미인증 preview는 증빙 원장에 기록되지 않습니다 (actor를 보내면 "
+            "기록되며, 이 라우트는 서명을 검증하지 않으므로 tenant는 claim으로 "
+            "표시됩니다)."
+        ),
         "actor_context": context.model_dump(),
         "groups": claims.get("groups", []),
         "group_role_bindings": group_bindings,
         "ignored_role_claims": ignored_role_claims,
-        "audit_event_id": audit_event.id,
+        "audit_event_id": audit_event.id if audit_event else None,
     }
 
 
@@ -318,6 +341,10 @@ def enterprise_oidc_verify(payload: dict[str, Any]) -> dict[str, Any]:
     audit_event = authz.record_oidc_mapping_audit_event(
         context,
         group_bindings,
+        # This path checked the signature against operator-configured trust
+        # anchors, so the token's tenant is a verified fact and the row belongs
+        # in that tenant's ledger.
+        tenant_verified=True,
         mapping_mode="jwks_signature_verification",
         ignored_role_claims=ignored_role_claims,
     )

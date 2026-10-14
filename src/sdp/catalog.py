@@ -46,33 +46,114 @@ _SCHEMA_HISTORY: dict[str, list[dict[str, Any]]] = {}
 _GOVERNED_DATASET_FIELDS = ("schema", "source_system", "profile", "tenant_id")
 
 
+# Connection-string keys that are locators rather than secrets. An ALLOW-list,
+# not a deny-list of password-ish names: a deny-list leaks the moment a driver
+# uses a key nobody listed, and that is exactly how the URL-only version of this
+# function leaked. Anything not named here is dropped.
+_SAFE_CONNECTION_KEYS = frozenset(
+    {
+        "account",
+        "data source",
+        "database",
+        "dbname",
+        "driver",
+        "host",
+        "hostaddr",
+        "port",
+        "server",
+        "service_name",
+        "sslmode",
+        "warehouse",
+    }
+)
+
+# Schemes that wrap another URL (``jdbc:postgresql://user:pw@host/db``). The
+# wrapper makes ``urlsplit`` read the whole inner URL as a *path*, so the
+# authority - and the userinfo in it - is never parsed.
+_WRAPPER_SCHEMES = frozenset({"jdbc", "odbc"})
+
+
+def _redacted_keyword_value_dsn(source_system: str) -> str:
+    """Keep only the allow-listed locator keys of a keyword/value connection string."""
+    tokens: list[str] = []
+    for chunk in re.split(r"[;\s]+", source_system):
+        if "=" not in chunk:
+            continue
+        key, _, value = chunk.partition("=")
+        if key.strip().lower() in _SAFE_CONNECTION_KEYS:
+            tokens.append(f"{key.strip()}={value}")
+    return " ".join(tokens) if tokens else "redacted"
+
+
 def redacted_source_system(source_system: str) -> str:
     """Describe a dataset's source system without the credentials its DSN may carry.
 
     ``source_system`` is a governed field that ``catalog.discovery_view``
-    withholds, and a DSN routinely carries a password in its userinfo component
-    (``postgresql://user:secret@host/db``). The connector evidence needs the
-    locator, never the secret, so userinfo and query are dropped on every path -
-    including the authorized one, since no caller needs the credential.
+    withholds, and a DSN routinely carries a password - in a URL's userinfo
+    (``postgresql://user:secret@host/db``), as a keyword/value pair
+    (``host=h user=u password=secret``), inside an ODBC string
+    (``Driver={PostgreSQL};Uid=u;Pwd=secret;``), or behind a wrapper scheme
+    (``jdbc:postgresql://u:secret@h/db``). The connector evidence needs the
+    locator, never the secret, so this drops the credential on every path -
+    including the authorized one, since no caller needs it.
+
+    The first version of this function assumed ``source_system`` is always a URL
+    with an authority, and returned the input unchanged when ``urlsplit`` found
+    no host. Measured across ten real connection-string forms, **six leaked the
+    secret verbatim**::
+
+        postgresql://u:PW123@h:5432/db                 -> postgresql://h:5432/db      ok
+        host=h port=5432 user=u password=PW123 dbname=db  -> unchanged                LEAK
+        jdbc:postgresql://u:PW123@h:5432/db            -> unchanged                   LEAK
+        Driver={PostgreSQL};Server=h;Uid=u;Pwd=PW123;  -> unchanged                   LEAK
+        postgresql://h:5432/db password=PW123          -> unchanged                   LEAK
+        Server=h;Database=db;User Id=u;Password=PW123; -> unchanged                   LEAK
+        PW123                                          -> unchanged                   LEAK
+
+    ``audited_patch_values`` is the one redaction on a patched ``source_system``,
+    so the cleartext password was written three times into the audit event
+    (``changes``, ``before``, ``after``) and returned by
+    ``GET /catalog/datasets/{id}/audit?user=analyst`` - to the very roles for
+    which every read route withholds ``source_system`` entirely. The existing
+    test passed because it only ever patched the one form that worked.
+
+    It now fails closed: a string without a parseable authority keeps only
+    allow-listed locator keys, and a string with no recognizable structure
+    becomes ``"redacted"`` rather than being echoed.
     """
     try:
         parts = urlsplit(source_system)
     except ValueError:
         return "redacted"
+
+    # A wrapper scheme hides the real URL in the path; unwrap and re-parse once.
+    if parts.scheme in _WRAPPER_SCHEMES and "//" in parts.path:
+        inner = redacted_source_system(source_system.split(":", 1)[1])
+        return f"{parts.scheme}:{inner}"
+
     if not parts.scheme:
-        return source_system
+        return _redacted_keyword_value_dsn(source_system)
     try:
         host = parts.hostname
     except ValueError:
         return f"{parts.scheme}://redacted"
     if host is None:
-        return urlunsplit((parts.scheme, "", parts.path, "", ""))
+        # No authority: the remainder is not a locator we can trust to be
+        # secret-free, so only the allow-listed keys of it survive.
+        remainder = _redacted_keyword_value_dsn(parts.path)
+        return f"{parts.scheme}:{remainder}" if remainder != "redacted" else f"{parts.scheme}:redacted"
     try:
         port = parts.port
     except ValueError:
         port = None
     authority = f"{host}:{port}" if port else host
-    return urlunsplit((parts.scheme, authority, parts.path, "", ""))
+    # The path can carry a trailing secret of its own
+    # (``postgresql://h/db password=PW``), so it is filtered the same way.
+    path = parts.path
+    if "=" in path:
+        safe = _redacted_keyword_value_dsn(path)
+        path = f"/{safe}" if safe != "redacted" else "/redacted"
+    return urlunsplit((parts.scheme, authority, path, "", ""))
 
 
 # The same boundary at column granularity. The schema-history and schema-diff

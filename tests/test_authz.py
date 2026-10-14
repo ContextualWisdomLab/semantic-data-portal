@@ -287,9 +287,37 @@ def test_record_oidc_mapping_audit_event_marks_unmapped_contexts():
         context,
         [{"group_name": "unknown-group", "tenant_scope": "", "granted_roles": []}],
         mapping_mode="claim_mapping_preview",
+        # No default: the answer decides whose ledger the row lands in, so every
+        # call site states it. A verified mapping keeps mapped/unmapped.
+        tenant_verified=True,
     )
     assert event.result == "unmapped"
     assert event.action == authz.OIDC_MAPPING_AUDIT_ACTION
     assert event.resource == authz.OIDC_MAPPING_AUDIT_RESOURCE
     assert event.details["ignored_role_claims"] == []
     assert event.details["granted_roles"] == []
+
+
+
+def test_an_unverified_mapping_is_not_attributed_to_the_claimed_tenant():
+    """``tenant_verified=False`` files the row outside any real tenant.
+
+    The evidence stores file an audit row by ``details['tenant_id']``, and this
+    recorder wrote ``actor_context.tenant_id`` verbatim - which on the preview
+    path comes from unverified caller claims. An outsider could therefore plant
+    a row in any tenant's ledger.
+    """
+    context = authz.ActorContext(
+        subject="mallory@evil.example", tenant_id="external", roles=["admin"]
+    )
+    event = authz.record_oidc_mapping_audit_event(
+        context,
+        [{"group_name": "sdp-platform-admins", "tenant_scope": "*", "granted_roles": ["admin"]}],
+        mapping_mode="claim_mapping_preview",
+        tenant_verified=False,
+    )
+    assert event.details["tenant_id"] == authz.UNRESOLVED_TENANT_ID
+    assert event.details["claimed_tenant_id"] == "external"
+    assert event.details["tenant_verified"] is False
+    # "mapped" would read as a real grant.
+    assert event.result == "previewed"

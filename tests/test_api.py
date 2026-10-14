@@ -1726,6 +1726,13 @@ def test_oidc_preview_reports_group_role_bindings_with_granting_scope():
                 "exp": int(time()) + 3600,
             },
             "role_map": {"demo": {"sdp-analysts": ["data-analyst"]}},
+            # An actor is required for the preview to record anything. The route
+            # is open, but an unauthenticated caller must not be able to write
+            # to the evidence ledger: it was recording on every call, filed
+            # under the tenant the *unverified claims* named, so an outsider
+            # could plant a row in any tenant's ledger (and 300 requests put
+            # 300 rows into the uncapped persisted store).
+            "actor": "admin",
         },
     )
 
@@ -1736,6 +1743,92 @@ def test_oidc_preview_reports_group_role_bindings_with_granting_scope():
         {"group_name": "unknown-group", "tenant_scope": "", "granted_roles": []},
     ]
     assert body["audit_event_id"]
+    assert body["audit_recorded"] is True
+
+
+def test_oidc_preview_records_nothing_for_an_unauthenticated_caller() -> None:
+    """The open preview must not let an outsider write evidence.
+
+    Measured before the repair, with no actor and no credential::
+
+        POST /enterprise/auth/oidc-preview
+          {"claims": {"sub": "mallory@evil.example", "tenant_id": "external",
+                      "groups": ["sdp-platform-admins"], "exp": 9999999999}}
+          -> 200
+
+        GET /audit/events?user=external-analyst
+          -> one row: actor=mallory@evil.example, result=mapped,
+             details.granted_roles=[admin, data-analyst, platform-admin],
+             details.tenant_id=external, decision_id=null
+
+        GET /audit/events?user=analyst  (the caller's own tenant)  -> []
+
+    The victim tenant's auditor read a forged grant with nothing to cross-check
+    it against, and the persisted store has no cap.
+    """
+    forged = client.post(
+        "/enterprise/auth/oidc-preview",
+        json={
+            "claims": {
+                "sub": "mallory@evil.example",
+                "tenant_id": "external",
+                "groups": ["sdp-platform-admins"],
+                "exp": int(time()) + 3600,
+            }
+        },
+    )
+    assert forged.status_code == 200, forged.text
+    body = forged.json()
+    # The mapping is still computed - previewing a claim shape discloses nothing.
+    assert body["actor_context"]["tenant_id"] == "external"
+    # Nothing was written.
+    assert body["audit_recorded"] is False
+    assert body["audit_event_id"] is None
+    assert body["audit_note"]
+
+    victim = client.get("/audit/events", params={"user": "external-analyst", "limit": 20})
+    assert victim.status_code == 200, victim.text
+    planted = [
+        row
+        for row in victim.json()
+        if row.get("actor") == "mallory@evil.example"
+    ]
+    assert not planted, planted
+
+
+def test_a_recorded_preview_is_marked_unverified_rather_than_mapped() -> None:
+    """Even with an actor, this route checks no signature.
+
+    A row reading ``result: mapped`` with ``granted_roles: [admin, ...]`` is
+    indistinguishable from a real grant, and the preview's tenant comes from
+    claims nobody verified - so the row is filed under ``unresolved`` with the
+    claimed tenant kept beside it as a claim.
+    """
+    recorded = client.post(
+        "/enterprise/auth/oidc-preview",
+        json={
+            "actor": "admin",
+            "claims": {
+                "sub": "someone@example.com",
+                "tenant_id": "external",
+                "groups": ["sdp-platform-admins"],
+                "exp": int(time()) + 3600,
+            },
+        },
+    )
+    assert recorded.status_code == 200, recorded.text
+    assert recorded.json()["audit_recorded"] is True
+
+    events = client.get("/audit/events", params={"user": "admin", "limit": 50})
+    row = next(
+        item
+        for item in events.json()
+        if item["id"] == recorded.json()["audit_event_id"]
+    )
+    assert row["result"] == "previewed", row
+    assert row["details"]["tenant_verified"] is False
+    assert row["details"]["tenant_id"] == "unresolved"
+    assert row["details"]["claimed_tenant_id"] == "external"
 
 
 def test_oidc_preview_rejects_mixed_shape_role_map():
@@ -1759,14 +1852,31 @@ def test_oidc_preview_rejects_mixed_shape_role_map():
 
 
 def test_oidc_mapping_audit_event_records_bindings_without_claim_leak(tmp_path):
-    """Every mapping must persist an audit event carrying the granting scope and
-    resolved roles, and must not persist the claim payload or the token."""
+    """A recorded mapping carries the granting scope and resolved roles, and
+    never the claim payload or the token.
+
+    Two changes from the original form of this test, both because the preview
+    path records differently now:
+
+    * it sends an ``actor``. An unauthenticated caller must not be able to write
+      to the evidence ledger at all - this route was recording on every call,
+      filed under the tenant the *unverified claims* named, so an outsider
+      could plant a row in any tenant's ledger.
+    * it expects ``previewed`` / ``unresolved`` / ``claimed_tenant_id`` rather
+      than ``mapped`` / ``demo``. This route checks no signature, so the
+      claimed tenant is a claim, and a row reading ``mapped`` with real
+      ``granted_roles`` is indistinguishable from a verified grant.
+
+    The no-leak assertions - no claim payload, no token - are unchanged, and the
+    exact details key set is still pinned so a new key cannot appear unnoticed.
+    """
     store = sdp_core.SQLiteEvidenceStore(tmp_path / "oidc-evidence.sqlite3")
     previous = app_evidence.configure_evidence_store(store)
     try:
         response = client.post(
             "/enterprise/auth/oidc-preview",
             json={
+                "actor": "admin",
                 "claims": {
                     "email": "analyst@example.com",
                     "tenant_id": "demo",
@@ -1786,10 +1896,12 @@ def test_oidc_mapping_audit_event_records_bindings_without_claim_leak(tmp_path):
     assert len(events) == 1
     event = events[0]
     assert event.action == "oidc_group_role_mapping"
-    assert event.result == "mapped"
+    assert event.result == "previewed"
     assert event.actor == "analyst@example.com"
     assert event.details["mapping_mode"] == "claim_mapping_preview"
-    assert event.details["tenant_id"] == "demo"
+    assert event.details["tenant_id"] == "unresolved"
+    assert event.details["claimed_tenant_id"] == "demo"
+    assert event.details["tenant_verified"] is False
     assert event.details["granted_roles"] == ["data-analyst"]
     assert event.details["ignored_role_claims"] == ["sdp-platform-admins"]
     assert event.details["group_bindings"] == [
@@ -1798,6 +1910,8 @@ def test_oidc_mapping_audit_event_records_bindings_without_claim_leak(tmp_path):
     assert set(event.details) == {
         "mapping_mode",
         "tenant_id",
+        "claimed_tenant_id",
+        "tenant_verified",
         "granted_roles",
         "group_bindings",
         "ignored_role_claims",

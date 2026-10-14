@@ -19,6 +19,7 @@ from uuid import uuid4
 import jwt
 from jwt import InvalidTokenError, PyJWK
 from sdp_core import ActorContext, AuditEvent
+from sdp_core.stores import UNRESOLVED_TENANT_ID
 
 from .evidence import append_audit_event
 
@@ -214,27 +215,68 @@ def record_oidc_mapping_audit_event(
     *,
     mapping_mode: str,
     ignored_role_claims: list[str] | None = None,
+    tenant_verified: bool,
 ) -> AuditEvent:
     """Append one audit event explaining an OIDC group-to-role mapping.
 
     The event carries group names, granting tenant scopes, and resolved role
     names only. Tokens, signatures, and raw claim payloads never reach the
     evidence store through this path.
+
+    ``tenant_verified`` has no default on purpose: every call site must decide,
+    because the answer determines whose ledger the row lands in. The evidence
+    stores file an audit row by ``details['tenant_id']``, and this function was
+    writing ``actor_context.tenant_id`` verbatim - which, on the preview path,
+    comes from **unverified caller claims**. Measured with one unauthenticated
+    request::
+
+        POST /enterprise/auth/oidc-preview
+          {"claims": {"sub": "mallory@evil.example", "tenant_id": "external",
+                      "groups": ["sdp-platform-admins"], "exp": 9999999999}}
+          -> 200
+
+        GET /audit/events?user=external-analyst
+          -> [{"actor": "mallory@evil.example", "result": "mapped",
+               "decision_id": null,
+               "details": {"granted_roles": ["admin", "data-analyst",
+                                             "platform-admin"],
+                           "tenant_id": "external"}}]
+
+        GET /audit/events?user=analyst   (the caller's own tenant)  -> []
+
+    So an outsider with no credential could plant a row in any tenant's ledger
+    claiming an identity of its choosing had been granted platform-admin, and
+    the victim had nothing to cross-check it against.
+
+    An unverified mapping is unattributable by definition, so its row is filed
+    under ``UNRESOLVED_TENANT_ID`` with the claimed tenant kept beside it as a
+    claim, and its ``result`` says ``previewed`` rather than ``mapped`` - a
+    preview grants nothing, and a row reading ``mapped`` with
+    ``granted_roles: [admin]`` is indistinguishable from a real grant.
     """
+    verified_tenant = actor_context.tenant_id if tenant_verified else UNRESOLVED_TENANT_ID
+    if tenant_verified:
+        result = "mapped" if actor_context.roles else "unmapped"
+    else:
+        result = "previewed"
+    details: dict[str, Any] = {
+        "mapping_mode": mapping_mode,
+        "tenant_id": verified_tenant,
+        "granted_roles": list(actor_context.roles),
+        "group_bindings": group_bindings,
+        "ignored_role_claims": list(ignored_role_claims or []),
+        "tenant_verified": tenant_verified,
+    }
+    if not tenant_verified:
+        details["claimed_tenant_id"] = actor_context.tenant_id
     audit_event = AuditEvent(
         id=str(uuid4()),
         actor=actor_context.subject,
         action=OIDC_MAPPING_AUDIT_ACTION,
         resource=OIDC_MAPPING_AUDIT_RESOURCE,
-        result="mapped" if actor_context.roles else "unmapped",
+        result=result,
         reason=f"oidc group mapping resolved {len(actor_context.roles)} role(s)",
-        details={
-            "mapping_mode": mapping_mode,
-            "tenant_id": actor_context.tenant_id,
-            "granted_roles": list(actor_context.roles),
-            "group_bindings": group_bindings,
-            "ignored_role_claims": list(ignored_role_claims or []),
-        },
+        details=details,
     )
     return append_audit_event(audit_event)
 

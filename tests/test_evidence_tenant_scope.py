@@ -99,3 +99,86 @@ def test_append_audit_event_does_not_discard_the_event_without_a_store() -> None
     finally:
         evidence._AUDIT_EVENT_LOG.clear()
         evidence.configure_evidence_store(previous)
+
+
+# --------------------------------------------------------------------------- #
+# The producer side: who gets to choose the tenant a row is filed under.
+#
+# ``_effective_tenant_id`` honoured a caller-supplied ``target_tenant_id``
+# unconditionally, and ``evaluate``'s role check runs *after* the stamp. So a
+# caller with no actor at all could pick another tenant's ledger. Measured with
+# an unauthenticated ``POST /catalog/datasets`` carrying
+# ``tenant_id: "zeta-bank"``:
+#
+#     response -> 403 "create 작업은 admin 권한만 가능"
+#     decision -> subject=anonymous action=create resource=forged-probe
+#                 effect=deny   filed under tenant: zeta-bank
+#
+# readable by that tenant's auditor, invisible to the caller's own. ``tenant_id``
+# is a free-form string, so rows could be filed under tenants that do not exist.
+# --------------------------------------------------------------------------- #
+
+
+def test_a_caller_cannot_file_a_decision_under_a_tenant_it_cannot_reach() -> None:
+    from sdp.policy import _effective_tenant_id
+
+    # An unauthenticated caller naming someone else's tenant.
+    assert _effective_tenant_id("anonymous", "forged-probe", "zeta-bank") == (
+        stores.UNRESOLVED_TENANT_ID
+    )
+    # A reader scoped to its own tenant naming another one.
+    assert _effective_tenant_id("analyst", "forged-probe", "zeta-bank") == "demo"
+    # Its own tenant is honoured.
+    assert _effective_tenant_id("analyst", "forged-probe", "demo") == "demo"
+    # A platform-admin crosses deliberately, which is the documented exception.
+    assert _effective_tenant_id("admin", "forged-probe", "zeta-bank") == "zeta-bank"
+
+
+def test_an_unauthenticated_create_leaves_its_refusal_in_no_ones_ledger() -> None:
+    """End to end, through the route that passes the body's tenant_id."""
+    from fastapi.testclient import TestClient
+
+    from sdp import evidence
+    from sdp.api import app
+
+    client = TestClient(app, raise_server_exceptions=False)
+    body = {
+        "id": "forged-probe-ds",
+        "tenant_id": "zeta-bank",
+        "title": "제목",
+        "description": "설명",
+        "domain": "customer_intelligence",
+        "owner": "owner",
+        "steward": "steward",
+        "tags": ["tag_one"],
+        "terms": ["고객"],
+        "sensitivity": "internal",
+        "source_system": "postgresql://analytics.dw/crm",
+        "update_frequency": "daily",
+        "quality_score": 0.9,
+        "freshness_score": 0.9,
+        "schema": [
+            {
+                "name": "column_one",
+                "datatype": "string",
+                "nullable_ratio": 0.0,
+                "distinct_ratio": 1.0,
+                "quality_issues": [],
+                "pii": False,
+            }
+        ],
+        "distributions": [],
+        "mappings": [],
+        "related_datasets": [],
+        "profile": {},
+    }
+    before = len(evidence._POLICY_DECISION_LOG)
+    refused = client.post("/catalog/datasets", json=body)  # no actor at all
+    assert refused.status_code == 403, refused.text
+
+    planted = evidence._POLICY_DECISION_LOG[before:]
+    assert planted, "the refusal must still be recorded"
+    for decision in planted:
+        assert decision.obligations["tenant_id"] == stores.UNRESOLVED_TENANT_ID, (
+            f"filed under {decision.obligations['tenant_id']!r}"
+        )

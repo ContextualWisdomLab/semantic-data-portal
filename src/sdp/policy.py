@@ -21,8 +21,30 @@ def _effective_tenant_id(subject: str, resource: str, target_tenant_id: str | No
     it belongs to the actor's. When neither resolves, the row is marked
     unresolved rather than attributed to a real tenant.
     """
-    if target_tenant_id:
-        # A create names a tenant the catalog cannot yet confirm; the caller supplies it.
+    if target_tenant_id and can_access_tenant(subject, target_tenant_id):
+        # A create names a tenant the catalog cannot yet confirm, so the caller
+        # supplies it - but only a caller who can actually reach that tenant
+        # decides where the row is filed.
+        #
+        # It used to be honoured unconditionally, and the role check in
+        # ``evaluate`` runs *after* the stamp, so a caller with no actor at all
+        # could choose another tenant's ledger. Measured with an unauthenticated
+        # ``POST /catalog/datasets`` carrying ``tenant_id: "zeta-bank"``::
+        #
+        #     response -> 403 "create 작업은 admin 권한만 가능"
+        #     decision -> subject=anonymous action=create resource=forged-probe
+        #                 effect=deny  filed under tenant: zeta-bank
+        #
+        # readable by ``GET /policy/decisions?user=zeta-analyst`` and invisible
+        # to the caller's own tenant. ``tenant_id`` is a free-form string, so
+        # rows could also be filed under tenants that do not exist.
+        #
+        # The comment that justified the unconditional branch - "the owning
+        # tenant's auditor sees attempts on its own assets" - does not apply
+        # here: this row is for a caller refused on *role* grounds against a
+        # tenant nobody verified. Keeping it in the refused caller's own scope
+        # preserves the auditability goal without letting an anonymous request
+        # pick the ledger.
         return target_tenant_id
     dataset = get_dataset(resource)
     if dataset and dataset.tenant_id:
