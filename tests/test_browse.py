@@ -130,3 +130,26 @@ def test_preview_masks_declared_pii_even_if_the_obligation_omits_it(monkeypatch)
     result = browse.preview("crm-customer-master", user="admin", purpose="analysis", limit=1)
     assert result["rows"][0]["customer_email"] == "***"
     assert "customer_email" in result["masking_summary"]["masked_columns"]
+
+
+def test_browse_audit_events_carry_the_owning_tenant():
+    """``PostgresEvidenceStore`` reads an audit row's tenant from
+    ``details['tenant_id']``, and nothing used to write that key — so every audit
+    event, including a cross-tenant denial, was stored under the literal
+    ``'demo'`` tenant. A tenant-scoped audit query would then miss its own rows
+    and return another tenant's.
+    """
+    base = catalog._DATA["crm-customer-master"]
+    catalog._DATA["external-customer-master"] = base.model_copy(
+        update={"id": "external-customer-master", "tenant_id": "external"}
+    )
+
+    before = len(catalog._AUDIT_LOG)
+    with pytest.raises(PermissionError):
+        browse.preview("external-customer-master", user="analyst", purpose="analysis")
+    browse.preview("external-customer-master", user="external-analyst", purpose="analysis", limit=1)
+
+    recorded = catalog._AUDIT_LOG[before:]
+    assert len(recorded) == 2
+    for event in recorded:
+        assert event.details["tenant_id"] == "external", event.action

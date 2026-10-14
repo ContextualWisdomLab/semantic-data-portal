@@ -118,10 +118,26 @@
 - `POST /policy/decision`
 - Catalog mutation guard: `create`, `publish`, `patch`, `deprecate`
 - Browse guard: `preview`, `schema`, `query`
+- Evidence row의 tenant 귀속: `PostgresEvidenceStore`는 policy decision은
+  `obligations["tenant_id"]`, audit event는 `details["tenant_id"]`에서 tenant를 읽어
+  `tenant_id TEXT NOT NULL` 컬럼과 tenant 선행 인덱스로 행을 scope한다. 따라서
+  생산 측에서 모든 분기에 tenant를 stamp한다 — `policy._effective_tenant_id()`는
+  존재하는 데이터셋의 소유 tenant를, 데이터셋을 지칭하지 않는 행위(`create`,
+  discovery, 없는 resource)는 actor의 tenant를 쓴다. `catalog.ingest_event()`와
+  `catalog._build_dataset_payload()`가 audit event에 같은 값을 넣는다.
+  둘 다 해결되지 않으면 `sdp_core.stores.UNRESOLVED_TENANT_ID`로 표시한다.
+  **`demo`는 실제 tenant(seed 데이터셋의 소유자)이므로 fallback 값으로 쓰지 않는다** —
+  이전 `or "demo"` fallback은 tenant-scoped 질의가 남의 행을 보고 자기 행을
+  놓치게 만들었다.
 - 증빙 테스트:
   - `tests/test_api.py::test_create_requires_admin`
   - `tests/test_api.py::test_dataset_mutation_policy_and_lifecycle`
   - `tests/test_api.py::test_browse_schema_requires_purpose`
+  - `tests/test_policy.py::test_every_decision_branch_stamps_the_owning_tenant`
+  - `tests/test_policy.py::test_decision_without_a_resolvable_tenant_is_not_attributed_to_demo`
+  - `tests/test_browse.py::test_browse_audit_events_carry_the_owning_tenant`
+  - `tests/test_catalog.py::test_mutation_audit_events_carry_the_dataset_tenant`
+  - `tests/test_evidence_tenant_scope.py` (store helper + 마이그레이션 backfill)
 
 ## 5) 운영/품질
 

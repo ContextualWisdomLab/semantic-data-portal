@@ -17,12 +17,26 @@ def _payload_to_dict(payload: object) -> dict[str, Any]:
     raise TypeError(f"unsupported evidence payload type: {type(payload).__name__}")
 
 
+# Marker for an evidence row whose owning tenant could not be resolved.
+#
+# ``demo`` is a real tenant in this product - the seeded datasets live in it -
+# so defaulting to it does not merely lose information, it files the row under
+# somebody else's tenant. Since ``PostgresEvidenceStore`` declares
+# ``tenant_id TEXT NOT NULL`` and indexes it first, a tenant-scoped reader would
+# then see rows that are not theirs and miss rows that are. An unattributable
+# row is marked instead, so it is claimed by no tenant and stays visible as a
+# data-quality signal.
+UNRESOLVED_TENANT_ID = "unresolved"
+
+
 def _policy_tenant_id(decision: PolicyDecision) -> str:
-    return str(decision.obligations.get("tenant_id") or "demo")
+    """Resolve the tenant a policy-decision row belongs to, or mark it unresolved."""
+    return str(decision.obligations.get("tenant_id") or UNRESOLVED_TENANT_ID)
 
 
 def _audit_tenant_id(event: AuditEvent) -> str:
-    return str(event.details.get("tenant_id") or event.details.get("tenant") or "demo")
+    """Resolve the tenant an audit row belongs to, or mark it unresolved."""
+    return str(event.details.get("tenant_id") or event.details.get("tenant") or UNRESOLVED_TENANT_ID)
 
 
 class SQLiteEvidenceStore:
@@ -214,9 +228,13 @@ class PostgresEvidenceStore:
             connection.execute("ALTER TABLE policy_decisions ADD COLUMN IF NOT EXISTS tenant_id TEXT")
             connection.execute("ALTER TABLE policy_decisions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ")
             connection.execute(
-                """
+                f"""
                 UPDATE policy_decisions
-                SET tenant_id = COALESCE(NULLIF(tenant_id, ''), payload -> 'obligations' ->> 'tenant_id', 'demo')
+                SET tenant_id = COALESCE(
+                    NULLIF(tenant_id, ''),
+                    NULLIF(payload -> 'obligations' ->> 'tenant_id', ''),
+                    '{UNRESOLVED_TENANT_ID}'
+                )
                 WHERE tenant_id IS NULL OR tenant_id = ''
                 """
             )
@@ -256,9 +274,13 @@ class PostgresEvidenceStore:
             connection.execute("ALTER TABLE policy_decisions ALTER COLUMN created_at SET NOT NULL")
             connection.execute("ALTER TABLE audit_events ADD COLUMN IF NOT EXISTS tenant_id TEXT")
             connection.execute(
-                """
+                f"""
                 UPDATE audit_events
-                SET tenant_id = COALESCE(NULLIF(tenant_id, ''), payload -> 'details' ->> 'tenant_id', 'demo')
+                SET tenant_id = COALESCE(
+                    NULLIF(tenant_id, ''),
+                    NULLIF(payload -> 'details' ->> 'tenant_id', ''),
+                    '{UNRESOLVED_TENANT_ID}'
+                )
                 WHERE tenant_id IS NULL OR tenant_id = ''
                 """
             )

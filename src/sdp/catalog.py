@@ -375,6 +375,10 @@ def _build_dataset_payload(
     decision_id: str | None = None,
     details: dict[str, object] | None = None,
 ) -> AuditEvent:
+    # The evidence store scopes an audit row by details["tenant_id"], so the
+    # owning tenant has to travel with the event; the Dataset is right here.
+    event_details: dict[str, object] = {"tenant_id": dataset.tenant_id}
+    event_details.update(details or {})
     return AuditEvent(
         id=str(uuid4()),
         actor=actor,
@@ -383,7 +387,7 @@ def _build_dataset_payload(
         decision_id=decision_id,
         result="success",
         reason="ok",
-        details=details or {},
+        details=event_details,
         created_at=datetime.now(timezone.utc),
     )
 
@@ -595,6 +599,14 @@ def ingest_event(
     reason: str = "",
     details: dict[str, object] | None = None,
 ) -> AuditEvent:
+    # Stamp the owning tenant so the evidence store can scope the row. A denial
+    # for a dataset that does not exist has no owning tenant; it is left for the
+    # store to mark unresolved rather than attributed to a real tenant.
+    event_details: dict[str, object] = {}
+    dataset = _DATA.get(dataset_id)
+    if dataset and dataset.tenant_id:
+        event_details["tenant_id"] = dataset.tenant_id
+    event_details.update(details or {})
     event = AuditEvent(
         id=str(uuid4()),
         actor=actor,
@@ -603,7 +615,7 @@ def ingest_event(
         result=decision,
         decision_id=decision_id,
         reason=reason,
-        details=details or {},
+        details=event_details,
         created_at=datetime.now(timezone.utc),
     )
     return _record_audit_event(event)

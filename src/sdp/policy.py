@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from typing import Any
 from uuid import uuid4
+
+from sdp_core.stores import UNRESOLVED_TENANT_ID
 
 from .authz import can_access_tenant, has_role, resolve_actor_context
 from .catalog import get_dataset
@@ -8,8 +11,33 @@ from .domain import PolicyDecision
 from .evidence import record_policy_decision
 
 
-def _decision(**kwargs: object) -> PolicyDecision:
-    return record_policy_decision(PolicyDecision(**kwargs))
+def _effective_tenant_id(subject: str, resource: str) -> str:
+    """Resolve which tenant an evidence row for this decision belongs to.
+
+    A decision about an existing dataset belongs to the tenant that owns the
+    dataset - that is the scope a tenant-scoped auditor queries for its own
+    assets' access history. A decision that names no existing dataset (a
+    ``create``, a discovery query, an unknown resource) has no owning tenant, so
+    it belongs to the actor's. When neither resolves, the row is marked
+    unresolved rather than attributed to a real tenant.
+    """
+    dataset = get_dataset(resource)
+    if dataset and dataset.tenant_id:
+        return dataset.tenant_id
+    return resolve_actor_context(subject).tenant_id or UNRESOLVED_TENANT_ID
+
+
+def _decision(*, tenant_id: str, **kwargs: Any) -> PolicyDecision:
+    """Record one policy decision, stamped with the tenant it belongs to.
+
+    The evidence store scopes rows by ``obligations['tenant_id']``, so the stamp
+    is applied on every branch rather than only the ones whose obligations
+    happen to mention a tenant. A branch that sets the key explicitly keeps its
+    own value.
+    """
+    obligations = dict(kwargs.pop("obligations", None) or {})
+    obligations.setdefault("tenant_id", tenant_id)
+    return record_policy_decision(PolicyDecision(obligations=obligations, **kwargs))
 
 
 def _is_admin(subject: str) -> bool:
@@ -32,6 +60,7 @@ def evaluate(subject: str, resource: str, action: str, purpose: str) -> PolicyDe
         "resource": resource,
         "action": action,
         "decision_id": decision_id,
+        "tenant_id": _effective_tenant_id(subject, resource),
     }
 
     if action_key == "create":

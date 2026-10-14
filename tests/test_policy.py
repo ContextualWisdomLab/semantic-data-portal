@@ -81,3 +81,64 @@ def test_evaluate_records_evidence_for_every_decision() -> None:
     before = len(evidence._POLICY_DECISION_LOG)
     policy.evaluate(subject="analyst", resource="crm-customer-master", action="query", purpose="analysis")
     assert len(evidence._POLICY_DECISION_LOG) == before + 1
+
+
+# --- tenant attribution of evidence rows ---------------------------------
+
+
+def _external_dataset(**overrides: object) -> None:
+    """Seed a dataset owned by tenant ``external`` (where ``external-analyst`` lives).
+
+    An in-tenant actor is what makes the non-tenant-boundary deny branches
+    reachable: a cross-tenant resource short-circuits all of them.
+    """
+    base = catalog._DATA["crm-customer-master"]
+    catalog._DATA["external-customer-master"] = base.model_copy(
+        update={"id": "external-customer-master", "tenant_id": "external", **overrides}
+    )
+
+
+@pytest.mark.parametrize(
+    "subject,action,purpose,sensitivity,expected_effect",
+    [
+        ("external-analyst", "preview", "analysis", "medium", "allow"),
+        ("analyst", "preview", "analysis", "medium", "deny"),           # tenant boundary
+        ("external-analyst", "preview", "analysis", "critical", "deny"),  # critical sensitivity
+        ("external-analyst", "preview", "external-export", "medium", "deny"),  # export purpose
+        ("external-analyst", "publish", "analysis", "medium", "deny"),   # mutation role
+    ],
+)
+def test_every_decision_branch_stamps_the_owning_tenant(
+    subject: str, action: str, purpose: str, sensitivity: str, expected_effect: str
+) -> None:
+    """The evidence store scopes rows by ``obligations['tenant_id']`` (and marks
+    the column ``NOT NULL`` with a tenant-leading index), so every branch must
+    stamp it. Before this contract only the tenant-boundary deny did, and the
+    store's ``or "demo"`` fallback filed the rest under the real ``demo``
+    tenant - a cross-tenant misattribution, not a missing value.
+    """
+    _external_dataset(sensitivity=sensitivity)
+    decision = policy.evaluate(
+        subject=subject, resource="external-customer-master", action=action, purpose=purpose
+    )
+    assert decision.effect == expected_effect
+    assert decision.obligations.get("tenant_id") == "external"
+
+
+def test_decision_without_a_resolvable_tenant_is_not_attributed_to_demo() -> None:
+    """An unknown subject acting on an unknown resource belongs to no tenant.
+    Recording that honestly beats claiming the real ``demo`` tenant owns it."""
+    decision = policy.evaluate(
+        subject="__nobody__", resource="__no_such_dataset__", action="query", purpose="analysis"
+    )
+    assert decision.obligations.get("tenant_id") == policy.UNRESOLVED_TENANT_ID
+    assert decision.obligations.get("tenant_id") != "demo"
+
+
+def test_decision_on_a_tenantless_resource_uses_the_actor_tenant() -> None:
+    """``create`` and catalog discovery name no existing dataset, so the row
+    belongs to the actor's tenant."""
+    decision = policy.evaluate(
+        subject="admin", resource="brand-new-dataset", action="create", purpose="analysis"
+    )
+    assert decision.obligations.get("tenant_id") == "demo"  # the admin's own tenant

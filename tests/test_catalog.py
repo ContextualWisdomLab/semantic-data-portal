@@ -288,3 +288,20 @@ def test_get_related_datasets_returns_unique_list() -> None:
     related = catalog.get_related_datasets(_CRM)
     assert isinstance(related, list)
     assert set(related) == set(catalog._DATA[_CRM].related_datasets)
+
+
+def test_mutation_audit_events_carry_the_dataset_tenant():
+    """A catalog mutation builds its audit event straight from the ``Dataset``,
+    so the owning tenant is in hand; it must reach ``details['tenant_id']``,
+    which is where the Postgres evidence store scopes the row from."""
+    base = catalog._DATA["crm-customer-master"]
+    catalog._DATA["external-customer-master"] = base.model_copy(
+        update={"id": "external-customer-master", "tenant_id": "external", "status": "draft"}
+    )
+
+    before = len(catalog._AUDIT_LOG)
+    catalog.publish_dataset("external-customer-master", actor="admin")
+    recorded = catalog._AUDIT_LOG[before:]
+    assert recorded
+    for event in recorded:
+        assert event.details["tenant_id"] == "external", event.action
