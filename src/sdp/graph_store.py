@@ -195,6 +195,53 @@ class GraphStore(ABC):
 
         raise NotImplementedError
 
+    # removal ------------------------------------------------------------------
+    #
+    # The store had no removal primitive at all, in either backend, so every
+    # mirror write was an append. A dataset whose column, term, mapping or
+    # lineage edge was removed kept it in the graph forever. Measured on the
+    # in-memory backend after ``PATCH /catalog/datasets/crm-customer-master``
+    # dropped the declared-PII column ``customer_email``:
+    #
+    #     catalog schema            -> customer_id, signup_at
+    #     GET /graph/nodes/...:customer_email -> 200, properties.pii = true
+    #     POST /search/semantic "customer_email" (actor analyst)
+    #                               -> top hit, score 0.673
+    #
+    # ``/browse`` masked that column while it was declared, so removing it made
+    # it *more* exposed than keeping it. Reconciling needs both a read of what
+    # the graph currently holds and a way to remove it.
+
+    @abstractmethod
+    def edges_for(
+        self, node_id: str, edge_type: str, *, direction: str = "out"
+    ) -> List[GraphEdge]:
+        """Return this node's edges of one type, outgoing or incoming.
+
+        ``direction`` is ``"out"`` or ``"in"``. Lineage inputs arrive as
+        incoming edges (upstream -> dataset), so reconciling a dataset's
+        declared lineage needs both.
+        """
+
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_edge(self, edge_type: str, source_id: str, target_id: str) -> bool:
+        """Remove one directed edge; ``True`` when something was removed."""
+
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_node(self, node_id: str) -> bool:
+        """Remove a node, its embedding and every edge touching it.
+
+        Returns ``True`` when the node existed. Used for the column nodes a
+        dataset no longer declares; concept and dataset nodes are never removed
+        this way, because they are not owned by the dataset being reconciled.
+        """
+
+        raise NotImplementedError
+
 
 # --- In-memory backend --------------------------------------------------------
 
@@ -417,6 +464,51 @@ class InMemoryGraphStore(GraphStore):
             "concepts": len(self._concepts),
             "embeddings": len(self._embeddings),
         }
+
+    # removal ------------------------------------------------------------------
+
+    def edges_for(
+        self, node_id: str, edge_type: str, *, direction: str = "out"
+    ) -> List[GraphEdge]:
+        """Return this node's edges of one type, outgoing or incoming."""
+        if direction not in {"out", "in"}:
+            raise ValueError("direction must be 'out' or 'in'")
+        if direction == "out":
+            return [
+                edge
+                for edge in self._edges
+                if edge.edge_type == edge_type and edge.source_id == node_id
+            ]
+        return [
+            edge
+            for edge in self._edges
+            if edge.edge_type == edge_type and edge.target_id == node_id
+        ]
+
+    def delete_edge(self, edge_type: str, source_id: str, target_id: str) -> bool:
+        """Remove one directed edge; ``True`` when something was removed."""
+        before = len(self._edges)
+        self._edges = [
+            edge
+            for edge in self._edges
+            if not (
+                edge.edge_type == edge_type
+                and edge.source_id == source_id
+                and edge.target_id == target_id
+            )
+        ]
+        return len(self._edges) != before
+
+    def delete_node(self, node_id: str) -> bool:
+        """Remove a node, its embedding and every edge touching it."""
+        existed = self._nodes.pop(node_id, None) is not None
+        self._embeddings.pop(node_id, None)
+        self._edges = [
+            edge
+            for edge in self._edges
+            if edge.source_id != node_id and edge.target_id != node_id
+        ]
+        return existed
 
 
 # --- Postgres + Apache AGE + pgvector backend --------------------------------
@@ -827,6 +919,94 @@ class PostgresGraphStore(GraphStore):
             "concepts": int(concepts),
             "embeddings": int(embeddings),
         }
+
+    # removal ------------------------------------------------------------------
+    #
+    # Verification boundary, stated rather than implied: these three methods are
+    # written to the same pattern as the upserts above - the AGE graph and the
+    # two relational mirrors (``graph_edges``/``graph_nodes`` plus
+    # ``embedding_vectors``) are changed in one transaction - but **they have not
+    # been run against a live Postgres+AGE+pgvector instance**, because this
+    # environment has none. The in-memory backend's equivalents are covered by
+    # ``tests/test_graph_mirroring.py``; the assertions that need a real
+    # database live in ``tests/test_integration_age.py``, which skips unless
+    # ``SDP_DATABASE_DSN`` is reachable. Implementing only the in-memory half
+    # would have left the Postgres deployment with the stale-data defect, which
+    # is worse than an unverified-but-reviewed implementation.
+
+    def edges_for(
+        self, node_id: str, edge_type: str, *, direction: str = "out"
+    ) -> List[GraphEdge]:
+        """Return this node's edges of one type, outgoing or incoming."""
+        from sqlalchemy import text as sql
+
+        if direction not in {"out", "in"}:
+            raise ValueError("direction must be 'out' or 'in'")
+        column = "source_id" if direction == "out" else "target_id"
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                sql(
+                    "SELECT edge_type, source_id, target_id, edge_properties "
+                    f"FROM graph_edges WHERE edge_type = :etype AND {column} = :node"
+                ),
+                {"etype": edge_type, "node": node_id},
+            ).fetchall()
+        return [
+            GraphEdge(row[0], row[1], row[2], dict(row[3] or {})) for row in rows
+        ]
+
+    def delete_edge(self, edge_type: str, source_id: str, target_id: str) -> bool:
+        """Remove one directed edge; ``True`` when something was removed."""
+        from sqlalchemy import text as sql
+
+        rel = _relationship_label(edge_type)
+        with self._engine.begin() as conn:
+            self._prepare(conn)
+            self._cypher(
+                conn,
+                "MATCH (a:GraphNode {node_id: $source_id})"
+                f"-[r:{rel}]->"
+                "(b:GraphNode {node_id: $target_id}) DELETE r RETURN 1 AS v",
+                "v agtype",
+                params={"source_id": source_id, "target_id": target_id},
+            )
+            removed = conn.execute(
+                sql(
+                    "DELETE FROM graph_edges WHERE edge_type = :etype "
+                    "AND source_id = :src AND target_id = :tgt"
+                ),
+                {"etype": edge_type, "src": source_id, "tgt": target_id},
+            ).rowcount
+        return bool(removed)
+
+    def delete_node(self, node_id: str) -> bool:
+        """Remove a node, its embedding and every edge touching it."""
+        from sqlalchemy import text as sql
+
+        with self._engine.begin() as conn:
+            self._prepare(conn)
+            self._cypher(
+                conn,
+                "MATCH (n:GraphNode {node_id: $node_id}) DETACH DELETE n RETURN 1 AS v",
+                "v agtype",
+                params={"node_id": node_id},
+            )
+            conn.execute(
+                sql(
+                    "DELETE FROM graph_edges "
+                    "WHERE source_id = :node OR target_id = :node"
+                ),
+                {"node": node_id},
+            )
+            conn.execute(
+                sql("DELETE FROM embedding_vectors WHERE node_id = :node"),
+                {"node": node_id},
+            )
+            removed = conn.execute(
+                sql("DELETE FROM graph_nodes WHERE node_id = :node"),
+                {"node": node_id},
+            ).rowcount
+        return bool(removed)
 
 
 # --- Backend selection --------------------------------------------------------

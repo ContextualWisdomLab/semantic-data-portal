@@ -432,7 +432,24 @@ _CONSOLE_TEMPLATE = """<!doctype html>
         if (outcome.status === 'fulfilled') return;
         const name = panels[index][0];
         const status = outcome.reason && outcome.reason.status;
-        (status === 401 || status === 403 ? needActor : failures).push(name);
+        // Classified by whether an actor was supplied, NOT by which 4xx came
+        // back. The rule used to be an allow-list of the two auth statuses
+        // (401 and 403), and the
+        // connector probe later began answering 404 - it resolves its
+        // query-parameter dataset in the caller's tenant scope, and an
+        // out-of-scope dataset must be indistinguishable from an absent one.
+        // So every signed-out load fell through to `failures` and the badge
+        // read "evidence load failed: connectors" again, on a working platform.
+        // Measured signed-out against a live server: all four connector probes
+        // 404, the other three panels 200.
+        //
+        // A refusal with no actor is the expected signed-out view whatever its
+        // status; a refusal *with* an actor is a real problem worth naming. A
+        // 5xx is always a real failure, since no actor would have prevented it.
+        // This rule cannot be broken again by changing which 4xx a gate
+        // returns.
+        const serverError = typeof status === 'number' && status >= 500;
+        (!viewer && !serverError ? needActor : failures).push(name);
       });
 
       if (failures.length) {
@@ -443,17 +460,31 @@ _CONSOLE_TEMPLATE = """<!doctype html>
         text('readyBadge', 'ready for pilot review');
       }
 
+      // The hint REPLACES the panel body. It used to be appended only when the
+      // body was empty - and every one of these tables ships a static
+      // placeholder row from the server ("Loading | --", and for connectors
+      // "SQL connector | crm-customer-master | --"), so the old
+      // empty-body guard was never true and the hint was dead code for all
+      // three panels. The
+      // placeholder is worse than nothing on a signed-out view: it reads as a
+      // real connector row whose status is unknown, rather than as a panel that
+      // needs an actor.
+      const PANEL_TARGETS = {
+        connectors: ['connectorRows', 3],
+        controls: ['controlsRows', 2],
+        KPIs: ['kpiRows', 2],
+      };
       needActor.forEach((name) => {
-        const rows = {connectors: 'connectorRows', controls: 'controlsRows', KPIs: 'kpiRows'}[name];
-        const target = rows && document.getElementById(rows);
-        if (target && !target.innerHTML) {
-          const cell = document.createElement('td');
-          cell.colSpan = 3;
-          cell.textContent = '이 패널은 actor가 필요합니다 (?user=)';
-          const row = document.createElement('tr');
-          row.appendChild(cell);
-          target.appendChild(row);
-        }
+        const target = PANEL_TARGETS[name];
+        if (!target) return;
+        const body = document.getElementById(target[0]);
+        if (!body) return;
+        const cell = document.createElement('td');
+        cell.colSpan = target[1];
+        cell.textContent = '이 패널은 actor가 필요합니다 (?user=)';
+        const row = document.createElement('tr');
+        row.appendChild(cell);
+        body.replaceChildren(row);
       });
     });
   </script>

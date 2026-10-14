@@ -63,6 +63,26 @@ def seed_dataset(dataset: Any, store: Optional[GraphStore] = None) -> None:
     Tenant scope is unaffected: ``policy.can_see_graph_node`` resolves each node's
     owning dataset and applies the same boundary the catalog does, so mirroring a
     dataset does not widen who can see it.
+
+    Every write here is an upsert, which made the mirror **append-only**: a
+    column, term, mapping or lineage edge removed from the catalog stayed in the
+    graph forever. Measured after ``PATCH /catalog/datasets/crm-customer-master``
+    dropped the declared-PII column ``customer_email``:
+
+        catalog schema                        customer_id, signup_at
+        GET /graph/nodes/...:customer_email   200, properties.pii = true
+        POST /search/semantic "customer_email"  top hit, score 0.673 (analyst)
+
+    ``/browse`` masks that column while it is declared, so removing it made the
+    column *more* exposed than keeping it. The same held for terms, business
+    mappings, lineage in both directions and related datasets, and a rename left
+    both names in the graph. ``/graph/stats`` was monotone: 26 nodes / 78 edges
+    before and after stripping a dataset bare.
+
+    So this is now a reconcile: the declared sets are upserted and anything the
+    graph still holds for this dataset that the catalog no longer declares is
+    removed. Only the dataset's own column nodes are deleted - concepts and
+    other datasets are not owned by this one, so for those only the edge goes.
     """
     store = store or get_store()
     text_blob = " ".join(
@@ -86,8 +106,10 @@ def seed_dataset(dataset: Any, store: Optional[GraphStore] = None) -> None:
         text=text_blob,
     )
 
+    declared_columns = set()
     for column in dataset.schema:
         column_id = f"{dataset.id}:{column.name}"
+        declared_columns.add(column_id)
         store.upsert_node(
             column_id,
             "column",
@@ -98,9 +120,12 @@ def seed_dataset(dataset: Any, store: Optional[GraphStore] = None) -> None:
         store.upsert_edge("has_column", dataset.id, column_id)
 
     # dataset -> concept mappings (both explicit terms and business mappings)
+    declared_mappings = set()
     for term in dataset.terms:
+        declared_mappings.add(term)
         store.upsert_edge("mapping", dataset.id, term, properties={"origin": "term"})
     for mapping in dataset.mappings:
+        declared_mappings.add(mapping.concept)
         store.upsert_edge(
             "mapping",
             dataset.id,
@@ -115,3 +140,48 @@ def seed_dataset(dataset: Any, store: Optional[GraphStore] = None) -> None:
         store.upsert_edge("lineage", dataset.id, downstream, properties={"kind": "output"})
     for related in dataset.related_datasets:
         store.upsert_edge("related_dataset", dataset.id, related)
+
+    _reconcile_removed(
+        dataset,
+        store,
+        declared_columns=declared_columns,
+        declared_mappings=declared_mappings,
+    )
+
+
+def _reconcile_removed(
+    dataset: Any,
+    store: GraphStore,
+    *,
+    declared_columns: set[str],
+    declared_mappings: set[str],
+) -> None:
+    """Remove what the graph still holds for this dataset and the catalog does not.
+
+    Separated from the upsert half so the two directions are readable on their
+    own. Scoped strictly to edges this dataset owns: a ``mapping`` edge from the
+    dataset to a concept is removed, the concept node is not; a ``lineage`` edge
+    is removed, the other dataset is not. Only the dataset's own
+    ``{dataset.id}:{column}`` nodes are deleted, and only once their
+    ``has_column`` edge is gone.
+    """
+    for edge in store.edges_for(dataset.id, "has_column"):
+        if edge.target_id in declared_columns:
+            continue
+        store.delete_edge("has_column", dataset.id, edge.target_id)
+        store.delete_node(edge.target_id)
+
+    for edge in store.edges_for(dataset.id, "mapping"):
+        if edge.target_id not in declared_mappings:
+            store.delete_edge("mapping", dataset.id, edge.target_id)
+
+    for edge in store.edges_for(dataset.id, "lineage", direction="out"):
+        if edge.target_id not in set(dataset.lineage_outputs):
+            store.delete_edge("lineage", dataset.id, edge.target_id)
+    for edge in store.edges_for(dataset.id, "lineage", direction="in"):
+        if edge.source_id not in set(dataset.lineage_inputs):
+            store.delete_edge("lineage", edge.source_id, dataset.id)
+
+    for edge in store.edges_for(dataset.id, "related_dataset"):
+        if edge.target_id not in set(dataset.related_datasets):
+            store.delete_edge("related_dataset", dataset.id, edge.target_id)

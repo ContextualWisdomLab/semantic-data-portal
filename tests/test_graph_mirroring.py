@@ -28,6 +28,7 @@ from fastapi.testclient import TestClient
 from sdp import catalog
 from sdp.api import app
 from sdp.graph_store import get_store
+from sdp.seed import seed_dataset
 
 
 client = TestClient(app, raise_server_exceptions=False)
@@ -53,6 +54,24 @@ def _restore_catalog():
     yield
     catalog._DATA.clear()
     catalog._DATA.update(data)
+
+
+@pytest.fixture(autouse=True)
+def _remirror_the_seeded_datasets(_restore_catalog):
+    """Establish this file's own graph baseline before each test.
+
+    ``tests/conftest.py`` restores ``catalog._DATA`` but deliberately does not
+    restore the graph store - it has no snapshot API, and adding one to the
+    product for the test suite would be the wrong trade. Its docstring says a
+    test that depends on graph-store contents must establish its own baseline,
+    and these tests do: once a test removes edges, the catalog is restored while
+    the graph keeps the removal, so the next test would find nothing left to
+    remove and its precondition would fail. Re-mirroring from the restored
+    catalog is idempotent, which is the property that makes this cheap.
+    """
+    for dataset in catalog.list_datasets():
+        seed_dataset(dataset)
+    yield
 
 
 def test_a_created_dataset_and_its_columns_reach_the_graph() -> None:
@@ -132,3 +151,160 @@ def test_the_startup_bootstrap_is_still_idempotent() -> None:
     second = seed_store()
     assert first == second, "re-seeding changed the store, so a write is not an upsert"
     assert get_store().stats() == second
+
+
+# --------------------------------------------------------------------------- #
+# The reverse direction: a *removal* must reach the graph too.
+#
+# Every mirror write was an upsert and the store had no removal primitive at
+# all, so the mirror was append-only. Measured after
+# ``PATCH /catalog/datasets/crm-customer-master`` dropped the declared-PII
+# column ``customer_email``:
+#
+#     catalog schema                          customer_id, signup_at
+#     GET /graph/nodes/...:customer_email     200, properties.pii = true
+#     POST /search/semantic "customer_email"  top hit, score 0.673 (analyst)
+#
+# ``/browse`` masks that column while it is declared, so removing it made the
+# column *more* exposed than keeping it. ``/graph/stats`` was monotone: 26 nodes
+# / 78 edges before and after stripping a dataset bare.
+# --------------------------------------------------------------------------- #
+
+
+def _declared_column_nodes(dataset_id: str) -> set[str]:
+    dataset = catalog._DATA[dataset_id]
+    return {f"{dataset_id}:{column.name}" for column in dataset.schema}
+
+
+def _graph_column_nodes(dataset_id: str) -> set[str]:
+    return {
+        edge.target_id for edge in get_store().edges_for(dataset_id, "has_column")
+    }
+
+
+def test_a_removed_column_leaves_the_graph_and_semantic_search() -> None:
+    """The PII case, because it is the one that matters most."""
+    dataset = catalog._DATA["crm-customer-master"]
+    pii_columns = [column.name for column in dataset.schema if column.pii]
+    assert pii_columns, "fixture must declare a PII column for this to mean anything"
+
+    kept = [column.model_dump() for column in dataset.schema if not column.pii]
+    patched = client.patch(
+        "/catalog/datasets/crm-customer-master",
+        json={"actor": "admin", "schema": kept},
+    )
+    assert patched.status_code == 200, patched.text
+
+    for column in pii_columns:
+        node_id = f"crm-customer-master:{column}"
+        assert get_store().get_node(node_id) is None, f"{node_id} survived in the graph"
+        found = client.post(
+            "/search/semantic",
+            json={"actor": "analyst", "query": column, "kind": "column", "limit": 5},
+        )
+        assert found.status_code == 200, found.text
+        hits = [row["node_id"] for row in found.json()["results"]]
+        assert node_id not in hits, f"{node_id} still returned by semantic search: {hits}"
+
+
+def test_the_graph_column_set_equals_the_catalog_after_a_rename() -> None:
+    """A rename used to leave both names behind."""
+    dataset = catalog._DATA["crm-customer-master"]
+    renamed = [column.model_dump() for column in dataset.schema]
+    renamed[0]["name"] = f"{renamed[0]['name']}_v2"
+    patched = client.patch(
+        "/catalog/datasets/crm-customer-master", json={"actor": "admin", "schema": renamed}
+    )
+    assert patched.status_code == 200, patched.text
+
+    assert _graph_column_nodes("crm-customer-master") == _declared_column_nodes(
+        "crm-customer-master"
+    )
+
+
+@pytest.mark.parametrize(
+    "field,edge_type,direction",
+    [
+        ("terms", "mapping", "out"),
+        ("mappings", "mapping", "out"),
+        ("lineage_outputs", "lineage", "out"),
+        ("lineage_inputs", "lineage", "in"),
+        ("related_datasets", "related_dataset", "out"),
+    ],
+)
+def test_every_mirrored_facet_is_reconciled_not_only_appended(
+    field: str, edge_type: str, direction: str
+) -> None:
+    """Enumerated by facet, because fixing one of these would have missed the rest.
+
+    Measured before the repair, after a PATCH clearing all five on
+    ``crm-event``: mapping 5 edges unchanged, lineage out 4 unchanged, lineage
+    in 4 unchanged, related_dataset 2 unchanged, while
+    ``GET /catalog/datasets/crm-event/lineage`` reported both lists empty.
+    """
+    before = get_store().edges_for("crm-event", edge_type, direction=direction)
+    assert before, f"fixture must have {edge_type} ({direction}) edges to remove"
+
+    cleared = client.patch(
+        "/catalog/datasets/crm-event",
+        json={
+            "actor": "admin",
+            "terms": [],
+            "mappings": [],
+            "lineage_inputs": [],
+            "lineage_outputs": [],
+            "related_datasets": [],
+        },
+    )
+    assert cleared.status_code == 200, cleared.text
+
+    after = get_store().edges_for("crm-event", edge_type, direction=direction)
+    assert not after, (
+        f"{edge_type} ({direction}) survived the removal: "
+        f"{[(e.source_id, e.target_id) for e in after]}"
+    )
+
+
+def test_graph_stats_can_decrease() -> None:
+    """It was monotone, which is how the append-only mirror stayed invisible."""
+    store = get_store()
+    before = store.stats()["edges"]
+    cleared = client.patch(
+        "/catalog/datasets/crm-event",
+        json={
+            "actor": "admin",
+            "terms": [],
+            "mappings": [],
+            "lineage_inputs": [],
+            "lineage_outputs": [],
+            "related_datasets": [],
+        },
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert store.stats()["edges"] < before, (
+        f"edges did not decrease: {before} -> {store.stats()['edges']}"
+    )
+
+
+def test_reconciling_does_not_remove_nodes_this_dataset_does_not_own() -> None:
+    """A mapping edge goes; the concept it pointed at stays.
+
+    The dataset owns its ``{id}:{column}`` nodes and nothing else. Deleting a
+    concept or another dataset because one mapping was dropped would turn a
+    metadata edit into data loss for every other consumer of that concept.
+    """
+    store = get_store()
+    concepts_before = store.stats()["concepts"]
+    mapped = {edge.target_id for edge in store.edges_for("crm-event", "mapping")}
+    assert mapped, "fixture must have mapping edges"
+
+    cleared = client.patch(
+        "/catalog/datasets/crm-event",
+        json={"actor": "admin", "terms": [], "mappings": []},
+    )
+    assert cleared.status_code == 200, cleared.text
+
+    assert store.stats()["concepts"] == concepts_before
+    for concept in mapped:
+        if concept in catalog._DATA:  # another dataset, not a concept node
+            assert store.get_node(concept) is not None, f"{concept} was deleted"

@@ -624,10 +624,39 @@ def dataset_detail(
 # The context is inline so the document is self-describing and needs no network
 # fetch. Portal-specific fields get the portal's own vocabulary IRI rather than
 # being asserted as DCAT terms they are not.
+#
+# Adding the context fixed only the **top level**. Every property inside
+# `distribution` and `mappings` stayed unmapped, so a conforming processor
+# dropped them. Measured with pyld 3.3.0 on the live response:
+#
+#     raw  distribution -> [{"id": "dist-crm-customer",
+#                            "format": "postgresql.table",
+#                            "endpoint": "https://example.internal/..."}]
+#     expanded          -> [{}]                  # an empty blank node
+#
+#     raw  mappings[0]  -> {"concept": "고객", "status": ..., "source": ...,
+#                           "steward": ..., "approved_at": ...}
+#     expanded keys     -> ['sdp#status', 'sdp#steward']   # concept dropped
+#
+# In N-Quads the distribution appears only as an object with **zero** outgoing
+# triples: no access URL, no format, no identifier - which is the entire point
+# of a DCAT distribution. An approval record with its `concept` dropped cannot
+# say which business concept was approved. Across the five seeded datasets:
+# 5/5 distributions expanded to `{}` and 51 nested term occurrences had no
+# mapping. `docs`/`readiness` cite this endpoint as the proof artifact for the
+# `rdf_connector` capability, so the auditor verifying that claim is exactly who
+# loads the export into an RDF tool and finds nothing there.
+#
+# `endpoint` is typed `@id` so it expands to a node reference rather than a
+# string literal, and `approved_at` is typed `xsd:dateTime` so a consumer can
+# order approvals. `dist_id` is the distribution's own `@id`; the nested `id`
+# term is gone, because `id` is an ordinary term and never the `@id` keyword -
+# the same mistake the top level had.
 JSONLD_CONTEXT: dict[str, Any] = {
     "dcat": "http://www.w3.org/ns/dcat#",
     "dcterms": "http://purl.org/dc/terms/",
     "sdp": "https://semantic-data-portal.local/ns#",
+    "xsd": "http://www.w3.org/2001/XMLSchema#",
     "title": "dcterms:title",
     "description": "dcterms:description",
     "license": "dcterms:license",
@@ -640,9 +669,39 @@ JSONLD_CONTEXT: dict[str, Any] = {
     "metadata_completeness": "sdp:metadataCompleteness",
     "metadata_recommendation_score": "sdp:metadataRecommendationScore",
     "mappings": "sdp:businessMapping",
+    # nested: dcat:Distribution
+    "format": "dcterms:format",
+    "endpoint": {"@id": "dcat:accessURL", "@type": "@id"},
+    # nested: sdp:businessMapping
+    "concept": "sdp:concept",
+    "source": "dcterms:source",
+    "approved_at": {"@id": "sdp:approvedAt", "@type": "xsd:dateTime"},
 }
 
 JSONLD_KEYWORDS = frozenset({"@context", "@id", "@type"})
+
+
+def _jsonld_distribution(dataset: Any, distribution: Any) -> dict[str, Any]:
+    """Render one distribution as a real DCAT node rather than a bare dict.
+
+    The raw ``model_dump`` carried ``id``, which is an ordinary term and not the
+    ``@id`` keyword, so the distribution expanded to an anonymous blank node
+    with no identity. It now gets a subject IRI derived from the dataset and the
+    distribution id, and an explicit ``@type``, so a consumer can refer to it.
+    The original identifier is kept as ``dcterms:identifier`` rather than
+    silently dropped.
+    """
+    payload = distribution.model_dump()
+    distribution_id = payload.pop("id", None)
+    node: dict[str, Any] = {"@type": "dcat:Distribution"}
+    if distribution_id:
+        node["@id"] = (
+            "https://semantic-data-portal.local/datasets/"
+            f"{dataset.id}/distributions/{distribution_id}"
+        )
+        node["dcterms:identifier"] = distribution_id
+    node.update(payload)
+    return node
 
 
 @app.get("/catalog/datasets/{dataset_id}/jsonld")
@@ -668,7 +727,7 @@ def dataset_jsonld(
         "domain": dataset.domain,
         "owner": dataset.owner,
         "steward": dataset.steward,
-        "distribution": [d.model_dump() for d in dataset.distributions],
+        "distribution": [_jsonld_distribution(dataset, d) for d in dataset.distributions],
         "mappings": [m.model_dump() for m in dataset.mappings],
     }
 

@@ -28,6 +28,8 @@ properties whose absence caused the defect.
 
 from __future__ import annotations
 
+import re
+
 from fastapi.testclient import TestClient
 
 from sdp.api import app
@@ -66,15 +68,101 @@ def test_one_failing_panel_does_not_blank_the_others() -> None:
 
 
 def test_the_badge_separates_a_signed_out_view_from_a_real_failure() -> None:
-    """"evidence load failed" on an unauthenticated view blames the platform."""
+    """"evidence load failed" on an unauthenticated view blames the platform.
+
+    The classifier must **not** key on a status allow-list. It did
+    (``status === 401 || status === 403``), and then the connector probe began
+    answering 404 - it resolves its query-parameter dataset in the caller's
+    tenant scope, and an out-of-scope dataset has to be indistinguishable from
+    an absent one. Every signed-out load fell straight through to ``failures``
+    and the badge read "evidence load failed: connectors" again.
+
+    What makes this worse than a plain regression: the test below
+    (``test_the_probe_route_the_console_calls_is_still_actor_gated``) was
+    updated in the same series to accept the new 404 and nobody asked whether
+    the consumer of that status still worked. Two assertions in one file
+    disagreed and both passed. So the allow-list is now asserted *absent*.
+    """
     page = render_enterprise_console()
-    assert "status === 401 || status === 403" in page, (
-        "an auth status must be classified apart from a genuine error"
+    assert "status === 401 || status === 403" not in page, (
+        "classifying by a status allow-list is what broke; key on actor presence"
     )
+    assert "(!viewer && !serverError ? needActor : failures)" in page, (
+        "a refusal with no actor is the signed-out view whatever its status"
+    )
+    assert "status >= 500" in page, "a 5xx is a real failure no actor would fix"
     assert "signed-out view" in page
     assert "evidence load failed: ${failures.join" in page, (
         "a real failure should name the panels that failed"
     )
+
+
+def test_the_actor_hint_replaces_the_placeholder_rather_than_waiting_for_an_empty_panel() -> None:
+    """The hint was dead code for every panel.
+
+    It was appended only ``if (target && !target.innerHTML)``, and all three
+    tables ship a static placeholder row from the server - ``Loading | --``, and
+    for connectors ``SQL connector | crm-customer-master | --``. So the guard
+    was never true. Measured in Chromium before the repair, signed out: badge
+    correct but the connector panel still showed
+    ``'SQL connector\tcrm-customer-master\t--'``, which reads as a real row
+    whose status is unknown rather than as a panel needing an actor.
+    """
+    page = render_enterprise_console()
+    assert "!target.innerHTML" not in page, (
+        "the panels ship placeholder rows, so this guard is never true"
+    )
+    assert "body.replaceChildren(row)" in page
+    assert "이 패널은 actor가 필요합니다 (?user=)" in page
+    # The placeholder the hint has to replace is really there, so the test above
+    # is about a live condition rather than a hypothetical one.
+    assert '<tr><td>SQL connector</td><td class="mono">crm-customer-master</td><td>--</td></tr>' in page
+
+
+def _console_panel_urls(page: str) -> list[str]:
+    """The paths the shipped console actually fetches, read out of the page.
+
+    Extracted rather than hardcoded: a hardcoded list would keep passing after
+    the console started fetching something else, which is the shape of defect
+    this file exists to catch.
+    """
+    literals = re.findall(r"json\('(/[^']+)'\)", page)
+    probes = re.findall(
+        r"\['[^']+', '([a-z_]+)', '([a-z0-9-]+)'\]", page
+    )
+    return literals + [
+        f"/enterprise/connectors/{connector}/probe?dataset_id={dataset}"
+        for connector, dataset in probes
+    ]
+
+
+def test_every_panel_the_console_fetches_behaves_as_the_classifier_assumes() -> None:
+    """The server-side half of the contract, measured.
+
+    With no actor every panel must either answer 200 or refuse with a 4xx -
+    never a 5xx, which the classifier reports as a real failure. With an actor
+    every panel must answer 200, or the badge would say the platform is broken
+    while it is not.
+    """
+    page = render_enterprise_console()
+    urls = _console_panel_urls(page)
+    assert len(urls) >= 7, urls  # 3 literal panels + 4 connector probes
+
+    signed_out = {}
+    signed_in = {}
+    for url in urls:
+        joiner = "&" if "?" in url else "?"
+        signed_out[url] = client.get(url).status_code
+        signed_in[url] = client.get(f"{url}{joiner}user=admin").status_code
+
+    server_errors = {url: code for url, code in signed_out.items() if code >= 500}
+    assert not server_errors, f"signed-out panels must not 5xx: {server_errors}"
+    not_ok_with_actor = {url: code for url, code in signed_in.items() if code != 200}
+    assert not not_ok_with_actor, (
+        f"with an actor every panel must load: {not_ok_with_actor}"
+    )
+    # At least one panel really is gated, so the signed-out branch is live.
+    assert any(code >= 400 for code in signed_out.values()), signed_out
 
 
 def test_the_console_still_renders_and_is_reachable() -> None:
