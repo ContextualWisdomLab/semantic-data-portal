@@ -10,6 +10,8 @@ from uuid import uuid4
 from sdp_core import buyer_demo_datasets
 from sdp_core.contracts import REQUIRED_METADATA_FIELDS
 
+from .quality_warnings import quality_warning_summary
+
 from .domain import (
     AuditEvent,
     ColumnMetadata,
@@ -288,6 +290,14 @@ def discovery_view(dataset: Dataset) -> Dict[str, Any]:
     published["metadata_completeness"] = dataset.metadata_completeness
     published["metadata_recommendation_score"] = dataset.metadata_recommendation_score
     published["completeness_badge"] = completeness_badge(dataset)
+    # LIN-004's warnings, dataset-scope only. ``include_column_scope=False`` is
+    # the same boundary the lines above enforce: a column-scope warning names a
+    # column and reads per-column statistics this projection withholds, so the
+    # count travels instead of the content and a short list cannot read as a
+    # clean dataset. The governed schema route publishes the full set.
+    published["quality_warnings"] = quality_warning_summary(
+        dataset, include_column_scope=False
+    )
     return published
 
 

@@ -2183,6 +2183,10 @@ def test_catalog_discovery_payload_field_set_is_pinned():
         "metadata_completeness",
         "metadata_recommendation_score",
         "completeness_badge",
+        # LIN-004's warning block. Dataset-scope warnings only, plus the count
+        # of the column-scope ones this surface withholds - see
+        # tests/test_quality_threshold_warnings.py for that boundary.
+        "quality_warnings",
     }
 
 

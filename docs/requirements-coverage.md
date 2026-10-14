@@ -30,9 +30,9 @@ PYTHONPATH=src python -m sdp_core.requirements
 
 | 상태 | 전체 | P0 |
 | --- | --- | --- |
-| `implemented` | 36 | 21 |
+| `implemented` | 37 | 21 |
 | `partial` | 20 | 10 |
-| `not_implemented` | 16 | 3 |
+| `not_implemented` | 15 | 3 |
 | `external` | 2 | 0 |
 
 ## 전체 색인
@@ -84,7 +84,7 @@ PYTHONPATH=src python -m sdp_core.requirements
 | LIN-001 | P0 | `implemented` |
 | LIN-002 | P1 | `not_implemented` |
 | LIN-003 | P0 | `partial` |
-| LIN-004 | P1 | `not_implemented` |
+| LIN-004 | P1 | `implemented` |
 | LIN-005 | P1 | `not_implemented` |
 | ADM-001 | P0 | `not_implemented` |
 | ADM-002 | P0 | `not_implemented` |
@@ -414,11 +414,12 @@ PYTHONPATH=src python -m sdp_core.requirements
 - **증빙**: `route:GET /catalog/datasets/{dataset_id}/profile`
 - **비고**: null ratio, distinct ratio and freshness are present; duplicate ratio is not computed anywhere.
 
-#### LIN-004 · P1 · `not_implemented`
+#### LIN-004 · P1 · `implemented`
 
 - **요구사항**: 품질 threshold 위반 시 데이터셋 상세에 warning을 표시해야 한다.
 - **수락 기준**: warning에는 rule, observed value, threshold 포함
-- **비고**: Quality scores are carried and published, but no threshold is configured and no warning is derived from one.
+- **증빙**: `route:GET /catalog/datasets/{dataset_id}`, `route:GET /browse/{dataset_id}/schema`, `func:sdp.quality_warnings.quality_warning_summary`, `test:tests/test_quality_threshold_warnings.py::test_every_declared_rule_fires_on_a_violating_dataset`, `test:tests/test_quality_threshold_warnings.py::test_every_warning_carries_rule_observed_value_and_threshold`
+- **비고**: Six rules over the dataset's declared scores, its required-metadata completeness and its per-column null/distinct ratios and declared issues. Each warning carries the rule, the observed value and the threshold, which is what the acceptance criterion names. Two boundaries are deliberate: a rule whose input cannot be compared reports `unevaluated` rather than passing, and column-scope warnings appear only behind the policy gate because they name a column and read statistics the discovery surface withholds - the open surface publishes `withheld_quality_warning_count` instead. The thresholds are product-wide defaults, not per-tenant or per-domain configuration; `threshold_source` says so on every warning.
 
 #### LIN-005 · P1 · `not_implemented`
 

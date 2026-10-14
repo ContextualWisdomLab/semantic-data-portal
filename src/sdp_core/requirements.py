@@ -537,10 +537,27 @@ REQUIREMENT_COVERAGE: dict[str, RequirementCoverage] = {
         ),
     ),
     "LIN-004": RequirementCoverage(
-        status="not_implemented",
+        status="implemented",
+        evidence=[
+            "route:GET /catalog/datasets/{dataset_id}",
+            "route:GET /browse/{dataset_id}/schema",
+            "func:sdp.quality_warnings.quality_warning_summary",
+            "test:tests/test_quality_threshold_warnings.py::test_every_declared_rule_fires_on_a_violating_dataset",
+            "test:tests/test_quality_threshold_warnings.py::test_every_warning_carries_rule_observed_value_and_threshold",
+        ],
         note=(
-            "Quality scores are carried and published, but no threshold is "
-            "configured and no warning is derived from one."
+            "Six rules over the dataset's declared scores, its required-metadata "
+            "completeness and its per-column null/distinct ratios and declared "
+            "issues. Each warning carries the rule, the observed value and the "
+            "threshold, which is what the acceptance criterion names. Two "
+            "boundaries are deliberate: a rule whose input cannot be compared "
+            "reports `unevaluated` rather than passing, and column-scope "
+            "warnings appear only behind the policy gate because they name a "
+            "column and read statistics the discovery surface withholds - the "
+            "open surface publishes `withheld_quality_warning_count` instead. "
+            "The thresholds are product-wide defaults, not per-tenant or "
+            "per-domain configuration; `threshold_source` says so on every "
+            "warning."
         ),
     ),
     "LIN-005": RequirementCoverage(

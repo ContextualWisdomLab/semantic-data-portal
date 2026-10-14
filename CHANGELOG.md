@@ -20,7 +20,7 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                    924 passed, 11 skipped
+    pytest                    937 passed, 11 skipped
     pytest (역방향/난수 순서)  순서 무관 통과 (역순 + seed 11/707/31337)
     pytest tests/fuzz          11 passed
     python -m sdp.demo_smoke   exit 0, "ready": true
@@ -336,6 +336,30 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
   이미 pydantic 모델로 검증되고 있었지만 문서에는 `additionalProperties: true`로만
   나타났습니다. 런타임은 그대로이고(400 형태 유지), 게시한 모델이 핸들러가 실제로
   생성하는 모델인지 AST로 확인합니다.
+- **품질 임계값을 선언하고 위반을 경고하게 했습니다(LIN-004).** 재료는 전부 있었고
+  전부 쓰이지 않았습니다: `quality_score`·`freshness_score`·`metadata_completeness`와
+  컬럼별 `nullable_ratio`·`distinct_ratio`·`quality_issues`가 저장되고 공개되고
+  있었지만, 임계값을 선언한 코드가 어디에도 없었으므로 위반이 성립할 수 없었고 경고가
+  존재할 수 없었습니다. **임계값 없는 숫자는 품질 신호가 아니라 그냥 숫자입니다.**
+  규칙 여섯 개를 선언하고 위반마다 수락 기준이 명시한 `rule`·`observed_value`·`threshold`를
+  담아 데이터셋 상세와 거버닝 스키마 조회에 공개합니다. 세 가지를 지킵니다.
+  (1) **평가할 수 없는 규칙은 통과가 아닙니다** — 입력이 없거나 숫자가 아니거나
+  NaN/inf이거나 bool이면(bool은 `int` 서브클래스라 `True`가 `1.0`으로 비교될 수 있습니다)
+  `unevaluated`와 사유를 보고하고 셉니다. 없는 데이터를 "임계값 이내"로 처리하면 품질
+  표면의 목적이 정확히 뒤집힙니다. (2) **경고는 discovery 경계를 넘지 않습니다** —
+  "컬럼 `ssn`이 94% null"은 `discovery_view`가 withhold하는 컬럼별 통계를 quality 필드로
+  우회시키는 것입니다. 그래서 규칙에 범위가 있습니다: dataset 범위는 discovery가 이미
+  공개하는 필드를 읽고 거기 나타나며, column 범위는 정책 게이트 뒤에만 나타나고 공개
+  표면에는 `withheld_quality_warning_count`가 갑니다. (3) **임계값은 한 곳입니다** —
+  `metadata_completeness`는 saleability gate가 이미 비교하는 0.90을 재사용합니다(두 벌이
+  어긋나면 같은 데이터셋이 pass이면서 gap입니다).
+  테스트가 규칙 **여섯 개 전부에 대해 위반 픽스처를 만들어 실제로 발화하는 것을
+  확인합니다** — 시드 데모 데이터는 모든 임계값에 대해 깨끗하므로, 시드만 읽는 테스트는
+  한 번도 발화하지 않는 규칙 집합을 통과시킵니다. 임계값과 **같은** 값은 발화하지 않고
+  (시드의 `semantic-glossary.broader_concept`가 null 비율 0.200으로 정확히 경계에
+  있습니다) 0.001 넘으면 발화하는 것도 함께 확인합니다 — 그래야 앞의 단언이 죽은 규칙
+  때문에 통과하는 것이 아님이 증명됩니다. 이에 따라 LIN-004는 `not_implemented` →
+  `implemented`입니다.
 - **PRD가 선언한 여섯 개 지연 예산을 측정하게 했습니다 — 단방향으로.**
   `docs/prd-trd.md`는 표면별 p95 예산을 선언합니다(NFR-PERF-001~006: catalog 검색 2초,
   dataset 상세 1.5초, schema browsing 3초, preview 10초, LLM 답변 15초, ontology term

@@ -6,6 +6,7 @@ from .authz import can_access_tenant
 from .catalog import get_dataset, get_dataset_profile, ingest_event
 from .domain import ColumnMetadata, Dataset
 from .policy import evaluate, evaluate_dataset_scope_refusal
+from .quality_warnings import quality_warning_summary
 
 # Demo sample values, keyed by the column they belong to. The preview rows are
 # built by projecting these onto the *named* dataset's declared schema, so a
@@ -243,6 +244,10 @@ def schema(dataset_id: str, user: str, purpose: str = "analysis") -> Dict[str, A
         "mappings": [mapping.model_dump() for mapping in dataset.mappings],
         "masked_columns": decision.obligations.get("masking", []),
         "quality": {"quality_score": dataset.quality_score, "freshness_score": dataset.freshness_score},
+        # The full LIN-004 set, column scope included: this route is already
+        # publishing the per-column statistics those rules read, behind the
+        # policy gate that just allowed the caller.
+        "quality_warnings": quality_warning_summary(dataset, include_column_scope=True),
     }
 
 

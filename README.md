@@ -46,6 +46,20 @@ PYTHONPATH=src uvicorn sdp.api:app --reload
 `SDP_SQLITE_PATH=.local/sdp-evidence.sqlite3`를 지정하면 production credential 없이도 같은 evidence store protocol을 로컬 SQLite fallback으로 검증할 수 있습니다. `SDP_DATABASE_URL`이 있으면 Postgres가 SQLite보다 우선합니다.
 `SDP_LOG_SINK_URL=file:///data/sdp-requests.jsonl`(절대 경로, `file://` 뒤 authority 없이 슬래시 세 개)과 `SDP_REQUEST_ID_HEADER=X-Request-Id`를 지정하면 request id, tenant, actor, route, status, latency, evidence ids만 body 없이 request observation log로 기록됩니다. `file://.local/...`처럼 상대 경로로 보이는 값은 **거부됩니다** — authority가 경로로 접혀 들어가 파일시스템 루트(`//.local/...`)를 가리켰고, 컨테이너는 `USER 10001`로 `/data`만 쓸 수 있어 매 요청이 `PermissionError`로 실패하는데 manifest는 계속 `implemented`라고 보고했습니다. 이제 쓸 수 없는 설정은 `GET /enterprise/observability`가 `configured: false`와 `invalid_configuration` 사유로 보고합니다(설정값 자체는 공개하지 않습니다 — sink의 내부 호스트와 경로가 담겨 있습니다).
 http(s) sink도 지원합니다. URL에 credential을 담은 형태(`https://sdp-ingest:TOKEN@logs.example.net/loki/api/v1/push` — Loki·Elastic·서명 webhook의 문서화된 push URL 형태)는 userinfo를 URL에서 분리해 `Authorization` 헤더로 보냅니다(password가 있으면 `Basic`, token 하나면 `Bearer`; `@`·`:`를 담은 password는 percent-encoding). 이전에는 URL 전체를 `urllib`에 넘겨 userinfo가 연결 host로 남았고(`sdp-ingest:TOKEN@logs.example.net` → `InvalidURL: nonnumeric port`), 모든 export가 실패하는 동안 manifest는 `configured: true`로 보고했으며 예외 메시지가 authority를 인용해 credential이 export error ring에 남았습니다. host가 없거나 port가 숫자가 아닌 http sink도 이제 file sink와 같은 경로로 `configured: false` + `invalid_configuration`으로 보고합니다.
+데이터셋 상세(`GET /catalog/datasets/{id}`)와 거버닝 스키마 조회
+(`GET /browse/{id}/schema`)는 `quality_warnings` 블록을 함께 공개합니다(LIN-004).
+규칙 여섯 개 — 선언된 quality/freshness score, 필수 metadata 충족률, 컬럼별 null 비율·
+distinct 비율·선언된 quality issue — 를 임계값과 비교하고, 위반마다 `rule`,
+`observed_value`, `threshold`를 담습니다. 이전에는 이 숫자들이 모두 저장·공개되고 있었지만
+임계값을 선언한 코드가 없어서 위반이 성립할 수 없었습니다 — **임계값 없는 숫자는 품질
+신호가 아닙니다**. 두 가지 경계가 의도적입니다. (1) 비교할 수 없는 입력(값 없음, 숫자 아님,
+NaN/inf, bool)은 통과가 아니라 `unevaluated`로 보고합니다 — 없는 데이터가 "깨끗하다"로
+읽히면 품질 표면의 목적이 뒤집힙니다. (2) 컬럼 범위 경고는 컬럼 이름과 `discovery_view`가
+withhold하는 컬럼별 통계를 담으므로 **정책 게이트 뒤에서만** 공개하고, 공개 표면에는
+`withheld_quality_warning_count`를 적습니다(짧은 목록이 깨끗한 데이터셋으로 읽히지 않게).
+임계값은 제품 전역 기본값이며 테넌트/도메인별 설정이 아닙니다 — 모든 경고에
+`threshold_source: product_default`로 적습니다.
+
 `GET /enterprise/latency-budgets`는 PRD가 선언한 여섯 개 p95 예산(NFR-PERF-001~006)을
 그 예산이 적용되는 라우트에 묶어 두고, 이 워커가 실제로 관측한 성공 응답의 nearest-rank p95와
 비교합니다. 이전에는 미들웨어가 요청별 `latency_ms`를 기록하고 manifest가 그것을 공개하면서도
