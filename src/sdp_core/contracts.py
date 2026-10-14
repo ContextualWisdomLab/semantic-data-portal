@@ -43,6 +43,25 @@ class DatasetProfile(BaseModel):
     quality_issues: list[str] = Field(default_factory=list)
 
 
+# The metadata a dataset must carry to be considered complete. This is the one
+# list: ``Dataset.metadata_completeness`` scores it and ``catalog.validate_metadata``
+# requires it. They were two lists of different lengths, so the published
+# completeness number could read 1.0 for a dataset the validator calls critically
+# invalid.
+REQUIRED_METADATA_FIELDS = (
+    "owner",
+    "steward",
+    "title",
+    "description",
+    "domain",
+    "sensitivity",
+    "update_frequency",
+    "source_system",
+    "schema",
+    "distributions",
+)
+
+
 class Dataset(BaseModel):
     id: str
     tenant_id: str = "demo"
@@ -76,17 +95,30 @@ class Dataset(BaseModel):
 
     @property
     def metadata_completeness(self) -> float:
-        required_fields = [
-            self.owner,
-            self.steward,
-            self.title,
-            self.description,
-            self.sensitivity,
-            self.update_frequency,
-            self.source_system,
-        ]
-        covered = sum(1 for value in required_fields if value)
-        return covered / len(required_fields)
+        """Share of the **required** metadata fields this dataset carries.
+
+        This scored seven fields while ``catalog.validate_metadata`` requires
+        ten (adding ``domain``, ``schema`` and ``distributions``), so a dataset
+        that fails validation critically still published ``1.0``. Measured on a
+        dataset registered with ``schema: []`` and ``distributions: []``::
+
+            GET /catalog/datasets/{id}/validate
+              -> is_valid: false, critical: true,
+                 missing: ["schema", "distributions"]
+            the same catalog payload
+              -> metadata_completeness: 1.0
+
+        The KPI named after this measure states its own guardrail as
+        "Completeness must not hide failed validation." - which is exactly what
+        the seven-field score did. One list, in
+        ``REQUIRED_METADATA_FIELDS`` below, is what keeps the number and the
+        validator from drifting again; ``catalog`` imports it rather than
+        keeping its own copy.
+        """
+        covered = sum(
+            1 for field in REQUIRED_METADATA_FIELDS if getattr(self, field, None)
+        )
+        return covered / len(REQUIRED_METADATA_FIELDS)
 
     @property
     def metadata_recommendation_score(self) -> float:

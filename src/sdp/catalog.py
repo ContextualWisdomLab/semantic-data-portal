@@ -8,6 +8,7 @@ from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
 from sdp_core import buyer_demo_datasets
+from sdp_core.contracts import REQUIRED_METADATA_FIELDS
 
 from .domain import (
     AuditEvent,
@@ -440,18 +441,11 @@ class SearchResult:
     score: float
 
 
-_REQUIRED_METADATA_FIELDS = [
-    "owner",
-    "steward",
-    "title",
-    "description",
-    "domain",
-    "sensitivity",
-    "update_frequency",
-    "source_system",
-    "schema",
-    "distributions",
-]
+# Imported, not duplicated: ``Dataset.metadata_completeness`` scores the same
+# list. They were two lists of different lengths (7 vs 10), so a dataset the
+# validator calls critically invalid still published
+# ``metadata_completeness: 1.0``.
+_REQUIRED_METADATA_FIELDS = list(REQUIRED_METADATA_FIELDS)
 
 
 def _bump_version(version: str) -> str:

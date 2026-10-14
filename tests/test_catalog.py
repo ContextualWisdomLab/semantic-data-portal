@@ -126,9 +126,23 @@ def test_search_min_freshness_excludes_all() -> None:
 def test_search_include_inactive_completeness_gate() -> None:
     """A low-metadata-completeness dataset is hidden unless include_inactive is set (line 236)."""
     base = catalog._DATA[_CRM]
-    # Two blank required fields drop metadata_completeness to 5/7 (< 0.8).
+    # Three blank required fields drop metadata_completeness to 7/10 (< 0.8).
+    #
+    # It used to be two blanks for 5/7. The denominator changed because
+    # ``metadata_completeness`` scored seven fields while
+    # ``validate_metadata`` required ten, so a dataset the validator called
+    # critically invalid still published 1.0 - the KPI's own guardrail is
+    # "Completeness must not hide failed validation." Both now read
+    # ``sdp_core.contracts.REQUIRED_METADATA_FIELDS``. What this test is about
+    # is the gate, so the fixture is adjusted to sit below it.
     catalog._DATA["inactive-ds"] = base.model_copy(
-        update={"id": "inactive-ds", "owner": "", "steward": "", "title": "customer inactive dataset"}
+        update={
+            "id": "inactive-ds",
+            "owner": "",
+            "steward": "",
+            "update_frequency": "",
+            "title": "customer inactive dataset",
+        }
     )
     assert catalog._DATA["inactive-ds"].metadata_completeness < 0.8
 
