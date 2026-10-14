@@ -117,6 +117,25 @@ SDP_DATABASE_DSN='postgresql+psycopg://sdp_graph_app:<url-encoded-password>@loca
 거부가 모두 게시되었는지, 그리고 게시된 거부가 모두 실제로 발생 가능한지. 라우트가
 낼 수 있는 상태는 `sdp.api`의 AST를 따라 유도하므로 손으로 적은 목록이 아닙니다.
 
+### 요청 본문 스키마
+
+`POST /catalog/datasets`(온보딩)와 `POST /browse/query`(거버닝 쿼리)를 포함한 네
+라우트는 이미 pydantic 계약(`DatasetCreateRequest`, `DatasetPatchRequest`,
+`QueryDraftRequest`, `QueryExecutionRequest`)으로 검증되고 있었지만, 라우트 파라미터가
+`dict`라서 OpenAPI 문서에는 `additionalProperties: true`로만 나타났습니다 — 생성된
+클라이언트가 필드 이름을 하나도 볼 수 없었습니다. 이제 문서가 해당 모델을 게시합니다.
+
+런타임은 바뀌지 않았습니다: 파라미터는 여전히 `dict`이고, 스키마 위반은 FastAPI의
+422가 아니라 이 저장소의 `400 {"error": "invalid_request", "fields": [...]}` 형태를
+유지합니다. `tests/test_api_request_contract.py`가 **각 라우트가 게시한 모델이 그
+핸들러가 실제로 생성하는 모델인지** AST로 확인하므로, 아무도 검증하지 않는 스키마를
+문서가 광고할 수 없습니다.
+
+나머지 10개 라우트는 모델 없이 `payload.get(...)`로 느슨한 키를 읽습니다. 스키마를
+손으로 써 붙이면 핸들러가 읽는 것과 어긋날 수 있고, 모델을 주면 검증이 pydantic으로
+넘어가 게시된 400이 422로 바뀝니다 — 문서 수정이 아니라 기존 클라이언트에 대한 계약
+변경이므로 범위에서 제외했습니다.
+
 ### Health / readiness
 - `GET /health` — liveness
 - `GET /healthz` — readiness (그래프 백엔드 DB/AGE/pgvector 준비 검증, 미준비 시 503)

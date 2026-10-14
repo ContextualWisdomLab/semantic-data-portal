@@ -65,6 +65,7 @@ from .observability import (
     request_id_header,
 )
 from .api_error_contract import document_refusals
+from .api_request_contract import document_request_bodies
 from .authz import can_access_tenant, resolve_actor_context
 from .policy import (
     accessible_tenant_ids,
@@ -1721,3 +1722,7 @@ def browse_query_v1(payload: dict[str, Any]) -> dict[str, Any]:
 # family. ``tests/test_api_error_contract.py`` checks it against the statuses
 # the source can actually raise, in both directions.
 DOCUMENTED_REFUSALS = document_refusals(app)
+# Publish the request-body contracts these routes already validate against. The
+# runtime parameter stays ``dict[str, Any]`` and the 400 shape is unchanged; see
+# ``sdp.api_request_contract`` for why the document was lying about them.
+document_request_bodies(app)
