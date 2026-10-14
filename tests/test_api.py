@@ -367,7 +367,16 @@ def test_enterprise_production_readiness_tracks_paid_pilot_integrations():
     assert any("policy decisions and audit events" in item for item in integrations["postgres_evidence_store"]["acceptance_criteria"])
 
     assert integrations["oidc_jwks_verification"]["status"] == "implemented"
-    assert "SDP_OIDC_JWKS_URL" in integrations["oidc_jwks_verification"]["required_environment"]
+    # SDP_OIDC_JWKS and SDP_OIDC_JWKS_URL are **alternatives**, not both
+    # required: authz._load_configured_jwks reads the inline document first and
+    # falls back to the URL, so a deployment configures one. Listing both as
+    # required made the gate unsatisfiable by a correct deployment - a dummy
+    # inline value set to clear it is invalid JSON that makes that function
+    # raise.
+    assert integrations["oidc_jwks_verification"]["required_environment_alternatives"] == [
+        ["SDP_OIDC_JWKS", "SDP_OIDC_JWKS_URL"]
+    ]
+    assert "SDP_OIDC_ISSUER" in integrations["oidc_jwks_verification"]["required_environment"]
     assert any("direct role claims" in item for item in integrations["oidc_jwks_verification"]["acceptance_criteria"])
 
     assert integrations["connector_credential_vault"]["status"] == "implemented"

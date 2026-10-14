@@ -36,12 +36,24 @@ from sdp_core.production import (
 )
 
 
-def _fully_configured_environment() -> dict[str, str]:
-    return {
+def _fully_configured_environment(*, alternative_index: int = 0) -> dict[str, str]:
+    """A deployment that satisfies the declared requirement, as an operator would.
+
+    ``alternative_index`` picks which member of each alternative group is set.
+    Setting *every* name is what a correct deployment cannot do:
+    ``SDP_OIDC_JWKS`` and ``SDP_OIDC_JWKS_URL`` are alternatives, and a dummy
+    inline JWKS set only to clear the gate is invalid JSON that makes
+    ``authz._load_configured_jwks`` raise.
+    """
+    environment = {
         name: "configured"
         for integration in production_integration_registry()
         for name in integration.required_environment
     }
+    for integration in production_integration_registry():
+        for alternatives in integration.required_environment_alternatives:
+            environment[alternatives[alternative_index % len(alternatives)]] = "configured"
+    return environment
 
 
 def test_an_unconfigured_deployment_is_not_paid_pilot_ready() -> None:
@@ -249,3 +261,52 @@ def test_no_enterprise_control_claims_retention_it_does_not_implement() -> None:
     assert durability.status == "implemented"
     assert "no age-based retention" in durability.label
     assert "not a retention policy" in durability.risk_reduced
+
+
+def test_a_mutually_exclusive_requirement_is_satisfiable_by_one_member() -> None:
+    """The declared requirement must be satisfiable by a real deployment.
+
+    ``SDP_OIDC_JWKS`` (the inline document, for an air-gapped deployment) and
+    ``SDP_OIDC_JWKS_URL`` (fetched when no inline document is configured) were
+    both listed as required. ``authz._load_configured_jwks`` reads the inline
+    one first and falls back to the URL, so a deployment configures **one** -
+    and a dummy inline value set only to clear the gate is invalid JSON, which
+    makes that function raise. The gate pushed operators toward a configuration
+    that breaks the capability it claims to measure.
+    """
+    groups = [
+        alternatives
+        for integration in production_integration_registry()
+        for alternatives in integration.required_environment_alternatives
+    ]
+    assert groups, "the OIDC JWKS pair must be declared as alternatives"
+
+    for index in range(max(len(group) for group in groups)):
+        manifest = enterprise_production_readiness_manifest(
+            _fully_configured_environment(alternative_index=index)
+        )
+        assert manifest.paid_pilot_ready is True, (
+            f"alternative {index} does not satisfy the gate: "
+            f"{manifest.missing_environment}"
+        )
+
+    # No member of an alternative group may also sit in required_environment,
+    # or the "either" is a "both" again.
+    for integration in production_integration_registry():
+        for alternatives in integration.required_environment_alternatives:
+            overlap = set(alternatives) & set(integration.required_environment)
+            assert not overlap, f"{integration.id}: {sorted(overlap)}"
+
+
+def test_an_unsatisfied_alternative_group_is_named_as_a_choice() -> None:
+    """The report must not list names the deployment is not supposed to set."""
+    environment = {
+        name: "configured"
+        for integration in production_integration_registry()
+        for name in integration.required_environment
+    }
+    manifest = enterprise_production_readiness_manifest(environment)
+    assert manifest.paid_pilot_ready is False
+    assert manifest.missing_environment["oidc_jwks_verification"] == [
+        "SDP_OIDC_JWKS | SDP_OIDC_JWKS_URL"
+    ]

@@ -22,6 +22,18 @@ class ProductionIntegration(BaseModel):
     # deleting them keeps the gap visible to a buyer; silently dropping the
     # variable would remove the false claim *and* the information.
     declared_unimplemented_environment: list[str] = []
+    # Groups of variables that are **alternatives**, not all required. Each
+    # inner list is satisfied when at least one of its names is set.
+    #
+    # ``SDP_OIDC_JWKS`` (the inline document, for an air-gapped deployment) and
+    # ``SDP_OIDC_JWKS_URL`` (fetched when no inline document is configured) were
+    # both listed as required. ``authz._load_configured_jwks`` reads the inline
+    # one first and falls back to the URL, so a deployment configures *one*.
+    # Requiring both meant a deployment using the URL form had to set a dummy
+    # inline value to clear the gate - and a dummy inline value is invalid JSON,
+    # which makes ``_load_configured_jwks`` raise. The gate pushed operators
+    # toward a configuration that breaks the capability it claims to measure.
+    required_environment_alternatives: list[list[str]] = []
 
 
 class ProductionReadinessManifest(BaseModel):
@@ -101,10 +113,11 @@ def production_integration_registry() -> list[ProductionIntegration]:
             required_environment=[
                 "SDP_OIDC_ISSUER",
                 "SDP_OIDC_AUDIENCE",
-                "SDP_OIDC_JWKS_URL",
-                "SDP_OIDC_JWKS",
                 "SDP_OIDC_GROUP_ROLE_MAP",
             ],
+            # One of these, not both: the inline document for an air-gapped
+            # deployment, or the URL to fetch it from.
+            required_environment_alternatives=[["SDP_OIDC_JWKS", "SDP_OIDC_JWKS_URL"]],
             acceptance_criteria=[
                 "Signed tokens are verified against issuer, audience, expiry, and JWKS key id.",
                 "Trust anchors come from operator configuration; a request body that carries issuer, audience, JWKS, or role map is refused.",
@@ -168,15 +181,28 @@ def production_integration_registry() -> list[ProductionIntegration]:
     ]
 
 
+def _is_set(environment: Mapping[str, str], name: str) -> bool:
+    """Whether this deployment sets a non-blank value for ``name``."""
+    return bool((environment.get(name) or "").strip())
+
+
 def _missing_required_environment(
     integration: ProductionIntegration, environment: Mapping[str, str]
 ) -> list[str]:
-    """Name the declared environment variables this deployment does not set."""
-    return [
-        name
-        for name in integration.required_environment
-        if not (environment.get(name) or "").strip()
+    """Name the declared environment this deployment does not satisfy.
+
+    An alternative group contributes one entry naming the whole group, so the
+    report says "one of these" rather than listing names the deployment is not
+    supposed to set. Requiring every name of a mutually exclusive pair made the
+    gate unsatisfiable by a correct deployment.
+    """
+    missing = [
+        name for name in integration.required_environment if not _is_set(environment, name)
     ]
+    for alternatives in integration.required_environment_alternatives:
+        if not any(_is_set(environment, name) for name in alternatives):
+            missing.append(" | ".join(alternatives))
+    return missing
 
 
 def enterprise_production_readiness_manifest(
