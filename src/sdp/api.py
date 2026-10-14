@@ -1491,12 +1491,20 @@ def ontology_vocabulary_jsonld() -> dict[str, Any]:
     ``mappings[].concept`` is a plain literal, so no triple anywhere named a
     concept. This is the artifact the revision versions.
 
-    Open and vocabulary-only - no dataset ids. ``ontology._INDEX`` is built with
-    no tenant predicate, and serving it is exactly how ``concept_assets`` leaked
-    every tenant's dataset ids to a caller its own policy decision denied; the
-    concept-to-dataset mapping stays on the governed
+    Open, and it **derives** no dataset identity. ``ontology._INDEX`` is built
+    with no tenant predicate, and serving it is exactly how ``concept_assets``
+    leaked every tenant's dataset ids to a caller its own policy decision
+    denied; the concept-to-dataset mapping stays on the governed
     ``GET /ontology/concept/{term}``. The document says so in
     ``sdp:datasetMappingIsVersioned false``.
+
+    That guarantee is about derivation and is narrower than "no dataset id can
+    appear in this document". Nothing refuses a concept *named* after a dataset
+    (``kind`` is free-form and no class check guards concept registration -
+    ONT-002's recorded gap), and such a name reaches the document as a label and
+    an ``@id`` like any other. What it does not bring with it is any mapping,
+    distribution or dataset structure, which is what
+    ``test_the_export_never_derives_dataset_identity`` pins.
     """
     return ontology.vocabulary_jsonld()
 
@@ -1821,8 +1829,18 @@ def ingest_concept(payload: OntologyConceptRequest) -> dict[str, Any]:
     # escaping unmapped (measured with ``{"concept": "   "}``). Validation is
     # also where an alias that would hijack another concept is refused.
     try:
+        # ``definition`` and the hierarchy fields are passed so the ConceptShape
+        # gate runs here, where a violation maps to 400. Validated a second time
+        # inside ``register_concept``; the duplication is the existing pattern
+        # and is what makes the gate unbypassable by a future caller.
         ontology.validate_concept_registration(
-            payload.concept, aliases=aliases, multilingual=multilingual
+            payload.concept,
+            definition=payload.definition or "",
+            aliases=aliases,
+            multilingual=multilingual,
+            broader=getattr(payload, "broader", None),
+            narrower=list(getattr(payload, "narrower", None) or []),
+            related=list(getattr(payload, "related", None) or []),
         )
     except ValueError as invalid:
         raise HTTPException(status_code=400, detail=str(invalid)) from invalid
@@ -1859,6 +1877,7 @@ def ingest_concept(payload: OntologyConceptRequest) -> dict[str, Any]:
         "concept": record,
         "published_concept": registration["concept"],
         "concept_already_published": registration["already_published"],
+        "concept_validation": registration["concept_validation"],
     }
 
 

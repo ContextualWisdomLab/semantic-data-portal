@@ -427,6 +427,12 @@ SDP_DATABASE_DSN='postgresql+psycopg://sdp_graph_app:<url-encoded-password>@loca
 - `GET /ontology/version`
 - `GET /ontology/change-log?user=<actor>`
 - `GET /ontology/vocabulary/jsonld`
+- `POST /ontology/concepts`·`POST /ontology/patches/{id}/review` — 게시 전에
+  **ConceptShape**를 평가하고(`definition` 필수) 결과를 `concept_validation`으로
+  응답에 담는다. 비적합 개념은 게시되지 않는다(400). 계층 target이 등록된 개념으로
+  해소되지 않는 제약은 **warning** — 시드 어휘가 10회 위반하므로 게시를 막지 않는다.
+- `GET /enterprise/shacl-validation` — 데이터셋 conformance에 더해
+  `concept_conformance`(어휘 전체의 ConceptShape 적합률 + warning 수)를 게시한다.
 - `GET /browse/{dataset_id}/schema`
 - `POST /browse/{dataset_id}/preview`
 - `POST /llm/search`

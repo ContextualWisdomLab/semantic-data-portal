@@ -8,6 +8,11 @@ from uuid import uuid4
 from . import ontology_version
 from .catalog import list_datasets, mapping_candidates
 from .domain import OntologyPatch
+from .semantic_validation import (
+    PRESENCE_BASIS,
+    has_visible_character,
+    validate_concept_semantics,
+)
 
 
 _CONCEPT_DEFINITIONS: Dict[str, Dict[str, Any]] = {
@@ -152,11 +157,55 @@ def _assert_no_alias_conflict(canonical: str, terms: List[str]) -> None:
         raise ValueError("alias conflict: " + "; ".join(sorted(conflicts)))
 
 
+def concept_record(
+    *,
+    definition: str = "",
+    aliases: List[str] | None = None,
+    multilingual: List[str] | None = None,
+    broader: str | None = None,
+    narrower: List[str] | None = None,
+    related: List[str] | None = None,
+) -> Dict[str, Any]:
+    """One concept record in the exact shape the vocabulary stores.
+
+    Built here rather than inline so the shape gate evaluates the **same** six
+    keys that ``_register_concept_locked`` writes. A validator checking a record
+    assembled a second way is a validator that can pass while the stored record
+    fails.
+    """
+    return {
+        "aliases": list(aliases or []),
+        "broader": broader,
+        "narrower": list(narrower or []),
+        "related": list(related or []),
+        "definition": definition.strip(),
+        "multilingual": list(multilingual or []),
+    }
+
+
+def concept_shape_report(concept: str, record: Dict[str, Any]) -> dict[str, Any]:
+    """Evaluate ConceptShape against one record (ONT-005's SHACL gate item).
+
+    ``canonical_concept_or_none`` is injected as the resolver, so a hierarchy
+    target that is only an alias resolves to the concept it aliases and one that
+    resolves to nothing is reported. The resolver is passed in rather than
+    imported by ``semantic_validation``, which would make that module import the
+    vocabulary it validates.
+    """
+    return validate_concept_semantics(
+        concept, record, resolve_concept=canonical_concept_or_none
+    )
+
+
 def validate_concept_registration(
     concept: str,
     *,
+    definition: str = "",
     aliases: List[str] | None = None,
     multilingual: List[str] | None = None,
+    broader: str | None = None,
+    narrower: List[str] | None = None,
+    related: List[str] | None = None,
 ) -> str:
     """Validate a concept registration and return its canonical (stripped) name.
 
@@ -170,11 +219,51 @@ def validate_concept_registration(
     canonical = concept.strip()
     if not canonical:
         raise ValueError("concept must not be empty")
+    # ``strip`` removes only ``str.isspace()`` characters, and the Unicode
+    # format category is not whitespace - measured, three concepts named
+    # U+200B, U+FEFF and NUL were published through ``POST /ontology/concepts``
+    # with 200, and a concept whose name no reader can see cannot be resolved,
+    # searched for or cited. The same predicate the ConceptShape gate applies to
+    # the definition, so the name and its definition are held to one rule.
+    if not has_visible_character(canonical):
+        raise ValueError(f"concept must contain {PRESENCE_BASIS}")
     if len(canonical) > MAX_ONTOLOGY_PATCH_FIELD:
         raise ValueError(f"concept must be at most {MAX_ONTOLOGY_PATCH_FIELD} characters")
     if canonical not in _CONCEPT_DEFINITIONS:
         _assert_no_alias_conflict(
             canonical, list(aliases or []) + list(multilingual or [])
+        )
+    # ONT-005's acceptance criterion is "reasoner + SHACL + reviewer 승인 후
+    # 병합" and reviewer approval was the whole gate. The shape is evaluated
+    # here - the designated pre-write validator, whose ValueError the routes
+    # already map to 400 - so **both** publication paths are covered by one
+    # gate and a third caller cannot bypass it. Measured before this gate:
+    # ``POST /ontology/concepts {"actor": "admin", "concept": "정의누락개념"}``
+    # answered 200 and published a concept with ``definition: ''`` into the
+    # glossary every read surface consults.
+    #
+    # Only violations gate. The shape's hierarchy constraint is a warning,
+    # because the shipped vocabulary violates it 10 times and a constraint that
+    # refuses the product's own seed cannot gate publication.
+    report = concept_shape_report(
+        canonical,
+        concept_record(
+            definition=definition,
+            aliases=aliases,
+            multilingual=multilingual,
+            broader=broader,
+            narrower=narrower,
+            related=related,
+        ),
+    )
+    if not report["conforms"]:
+        raise ValueError(
+            "ConceptShape violation: "
+            + "; ".join(
+                item["message"]
+                for item in report["violations"]
+                if item["severity"] == "violation"
+            )
         )
     return canonical
 
@@ -264,7 +353,13 @@ def _register_concept_locked(
     exists to close.
     """
     canonical = validate_concept_registration(
-        concept, aliases=aliases, multilingual=multilingual
+        concept,
+        definition=definition,
+        aliases=aliases,
+        multilingual=multilingual,
+        broader=broader,
+        narrower=narrower,
+        related=related,
     )
 
     existing = _CONCEPT_DEFINITIONS.get(canonical)
@@ -272,7 +367,12 @@ def _register_concept_locked(
         # An approval must not silently rewrite a shipped definition; that needs
         # its own explicit path. The record is returned unchanged so the caller
         # can report that nothing was overwritten.
-        return {"concept": canonical, "already_published": True, **existing}
+        return {
+            "concept": canonical,
+            "already_published": True,
+            "concept_validation": concept_shape_report(canonical, existing),
+            **existing,
+        }
 
     if len(_CONCEPT_DEFINITIONS) >= MAX_REGISTERED_CONCEPTS:
         # Eviction is a content change of its own, recorded by the evicting
@@ -281,14 +381,14 @@ def _register_concept_locked(
         # deletion and the publication as two revisions, in that order.
         _evict_one_registered_concept(actor_id=actor_id)
 
-    record: Dict[str, Any] = {
-        "aliases": list(aliases or []),
-        "broader": broader,
-        "narrower": list(narrower or []),
-        "related": list(related or []),
-        "definition": definition.strip(),
-        "multilingual": list(multilingual or []),
-    }
+    record: Dict[str, Any] = concept_record(
+        definition=definition,
+        aliases=aliases,
+        multilingual=multilingual,
+        broader=broader,
+        narrower=narrower,
+        related=related,
+    )
     _CONCEPT_DEFINITIONS[canonical] = record
     _index_concept_terms(canonical, record)
     # Recorded after both writes, so the digest stamped into the entry is the
@@ -302,7 +402,15 @@ def _register_concept_locked(
         actor_id=actor_id,
         reviewer_id=reviewer_id,
     )
-    return {"concept": canonical, "already_published": False, **record}
+    return {
+        "concept": canonical,
+        "already_published": False,
+        # Evaluated against the record as **stored**, after the write, so the
+        # published report describes published content rather than a submission
+        # that could still have been refused.
+        "concept_validation": concept_shape_report(canonical, record),
+        **record,
+    }
 
 
 def _evict_one_registered_concept(*, actor_id: str | None = None) -> None:
@@ -671,5 +779,11 @@ def _review_patch_locked(
         if registration is not None:
             published["published_concept"] = registration["concept"]
             published["concept_already_published"] = registration["already_published"]
+            # ONT-005 asks for SHACL before merge. The gate runs inside
+            # ``register_concept`` above - so a non-conforming concept raises
+            # before the status write and the patch is never marked approved
+            # with nothing published - and the report is published here so the
+            # evaluation is observable rather than merely asserted.
+            published["concept_validation"] = registration["concept_validation"]
         return published
     raise KeyError("patch not found")

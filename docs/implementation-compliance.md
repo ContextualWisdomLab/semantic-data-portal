@@ -121,10 +121,16 @@
     NFR-QUAL-002). revision·변경 로그·심사자 기록은 프로세스 메모리 한정이며
     `revision_is_durable: false`로 선언합니다. 버전 범위는 어휘와 alias index뿐이고
     `ontology._INDEX`(개념↔dataset 매핑)는 import 시점에 고정됩니다.
-- ONT-005 제안-승인-노출 흐름, ONT-006 매핑 상태(`proposed/approved/rejected`),
-  근거 문자열/신뢰도
+- ONT-005 제안-승인-노출 흐름 + **게시 전 ConceptShape 평가**, ONT-006 매핑
+  상태(`proposed/approved/rejected`), 근거 문자열/신뢰도
   - `POST /ontology/patches`
   - `POST /ontology/patches/{id}/review`
+  - 게이트는 공유 pre-write 검증기(`ontology.validate_concept_registration`)에
+    있으므로 두 게시 경로가 하나의 검사로 막힌다. 응답의 `concept_validation`이
+    평가 결과를 담는다.
+  - 미해결 경계: reasoner 없음(ONT-007). 엔진은 `builtin_shape_checks`,
+    `shacl_engine_executed: false`. 계층 target 제약은 warning(시드 어휘가 10회
+    위반하므로 violation으로 올릴 수 없다).
 - 증빙 테스트:
   - `tests/test_api.py::test_ontology_search`
   - `tests/test_api.py::test_ontology_concept_graph`
@@ -132,6 +138,7 @@
   - `tests/test_api.py::test_ontology_patch_workflow`
   - `tests/test_ontology_version_identity.py` (버전·변경 로그·심사자 기록·동시성)
   - `tests/test_ontology_vocabulary_export.py` (SKOS/RDFS export·IRI 단사성·pin)
+  - `tests/test_concept_shape_gate.py` (ConceptShape 게이트·warning 경계·플랫폼 수치)
 
 ## 3) Browse / Query
 

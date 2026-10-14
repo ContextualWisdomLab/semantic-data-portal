@@ -80,6 +80,7 @@ def test_incomplete_dataset_reports_all_violation_classes() -> None:
 import pytest
 
 from sdp import catalog as catalog_module
+from sdp import ontology
 from sdp import semantic_validation as sv
 
 
@@ -115,6 +116,18 @@ def test_every_published_required_property_is_evaluated() -> None:
                 report = _probe(f"shape-probe-ds-{prop}", **{prop: None})
                 paths = {item["path"] for item in report["violations"]}
                 if prop not in paths:
+                    unevaluated.append((shape["id"], prop))
+                continue
+            if shape["id"] == "ConceptShape":
+                # A concept, not a dataset node: the same enumeration, against
+                # the record shape ``ontology.concept_record`` builds and
+                # ``register_concept`` stores. Breaking the property here is
+                # what proves the publication gate reads it; see
+                # ``tests/test_concept_shape_gate.py`` for the gate itself.
+                record = ontology.concept_record(definition="d", aliases=["a"])
+                record[prop] = ""
+                report = ontology.concept_shape_report("개념형상검사", record)
+                if prop not in {item["path"] for item in report["violations"]}:
                     unevaluated.append((shape["id"], prop))
                 continue
             field, reader = node_shapes[shape["id"]]

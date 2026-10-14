@@ -220,7 +220,10 @@ def test_the_entrys_digest_is_the_content_the_revision_names() -> None:
 def test_the_change_log_is_newest_first() -> None:
     for index in range(3):
         ontology.register_concept(
-            f"순서개념-{index}", change_source="concept_upsert", actor_id="admin"
+            f"순서개념-{index}",
+            change_source="concept_upsert",
+            definition="순서 확인용",
+            actor_id="admin",
         )
     revisions = [
         entry["change_revision"] for entry in ontology.vocabulary_change_log(limit=3)["changes"]
@@ -237,7 +240,10 @@ def test_the_change_log_is_bounded_and_declares_what_it_dropped() -> None:
     assert _identity()["change_log_is_truncated"] is False
     for index in range(capacity + 5):
         ontology.register_concept(
-            f"상한개념-{index}", change_source="concept_upsert", actor_id="admin"
+            f"상한개념-{index}",
+            change_source="concept_upsert",
+            definition="상한 확인용",
+            actor_id="admin",
         )
     identity = _identity()
     assert identity["change_log_entry_count"] == capacity
@@ -257,11 +263,15 @@ def test_an_eviction_is_recorded_as_its_own_revision() -> None:
         ontology.register_concept(
             f"퇴출채움-{len(ontology._CONCEPT_DEFINITIONS)}",
             change_source="concept_upsert",
+            definition="퇴출 확인용",
             actor_id="admin",
         )
     before = _identity()["ontology_revision"]
     ontology.register_concept(
-        "퇴출유발개념", change_source="concept_upsert", actor_id="admin"
+        "퇴출유발개념",
+        change_source="concept_upsert",
+        definition="퇴출을 유발하는 개념",
+        actor_id="admin",
     )
     identity = _identity()
     assert identity["ontology_revision"] == before + 2
@@ -484,7 +494,10 @@ def test_two_concurrent_publications_of_one_concept_produce_one_revision(
         try:
             results.append(
                 ontology.register_concept(
-                    "경쟁개념", change_source="concept_upsert", actor_id="admin"
+                    "경쟁개념",
+                    change_source="concept_upsert",
+                    definition="경쟁 확인용",
+                    actor_id="admin",
                 )
             )
         except BaseException as exc:  # pragma: no cover - reported, not swallowed

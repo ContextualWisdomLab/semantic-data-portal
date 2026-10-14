@@ -2,8 +2,8 @@
 
 이 문서는 `claude/semantic-portal-pr-merge-e5a48k` 브랜치(PR
 [#102](https://github.com/ContextualWisdomLab/semantic-data-portal/pull/102))가
-베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **203개** 커밋 중 122개는
-gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 81개입니다. 측정 명령:
+베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **204개** 커밋 중 122개는
+gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 82개입니다. 측정 명령:
 
     git rev-list --count origin/docs/product-technical-gap-baseline..HEAD
     git log --format=%H origin/docs/product-technical-gap-baseline..HEAD \
@@ -26,10 +26,93 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 81
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                    1079 passed, 11 skipped
+    pytest                    1112 passed, 11 skipped
     pytest (역방향/난수 순서)  순서 무관 통과 (역순 + seed 11/707/31337)
     pytest tests/fuzz          11 passed
     python -m sdp.demo_smoke   exit 0, "ready": true
+
+### Security — 정의 없는 개념이 공유 용어집에 게시될 수 있었습니다 (ONT-005)
+
+ONT-005(P0) 수락 기준은 "**reasoner + SHACL + reviewer 승인** 후 병합"이고, 심사자
+승인이 유일한 게이트였습니다. `review_patch`는 승인 결정에서 곧바로
+`register_concept`로 가고, 그 검사는 이름 비어있지 않음·길이·alias 충돌·어휘 상한뿐
+입니다. 게시되는 **개념 자체를 보는 것은 아무것도 없었고**, `semantic_validation`에는
+개념을 target하는 shape이 하나도 없었습니다.
+
+HTTP로 측정한 결함:
+
+    POST /ontology/concepts {"actor": "admin", "concept": "정의누락개념"}
+        -> 200,  저장된 definition = ''
+    GET  /ontology/search?q=정의누락개념   -> count 1, definition = ''
+    GET  /ontology/concept/정의누락개념    -> definition = ''
+
+모든 읽기 표면이 참조하는 공유 용어집이 **정의 없는 개념**을 담을 수 있었고, 그것이
+권한 있는 라우트를 통해 게시되었습니다. 용어의 정의가 없는 용어집은 용어집이 아닙니다.
+
+`ConceptShape`를 shape 카탈로그에 추가하고 **공유 pre-write 검증기**
+(`validate_concept_registration`)에서 평가합니다. 그래서 두 게시 경로(직접 upsert와
+승인)가 하나의 검사로 막히고, 세 번째 호출자가 우회할 수 없습니다. 승인 경로에서는
+`register_concept`가 상태 기록 **이전에** 실행되므로(기존 순서 수리), 비적합 개념은
+patch를 `approved`로 남기지 않고 `proposed`로 둡니다 — 승인은 기록되고 노출은 없는
+상태를 만들지 않습니다.
+
+shape의 강도는 경계를 명시합니다. 엔진은 `builtin_shape_checks`이고
+`shacl_engine_executed`는 계속 false입니다 — shape이 SHACL로 표현 가능하고 동등한
+in-process 검사로 강제된다는 것이 RDF 스택 없이 할 수 있는 가장 정직한 주장입니다
+(`pyshacl`·`rdflib`은 의존성이 아니고 CI는 hash-pinned requirements로 설치하며,
+`tests/test_semantic_validation.py`가 그 부재를 `pytest.raises(ImportError)`로
+고정합니다).
+
+제약 선택도 측정에 따릅니다:
+
+- `definition`만 **필수**로 둘 수 있습니다. 최상위 개념에는 `broader`가 없고 리프에는
+  `narrower`가 없으므로 둘 중 하나를 요구하면 올바른 어휘를 거부합니다. `aliases`는
+  같은 이유로 **권고**(warning)입니다. 그리고 `propose_patch`는 concept+suggestion만
+  만들므로, aliases/multilingual/broader에 `sh:minCount 1`을 걸면 **모든 patch 승인이
+  거부**됩니다.
+- 계층 target이 Concept이어야 한다는 `sh:class` 모양의 제약은 **warning**입니다.
+  시드 어휘가 9개 미정의 이름에 대해 10회 위반하며, violation으로 올리면 시드 개념
+  5개 전부(고객·매출·이탈·이탈 고객·활성 고객)가 비적합이 됩니다(역검증으로 측정).
+  제품 자신의 시드를 거부하는 제약은 게시를 막을 수 없습니다. alias 전용 target은
+  alias index로 해소되므로(휴면 고객 → 이탈 고객) warning이 아닙니다.
+
+게시된 보고가 **어떤 shape을 적용했는지** 말합니다. 카탈로그가 4개가 되었으므로,
+카탈로그만 게시하면 데이터셋 보고가 ConceptShape으로 데이터셋을 검증한 것처럼 읽힙니다
+— 이 모듈의 역사가 바로 그 오독에 관한 것입니다. 각 보고가 `evaluated_shapes`를 담고,
+`tests/test_semantic_validation.py::test_every_published_required_property_is_evaluated`의
+열거가 ConceptShape까지 확장되어 게시된 필수 속성이 평가되지 않는 상태를 막습니다.
+`/enterprise/shacl-validation`은 어휘 전체의 `concept_conformance`를 게시하므로 shape의
+효과가 게시 순간이 아니라 플랫폼 단위로 측정됩니다.
+
+**ONT-005는 여전히 `partial`입니다.** reasoner가 없고(ONT-007), 속성 존재 shape은
+consistency 검사가 아니며, export에는 reasoner가 작용할 OWL axiom이 없습니다 —
+NFR-QUAL-002도 그대로 미충족이고, 그 note의 "SHACL shape도 적용하지 않는다"는 서술을
+정정했습니다.
+
+### Security — "있음"의 정의가 `str.strip()`이었습니다
+
+위 ConceptShape 게이트의 첫 버전은 `str.strip()`으로 정의 존재를 판정했습니다.
+`strip`은 `str.isspace()`가 참인 문자만 제거하고 **Unicode format 범주(Cf)는
+whitespace가 아닙니다**. 측정 결과 U+200B(zero-width space)·U+200C·U+00AD(soft
+hyphen)·U+200E·U+2060·U+FEFF(BOM)·NUL 각각 하나로만 이루어진 정의가 게이트를
+통과했고, `/ontology/search`가 그 개념을 **빈 화면으로 렌더되는 정의**와 함께
+돌려주었습니다 — 게이트가 막으려던 바로 그 결함을, `strip`이 건드리지 않는 문자
+부류를 통해서 재현한 것입니다.
+
+같은 뿌리가 개념 **이름**에도 있었습니다. `validate_concept_registration`의 검사는
+`strip()` 후 비어있지 않음 뿐이어서, 측정 결과 `POST /ontology/concepts`로
+U+200B·U+FEFF·NUL **이름의 개념 3개가 200으로 게시**되었습니다. 읽는 사람이 볼 수
+없는 이름의 개념은 해석도 검색도 인용도 되지 않으면서 상한이 있는 어휘의 자리를
+차지합니다.
+
+하나의 술어(`semantic_validation.has_visible_character`)로 둘을 닫습니다: 값에
+Unicode separator(Zs/Zl/Zp)와 control/format(Cc/Cf) 범주 **밖의** 문자가 최소 하나
+있어야 합니다. 이 규칙은 `sh:minCount 1`보다 **엄격합니다**(보이지 않는 literal도
+minCount는 만족시킵니다) — 그래서 shape이 `required_property_basis`로 그 규칙을
+게시하고, 강제하는 규칙과 선언한 규칙이 갈라지지 않습니다. 규칙은 "보이지 않는 문자가
+없어야 한다"가 아니라 "보이는 문자가 하나는 있어야 한다"이므로 `"\u200b 실제 정의
+\ufeff"`는 적합합니다. 역검증: `str.strip()`으로 되돌리면 7개 문자 케이스 전부가
+실패합니다.
 
 ### Added — 온톨로지에 버전·변경 로그·심사자 기록이 생겼습니다 (ONT-004)
 

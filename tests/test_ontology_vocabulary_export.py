@@ -203,6 +203,10 @@ def test_the_export_never_derives_dataset_identity() -> None:
     guards concept registration. That is ONT-002's recorded gap, not something
     this export introduces or can close; the second half of this test pins the
     distinction so the first half is not read as a stronger promise than it is.
+    The route's own docstring states the same limit, because that is what a
+    reader sees as the OpenAPI description - it said a flat "no dataset ids"
+    until an adversarial review pointed out that the guarantee is about
+    derivation.
     """
     from sdp.catalog import list_datasets
 
@@ -363,7 +367,10 @@ def test_a_pin_stops_matching_when_the_vocabulary_changes() -> None:
         == 200
     )
     ontology.register_concept(
-        "핀무효화개념", change_source="concept_upsert", actor_id="admin"
+        "핀무효화개념",
+        change_source="concept_upsert",
+        definition="핀 무효화 확인용",
+        actor_id="admin",
     )
     assert (
         client.get(
