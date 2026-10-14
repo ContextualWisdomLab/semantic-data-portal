@@ -13,6 +13,7 @@ import sdp.catalog as app_catalog
 import sdp.domain as app_domain
 import sdp.evidence as app_evidence
 import sdp.observability as app_observability
+import sdp.ontology as app_ontology
 import sdp_core
 from sdp.api import app
 from sdp.connectors import get_source_connector
@@ -30,6 +31,7 @@ def isolate_in_memory_app_state():
     schema_history = deepcopy(app_catalog._SCHEMA_HISTORY)
     policy_log = list(app_evidence._POLICY_DECISION_LOG)
     audit_event_log = list(app_evidence._AUDIT_EVENT_LOG)
+    ontology_patches = [patch.model_copy(deep=True) for patch in app_ontology._ONTOLOGY_PATCHES]
     request_observations = app_observability.list_request_observations()
     export_errors = app_observability.list_observability_export_errors()
     yield
@@ -40,6 +42,7 @@ def isolate_in_memory_app_state():
     app_catalog._SCHEMA_HISTORY.update(schema_history)
     app_evidence._POLICY_DECISION_LOG[:] = policy_log
     app_evidence._AUDIT_EVENT_LOG[:] = audit_event_log
+    app_ontology._ONTOLOGY_PATCHES[:] = ontology_patches
     app_observability.reset_request_observability()
     for observation in request_observations:
         app_observability.record_request_observation(observation, export=False)
@@ -1434,9 +1437,11 @@ def test_ontology_patch_workflow():
     patch_list = patches.json()["patches"]
     assert any(item["id"] == patch["id"] for item in patch_list)
 
+    # This call used to pass `reviewer` with no actor at all, which is what
+    # pinned the unauthenticated, body-supplied-reviewer behaviour.
     review = client.post(
         f"/ontology/patches/{patch['id']}/review",
-        json={"decision": "approve", "reviewer": "admin", "comment": "적절한 제안"},
+        json={"decision": "approve", "actor": "admin", "comment": "적절한 제안"},
     )
     assert review.status_code == 200
     assert review.json()["status"] == "approved"
@@ -2031,3 +2036,70 @@ def test_profile_route_refuses_an_out_of_tenant_caller():
     )
     assert allowed.status_code == 200
     assert allowed.json()["row_count"] is not None
+
+
+def test_ontology_patch_review_requires_an_authorized_steward():
+    """A steward sign-off is a governance mutation on a platform sold on
+    "policy-before-data-access with auditable evidence", yet the review route
+    took the reviewer identity verbatim from the request body with no
+    authorization at all. Measured: an anonymous caller approved its own patch
+    and stamped ``reviewed_by: biz-admin`` — a record naming a steward who never
+    saw it, with zero evidence rows. The structurally identical write
+    ``POST /ontology/concepts`` already enforced admin.
+    """
+    proposal = client.post(
+        "/ontology/patches", json={"concept": "고객", "suggestion": "redefine"}
+    )
+    assert proposal.status_code == 200
+    patch_id = proposal.json()["id"]
+
+    anonymous = client.post(
+        f"/ontology/patches/{patch_id}/review",
+        json={"decision": "approve", "reviewer": "biz-admin", "comment": "lgtm"},
+    )
+    assert anonymous.status_code == 403, anonymous.text
+
+    non_admin = client.post(
+        f"/ontology/patches/{patch_id}/review",
+        json={"decision": "approve", "actor": "analyst"},
+    )
+    assert non_admin.status_code == 403
+
+
+def test_ontology_patch_review_refuses_a_body_supplied_reviewer():
+    """The reviewer is the authorized actor. A caller-chosen ``reviewer`` would
+    name somebody who never reviewed it, so the field is refused outright rather
+    than silently ignored."""
+    proposal = client.post(
+        "/ontology/patches", json={"concept": "고객", "suggestion": "redefine"}
+    )
+    patch_id = proposal.json()["id"]
+
+    spoofed = client.post(
+        f"/ontology/patches/{patch_id}/review",
+        json={"decision": "approve", "actor": "admin", "reviewer": "biz-admin"},
+    )
+    assert spoofed.status_code == 400
+    assert "reviewer" in spoofed.json()["detail"]
+
+    approved = client.post(
+        f"/ontology/patches/{patch_id}/review",
+        json={"decision": "approve", "actor": "admin", "comment": "ok"},
+    )
+    assert approved.status_code == 200
+    assert approved.json()["reviewed_by"] == "admin"
+
+
+def test_ontology_patch_review_records_evidence():
+    """A governance sign-off leaves an audit record, like every other mutation."""
+    proposal = client.post(
+        "/ontology/patches", json={"concept": "고객", "suggestion": "redefine"}
+    )
+    patch_id = proposal.json()["id"]
+    before = len(app_catalog._AUDIT_LOG)
+    client.post(
+        f"/ontology/patches/{patch_id}/review",
+        json={"decision": "reject", "actor": "admin", "comment": "no"},
+    )
+    recorded = app_catalog._AUDIT_LOG[before:]
+    assert any(event.action == "ontology.patch_review" for event in recorded), recorded

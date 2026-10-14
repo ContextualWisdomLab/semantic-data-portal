@@ -770,17 +770,49 @@ def ontology_patch_create(payload: dict[str, str]) -> dict[str, Any]:
 
 @app.post("/ontology/patches/{patch_id}/review")
 def ontology_patch_review(patch_id: str, payload: dict[str, str]) -> dict[str, Any]:
+    # A steward sign-off is a governance mutation, so it carries the same admin
+    # authorization as POST /ontology/concepts rather than none at all.
+    actor_id = _actor(payload)
+    # Authorization first: an unauthorized caller must not learn the payload rules.
+    _authorize_graph_write(actor_id, f"ontology/patches/{patch_id}")
+    if "reviewer" in payload:
+        # The reviewer is the authorized actor. A caller-chosen name would produce
+        # a record naming a steward who never saw the patch, so the field is
+        # refused outright rather than silently ignored.
+        raise HTTPException(
+            status_code=400,
+            detail="reviewer is derived from the authorized actor and must not be sent in the request body",
+        )
+    decision = evaluate(
+        subject=actor_id,
+        resource=f"ontology/patches/{patch_id}",
+        action="create",
+        purpose="ontology",
+    )
     try:
-        return ontology.review_patch(
+        reviewed = ontology.review_patch(
             patch_id=patch_id,
             decision=payload.get("decision", ""),
-            reviewer=payload.get("reviewer", "anonymous"),
+            reviewer=actor_id,
             comment=payload.get("comment", ""),
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    catalog.ingest_event(
+        event_type="ontology.patch_review",
+        actor=actor_id,
+        dataset_id=f"ontology/patches/{patch_id}",
+        decision=reviewed.get("status", "reviewed"),
+        reason=payload.get("comment", ""),
+        decision_id=decision.decision_id,
+        details={
+            "concept": reviewed.get("concept"),
+            "policy_decision_id": decision.decision_id,
+        },
+    )
+    return {**reviewed, "policy_decision_id": decision.decision_id}
 
 
 @app.get("/ontology/term/{term}/graph")
