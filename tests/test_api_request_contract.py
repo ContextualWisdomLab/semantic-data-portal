@@ -194,3 +194,38 @@ def test_the_untyped_bodies_that_remain_are_the_ones_with_no_model() -> None:
         assert not CONSTRUCTED.get(key), (
             f"{key} constructs {sorted(CONSTRUCTED[key])} but publishes no schema"
         )
+
+
+def test_the_custom_generator_does_not_drop_app_level_openapi_settings() -> None:
+    """It must delegate to FastAPI's generator, not re-implement the call.
+
+    ``FastAPI.openapi()`` forwards fourteen arguments to ``get_openapi``,
+    including ``summary``, ``terms_of_service``, ``contact``, ``license_info``,
+    ``servers``, ``webhooks``, ``tags`` and
+    ``separate_input_output_schemas``. The first version of
+    ``document_request_bodies`` re-implemented that call with five of them.
+    Every omitted setting is empty on this app today, and
+    ``separate_input_output_schemas`` happens to share its default, so the
+    document was byte-identical and nothing failed - the defect was latent. A
+    deployment that set ``servers`` or ``contact`` for a buyer would have found
+    them silently missing from the published document.
+    """
+    original_servers = app.servers
+    original_contact = app.contact
+    original_schema = app.openapi_schema
+    try:
+        app.servers = [{"url": "https://portal.example", "description": "pilot"}]
+        app.contact = {"name": "data governance", "email": "governance@example"}
+        app.openapi_schema = None
+        spec = app.openapi()
+        assert spec["servers"] == app.servers, spec.get("servers")
+        assert spec["info"]["contact"] == app.contact, spec["info"].get("contact")
+        # and the request-body contract is still applied on top
+        schema = spec["paths"]["/catalog/datasets"]["post"]["requestBody"]["content"][
+            "application/json"
+        ]["schema"]
+        assert schema == {"$ref": "#/components/schemas/DatasetCreateRequest"}
+    finally:
+        app.servers = original_servers
+        app.contact = original_contact
+        app.openapi_schema = original_schema

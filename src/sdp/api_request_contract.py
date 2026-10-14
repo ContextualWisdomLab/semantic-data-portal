@@ -37,7 +37,6 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from fastapi import FastAPI
-from fastapi.openapi.utils import get_openapi
 from fastapi.routing import APIRoute
 from pydantic import BaseModel
 
@@ -100,16 +99,25 @@ def document_request_bodies(app: FastAPI) -> Callable[[], dict[str, Any]]:
     was not. Replacing the body outright is unambiguous.
     """
 
+    # FastAPI's own generator, captured before it is replaced. Calling it is not
+    # the same as calling ``get_openapi`` with a few hand-picked arguments: the
+    # real method forwards fourteen, including ``summary``,
+    # ``terms_of_service``, ``contact``, ``license_info``, ``servers``,
+    # ``webhooks``, ``tags`` and ``separate_input_output_schemas``. The first
+    # version of this function re-implemented the call with five of them. Every
+    # omitted setting is empty on this app today and
+    # ``separate_input_output_schemas`` happens to share its default, so the
+    # document was identical - but the moment a deployment sets ``servers`` or
+    # ``contact`` for a buyer, they would have vanished from the document with
+    # nothing failing. Delegating keeps this function responsible for one thing.
+    generate = app.openapi
+
     def openapi() -> dict[str, Any]:
         if app.openapi_schema:
             return app.openapi_schema
-        schema = get_openapi(
-            title=app.title,
-            version=app.version,
-            openapi_version=app.openapi_version,
-            description=app.description,
-            routes=app.routes,
-        )
+        # ``generate()`` fills ``app.openapi_schema`` and returns that same dict,
+        # so the mutations below land on the cached document in place.
+        schema = generate()
         components = schema.setdefault("components", {}).setdefault("schemas", {})
         for route in app.routes:
             if not isinstance(route, APIRoute):
