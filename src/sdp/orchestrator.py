@@ -94,10 +94,22 @@ _TABLE_CLAUSE_TERMINATORS = frozenset(
 # which is the fail-closed direction: a name the allow-list cannot prove is
 # refused.
 #
-# Note on evidence: that ``$`` and bytes >= 0x80 continue an identifier is
-# PostgreSQL's documented lexer behaviour, not something measured here - this
-# repository has no live engine, and ``execute_query`` never executes SQL. What
-# is measured is the parser's own output above.
+# Note on evidence: the PostgreSQL half is **measured**, not inferred. An
+# independent verification of this finding stood up a throwaway UTF-8 cluster
+# and ran it::
+#
+#     CREATE TABLE customer(a int);
+#     CREATE TABLE customer$pii_raw(secret text);
+#     INSERT INTO customer$pii_raw VALUES ('ssn-123-45-6789');
+#     SELECT count(*), max(secret) FROM customer$pii_raw  -> 1 | ssn-123-45-6789
+#     SELECT count(*) FROM customer                       -> 0
+#
+# with ``pg_tables`` listing ``customer``, ``customer$pii_raw`` and
+# ``customer×pii_raw`` as three distinct tables, and the non-ASCII form
+# behaving identically. So the unquoted reference this validator certified as
+# ``customer`` really does resolve to a different table holding different rows.
+# Nothing executes in *this* repository - ``execute_query`` is a mock engine -
+# which is why the gate's own verdict is what the tests above measure.
 _TABLE_LIST_TOKEN = re.compile(r",|[A-Za-z_\u0080-\uffff][\w.$\u0080-\uffff]*")
 
 # A read-only certification cannot be given to a function it does not know.

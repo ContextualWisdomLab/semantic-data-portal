@@ -428,6 +428,7 @@ _CONSOLE_TEMPLATE = """<!doctype html>
     Promise.allSettled(panels.map(([, load]) => load())).then((outcomes) => {
       const failures = [];
       const needActor = [];
+      const refusedForActor = [];
       outcomes.forEach((outcome, index) => {
         if (outcome.status === 'fulfilled') return;
         const name = panels[index][0];
@@ -448,14 +449,48 @@ _CONSOLE_TEMPLATE = """<!doctype html>
         // 5xx is always a real failure, since no actor would have prevented it.
         // This rule cannot be broken again by changing which 4xx a gate
         // returns.
+        //
+        // Third bucket, because two were not enough. A refusal *with* an actor
+        // is not automatically a problem: a tenant-scoped panel answers 404 for
+        // a resource the viewer's tenant does not own, and that is the boundary
+        // working, not a broken platform. Measured with
+        // ``?user=external-analyst`` - a valid, shipped, documented actor:
+        //
+        //     /enterprise/connectors/sql_connector/probe -> 404  (tenant scope)
+        //     /policy/decisions, /audit/events           -> 200
+        //     evidence, controls, KPIs                   -> 200
+        //
+        // and the badge read "evidence load failed: connectors" on a platform
+        // answering every request correctly.
+        //
+        // No status allow-list here either, for exactly the reason the
+        // signed-out branch does not have one: the previous version keyed on
+        // ``401 || 403`` and broke the moment the probe began answering 404.
+        // ``test_the_badge_separates_a_signed_out_view_from_a_real_failure``
+        // asserts that allow-list is absent, and it was right to - my first
+        // attempt at this third bucket reintroduced one and that test caught
+        // it. A 4xx is the gate refusing *this* request; only a 5xx, or a
+        // status the client could not read at all, is the platform failing.
         const serverError = typeof status === 'number' && status >= 500;
-        (!viewer && !serverError ? needActor : failures).push(name);
+        const refused = typeof status === 'number' && status >= 400 && status < 500;
+        if (!viewer && !serverError) {
+          needActor.push(name);
+        } else if (refused) {
+          refusedForActor.push(name);
+        } else {
+          failures.push(name);
+        }
       });
 
       if (failures.length) {
         text('readyBadge', `evidence load failed: ${failures.join(', ')}`);
       } else if (needActor.length) {
         text('readyBadge', `signed-out view - add ?user= to load: ${needActor.join(', ')}`);
+      } else if (refusedForActor.length) {
+        // Worded as a refusal, not as a tenant reason: the console cannot know
+        // why the gate refused, only that it did, and claiming a tenant scope
+        // for a 400 would be a different wrong answer.
+        text('readyBadge', `refused for this actor: ${refusedForActor.join(', ')}`);
       } else {
         text('readyBadge', 'ready for pilot review');
       }
@@ -474,18 +509,31 @@ _CONSOLE_TEMPLATE = """<!doctype html>
         controls: ['controlsRows', 2],
         KPIs: ['kpiRows', 2],
       };
-      needActor.forEach((name) => {
-        const target = PANEL_TARGETS[name];
-        if (!target) return;
-        const body = document.getElementById(target[0]);
-        if (!body) return;
-        const cell = document.createElement('td');
-        cell.colSpan = target[1];
-        cell.textContent = '이 패널은 actor가 필요합니다 (?user=)';
-        const row = document.createElement('tr');
-        row.appendChild(cell);
-        body.replaceChildren(row);
-      });
+      // Refused panels get the same treatment as signed-out ones: the
+      // server-rendered placeholder row reads as a real connector row whose
+      // status is unknown, which is worse than saying the panel was refused.
+      // The hint text differs per bucket. Telling a viewer who *did* supply an
+      // actor that the panel "needs an actor" is a second wrong answer: the
+      // actor was supplied and the gate refused it.
+      const HINTS = {
+        needActor: '이 패널은 actor가 필요합니다 (?user=)',
+        refused: '이 actor에게는 거부된 패널입니다 (tenant 범위 밖이거나 권한 없음)',
+      };
+      needActor
+        .map((name) => [name, HINTS.needActor])
+        .concat(refusedForActor.map((name) => [name, HINTS.refused]))
+        .forEach(([name, hint]) => {
+          const target = PANEL_TARGETS[name];
+          if (!target) return;
+          const body = document.getElementById(target[0]);
+          if (!body) return;
+          const cell = document.createElement('td');
+          cell.colSpan = target[1];
+          cell.textContent = hint;
+          const row = document.createElement('tr');
+          row.appendChild(cell);
+          body.replaceChildren(row);
+        });
     });
   </script>
 </body>

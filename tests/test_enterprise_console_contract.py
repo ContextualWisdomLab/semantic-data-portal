@@ -82,18 +82,88 @@ def test_the_badge_separates_a_signed_out_view_from_a_real_failure() -> None:
     updated in the same series to accept the new 404 and nobody asked whether
     the consumer of that status still worked. Two assertions in one file
     disagreed and both passed. So the allow-list is now asserted *absent*.
+
+    This test used to pin the exact ternary
+    ``(!viewer && !serverError ? needActor : failures)``. That is one
+    expression, not the rule, and it blocked a correct change: a refusal **with**
+    an actor is not a platform failure either when the panel is tenant-scoped,
+    which needed a third branch. The assertions below are about the rule - key
+    on actor presence, never on a specific status - so an implementation that
+    honours it can take any shape. ``test_a_refusal_for_a_valid_actor_is_not_a
+    _platform_failure`` covers the third branch.
     """
     page = render_enterprise_console()
     assert "status === 401 || status === 403" not in page, (
         "classifying by a status allow-list is what broke; key on actor presence"
     )
-    assert "(!viewer && !serverError ? needActor : failures)" in page, (
+    # No equality against any individual status anywhere in the classifier.
+    assert not re.search(r"status ===\s*\d", page), (
+        "classifying by a specific status is the defect; compare ranges"
+    )
+    assert "!viewer && !serverError" in page, (
         "a refusal with no actor is the signed-out view whatever its status"
     )
+    assert "needActor.push(name)" in page, "the signed-out branch must still exist"
     assert "status >= 500" in page, "a 5xx is a real failure no actor would fix"
     assert "signed-out view" in page
     assert "evidence load failed: ${failures.join" in page, (
         "a real failure should name the panels that failed"
+    )
+
+
+def test_a_refusal_for_a_valid_actor_is_not_a_platform_failure() -> None:
+    """The console said the platform was broken for a shipped actor.
+
+    Measured with ``?user=external-analyst`` - a valid, documented actor whose
+    tenant does not own the dataset the connector panel probes::
+
+        /enterprise/connectors/sql_connector/probe -> 404   (tenant scope)
+        /policy/decisions, /audit/events           -> 200
+        evidence, controls, KPIs                   -> 200
+
+    Every request was answered correctly and the badge read
+    "evidence load failed: connectors". Two buckets were not enough: a 4xx is
+    the gate refusing *this* request, and only a 5xx - or a status the client
+    could not read at all - is the platform failing.
+    """
+    page = render_enterprise_console()
+    assert "refusedForActor" in page, "the third bucket must exist"
+    assert "refused for this actor:" in page, "and must have its own badge text"
+    # Worded as a refusal rather than a tenant reason: the console cannot know
+    # why the gate refused, and claiming a tenant scope for a 400 would be a
+    # different wrong answer.
+    assert "outside this actor's tenant scope" not in page
+    # The placeholder row is replaced for a refused panel too, for the same
+    # reason it is for a signed-out one - but with its own wording. Telling a
+    # viewer who *did* supply an actor that the panel "needs an actor" is a
+    # second wrong answer; measured in Chromium with ?user=external-analyst, the
+    # badge was right and the panel still read "이 패널은 actor가 필요합니다".
+    assert "refusedForActor.map((name) => [name, HINTS.refused])" in page
+    assert "이 actor에게는 거부된 패널입니다" in page
+
+
+def test_the_probe_status_the_console_classifies_is_the_one_it_receives() -> None:
+    """The two halves that disagreed, asserted together.
+
+    The earlier regression happened because one test accepted the probe's new
+    404 while another pinned a classifier that treated 404 as a failure. Both
+    passed. Measuring the status here, in the file that classifies it, is what
+    keeps them from drifting again.
+    """
+    from fastapi.testclient import TestClient
+
+    from sdp.api import app
+
+    client = TestClient(app, raise_server_exceptions=False)
+    response = client.get(
+        "/enterprise/connectors/sql_connector/probe",
+        params={"actor": "external-analyst", "dataset_id": "crm-customer-master"},
+    )
+    assert response.status_code == 404, response.text
+    page = render_enterprise_console()
+    # 404 must fall in the refused range, not the failure range.
+    assert "status >= 400 && status < 500" in page, (
+        "the refused bucket must cover every 4xx, including the probe's 404"
     )
 
 

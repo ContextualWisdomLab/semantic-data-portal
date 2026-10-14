@@ -17,7 +17,7 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                    892 passed, 11 skipped
+    pytest                    894 passed, 11 skipped
     pytest (역방향/난수 순서)  순서 무관 통과 (역순 + seed 11/29/77)
     pytest tests/fuzz          11 passed
     python -m sdp.demo_smoke   exit 0, "ready": true
@@ -33,7 +33,13 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
   `pg_terminate_backend(12345)`·`lo_unlink(1)`·`pg_sleep(100000)`·`pg_reload_conf()` 모두
   경고 0건. PRD BRW-005는 이를 **P0**로 선언합니다. deny-list는 무한집합이라 증명할 수 없으므로
   allowlist로 막습니다. 실행 엔진이 없으므로(`execute_query`는 mock) 함수 부작용과 `$`의 의미는
-  PostgreSQL 문서 기준이고, 측정한 것은 게이트의 판정입니다 — 어느 쪽이든 결함은 **거짓 인증**입니다.
+  측정한 것은 게이트의 판정입니다 — 어느 쪽이든 결함은 **거짓 인증**입니다.
+  **정정**: PostgreSQL 쪽도 추론이 아니라 측정입니다. 이 발견에 대한 독립 검증이 일회용 UTF-8
+  클러스터를 띄워 `customer`·`customer$pii_raw`·`customer×pii_raw`를 세 개의 서로 다른 테이블로
+  만들고, `SELECT count(*), max(secret) FROM customer$pii_raw` → `1 | ssn-123-45-6789`,
+  `SELECT count(*) FROM customer` → `0`을 확인했습니다. 즉 이 validator가 `customer`로 인증한
+  인용 없는 참조는 실제로 다른 행을 가진 다른 테이블로 해석됩니다. 이 저장소에서는 아무것도
+  실행되지 않으므로(`execute_query`는 mock) 여기 테스트가 측정하는 것은 게이트의 판정입니다.
 
 - **purpose binding이 공백 하나로 우회**되었습니다. `policy.evaluate`가 `action`은
   `.strip().lower()`로 정규화하면서 `purpose`는 `.lower()`만 했습니다. 측정:
@@ -90,6 +96,16 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
   수 없으므로 단조 카운터를 함께 추가했습니다.
 
 ### Fixed — 문서화된 워크플로가 실제로 동작하지 않던 것들
+- **운영 콘솔이 유효한 actor에게 "플랫폼이 고장났다"고 보고**했습니다. 측정
+  (`?user=external-analyst` — 출하되고 문서화된 유효 actor, 단 그 테넌트는 콘솔이 조회하는
+  데이터셋을 소유하지 않음): connector probe가 **404**(테넌트 범위 — 경계가 동작한 것),
+  나머지 패널은 200인데 badge는 `evidence load failed: connectors`였습니다. 버킷 두 개로는
+  부족했습니다: 4xx는 게이트가 **이 요청**을 거부한 것이고, 플랫폼 실패는 5xx(또는 클라이언트가
+  읽을 수 없는 상태)뿐입니다. Chromium 실측: signed-out → `signed-out view - add ?user=`,
+  external-analyst → `refused for this actor: connectors`, analyst/admin →
+  `ready for pilot review`. 패널 힌트도 버킷별로 다릅니다 — actor를 **보낸** 사람에게 "actor가
+  필요합니다"라고 말하는 것은 두 번째 오답입니다. 새 버킷에 상태 allow-list를 쓰지 않았습니다:
+  그게 이전 결함의 원인이고, 그것을 금지하는 테스트가 제 첫 시도를 잡았습니다.
 - **반쯤 적용된 tenant 마이그레이션이 영구히 복구되지 않았습니다.** `_add_tenant_column`이
   컬럼이 이미 있으면 **자기 backfill 전에** 반환했습니다. 이 메서드는 ALTER만 하는 형태로 먼저
   출시되었으니, 그 빌드로 업그레이드된 SQLite 원장은 전부 컬럼이 있고 backfill이 영원히 돌지
