@@ -47,10 +47,23 @@ def enterprise_control_registry() -> list[EnterpriseControl]:
             ],
         ),
         EnterpriseControl(
+            # The id is kept because it is referenced by
+            # docs/product-technical-gap-baseline.md and tests/test_api.py, but
+            # the label and the risk statement were claiming more than the
+            # control provides. "Retention" reads as an age-based policy, and
+            # there is none: neither evidence store has a prune, purge or expiry
+            # path, which is also why SDP_EVIDENCE_RETENTION_DAYS was moved out
+            # of the paid-pilot gate in sdp_core.production. What this control
+            # really provides is **durability** - rows survive a restart.
             id="local_evidence_retention",
-            label="Local evidence retention",
+            label="Local evidence durability (no age-based retention policy)",
             status="implemented",
-            risk_reduced="Policy decisions and audit events survive process restart in demo or pilot environments.",
+            risk_reduced=(
+                "Policy decisions and audit events survive process restart in demo or "
+                "pilot environments. This is durability, not a retention policy: rows "
+                "are kept indefinitely and no age-based prune or purge path exists in "
+                "either evidence store."
+            ),
             evidence=[
                 "SDP_SQLITE_PATH",
                 "sdp_core.SQLiteEvidenceStore",
@@ -60,6 +73,8 @@ def enterprise_control_registry() -> list[EnterpriseControl]:
             release_criteria=[
                 "Preview/query/catalog mutation flows persist policy_decision_id and audit event payloads.",
                 "Production backend can replace SQLite through the same evidence-store boundary.",
+                "An age-based retention policy is out of scope for this control; deleting "
+                "compliance evidence on a timer needs its own decision and its own gate.",
             ],
         ),
         EnterpriseControl(

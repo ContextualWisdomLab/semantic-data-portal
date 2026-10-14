@@ -14,6 +14,14 @@ class ProductionIntegration(BaseModel):
     current_evidence: list[str]
     required_environment: list[str]
     acceptance_criteria: list[str]
+    # Variables an operator may reasonably expect this integration to honour and
+    # that it does **not** yet read. They are listed here instead of in
+    # ``required_environment``, because a readiness gate that a no-op variable
+    # satisfies measures nothing - see
+    # :func:`enterprise_production_readiness_manifest`. Naming them rather than
+    # deleting them keeps the gap visible to a buyer; silently dropping the
+    # variable would remove the false claim *and* the information.
+    declared_unimplemented_environment: list[str] = []
 
 
 class ProductionReadinessManifest(BaseModel):
@@ -30,6 +38,9 @@ class ProductionReadinessManifest(BaseModel):
     configured_integrations: list[str] = []
     unconfigured_integrations: list[str] = []
     missing_environment: dict[str, list[str]] = {}
+    # Declared-but-unimplemented configuration, surfaced so the readiness
+    # document says what it cannot yet honour instead of staying silent.
+    unimplemented_environment: dict[str, list[str]] = {}
 
 
 def production_integration_registry() -> list[ProductionIntegration]:
@@ -38,7 +49,13 @@ def production_integration_registry() -> list[ProductionIntegration]:
             id="postgres_evidence_store",
             label="Postgres evidence store",
             status="implemented",
-            buyer_risk="SQLite remains available for local demo fallback; paid pilots can use managed, backed-up, tenant-indexed Postgres evidence retention.",
+            buyer_risk=(
+                "SQLite remains available for local demo fallback; paid pilots can use "
+                "managed, backed-up, tenant-indexed Postgres evidence storage. "
+                "Age-based retention is NOT implemented: neither evidence store has a "
+                "prune or purge path, so rows are kept until an operator removes them "
+                "out of band. SDP_EVIDENCE_RETENTION_DAYS is declared but unread."
+            ),
             current_evidence=[
                 "SDP_DATABASE_URL",
                 "SDP_DATABASE_SSLMODE",
@@ -54,8 +71,8 @@ def production_integration_registry() -> list[ProductionIntegration]:
             required_environment=[
                 "SDP_DATABASE_URL",
                 "SDP_DATABASE_SSLMODE",
-                "SDP_EVIDENCE_RETENTION_DAYS",
             ],
+            declared_unimplemented_environment=["SDP_EVIDENCE_RETENTION_DAYS"],
             acceptance_criteria=[
                 "policy decisions and audit events persist through the same store protocol under Postgres.",
                 "Every stored row carries tenant, resource, decision id, created_at, and immutable payload snapshot.",
@@ -186,6 +203,29 @@ def enterprise_production_readiness_manifest(
     ``paid_pilot_ready`` now requires both. ``demo_release_ready`` is unchanged:
     the demo path runs on in-memory defaults by design, which is why
     ``sdp.demo_smoke`` does not gate on this flag.
+
+    Making the flag falsifiable was not enough on its own: the gate still turned
+    on the *presence of a non-blank string*, and one of the declared variables
+    had no consumer anywhere in ``src/``. Measured before this change, with
+    everything else configured, the last variable standing between
+    ``paid_pilot_ready: false`` and ``true`` was ``SDP_EVIDENCE_RETENTION_DAYS``,
+    and it was satisfied by ``'banana'``, ``'0'``, ``'-1'`` and ``'   x'`` alike,
+    while neither ``SQLiteEvidenceStore`` nor ``PostgresEvidenceStore`` has any
+    prune, purge or expiry path at all. So the gate could be cleared by setting
+    a variable that does nothing, and an operator reading
+    ``required_environment`` concluded that evidence retention was configurable
+    and enforced when it was neither.
+
+    A gate may only measure capabilities that exist. The variable moved to
+    ``declared_unimplemented_environment``, which the manifest publishes, so the
+    gap is stated rather than either falsely gated or silently dropped.
+    Implementing retention was deliberately not done here: deleting compliance
+    evidence on a timer is a product decision about the destruction of audit
+    records, not a defect fix, and it would also need a Postgres path this
+    environment cannot verify.
+    ``tests/test_production_readiness_measurement.py`` now scans ``src/`` for a
+    consumer of every ``required_environment`` name, so the next no-op variable
+    fails there instead of quietly becoming a gate.
     """
     resolved_environment = os.environ if environment is None else environment
     integrations = production_integration_registry()
@@ -213,4 +253,9 @@ def enterprise_production_readiness_manifest(
         ],
         unconfigured_integrations=unconfigured,
         missing_environment=missing_environment,
+        unimplemented_environment={
+            item.id: list(item.declared_unimplemented_environment)
+            for item in integrations
+            if item.declared_unimplemented_environment
+        },
     )
