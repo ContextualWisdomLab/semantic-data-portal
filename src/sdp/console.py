@@ -350,9 +350,25 @@ _CONSOLE_TEMPLATE = """<!doctype html>
     const width = (id, value) => document.getElementById(id).style.width = pct(value);
     const text = (id, value) => document.getElementById(id).textContent = value;
 
+    // The console propagates the actor from its OWN query string. It is read
+    // here rather than templated server-side so no caller-supplied value is ever
+    // injected into this page, and it is URL-encoded on the way out. A console
+    // that hard-coded an actor would hand every viewer that actor's scope.
+    const viewer = new URLSearchParams(window.location.search).get('user') || '';
+
+    function scoped(path) {
+      if (!viewer) return path;
+      const separator = path.includes('?') ? '&' : '?';
+      return `${path}${separator}user=${encodeURIComponent(viewer)}`;
+    }
+
     async function json(path) {
-      const response = await fetch(path);
-      if (!response.ok) throw new Error(path);
+      const response = await fetch(scoped(path));
+      if (!response.ok) {
+        const failure = new Error(path);
+        failure.status = response.status;
+        throw failure;
+      }
       return response.json();
     }
 
@@ -389,16 +405,57 @@ _CONSOLE_TEMPLATE = """<!doctype html>
         ['File lake connector', 'file_lake_connector', 'crm-event'],
         ['REST connector', 'rest_connector', 'marketing-campaign'],
       ].map(async ([label, connector, dataset]) => {
-        const path = `/enterprise/connectors/${connector}/probe?dataset_id=${dataset}`;
+        const path = `/enterprise/connectors/${connector}/probe?dataset_id=${encodeURIComponent(dataset)}`;
         const probe = await json(path);
         return `<tr><td><a class="endpoint-link" href="${esc(path)}" aria-label="${esc(label)} probe endpoint for ${esc(dataset)}"><strong>${esc(label)}</strong></a></td><td class="mono">${esc(dataset)}</td><td><span class="badge ${probe.status === 'ready_for_demo' ? 'ok' : 'warn'}">${esc(probe.status)}</span></td></tr>`;
       }));
       document.getElementById('connectorRows').innerHTML = rows.join('');
     }
 
-    Promise.all([loadEvidence(), loadControls(), loadKpis(), loadConnectors()])
-      .then(() => text('readyBadge', 'ready for pilot review'))
-      .catch(() => text('readyBadge', 'evidence load failed'));
+    // allSettled, not all: the connector panel needs an actor, and with
+    // Promise.all its 403 rejected the whole chain - every panel went blank and
+    // the badge read "evidence load failed" on a platform that was working. A
+    // buyer-handoff artifact must not report itself broken because the viewer is
+    // unauthenticated, and a panel that cannot load must not take the others
+    // with it.
+    const panels = [
+      ['evidence', loadEvidence],
+      ['controls', loadControls],
+      ['KPIs', loadKpis],
+      ['connectors', loadConnectors],
+    ];
+
+    Promise.allSettled(panels.map(([, load]) => load())).then((outcomes) => {
+      const failures = [];
+      const needActor = [];
+      outcomes.forEach((outcome, index) => {
+        if (outcome.status === 'fulfilled') return;
+        const name = panels[index][0];
+        const status = outcome.reason && outcome.reason.status;
+        (status === 401 || status === 403 ? needActor : failures).push(name);
+      });
+
+      if (failures.length) {
+        text('readyBadge', `evidence load failed: ${failures.join(', ')}`);
+      } else if (needActor.length) {
+        text('readyBadge', `signed-out view - add ?user= to load: ${needActor.join(', ')}`);
+      } else {
+        text('readyBadge', 'ready for pilot review');
+      }
+
+      needActor.forEach((name) => {
+        const rows = {connectors: 'connectorRows', controls: 'controlsRows', KPIs: 'kpiRows'}[name];
+        const target = rows && document.getElementById(rows);
+        if (target && !target.innerHTML) {
+          const cell = document.createElement('td');
+          cell.colSpan = 3;
+          cell.textContent = '이 패널은 actor가 필요합니다 (?user=)';
+          const row = document.createElement('tr');
+          row.appendChild(cell);
+          target.appendChild(row);
+        }
+      });
+    });
   </script>
 </body>
 </html>"""
