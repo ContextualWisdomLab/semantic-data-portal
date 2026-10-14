@@ -226,3 +226,93 @@ def test_no_per_dataset_route_lets_a_domain_exception_escape_as_500() -> None:
         if response.status_code >= 500:
             failures.append((path, response.status_code))
     assert not failures, f"domain exception escaped as a server error: {failures}"
+
+
+def test_no_enterprise_aggregate_route_discloses_a_foreign_tenants_dataset() -> None:
+    """The aggregate evidence surface is a discovery surface too.
+
+    ``/enterprise/shacl-validation`` embeds a per-dataset ``reports`` array, so it
+    published every tenant's dataset ids to an unauthenticated caller - the same
+    disclosure ``/catalog/datasets/{id}/semantic-validation`` refuses, reached
+    through a route nobody had classified as discovery. Measured before the fix:
+
+        GET /enterprise/shacl-validation   (no actor) -> 200, reports[] contains
+                                                        "acme-secret" (tenant acme)
+
+    Ten of the eleven parameterless ``/enterprise`` GET routes were already clean
+    because they publish no dataset identity. The routes are enumerated from
+    ``app.routes`` rather than listed, so a new aggregate that starts embedding
+    dataset identity fails here instead of shipping.
+    """
+    base = catalog._DATA["crm-customer-master"]
+    catalog._DATA["acme-enterprise-secret"] = base.model_copy(
+        update={
+            "id": "acme-enterprise-secret",
+            "tenant_id": "acme",
+            "title": "ACME 기밀 매출",
+            "owner": "acme-finance",
+        }
+    )
+    secrets = ("acme-enterprise-secret", "ACME 기밀 매출", "acme-finance")
+
+    paths = sorted(
+        {
+            route.path
+            for route in app.routes
+            if getattr(route, "path", "").startswith("/enterprise")
+            and "GET" in getattr(route, "methods", set())
+            and "{" not in route.path
+        }
+    )
+    assert len(paths) >= 10, f"enterprise surface unexpectedly small: {paths}"
+
+    leaks = []
+    for path in paths:
+        response = client.get(path)
+        disclosed = [secret for secret in secrets if secret in response.text]
+        if disclosed:
+            leaks.append((path, disclosed))
+    assert not leaks, f"enterprise aggregate disclosed a foreign tenant's dataset: {leaks}"
+
+
+def test_the_shacl_aggregate_stays_platform_wide_while_its_reports_scope() -> None:
+    """Scoping the detail must not make the procurement metric caller-dependent.
+
+    ``validation_pass_rate`` is measured against a published 0.95 saleability
+    target, so it is a statement about the platform; if it varied by caller the
+    number would be meaningless. Only the per-dataset detail is scoped, and the
+    truncation is reported rather than left to look complete.
+    """
+    base = catalog._DATA["crm-customer-master"]
+    catalog._DATA["acme-rate-secret"] = base.model_copy(
+        update={"id": "acme-rate-secret", "tenant_id": "acme"}
+    )
+
+    def summary(actor: str | None) -> dict:
+        params = {} if actor is None else {"user": actor}
+        response = client.get("/enterprise/shacl-validation", params=params)
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    anonymous = summary(None)
+    tenant_reader = summary("analyst")
+    platform_admin = summary("admin")
+
+    # One aggregate for everyone.
+    for field in ("validation_pass_rate", "dataset_count", "conforming_datasets", "shape_count"):
+        assert anonymous[field] == tenant_reader[field] == platform_admin[field], field
+
+    # Detail scoped, and the gap declared.
+    for body in (anonymous, tenant_reader, platform_admin):
+        assert len(body["reports"]) + body["withheld_report_count"] == body["dataset_count"]
+
+    assert anonymous["reports"] == []
+    assert anonymous["withheld_report_count"] == anonymous["dataset_count"]
+
+    visible_to_tenant = {report["dataset_id"] for report in tenant_reader["reports"]}
+    assert "acme-rate-secret" not in visible_to_tenant
+    assert visible_to_tenant, "the tenant reader should still see its own datasets"
+
+    visible_to_admin = {report["dataset_id"] for report in platform_admin["reports"]}
+    assert "acme-rate-secret" in visible_to_admin
+    assert platform_admin["withheld_report_count"] == 0

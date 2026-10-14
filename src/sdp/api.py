@@ -217,8 +217,11 @@ def enterprise_evidence_pack() -> dict[str, Any]:
 
 
 @app.get("/enterprise/shacl-validation")
-def enterprise_shacl_validation() -> dict[str, Any]:
-    return enterprise_shacl_validation_summary()
+def enterprise_shacl_validation(user: str = Query(default="anonymous")) -> dict[str, Any]:
+    # The aggregate stays open - it carries no dataset identity. The per-dataset
+    # report array does, so it is scoped to the caller like the rest of the
+    # discovery surface. An unresolvable actor sees the aggregate and no reports.
+    return enterprise_shacl_validation_summary(accessible_tenant_ids(user))
 
 
 @app.get("/enterprise/steward-review")

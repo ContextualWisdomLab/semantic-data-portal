@@ -75,11 +75,32 @@ def validate_dataset_semantics(dataset_id: str) -> dict[str, Any]:
     }
 
 
-def enterprise_shacl_validation_summary() -> dict[str, Any]:
-    reports = [validate_dataset_semantics(dataset.id) for dataset in list_datasets()]
-    conforming = sum(1 for report in reports if report["conforms"])
-    total = len(reports)
+def enterprise_shacl_validation_summary(
+    tenant_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    """Summarize SHACL conformance platform-wide, with per-dataset detail scoped.
+
+    The aggregate is deliberately platform-wide: a pass rate against the 0.95
+    saleability target is a statement about the platform, and scoping it per
+    caller would make procurement's number depend on who asked.
+
+    The per-dataset ``reports`` array is a different thing - it carries dataset
+    ids - and it was unscoped, so an unauthenticated caller read every tenant's
+    dataset ids out of an aggregate evidence endpoint. That is the same
+    disclosure the per-dataset ``/catalog/datasets/{id}/semantic-validation``
+    route refuses, reached through a route nobody thought of as a discovery
+    surface. ``withheld_report_count`` reports the truncation rather than
+    letting a short array read as a complete one.
+    """
+    all_datasets = list_datasets()
+    conforming = sum(
+        1 for dataset in all_datasets if validate_dataset_semantics(dataset.id)["conforms"]
+    )
+    total = len(all_datasets)
     pass_rate = round(conforming / total, 3) if total else 0.0
+
+    visible = list_datasets(tenant_ids)
+    reports = [validate_dataset_semantics(dataset.id) for dataset in visible]
     return {
         "shacl_compatible": True,
         "target_pass_rate": 0.95,
@@ -88,4 +109,5 @@ def enterprise_shacl_validation_summary() -> dict[str, Any]:
         "conforming_datasets": conforming,
         "shape_count": len(_SHACL_COMPATIBLE_SHAPES),
         "reports": reports,
+        "withheld_report_count": total - len(reports),
     }
