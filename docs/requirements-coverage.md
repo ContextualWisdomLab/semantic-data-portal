@@ -167,7 +167,8 @@ PYTHONPATH=src python -m sdp_core.requirements
 
 - **요구사항**: catalog는 dataset version과 schema version을 구분해야 한다.
 - **수락 기준**: schema drift 발생 시 이전 버전과 diff 표시
-- **증빙**: `route:GET /catalog/datasets/{dataset_id}/schema-versions`, `route:GET /catalog/datasets/{dataset_id}/schema-diff`, `test:tests/test_api.py::test_catalog_schema_history_and_diff`
+- **증빙**: `route:GET /catalog/datasets/{dataset_id}/schema-versions`, `route:GET /catalog/datasets/{dataset_id}/schema-diff`, `test:tests/test_api.py::test_catalog_schema_history_and_diff`, `test:tests/test_mutation_idempotency.py::test_every_listed_schema_version_is_addressable_by_the_diff`, `test:tests/test_mutation_idempotency.py::test_a_real_schema_change_adds_a_new_listed_version`
+- **비고**: `version` and `schema_version` advance independently and a drift produces a diff against the previous schema version. The version listing used to repeat a version once per non-schema mutation - a state snapshot is recorded on every mutation, because it captures lineage, mappings, tags, status and scores too - so it advertised four `1.0.0` where the diff could resolve only one. Every listed version is now addressable.
 
 #### CAT-009 · P2 · `implemented`
 

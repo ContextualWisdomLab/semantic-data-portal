@@ -639,9 +639,25 @@ def get_dataset_schema_history(dataset_id: str) -> dict[str, Any]:
 
 
 def list_dataset_schema_versions(dataset_id: str) -> list[str]:
+    """The distinct schema versions this dataset has had, oldest first.
+
+    One entry per *snapshot* before this, which duplicated a version that had
+    not changed: a snapshot is recorded on every mutation (it captures lineage,
+    mappings, tags, status and scores as well as the columns, which is what
+    drift detection reads), so three non-schema patches published
+    ``["1.0.0", "1.0.0", "1.0.0", "1.0.0"]``. Every entry here is now
+    addressable by ``get_dataset_schema_diff``, which resolves a version
+    through a dict keyed on it and so could only ever reach one snapshot per
+    version anyway - the listing advertised four and the diff served one.
+    """
     get_dataset_or_404(dataset_id)
     history = _SCHEMA_HISTORY.get(dataset_id, [])
-    return [entry["schema_version"] for entry in history]
+    versions: list[str] = []
+    for entry in history:
+        version = entry["schema_version"]
+        if version not in versions:
+            versions.append(version)
+    return versions
 
 
 def get_dataset_schema_diff(dataset_id: str, from_version: str, to_version: str) -> dict[str, Any]:
@@ -863,11 +879,32 @@ def _patch_dataset_locked(
     data = dataset.model_dump()
     updates = patch.model_dump(exclude_unset=True)
 
+    effective: dict[str, Any] = {}
     for key, value in updates.items():
         if key in {"tags", "terms", "related_datasets", "lineage_inputs", "lineage_outputs", "mappings", "profile"} and value is None:
             continue
         if value is not None:
             data[key] = value
+            effective[key] = value
+
+    # A patch that changes nothing changes nothing. ``{"actor": "admin"}`` names
+    # no patchable field, and a body whose every value is ``None`` is skipped by
+    # the rules above, yet both used to bump ``version``, move ``updated_at``
+    # and append a schema snapshot - so the dataset claimed a modification time
+    # for a request that modified nothing, and the version sequence stopped
+    # counting changes. ``publish_dataset`` already models the answer: record the
+    # no-op in the ledger and return the dataset untouched.
+    if not effective:
+        _record_audit_event(
+            _build_dataset_payload(
+                dataset,
+                actor=actor,
+                decision_id=decision_id,
+                action="dataset.patch",
+                details={"changes": {}, "before": {}, "after": {}, "noop": True},
+            )
+        )
+        return dataset
 
     data["updated_at"] = datetime.now(timezone.utc)
     if "schema" in updates:
@@ -885,9 +922,9 @@ def _patch_dataset_locked(
             decision_id=decision_id,
             action="dataset.patch",
             details={
-                "changes": audited_patch_values(updates),
-                "before": audited_patch_values({k: before[k] for k in updates}),
-                "after": audited_patch_values({k: data[k] for k in updates}),
+                "changes": audited_patch_values(effective),
+                "before": audited_patch_values({k: before[k] for k in effective}),
+                "after": audited_patch_values({k: data[k] for k in effective}),
             },
         )
     )
@@ -972,6 +1009,25 @@ def _deprecate_dataset_locked(
 ) -> Dataset:
     """Deprecate one dataset. Call with the mutation lock held."""
     dataset = get_dataset_or_404(dataset_id)
+
+    # ``publish_dataset`` guards its already-published case; this did not, so a
+    # replayed deprecate wrote a fresh "dataset.deprecate / success" row to the
+    # governance ledger, bumped the version and appended a snapshot every time.
+    # Measured over three identical calls: version 1.0.1 -> 1.0.2 -> 1.0.3, three
+    # audit rows, three snapshots - a ledger reader could not tell a retried
+    # request from three deliberate deprecations.
+    if dataset.status == "deprecated":
+        _record_audit_event(
+            _build_dataset_payload(
+                dataset,
+                actor=actor,
+                decision_id=decision_id,
+                action="dataset.deprecate",
+                details={"status": dataset.status, "reason": reason, "noop": True},
+            )
+        )
+        return dataset
+
     dataset_data = dataset.model_dump()
     dataset_data["status"] = "deprecated"
     dataset_data["version"] = _bump_version(dataset.version)

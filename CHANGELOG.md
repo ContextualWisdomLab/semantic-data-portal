@@ -20,7 +20,7 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                    971 passed, 11 skipped
+    pytest                    978 passed, 11 skipped
     pytest (역방향/난수 순서)  순서 무관 통과 (역순 + seed 11/707/31337)
     pytest tests/fuzz          11 passed
     python -m sdp.demo_smoke   exit 0, "ready": true
@@ -156,6 +156,42 @@ before/after diff와 source/job/target이 여전히 없습니다). NFR-SEC-005�
 - 호출자가 제어하는 작업량과 메모리 증가에 상한을 두었습니다(쿼리 길이, 개념
   어휘, 제안 큐, 두 증빙 원장). 상한이 생기면 창의 길이로는 "기록됐는가"에 답할
   수 없으므로 단조 카운터를 함께 추가했습니다.
+
+### Fixed — 아무것도 바꾸지 않은 요청이 증빙을 만들어냈습니다
+
+같은 스윕의 세 건. 모양이 같습니다 — **변경하지 않은 요청이 변경한 것처럼 기록**되어
+원장과 version 수열과 `updated_at`이 일어나지 않은 작업을 서술했습니다.
+`publish_dataset`은 이미 정답을 구현하고 있었고(이미 published인 경우를 guard하고
+그 시도를 no-op으로 기록), 다른 두 경로는 그렇지 않았습니다. `crm-customer-master`에서 측정:
+
+    POST .../deprecate x3   -> 200, 200, 200
+                               version 1.0.1 -> 1.0.2 -> 1.0.3
+                               "dataset.deprecate / success" 원장 행 3개
+                               snapshot 3개 추가
+    PATCH {"actor": "admin"} -> 200
+                               version bump, updated_at 이동, snapshot 추가, 변경 0
+    GET  .../schema-versions -> ["1.0.0", "1.0.0", "1.0.0", "1.0.0"]
+
+- **재실행된 deprecate**가 매번 version을 올리고 원장에 새 `success` 행을 쓰고 snapshot을
+  추가했습니다 — 원장 독자가 재시도와 세 번의 의도적 deprecate를 구별할 수 없었습니다.
+- **빈 PATCH**(`{"actor": "admin"}`은 patch 가능한 필드를 하나도 지정하지 않습니다)가
+  version과 `updated_at`을 움직였습니다 — 수정하지 않은 요청에 대해 데이터셋이 수정 시각을
+  주장했습니다. 값이 전부 `None`인 본문도 같습니다(검증은 통과하고 필드별로 skip됩니다).
+  그래서 guard는 요청된 집합이 아니라 **실제 적용된 집합**을 봅니다 — 요청된 집합을 봤다면
+  이 경우를 놓쳤습니다. 같은 이유로 원장의 `changes`/`before`/`after`도 실제 적용된
+  필드만 담습니다(이전에는 skip된 필드가 적용된 변경으로 기록되었습니다).
+- **`/schema-versions`가 같은 버전을 반복**했습니다. snapshot은 모든 mutation마다
+  기록되고(컬럼뿐 아니라 lineage·mapping·tag·status·score도 담아 drift 탐지가 읽습니다)
+  목록은 snapshot당 한 줄이었으므로, 스키마가 바뀌지 않은 patch가 버전을 복제했습니다.
+  diff는 버전을 dict 키로 해석하므로 애초에 버전당 하나만 도달할 수 있었습니다 — 목록이
+  넷을 광고하고 diff가 하나를 서비스했습니다. 이제 목록의 **모든 항목이 주소 지정
+  가능**하고, 실제 스키마 변경은 여전히 새 항목을 만듭니다.
+
+세 경우 모두 **감사 행은 유지합니다** — 재실행된 요청은 실재하는 사건이고 숨기는 것이
+반대 방향의 결함입니다. 바뀐 것은 행이 `noop: true`를 달고 데이터셋이 그대로 반환된다는
+점입니다. 각 guard를 되돌려 해당 테스트가 실패하는 것을 확인했고, 실제 변경이 여전히
+bump된다는 테스트는 guard 없이도 통과하므로 그 셋은 guard의 존재만 탐지하는 것이
+아닙니다.
 
 ### Fixed — 문서화된 개발자 경로가 테스트를 한 건도 돌리지 못했습니다
 

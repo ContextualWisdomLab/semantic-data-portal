@@ -234,7 +234,18 @@ REQUIREMENT_COVERAGE: dict[str, RequirementCoverage] = {
             "route:GET /catalog/datasets/{dataset_id}/schema-versions",
             "route:GET /catalog/datasets/{dataset_id}/schema-diff",
             "test:tests/test_api.py::test_catalog_schema_history_and_diff",
+            "test:tests/test_mutation_idempotency.py::test_every_listed_schema_version_is_addressable_by_the_diff",
+            "test:tests/test_mutation_idempotency.py::test_a_real_schema_change_adds_a_new_listed_version",
         ],
+        note=(
+            "`version` and `schema_version` advance independently and a drift "
+            "produces a diff against the previous schema version. The version "
+            "listing used to repeat a version once per non-schema mutation - a "
+            "state snapshot is recorded on every mutation, because it captures "
+            "lineage, mappings, tags, status and scores too - so it advertised "
+            "four `1.0.0` where the diff could resolve only one. Every listed "
+            "version is now addressable."
+        ),
     ),
     "CAT-009": RequirementCoverage(
         status="implemented",
