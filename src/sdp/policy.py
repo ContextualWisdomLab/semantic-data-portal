@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 from uuid import uuid4
 
@@ -52,16 +53,23 @@ def _effective_tenant_id(subject: str, resource: str, target_tenant_id: str | No
     return resolve_actor_context(subject).tenant_id or UNRESOLVED_TENANT_ID
 
 
-def _decision(*, tenant_id: str, **kwargs: Any) -> PolicyDecision:
+def _decision(
+    *, tenant_id: str, provenance: Mapping[str, Any] | None = None, **kwargs: Any
+) -> PolicyDecision:
     """Record one policy decision, stamped with the tenant it belongs to.
 
     The evidence store scopes rows by ``obligations['tenant_id']``, so the stamp
     is applied on every branch rather than only the ones whose obligations
     happen to mention a tenant. A branch that sets the key explicitly keeps its
     own value.
+
+    ``provenance`` is merged last and is how a caller marks a row as something
+    other than a real access attempt - see :func:`evaluate`'s own parameter.
     """
     obligations = dict(kwargs.pop("obligations", None) or {})
     obligations.setdefault("tenant_id", tenant_id)
+    if provenance:
+        obligations.update(provenance)
     return record_policy_decision(PolicyDecision(obligations=obligations, **kwargs))
 
 
@@ -192,7 +200,31 @@ def evaluate(
     purpose: str,
     *,
     target_tenant_id: str | None = None,
+    provenance: Mapping[str, Any] | None = None,
 ) -> PolicyDecision:
+    """Evaluate one policy question and record the decision.
+
+    ``provenance``, when given, is merged into the recorded row's obligations.
+    It exists for ``POST /policy/decision``, whose whole purpose is answering
+    "what would policy say for this subject" - a question whose answer is
+    **hypothetical** and was being persisted into the compliance ledger
+    unlabelled, attributed to a subject the caller named, with no record of who
+    actually asked. Measured as ``analyst`` asking about ``external-analyst``::
+
+        POST /policy/decision {"user": "analyst", "subject": "external-analyst",
+                               "resource": "crm-event", "action": "preview"}
+        -> 200 {"subject": "external-analyst", "effect": "deny",
+                "reason": "tenant boundary denied", ...}
+        rows now readable naming external-analyst:
+          [{"subject": "external-analyst", "resource": "crm-event",
+            "action": "preview", "effect": "deny", ...}]
+
+    An auditor reading that row sees a refused preview attempt by a different
+    identity in a different tenant. No such attempt happened, and nothing in the
+    row named the caller who manufactured it. ``subject`` stays caller-supplied,
+    because that is the route's purpose; what the row gains is the two facts that
+    make it honest.
+    """
     action_key = action.strip().lower()
     action_key = CATALOG_ACTION_ALIASES.get(action_key, action_key)
     # ``purpose`` is the other caller-controlled dimension this function
@@ -237,6 +269,7 @@ def evaluate(
     if action_key in UNMAPPED_CATALOG_ACTIONS:
         return _decision(
             **decision_base,
+            provenance=provenance,
             effect="deny",
             reason="이 action은 아직 정책 엔진에 매핑되지 않았습니다.",
             obligations={"unmapped_published_action": action_key},
@@ -249,6 +282,7 @@ def evaluate(
         # what is evaluable instead of guessing.
         return _decision(
             **decision_base,
+            provenance=provenance,
             effect="deny",
             reason="평가할 수 없는 action입니다.",
             obligations={"known_actions": sorted(KNOWN_ACTIONS)},
@@ -279,6 +313,7 @@ def evaluate(
             )
         return _decision(
             **decision_base,
+            provenance=provenance,
             effect="allow",
             reason="관리자 권한으로 catalog mutation 권한 통과",
             obligations={"required_role": "admin"},
@@ -294,6 +329,7 @@ def evaluate(
             )
         return _decision(
             **decision_base,
+            provenance=provenance,
             effect="deny",
             reason="목록 조회는 인증된 사용자만 가능합니다.",
             obligations={"required_role": "data-analyst"},
@@ -303,6 +339,7 @@ def evaluate(
     if not dataset:
         return _decision(
             **decision_base,
+            provenance=provenance,
             effect="deny",
             reason="존재하지 않는 데이터셋입니다.",
         )
@@ -311,6 +348,7 @@ def evaluate(
     if not can_access_tenant(subject, dataset.tenant_id):
         return _decision(
             **decision_base,
+            provenance=provenance,
             effect="deny",
             reason="tenant boundary denied",
             obligations={"tenant_id": dataset.tenant_id, "actor_tenant_id": actor_context.tenant_id},
@@ -319,6 +357,7 @@ def evaluate(
     if dataset.sensitivity == "critical" and not _is_admin(subject):
         return _decision(
             **decision_base,
+            provenance=provenance,
             effect="deny",
             reason="critical 민감도 자산은 별도 심사 필요",
             obligations={"redact": True, "masking": True},
@@ -327,6 +366,7 @@ def evaluate(
     if purpose_key == "external-export" and not _is_admin(subject):
         return _decision(
             **decision_base,
+            provenance=provenance,
             effect="deny",
             reason="외부 반출 목적은 데이터 운영자 승인 필요",
             obligations={"required_role": "data-admin"},
@@ -335,6 +375,7 @@ def evaluate(
     if action_key in {"publish", "patch", "deprecate"} and not _can_mutate(subject, action_key):
         return _decision(
             **decision_base,
+            provenance=provenance,
             effect="deny",
             reason="catalog mutation 작업은 admin 권한만 가능",
             obligations={"required_role": "admin"},
@@ -343,6 +384,7 @@ def evaluate(
     if action_key in _DATA_READ_ACTIONS and not _has_data_reader_role(subject):
         return _decision(
             **decision_base,
+            provenance=provenance,
             effect="deny",
             reason="조회 권한이 없습니다.",
             obligations={"required_role": "data-analyst"},
@@ -351,6 +393,7 @@ def evaluate(
     if action_key in _METADATA_READ_ACTIONS and not _has_reader_role(subject):
         return _decision(
             **decision_base,
+            provenance=provenance,
             effect="deny",
             reason="조회 권한이 없습니다.",
             obligations={"required_role": "data-analyst"},
@@ -369,6 +412,7 @@ def evaluate(
 
     return _decision(
         **decision_base,
+        provenance=provenance,
         effect="allow",
         reason="거버넌스 정책 조건 충족",
         obligations=obligations,

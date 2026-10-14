@@ -411,3 +411,100 @@ def test_the_owning_tenant_still_sees_attempts_on_its_assets(foreign_dataset: st
     ]
     assert attempts, "a platform-admin auditor must see the refused attempt"
     assert all(row["effect"] == "deny" for row in attempts), attempts
+
+
+# --------------------------------------------------------------------------- #
+# A hypothetical answer must not read as a real access attempt.
+#
+# ``POST /policy/decision`` exists to answer "what would policy say for this
+# subject", so ``subject`` is deliberately caller-supplied. The answer was then
+# persisted into the compliance ledger unlabelled, attributed to the named
+# subject, with no record of who asked. Measured as ``analyst`` asking about
+# ``external-analyst``:
+#
+#     POST /policy/decision {"user": "analyst", "subject": "external-analyst",
+#                            "resource": "crm-event", "action": "preview"}
+#     -> 200 {"subject": "external-analyst", "effect": "deny",
+#             "reason": "tenant boundary denied"}
+#     rows readable naming external-analyst:
+#       [{"subject": "external-analyst", "resource": "crm-event",
+#         "action": "preview", "effect": "deny", ...}]
+#
+# An auditor reads a refused preview attempt by a different identity in a
+# different tenant. No such attempt happened, and the row did not name the
+# caller who manufactured it.
+# --------------------------------------------------------------------------- #
+
+
+def test_a_hypothetical_decision_says_so_and_names_who_asked() -> None:
+    response = client.post(
+        "/policy/decision",
+        json={
+            "user": "analyst",
+            "subject": "external-analyst",
+            "resource": "crm-event",
+            "action": "preview",
+            "purpose": "analysis",
+        },
+    )
+    assert response.status_code == 200, response.text
+    obligations = response.json()["obligations"]
+    assert obligations["evaluation_mode"] == "hypothetical"
+    assert obligations["asked_by"] == "analyst"
+    assert obligations["subject_is_caller"] is False
+
+    rows = client.get("/policy/decisions", params={"user": "analyst", "limit": 500}).json()
+    named = [row for row in rows if row.get("subject") == "external-analyst"]
+    assert named, "the row is still recorded - it is evidence, just labelled"
+    for row in named:
+        assert row["obligations"]["evaluation_mode"] == "hypothetical", row
+        assert row["obligations"]["asked_by"] == "analyst", row
+
+
+def test_a_real_access_attempt_is_distinguishable_from_a_hypothetical_one() -> None:
+    """The property the labelling exists for.
+
+    Without it the two rows are byte-identical in shape, and the only way to
+    tell them apart was a missing audit event - which needs cross-surface
+    correlation an auditor has no reason to perform.
+    """
+    client.post(
+        "/browse/crm-event/preview", json={"user": "analyst", "purpose": "analysis", "limit": 2}
+    )
+    client.post(
+        "/policy/decision",
+        json={"user": "analyst", "subject": "analyst", "resource": "crm-event", "action": "preview"},
+    )
+    rows = client.get("/policy/decisions", params={"user": "analyst", "limit": 500}).json()
+    previews = [row for row in rows if row.get("action") == "preview"]
+    real = [row for row in previews if "evaluation_mode" not in (row.get("obligations") or {})]
+    hypothetical = [
+        row
+        for row in previews
+        if (row.get("obligations") or {}).get("evaluation_mode") == "hypothetical"
+    ]
+    assert real, "a genuine attempt must stay unlabelled"
+    assert hypothetical, "the hypothetical one must be labelled"
+
+
+def test_asking_about_yourself_is_marked_as_such() -> None:
+    body = client.post(
+        "/policy/decision",
+        json={"user": "analyst", "resource": "crm-event", "action": "preview"},
+    ).json()
+    assert body["obligations"]["subject_is_caller"] is True
+    assert body["obligations"]["asked_by"] == "analyst"
+
+
+def test_only_the_hypothetical_route_labels_its_rows() -> None:
+    """``provenance`` is opt-in, so no other caller's rows change shape.
+
+    Threading an optional parameter through every branch of ``evaluate`` is the
+    kind of change that silently relabels unrelated evidence, so this asserts
+    the default stays empty.
+    """
+    decision = policy.evaluate(
+        subject="analyst", resource="crm-event", action="preview", purpose="analysis"
+    )
+    assert "evaluation_mode" not in decision.obligations
+    assert "asked_by" not in decision.obligations

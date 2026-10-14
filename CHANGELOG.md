@@ -17,7 +17,7 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                    849 passed, 11 skipped
+    pytest                    853 passed, 11 skipped
     pytest (역방향/난수 순서)  순서 무관 통과 (역순 + seed 11/29/77)
     pytest tests/fuzz          11 passed
     python -m sdp.demo_smoke   exit 0, "ready": true
@@ -183,6 +183,15 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
   다시 걸되 claim을 놓아 주므로 복구가 영구히 막히지 않습니다.
 
 ### Changed — 정직한 측정
+- **가정적 판정이 실제 접근 시도처럼 기록**되었습니다. `POST /policy/decision`은 "이 subject라면
+  정책이 뭐라고 할까"에 답하는 것이 목적이므로 `subject`는 의도적으로 호출자 지정입니다. 그런데
+  그 가정적 답이 **라벨 없이** 증빙 원장에 저장되었고, 지목된 subject에 귀속되며, **누가 물었는지는
+  기록되지 않았습니다**. 측정(`analyst`가 `external-analyst`에 대해 질의): 응답과 원장 모두
+  `subject: external-analyst, action: preview, effect: deny, reason: tenant boundary denied` —
+  감사자는 다른 테넌트의 다른 신원이 거부된 preview를 시도한 기록으로 읽습니다. 그런 시도는
+  없었고, 행을 만든 호출자의 이름은 어디에도 없었습니다. `subject`는 그대로 두고(그게 목적입니다)
+  행에 `evaluation_mode: hypothetical`·`asked_by`·`subject_is_caller`를 더했습니다. `provenance`는
+  opt-in이므로 다른 호출자의 행 모양은 바뀌지 않습니다(테스트로 고정).
 
 - `paid_pilot_ready`가 작성된 `status` 리터럴에서만 유도되어 **반증 불가능**했습니다.
   이제 배포에서 측정합니다. 더불어 게이트를 충족시키던

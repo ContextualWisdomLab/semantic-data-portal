@@ -1156,11 +1156,23 @@ def policy_decision(payload: dict[str, str]) -> dict[str, Any]:
     ):
         raise HTTPException(status_code=404, detail="dataset not found")
 
+    # The answer is hypothetical - that is this route's purpose - and the row it
+    # records was indistinguishable from a real refused access attempt by the
+    # named subject, with no record of who asked. See ``policy.evaluate``'s
+    # ``provenance`` parameter for the measurement.
+    subject = payload.get("subject", caller)
     decision = evaluate(
-        subject=payload.get("subject", caller),
+        subject=subject,
         resource=resource,
         action=payload.get("action", "preview"),
         purpose=payload.get("purpose", "analysis"),
+        provenance={
+            "evaluation_mode": "hypothetical",
+            # Who actually asked, which the row lost entirely when ``subject``
+            # named someone else.
+            "asked_by": caller,
+            "subject_is_caller": subject == caller,
+        },
     )
     return decision.model_dump()
 
