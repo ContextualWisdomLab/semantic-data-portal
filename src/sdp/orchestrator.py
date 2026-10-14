@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 from datetime import datetime, timezone
 from .catalog import get_dataset, ingest_event
 from .domain import QueryDraftRequest
@@ -195,6 +196,28 @@ def validate_sql_query(sql: str, *, source_system: str) -> list[str]:
     return warnings
 
 
+# Declared datatypes that carry a point in time. The drafter's date window is
+# only meaningful against one of these.
+_TEMPORAL_DATATYPES = frozenset({"date", "datetime", "time", "timestamp", "timestamptz"})
+
+
+def _temporal_column(dataset: Any) -> str | None:
+    """Return the dataset's first declared temporal column, or ``None``.
+
+    The drafter hard-coded ``created_at`` into its window predicate while
+    claiming, in the same response, to use "카탈로그에서 검증된 테이블/컬럼만".
+    Three of the five seeded datasets declare no temporal column at all and not
+    one of them declares ``created_at``: ``crm-customer-master`` has
+    ``signup_at``, ``crm-event`` has ``event_timestamp``, and ``sales-order``,
+    ``semantic-glossary`` and ``marketing-campaign`` have none. Every draft
+    therefore filtered on a column its own dataset does not have.
+    """
+    for column in dataset.schema:
+        if str(column.datatype).lower() in _TEMPORAL_DATATYPES:
+            return column.name
+    return None
+
+
 def draft_sql(req: QueryDraftRequest) -> dict:
     if req.date_window_days < 1 or req.date_window_days > 365:
         return {"error": "invalid_date_window", "reason": "date_window_days must be between 1 and 365"}
@@ -236,7 +259,23 @@ def draft_sql(req: QueryDraftRequest) -> dict:
     if req.group_by and req.group_by not in allowed_columns:
         return {"error": "invalid_group_by", "reason": "요청한 그룹화 컬럼이 데이터셋에 없습니다."}
 
-    where_clause = f"WHERE created_at >= current_date - interval '{req.date_window_days} day'"
+    # `interval '<n> day'` is a single-quoted literal, and this module's own
+    # validate_sql_query refuses any statement containing a quote
+    # (literal_values_not_allowed). Every draft this route produced was therefore
+    # rejected by /browse/query, so the documented draft-then-execute workflow had
+    # no path through it for any dataset. PostgreSQL date arithmetic expresses the
+    # same window with no literal, and date_window_days is already validated as an
+    # integer in 1..365 above, so nothing caller-controlled reaches the SQL as text.
+    window_column = _temporal_column(dataset)
+    if window_column is None:
+        # No temporal column: emit no predicate rather than invent one. The
+        # response says the window was not applied, because a caller that passed
+        # date_window_days would otherwise assume it was.
+        where_clause = ""
+    else:
+        where_clause = (
+            f"WHERE {_safe_identifier(window_column)} >= current_date - {req.date_window_days}"
+        )
     table_name = _source_table_name(dataset.source_system)
 
     row_limit = min(req.row_limit, 2000)
@@ -264,7 +303,19 @@ def draft_sql(req: QueryDraftRequest) -> dict:
         requested_columns = ["*"]
 
     estimated_cost = max(1, len(requested_columns) * row_limit // 200 + 1)
-    sql = f"SELECT {select_fields} FROM {table_name} {where_clause} {group_clause} LIMIT {max_rows}"
+    # Join only the clauses that exist: an empty WHERE or GROUP BY would otherwise
+    # leave a double space in the emitted statement.
+    sql = " ".join(
+        part
+        for part in (
+            f"SELECT {select_fields}",
+            f"FROM {table_name}",
+            where_clause,
+            group_clause,
+            f"LIMIT {max_rows}",
+        )
+        if part
+    )
 
     assumptions = [
         "카탈로그에서 검증된 테이블/컬럼만 사용",
@@ -285,6 +336,15 @@ def draft_sql(req: QueryDraftRequest) -> dict:
     if not req.group_by:
         assumptions.append("기본 집계는 건수 카운트 기반으로 반환")
 
+    if window_column is None:
+        assumptions.append(
+            f"이 데이터셋에는 시간 컬럼이 없어 {req.date_window_days}일 기간 필터를 적용하지 않았습니다"
+        )
+    else:
+        assumptions.append(
+            f"기간 필터는 {window_column} 기준 최근 {req.date_window_days}일"
+        )
+
     return {
         "dataset_id": req.dataset_id,
         "query": sql,
@@ -297,6 +357,9 @@ def draft_sql(req: QueryDraftRequest) -> dict:
         "requested_columns": requested_columns,
         "timeout_ms": timeout_ms,
         "estimated_cost": estimated_cost,
+        "date_window_days": req.date_window_days if window_column else 0,
+        "date_window_column": window_column,
+        "date_window_applied": window_column is not None,
     }
 
 
