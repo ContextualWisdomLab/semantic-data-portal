@@ -67,8 +67,13 @@ def test_graph_node_read_requires_an_authorized_reader():
 def test_graph_node_read_enforces_the_tenant_boundary():
     """A reader in another tenant is refused, exactly as /browse/{id}/schema refuses."""
     refused = client.get(f"/graph/nodes/{ACME_COLUMN}", params={"actor": "analyst"})
-    assert refused.status_code == 403
-    assert refused.json()["detail"] == "tenant boundary denied"
+    # 404, not 403: node ids are derived from dataset ids, so answering 403
+    # for a foreign node and 404 for a missing one tells an outsider which
+    # datasets exist - the same oracle the browse/catalog/llm families were
+    # repaired to close. The boundary still holds; only the status changed.
+    assert refused.status_code == 404
+    assert refused.json()["detail"] == "node not found"
+    assert "tenant" not in refused.text, "the refusal must not explain itself"
 
     # The owning tenant's reader still gets the node.
     allowed = client.get(f"/graph/nodes/{ACME_COLUMN}", params={"actor": "admin"})
@@ -108,8 +113,13 @@ def test_graph_traversal_refuses_a_start_node_in_another_tenant():
     response = client.post(
         "/graph/query", json={"actor": "analyst", "start_id": ACME_DATASET, "max_depth": 1}
     )
-    assert response.status_code == 403
-    assert response.json()["detail"] == "tenant boundary denied"
+    # 404, not 403: node ids are derived from dataset ids, so answering 403
+    # for a foreign node and 404 for a missing one tells an outsider which
+    # datasets exist - the same oracle the browse/catalog/llm families were
+    # repaired to close. The boundary still holds; only the status changed.
+    assert response.status_code == 404
+    assert response.json()["detail"] == "node not found"
+    assert "tenant" not in response.text, "the refusal must not explain itself"
 
 
 def test_semantic_search_withholds_other_tenants_nodes():

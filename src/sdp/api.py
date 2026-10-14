@@ -28,7 +28,7 @@ from .graph_models import (
     SemanticSearchRequest,
 )
 from .graph_store import get_store
-from .seed import seed_store
+from .seed import seed_dataset, seed_store
 from .catalog import (
     deprecate_dataset,
     get_dataset,
@@ -722,6 +722,11 @@ def create_dataset(payload: dict[str, Any]) -> dict[str, Any]:
         raise HTTPException(status_code=403, detail=decision.reason)
 
     dataset = register_dataset(request, actor=actor_id, decision_id=decision.decision_id)
+    # Mirror the mutation into the graph through the same upsert path the
+    # startup bootstrap uses. That path ran only at startup, so an onboarded
+    # dataset was invisible to graph traversal and semantic search - two
+    # capabilities README names - and a status change left a stale node.
+    seed_dataset(dataset)
     return {"status": "created", "dataset": dataset.model_dump()}
 
 
@@ -738,6 +743,7 @@ def publish_catalog_dataset(dataset_id: str, payload: dict[str, Any] | None = No
         raise HTTPException(status_code=404, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    seed_dataset(dataset)
     return {"status": "published", "dataset": dataset.model_dump()}
 
 
@@ -755,6 +761,7 @@ def patch_catalog_dataset(dataset_id: str, payload: dict[str, Any]) -> dict[str,
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    seed_dataset(dataset)
     return {"status": "updated", "dataset": dataset.model_dump()}
 
 
@@ -773,6 +780,7 @@ def deprecate_catalog_dataset(dataset_id: str, payload: dict[str, str] | None = 
             reason=payload.get("reason", "deprecated"),
             decision_id=decision.decision_id,
         )
+        seed_dataset(dataset)
         return {"status": "deprecated", "dataset": dataset.model_dump()}
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
@@ -1038,10 +1046,20 @@ def _authorize_graph_read(actor: str, resource: str) -> None:
 
 
 def _authorize_graph_node_read(actor: str, node_id: str) -> None:
-    """Require an authorized reader who may also see this particular node."""
+    """Require an authorized reader who may also see this particular node.
+
+    404, not 403, when the node belongs to a dataset outside the caller's tenant.
+    This route answered 403 for a foreign node and 404 for one that does not
+    exist, which is the same existence oracle the browse, catalog and llm
+    families were repaired to close - and it became reachable for onboarded
+    datasets the moment catalog mutations started mirroring into the graph, so it
+    is closed in the same change rather than left for a later sweep. Node ids are
+    derived from dataset ids (``<dataset_id>`` and ``<dataset_id>:<column>``), so
+    they are exactly as enumerable.
+    """
     _authorize_graph_read(actor, node_id)
     if not can_see_graph_node(actor, node_id):
-        raise HTTPException(status_code=403, detail="tenant boundary denied")
+        raise HTTPException(status_code=404, detail="node not found")
 
 
 @app.post("/ontology/concepts")
