@@ -64,7 +64,9 @@ from .observability import (
     request_id_from_headers,
     request_id_header,
 )
+from .authz import can_access_tenant
 from .policy import (
+    accessible_tenant_ids,
     can_see_graph_node,
     evaluate,
     filter_graph_search_results,
@@ -568,8 +570,21 @@ def dataset_related(dataset_id: str) -> dict[str, Any]:
 
 
 @app.get("/catalog/datasets/{dataset_id}/audit")
-def dataset_audit_events(dataset_id: str, limit: int = Query(default=50, ge=1, le=200)) -> list[dict[str, Any]]:
-    return [event.model_dump() for event in get_dataset_audit_events(dataset_id, limit=limit)]
+def dataset_audit_events(
+    dataset_id: str,
+    limit: int = Query(default=50, ge=1, le=200),
+    user: str = Query(default="anonymous"),
+) -> list[dict[str, Any]]:
+    # The same ledger behind a per-dataset path, so it carries the same gate plus
+    # the dataset's own tenant check.
+    _, tenant_ids = _authorize_evidence_read(user)
+    dataset = catalog.get_dataset(dataset_id)
+    if dataset and not can_access_tenant(user, dataset.tenant_id):
+        raise HTTPException(status_code=403, detail="tenant boundary denied")
+    return [
+        event.model_dump()
+        for event in get_dataset_audit_events(dataset_id, limit=limit, tenant_ids=tenant_ids)
+    ]
 
 
 @app.post("/catalog/datasets")
@@ -647,12 +662,32 @@ def deprecate_catalog_dataset(dataset_id: str, payload: dict[str, str] | None = 
         raise HTTPException(status_code=404, detail=str(exc))
 
 
+def _authorize_evidence_read(user: str) -> tuple[Any, list[str] | None]:
+    """Authorize an evidence-ledger read and resolve the tenants it may cover.
+
+    The ledger is the product's auditability claim, so a read is gated like any
+    other governed read and then scoped: ``policy.accessible_tenant_ids`` returns
+    ``None`` only for the explicit platform-admin crossing. Without the scope the
+    tenant stamp on every row would be decorative - one unauthenticated call used
+    to return every tenant's rows.
+    """
+    decision = evaluate(subject=user, resource="evidence", action="search", purpose="audit")
+    if decision.effect != "allow":
+        raise HTTPException(status_code=403, detail=decision.reason)
+    return decision, accessible_tenant_ids(user)
+
+
 @app.get("/audit/events")
 def list_events(
     limit: int = Query(default=100, ge=1, le=500),
     resource: str | None = Query(default=None),
+    user: str = Query(default="anonymous"),
 ) -> list[dict[str, Any]]:
-    return [event.model_dump() for event in list_audit_events(limit=limit, resource=resource)]
+    _, tenant_ids = _authorize_evidence_read(user)
+    return [
+        event.model_dump()
+        for event in list_audit_events(limit=limit, resource=resource, tenant_ids=tenant_ids)
+    ]
 
 
 @app.post("/policy/decision")
@@ -670,8 +705,13 @@ def policy_decision(payload: dict[str, str]) -> dict[str, Any]:
 def policy_decisions(
     limit: int = Query(default=100, ge=1, le=500),
     resource: str | None = Query(default=None),
+    user: str = Query(default="anonymous"),
 ) -> list[dict[str, Any]]:
-    return [decision.model_dump() for decision in list_policy_decisions(resource=resource, limit=limit)]
+    _, tenant_ids = _authorize_evidence_read(user)
+    return [
+        decision.model_dump()
+        for decision in list_policy_decisions(resource=resource, limit=limit, tenant_ids=tenant_ids)
+    ]
 
 
 @app.post("/ontology/resolve")

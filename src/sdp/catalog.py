@@ -15,7 +15,13 @@ from .domain import (
     DatasetCreateRequest,
     DatasetPatchRequest,
 )
-from .evidence import append_audit_event, has_configured_evidence_store, list_persisted_audit_events
+from .evidence import (
+    append_audit_event,
+    audit_tenant_id,
+    has_configured_evidence_store,
+    list_persisted_audit_events,
+    tenant_is_in_scope,
+)
 
 
 def _seed_datasets() -> List[Dataset]:
@@ -595,13 +601,26 @@ def deprecate_dataset(
     return deprecated
 
 
-def list_audit_events(*, limit: int = 100, resource: str | None = None) -> list[AuditEvent]:
+def list_audit_events(
+    *,
+    limit: int = 100,
+    resource: str | None = None,
+    tenant_ids: list[str] | None = None,
+) -> list[AuditEvent]:
+    """List audit events, optionally scoped to a set of tenants.
+
+    ``tenant_ids=None`` means every tenant and is reserved for the explicit
+    platform-admin crossing; an empty list yields no rows. The in-memory fallback
+    log is filtered the same way the stores filter in SQL, so a reader sees the
+    same scope whichever backend is configured.
+    """
     events = list(_AUDIT_LOG)
     if resource:
         events = [event for event in events if event.resource == resource]
+    events = [event for event in events if tenant_is_in_scope(audit_tenant_id(event), tenant_ids)]
 
     if has_configured_evidence_store():
-        persisted = list_persisted_audit_events(resource=resource, limit=limit)
+        persisted = list_persisted_audit_events(resource=resource, limit=limit, tenant_ids=tenant_ids)
         by_id = {event.id: event for event in events}
         for event in persisted:
             by_id[event.id] = event
@@ -611,8 +630,10 @@ def list_audit_events(*, limit: int = 100, resource: str | None = None) -> list[
     return events[:limit]
 
 
-def get_dataset_audit_events(dataset_id: str, *, limit: int = 100) -> list[AuditEvent]:
-    return list_audit_events(limit=limit, resource=dataset_id)
+def get_dataset_audit_events(
+    dataset_id: str, *, limit: int = 100, tenant_ids: list[str] | None = None
+) -> list[AuditEvent]:
+    return list_audit_events(limit=limit, resource=dataset_id, tenant_ids=tenant_ids)
 
 
 def mapping_candidates(dataset: Dataset, concept: str) -> list[str]:

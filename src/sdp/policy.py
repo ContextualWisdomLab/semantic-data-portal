@@ -262,3 +262,17 @@ def filter_graph_search_results(subject: str, results: list[dict[str, Any]]) -> 
     """
     visible = [result for result in results if can_see_graph_node(subject, result.get("node_id", ""))]
     return visible, len(results) - len(visible)
+
+
+def accessible_tenant_ids(subject: str) -> list[str] | None:
+    """Return the tenants whose evidence a subject may read.
+
+    ``None`` means every tenant and is reserved for the explicit platform-admin
+    crossing. An actor with no resolvable tenant gets an empty list, which the
+    store turns into "no rows" rather than an unscoped read - a reader with no
+    tenant must not fall through to everyone's evidence.
+    """
+    context = resolve_actor_context(subject)
+    if "platform-admin" in context.roles:
+        return None
+    return [context.tenant_id] if context.tenant_id else []

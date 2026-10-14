@@ -738,7 +738,7 @@ def test_audit_events_endpoint_reads_configured_evidence_store_after_memory_clea
 
         app_catalog._AUDIT_LOG.clear()
 
-        events_response = client.get("/audit/events", params={"resource": "crm-customer-master", "limit": 10})
+        events_response = client.get("/audit/events", params={"resource": "crm-customer-master", "limit": 10, "user": "admin"})
         assert events_response.status_code == 200
         assert any(event["action"] == "browse.preview" for event in events_response.json())
     finally:
@@ -771,7 +771,7 @@ def test_policy_decisions_endpoint_exposes_decision_evidence():
     assert decision_response.status_code == 200
     decision_id = decision_response.json()["decision_id"]
 
-    response = client.get("/policy/decisions", params={"resource": "crm-customer-master", "limit": 10})
+    response = client.get("/policy/decisions", params={"resource": "crm-customer-master", "limit": 10, "user": "admin"})
     assert response.status_code == 200
 
     decisions = response.json()
@@ -1013,7 +1013,7 @@ def test_catalog_facets_and_audit_events():
     assert response.status_code == 200
     assert response.json()["field"] == "sensitivity"
 
-    events = client.get("/audit/events")
+    events = client.get("/audit/events", params={"user": "admin"})
     assert events.status_code == 200
     assert isinstance(events.json(), list)
 
@@ -1082,7 +1082,7 @@ def test_preview_policy_denies_missing_dataset():
     response = client.post("/browse/unknown/preview", json={"user": "user1", "purpose": "analysis"})
     assert response.status_code == 404
 
-    events = client.get("/audit/events", params={"resource": "unknown"})
+    events = client.get("/audit/events", params={"resource": "unknown", "user": "admin"})
     assert events.status_code == 200
     assert any(
         event["action"] == "browse.preview"
@@ -1123,7 +1123,7 @@ def test_audit_event_includes_policy_decision_id_for_preview():
     body = response.json()
     decision_id = body["policy_decision_id"]
 
-    events = client.get("/audit/events", params={"resource": "crm-event"})
+    events = client.get("/audit/events", params={"resource": "crm-event", "user": "admin"})
     assert events.status_code == 200
     matching = [event for event in events.json() if event["action"] == "browse.preview" and event["details"].get("policy_decision_id") == decision_id]
     assert matching, "preview audit event should record policy decision id"
@@ -1459,7 +1459,7 @@ def test_browse_query_success():
     assert body["policy_decision_id"] is not None
     assert "request_id" in body
 
-    events = client.get("/audit/events", params={"resource": "crm-event"})
+    events = client.get("/audit/events", params={"resource": "crm-event", "user": "admin"})
     assert events.status_code == 200
     assert any(
         event["action"] == "browse.query"
@@ -1484,7 +1484,7 @@ def test_browse_query_rejects_table_outside_dataset_binding():
     assert response.status_code == 400
     assert "unauthorized_table_reference" in response.json()["detail"]["warnings"]
 
-    events = client.get("/audit/events", params={"resource": "crm-event"})
+    events = client.get("/audit/events", params={"resource": "crm-event", "user": "admin"})
     assert events.status_code == 200
     assert any(
         event["action"] == "browse.query"
@@ -1525,7 +1525,7 @@ def test_browse_query_denied_without_user():
     )
     assert response.status_code == 403
 
-    events = client.get("/audit/events", params={"resource": "crm-event"})
+    events = client.get("/audit/events", params={"resource": "crm-event", "user": "admin"})
     assert events.status_code == 200
     assert any(
         event["action"] == "browse.query"

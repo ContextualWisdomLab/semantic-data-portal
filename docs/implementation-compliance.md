@@ -146,6 +146,16 @@
   - `tests/test_browse.py::test_browse_audit_events_carry_the_owning_tenant`
   - `tests/test_catalog.py::test_mutation_audit_events_carry_the_dataset_tenant`
   - `tests/test_evidence_tenant_scope.py` (store helper + 마이그레이션 backfill)
+  - `tests/test_evidence_tenant_read_scope.py` (읽기 경로 tenant scope)
+- Evidence **읽기** 경로도 같은 tenant로 scope한다. `GET /audit/events`,
+  `GET /policy/decisions`, `GET /catalog/datasets/{id}/audit`는 actor를 받아 정책을
+  평가하고(`_authorize_evidence_read`), `policy.accessible_tenant_ids()`가 돌려주는
+  tenant 집합으로 행을 제한한다. `None`은 platform-admin의 명시적 교차 하나뿐이고,
+  tenant를 해석할 수 없는 reader는 빈 목록 → **0행**이다(unscoped read로 흐르지 않는다).
+  두 store 모두 `tenant_ids`를 받아 SQL에서 필터하며(Postgres는 tenant 선행 인덱스를
+  그대로 사용, SQLite는 같은 프로토콜을 위해 `tenant_id` 컬럼과 인덱스를 추가 —
+  기존 파일은 `PRAGMA table_info` 확인 후 `ALTER TABLE`로 마이그레이션하고 레거시 행은
+  `UNRESOLVED_TENANT_ID`를 받는다), in-memory fallback도 동일하게 필터한다.
 
 ## 5) 운영/품질
 

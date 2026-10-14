@@ -39,6 +39,24 @@ def _audit_tenant_id(event: AuditEvent) -> str:
     return str(event.details.get("tenant_id") or event.details.get("tenant") or UNRESOLVED_TENANT_ID)
 
 
+def _tenant_scope_clause(
+    tenant_ids: list[str] | None, placeholder: str
+) -> tuple[str, tuple[object, ...]]:
+    """Build the tenant predicate for an evidence read.
+
+    ``None`` means "every tenant" and is reserved for the explicit platform-admin
+    crossing; an empty list means "no tenant", which yields no rows rather than
+    all of them - a reader with no resolvable tenant must not fall through to an
+    unscoped read.
+    """
+    if tenant_ids is None:
+        return "", ()
+    if not tenant_ids:
+        return "1 = 0", ()
+    marks = ", ".join(placeholder for _ in tenant_ids)
+    return f"tenant_id IN ({marks})", tuple(tenant_ids)
+
+
 class SQLiteEvidenceStore:
     """Local evidence store for demo and pilot auditability."""
 
@@ -53,20 +71,21 @@ class SQLiteEvidenceStore:
     def _initialize(self) -> None:
         with self._connect() as connection:
             connection.execute(
-                """
+                f"""
                 CREATE TABLE IF NOT EXISTS policy_decisions (
                     decision_id TEXT PRIMARY KEY,
                     subject TEXT NOT NULL,
                     resource TEXT NOT NULL,
                     action TEXT NOT NULL,
                     effect TEXT NOT NULL,
+                    tenant_id TEXT NOT NULL DEFAULT '{UNRESOLVED_TENANT_ID}',
                     payload TEXT NOT NULL,
                     recorded_at TEXT NOT NULL
                 )
                 """
             )
             connection.execute(
-                """
+                f"""
                 CREATE TABLE IF NOT EXISTS audit_events (
                     id TEXT PRIMARY KEY,
                     actor TEXT NOT NULL,
@@ -74,11 +93,36 @@ class SQLiteEvidenceStore:
                     resource TEXT NOT NULL,
                     result TEXT NOT NULL,
                     decision_id TEXT,
+                    tenant_id TEXT NOT NULL DEFAULT '{UNRESOLVED_TENANT_ID}',
                     payload TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 )
                 """
             )
+            self._add_tenant_column(connection, "policy_decisions")
+            self._add_tenant_column(connection, "audit_events")
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_sqlite_decisions_tenant_resource "
+                "ON policy_decisions (tenant_id, resource)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_sqlite_events_tenant_resource "
+                "ON audit_events (tenant_id, resource)"
+            )
+
+    def _add_tenant_column(self, connection: Any, table: str) -> None:
+        """Add ``tenant_id`` to an evidence table created before it existed.
+
+        SQLite has no ``ADD COLUMN IF NOT EXISTS``, so the column list is read
+        first. Legacy rows take the unresolved marker rather than a real tenant.
+        """
+        columns = {row[1] for row in connection.execute(f"PRAGMA table_info({table})").fetchall()}
+        if "tenant_id" in columns:
+            return
+        connection.execute(
+            f"ALTER TABLE {table} ADD COLUMN tenant_id TEXT NOT NULL "
+            f"DEFAULT '{UNRESOLVED_TENANT_ID}'"
+        )
 
     def record_decision(self, decision: PolicyDecision) -> PolicyDecision:
         payload = decision.model_dump(mode="json")
@@ -86,8 +130,8 @@ class SQLiteEvidenceStore:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO policy_decisions
-                (decision_id, subject, resource, action, effect, payload, recorded_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                (decision_id, subject, resource, action, effect, tenant_id, payload, recorded_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     decision.decision_id,
@@ -95,6 +139,7 @@ class SQLiteEvidenceStore:
                     decision.resource,
                     decision.action,
                     decision.effect,
+                    _policy_tenant_id(decision),
                     json.dumps(payload, ensure_ascii=False, sort_keys=True),
                     datetime.now(timezone.utc).isoformat(),
                 ),
@@ -111,12 +156,26 @@ class SQLiteEvidenceStore:
             return None
         return PolicyDecision.model_validate(json.loads(row[0]))
 
-    def list_decisions(self, *, resource: str | None = None, limit: int = 100) -> list[PolicyDecision]:
-        sql = "SELECT payload FROM policy_decisions"
+    def list_decisions(
+        self,
+        *,
+        resource: str | None = None,
+        limit: int = 100,
+        tenant_ids: list[str] | None = None,
+    ) -> list[PolicyDecision]:
+        """List policy decisions, optionally scoped to a set of tenants."""
+        conditions: list[str] = []
         params: tuple[object, ...] = ()
         if resource:
-            sql += " WHERE resource = ?"
-            params = (resource,)
+            conditions.append("resource = ?")
+            params = (*params, resource)
+        clause, tenant_params = _tenant_scope_clause(tenant_ids, "?")
+        if clause:
+            conditions.append(clause)
+            params = (*params, *tenant_params)
+        sql = "SELECT payload FROM policy_decisions"
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
         sql += " ORDER BY recorded_at DESC LIMIT ?"
         params = (*params, limit)
 
@@ -130,8 +189,8 @@ class SQLiteEvidenceStore:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO audit_events
-                (id, actor, action, resource, result, decision_id, payload, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (id, actor, action, resource, result, decision_id, tenant_id, payload, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     event.id,
@@ -140,18 +199,33 @@ class SQLiteEvidenceStore:
                     event.resource,
                     event.result,
                     event.decision_id,
+                    _audit_tenant_id(event),
                     json.dumps(payload, ensure_ascii=False, sort_keys=True),
                     event.created_at.isoformat(),
                 ),
             )
         return event
 
-    def list_events(self, *, resource: str | None = None, limit: int = 100) -> list[AuditEvent]:
-        sql = "SELECT payload FROM audit_events"
+    def list_events(
+        self,
+        *,
+        resource: str | None = None,
+        limit: int = 100,
+        tenant_ids: list[str] | None = None,
+    ) -> list[AuditEvent]:
+        """List audit events, optionally scoped to a set of tenants."""
+        conditions: list[str] = []
         params: tuple[object, ...] = ()
         if resource:
-            sql += " WHERE resource = ?"
-            params = (resource,)
+            conditions.append("resource = ?")
+            params = (*params, resource)
+        clause, tenant_params = _tenant_scope_clause(tenant_ids, "?")
+        if clause:
+            conditions.append(clause)
+            params = (*params, *tenant_params)
+        sql = "SELECT payload FROM audit_events"
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
         sql += " ORDER BY created_at DESC LIMIT ?"
         params = (*params, limit)
 
@@ -332,12 +406,30 @@ class PostgresEvidenceStore:
             return None
         return PolicyDecision.model_validate(_payload_to_dict(row[0]))
 
-    def list_decisions(self, *, resource: str | None = None, limit: int = 100) -> list[PolicyDecision]:
-        sql = "SELECT payload FROM policy_decisions"
+    def list_decisions(
+        self,
+        *,
+        resource: str | None = None,
+        limit: int = 100,
+        tenant_ids: list[str] | None = None,
+    ) -> list[PolicyDecision]:
+        """List policy decisions, optionally scoped to a set of tenants.
+
+        The tenant predicate leads ``idx_policy_decisions_tenant_resource_created``,
+        which is why that index is ordered tenant-first.
+        """
+        conditions: list[str] = []
         params: tuple[object, ...] = ()
         if resource:
-            sql += " WHERE resource = %s"
-            params = (resource,)
+            conditions.append("resource = %s")
+            params = (*params, resource)
+        clause, tenant_params = _tenant_scope_clause(tenant_ids, "%s")
+        if clause:
+            conditions.append(clause)
+            params = (*params, *tenant_params)
+        sql = "SELECT payload FROM policy_decisions"
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
         sql += " ORDER BY created_at DESC LIMIT %s"
         params = (*params, limit)
 
@@ -377,12 +469,30 @@ class PostgresEvidenceStore:
             )
         return event
 
-    def list_events(self, *, resource: str | None = None, limit: int = 100) -> list[AuditEvent]:
-        sql = "SELECT payload FROM audit_events"
+    def list_events(
+        self,
+        *,
+        resource: str | None = None,
+        limit: int = 100,
+        tenant_ids: list[str] | None = None,
+    ) -> list[AuditEvent]:
+        """List audit events, optionally scoped to a set of tenants.
+
+        The tenant predicate leads ``idx_audit_events_tenant_resource_created``,
+        which is why that index is ordered tenant-first.
+        """
+        conditions: list[str] = []
         params: tuple[object, ...] = ()
         if resource:
-            sql += " WHERE resource = %s"
-            params = (resource,)
+            conditions.append("resource = %s")
+            params = (*params, resource)
+        clause, tenant_params = _tenant_scope_clause(tenant_ids, "%s")
+        if clause:
+            conditions.append(clause)
+            params = (*params, *tenant_params)
+        sql = "SELECT payload FROM audit_events"
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
         sql += " ORDER BY created_at DESC LIMIT %s"
         params = (*params, limit)
 
