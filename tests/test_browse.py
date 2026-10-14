@@ -18,6 +18,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from sdp import browse, catalog, evidence  # noqa: E402
+from sdp.policy import evaluate  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -85,3 +86,47 @@ def test_apply_mask_noop_without_masked_columns() -> None:
     """apply_mask returns the row unchanged when nothing is obligated masked."""
     row = {"a": "1", "b": "2"}
     assert browse.apply_mask(row, []) == {"a": "1", "b": "2"}
+
+
+def test_preview_rows_never_leave_the_named_dataset_schema():
+    """The sample rows were one fixed CRM row set served for every dataset, while
+    the masking obligation came from the *named* dataset's ``pii`` flags. Naming a
+    dataset with no PII column therefore returned ``customer_email`` in the clear:
+
+        semantic-glossary -> masked=[]  rows[0]['customer_email'] == 'alice@example.com'
+
+    A preview row may only carry columns the named dataset declares, so no
+    dataset_id can be used to reach another dataset's PII column.
+    """
+    for dataset_id, dataset in sorted(catalog._DATA.items()):
+        result = browse.preview(dataset_id, user="admin", purpose="analysis", limit=2)
+        declared = {column.name for column in dataset.schema}
+        assert declared, f"{dataset_id} has no declared schema"
+        for row in result["rows"]:
+            assert set(row) <= declared, f"{dataset_id} leaked {set(row) - declared}"
+        # The advertised column list and the rows must describe the same thing.
+        assert set(result["columns"]) == declared
+
+
+def test_preview_masks_every_declared_pii_column():
+    """Masking is a floor, not a best effort: a declared-PII column is never
+    emitted in the clear by the preview sample path."""
+    for dataset_id, dataset in sorted(catalog._DATA.items()):
+        pii_columns = [column.name for column in dataset.schema if column.pii]
+        result = browse.preview(dataset_id, user="admin", purpose="analysis", limit=2)
+        for row in result["rows"]:
+            for column in pii_columns:
+                assert row[column] == "***", f"{dataset_id}.{column} was not masked"
+        assert set(pii_columns) <= set(result["masking_summary"]["masked_columns"])
+
+
+def test_preview_masks_declared_pii_even_if_the_obligation_omits_it(monkeypatch):
+    """If a policy change ever stopped listing a PII column in the masking
+    obligation, the preview must still not emit the value."""
+    decision = evaluate(subject="admin", resource="crm-customer-master", action="preview", purpose="analysis")
+    stripped = decision.model_copy(update={"obligations": {"masking": []}})
+    monkeypatch.setattr(browse, "evaluate", lambda **_kwargs: stripped)
+
+    result = browse.preview("crm-customer-master", user="admin", purpose="analysis", limit=1)
+    assert result["rows"][0]["customer_email"] == "***"
+    assert "customer_email" in result["masking_summary"]["masked_columns"]

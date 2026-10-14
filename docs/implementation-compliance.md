@@ -97,10 +97,18 @@
 - API: `GET /browse/{dataset_id}/schema`, `POST /browse/{dataset_id}/preview`, `POST /browse/query`, `POST /browse/query`, `POST /llm/draft-query`
 - 정책 + 마스킹: `src/sdp/browse.py`, `src/sdp/policy.py`
 - 쿼리 허용/거부: `src/sdp/orchestrator.py: execute_query`, `draft_sql`
+- preview row 경계: 샘플 row는 `browse._sample_rows()`가 **지정된 데이터셋의 선언
+  스키마에 투영**해 만든다. 데이터셋이 선언하지 않은 컬럼은 들어갈 칸이 없으므로
+  다른 dataset_id로 남의 PII 컬럼에 도달할 수 없다. 마스킹은 floor로 적용한다 —
+  정책 obligation과 데이터셋이 `pii`로 선언한 컬럼의 합집합을 마스킹하고, 응답과
+  감사 기록에는 실제 적용된 집합을 보고한다.
 - 증빙 테스트:
   - `tests/test_api.py::test_preview_policy_denies_missing_dataset`
   - `tests/test_api.py::test_preview_pagination_and_decision_traceability`
   - `tests/test_api.py::test_preview_denies_low_privilege_actor`
+  - `tests/test_browse.py::test_preview_rows_never_leave_the_named_dataset_schema`
+  - `tests/test_browse.py::test_preview_masks_every_declared_pii_column`
+  - `tests/test_browse.py::test_preview_masks_declared_pii_even_if_the_obligation_omits_it`
   - `tests/test_api.py::test_browse_query_success`
   - `tests/test_api.py::test_browse_query_denied_without_user`
   - `tests/test_api.py::test_draft_query`
