@@ -635,6 +635,53 @@ bump된다는 테스트는 guard 없이도 통과하므로 그 셋은 guard의 �
   aware/naive가 섞여 있어도(섞인 채로 빼면 예외입니다) 공개된 읽기가 터지지 않고 span만
   `null`이 됩니다. `implemented`가 아닌 이유는 위의 단방향성
   그대로입니다 — 요구사항은 배포에 대한 진술이고 이 측정은 그것을 확인할 수 없습니다.
+- **그 매트릭스를 적대적 감사에 걸어 38건을 정정했습니다.** 전수 매핑을 만든 직후
+  스스로 감사했습니다(요구사항군별 에이전트 11개가 모든 행을 코드에 대고 검증 →
+  제기된 발견 45건을 각각 **독립 에이전트가 반증 시도**, 총 56 에이전트). 36~38건이
+  확인되고 **7건이 기각**되었습니다.
+  **상태 판정 기준이 제 초기 매핑에서 느슨했던 것이 드러났습니다.** 기준은 PRD의
+  **수락 기준(ACCEPT 열)** 이어야 합니다 — 기능이 어떤 형태로든 존재하는지가 아니라
+  그 요구사항이 명시한 메커니즘이 있는지입니다. 수락 기준이 이 저장소에 없는
+  메커니즘을 호명하면 기능이 대체로 동작해도 `implemented`가 아닙니다.
+  `implemented` **37건 → 13건**, `partial` 20건 → 45건, P0 `implemented` 21건 → 6건.
+  정정의 대표적인 근거(모두 코드 인용과 함께 재현):
+  `CAT-002`는 상세 페이지가 표시해야 할 11개 필드 중 `source_system`을 거버넌스
+  경계 때문에 의도적으로 withhold합니다(10/11). `CAT-005`의 수락 기준은 변경
+  **사유** 기록인데 `_build_dataset_payload`가 모든 카탈로그 쓰기에 `reason="ok"`를
+  하드코딩하고, `deprecate`만 호출자 사유를 받습니다(3/4 경로가 사유 없음).
+  `CAT-009`의 수락 기준은 business key 또는 ontology mapping 기반 추천인데
+  `get_join_candidates`는 `dataset.mappings`를 **읽지 않고** 컬럼 이름 일치를 쓰므로,
+  승인된 mapping만 공유하는 두 데이터셋은 `[]`를 돌려받고 `id`/`amount` 같은 일반
+  컬럼명만 공유하는 둘은 추천됩니다. `POL-003`의 마스킹은 `col.pii`만 보고 subject·
+  purpose·PRD가 호명한 sensitive/confidential 태그를 보지 않습니다. `ONT-002`·`ONT-005`의
+  수락 기준은 SHACL/OWL 검증과 reasoner인데 둘 다 없습니다. `NFR-QUAL-004`의 수락
+  기준은 **CQ pass rate**이고 그 전제인 CQ 등록(`ONT-008`)이 미구현입니다.
+  **반대 방향도 있습니다.** `NFR-SEC-004`를 `external`에서 `partial`로 올렸습니다 —
+  수락 기준이 "모든 **내부/외부** 통신 TLS"이고, 이 저장소가 소유한 내부 링크 세 개가
+  평문을 허용합니다(JWKS fetch가 http 허용, log sink가 Authorization 헤더를 지고 http
+  허용, 배포되는 postgres 프로파일이 `SDP_DATABASE_SSLMODE: disable`). 게다가 제
+  비고는 **이 저장소에 존재하지 않는 Traefik 설정**을 책임자로 지목하고 있었습니다
+  (`grep -rn traefik` → 제 비고 자신만). 다른 저장소의 모양을 가져다 쓴 것이고,
+  근거 없는 책임 전가였습니다.
+  `NFR-REL-001`/`002`는 `not_implemented` → `external`입니다. 매트릭스가 **자기
+  어휘와 모순**이었습니다 — `external`의 정의가 "배포/호스트 플랫폼의 책임"이고 그
+  세 예시 중 하나가 바로 "availability targets"인데, 가용성 요구사항을
+  `not_implemented`로 적어 두었습니다. `NFR-SEC-006`은 `implemented` → `external`:
+  LLM provider로 데이터를 보내지 않는다는 주장이 **통제가 있어서가 아니라 provider
+  경계가 아예 없어서** 성립하고, 인용된 테스트는 카탈로그 DSN redaction을 단언할
+  뿐 model egress에 대해 아무것도 말하지 않습니다.
+  기각된 7건은 **전부 제가 감사 도중에 이미 고친 것**이었습니다(CAT-001과
+  NFR-PERF-001~006 — 검증자가 "제기된 current status가 파일에 존재하지 않는다"로
+  기각). 감사를 제 수정과 병행 실행한 비용이고, 검증 단계가 그것을 잡았습니다.
+  인용도 세 건 교체했습니다. 감사가 지적한 대로 `CAT-004`/`ONT-003`이 인용한
+  concept-graph 테스트는 glossary 개방성만 단언하고 mapping status나 hierarchy
+  traversal을 다루지 않으며, `CAT-005`가 인용한 governed-write 테스트는 카탈로그
+  라우트를 하나도 건드리지 않습니다.
+  생성 문서에 **판정 기준과 이 분포의 의미를 명시**했습니다 — `partial` 45건은
+  정보가 없다는 뜻이 아니라 **정보가 상태가 아니라 비고에 있다**는 뜻입니다.
+  이 작업에서 제 적용 스크립트의 결함 하나도 저장소 가드레일이 잡았습니다:
+  긴 `tests/x.py::test_name` 인용이 wrap 경계에서 쪼개져 식별자 안에 공백이 들어갔고,
+  anti-dangling-evidence 테스트가 "존재하지 않는 테스트 3건"으로 실패했습니다.
 - **요구사항 대응 매트릭스를 전수로 만들고 기계가 강제하게 했습니다.**
   `CLAUDE.md`가 요구사항 대응 매트릭스로 지목하는 `docs/implementation-compliance.md`를
   PRD에 대고 측정한 결과: PRD의 요구사항 **74건**(기능 52 + NFR 22) 중 문서가 언급하는 것은
