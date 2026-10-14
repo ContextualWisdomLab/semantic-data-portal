@@ -59,10 +59,18 @@ def test_bump_version_normal_and_malformed() -> None:
 
 
 def test_term_score_skips_empty_token() -> None:
-    """An empty token in the token list is skipped without contributing to the score."""
+    """An empty token contributes nothing to the score.
+
+    The skip moved into ``_compiled_query_tokens`` when the regex compile was
+    hoisted out of the per-dataset loop, so the contract is pinned at both the
+    new seam and the scorer.
+    """
     dataset = catalog._DATA[_CRM]
-    with_empty = catalog._term_score(dataset, ["", "customer"], "customer")  # line 167 continue
-    without_empty = catalog._term_score(dataset, ["customer"], "customer")
+    assert catalog._compiled_query_tokens(["", "customer"]) and len(
+        catalog._compiled_query_tokens(["", "customer"])
+    ) == 1
+    with_empty = catalog._term_score(dataset, catalog._compiled_query_tokens(["", "customer"]), "customer")
+    without_empty = catalog._term_score(dataset, catalog._compiled_query_tokens(["customer"]), "customer")
     assert with_empty == without_empty
 
 

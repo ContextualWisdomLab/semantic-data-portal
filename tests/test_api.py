@@ -174,12 +174,15 @@ def test_enterprise_shacl_validation_summary_tracks_saleability_target():
 
 
 def test_enterprise_steward_review_summarizes_governance_queue():
+    # `requestor` is now derived from the authorized actor: a proposal writes to a
+    # shared process-lifetime queue, so it is a governed write rather than an open
+    # endpoint. This call used to pass no actor at all.
     proposed = client.post(
         "/ontology/patches",
         json={
+            "actor": "analyst",
             "concept": "고객",
             "suggestion": "VIP 고객 세그먼트를 구매자 데모 glossary 후보로 추가",
-            "requestor": "governance-analyst",
         },
     )
     assert proposed.status_code == 200
@@ -1423,6 +1426,7 @@ def test_ontology_patch_workflow():
     propose = client.post(
         "/ontology/patches",
         json={
+            "actor": "analyst",
             "concept": "이탈",
             "suggestion": "탈퇴한 고객은 최근 30일 주문 비율이 감소하는 segment로 분류 제안",
             "requestor": "analyst",
@@ -2048,7 +2052,7 @@ def test_ontology_patch_review_requires_an_authorized_steward():
     ``POST /ontology/concepts`` already enforced admin.
     """
     proposal = client.post(
-        "/ontology/patches", json={"concept": "고객", "suggestion": "redefine"}
+        "/ontology/patches", json={"actor": "analyst", "concept": "고객", "suggestion": "redefine"}
     )
     assert proposal.status_code == 200
     patch_id = proposal.json()["id"]
@@ -2071,7 +2075,7 @@ def test_ontology_patch_review_refuses_a_body_supplied_reviewer():
     name somebody who never reviewed it, so the field is refused outright rather
     than silently ignored."""
     proposal = client.post(
-        "/ontology/patches", json={"concept": "고객", "suggestion": "redefine"}
+        "/ontology/patches", json={"actor": "analyst", "concept": "고객", "suggestion": "redefine"}
     )
     patch_id = proposal.json()["id"]
 
@@ -2093,7 +2097,7 @@ def test_ontology_patch_review_refuses_a_body_supplied_reviewer():
 def test_ontology_patch_review_records_evidence():
     """A governance sign-off leaves an audit record, like every other mutation."""
     proposal = client.post(
-        "/ontology/patches", json={"concept": "고객", "suggestion": "redefine"}
+        "/ontology/patches", json={"actor": "analyst", "concept": "고객", "suggestion": "redefine"}
     )
     patch_id = proposal.json()["id"]
     before = len(app_catalog._AUDIT_LOG)

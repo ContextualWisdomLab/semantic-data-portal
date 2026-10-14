@@ -67,6 +67,9 @@ def _normalize_term(value: str) -> str:
 
 _INDEX = _build_index()
 _ONTOLOGY_PATCHES: list[OntologyPatch] = []
+# Bounds on the process-lifetime proposal queue; see propose_patch.
+MAX_ONTOLOGY_PATCHES = 500
+MAX_ONTOLOGY_PATCH_FIELD = 2000
 _ALIAS_TO_CANONICAL: Dict[str, str] = {}
 for base_concept in _CONCEPT_DEFINITIONS:
     _ALIAS_TO_CANONICAL[_normalize_term(base_concept)] = base_concept
@@ -211,6 +214,18 @@ def concept_assets(concept: str) -> Dict[str, Any]:
 
 
 def propose_patch(concept: str, suggestion: str, *, requestor: str = "anonymous") -> dict[str, Any]:
+    """Queue one ontology patch proposal.
+
+    The queue is process-lifetime state, so both the caller's strings and the
+    queue depth are bounded: an unbounded proposal route let a caller hold
+    arbitrary memory for the life of the process (a 50,000-character suggestion
+    was accepted). The oldest proposal is evicted at the cap rather than refusing
+    new ones, so the queue cannot be filled to lock out legitimate proposals.
+    """
+    if len(concept) > MAX_ONTOLOGY_PATCH_FIELD or len(suggestion) > MAX_ONTOLOGY_PATCH_FIELD:
+        raise ValueError(
+            f"concept and suggestion must each be at most {MAX_ONTOLOGY_PATCH_FIELD} characters"
+        )
     patch = OntologyPatch(
         id=str(uuid4()),
         concept=concept.strip() or "unknown",
@@ -219,6 +234,8 @@ def propose_patch(concept: str, suggestion: str, *, requestor: str = "anonymous"
         confidence=min(max(len(suggestion) / 220.0, 0.3), 0.95),
     )
     _ONTOLOGY_PATCHES.append(patch)
+    if len(_ONTOLOGY_PATCHES) > MAX_ONTOLOGY_PATCHES:
+        del _ONTOLOGY_PATCHES[:-MAX_ONTOLOGY_PATCHES]
     return patch.model_dump()
 
 

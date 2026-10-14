@@ -389,7 +389,9 @@ def healthz(response: Response) -> dict[str, Any]:
 
 @app.get("/catalog/search")
 def catalog_search(
-    q: str = Query(..., min_length=1),
+    # Each token is matched against every dataset, so an unbounded query is
+    # unbounded work: 1005 datasets took 0.03s at 10 tokens and 5.10s at 2000.
+    q: str = Query(..., min_length=1, max_length=2000),
     tags: list[str] | None = Query(default=None),
     domain: list[str] | None = Query(default=None),
     owner: list[str] | None = Query(default=None),
@@ -761,11 +763,22 @@ def ontology_patch_create(payload: dict[str, str]) -> dict[str, Any]:
     suggestion = payload.get("suggestion", "").strip()
     if not concept or not suggestion:
         raise HTTPException(status_code=400, detail="concept and suggestion are required")
-    return ontology.propose_patch(
-        concept=concept,
-        suggestion=suggestion,
-        requestor=payload.get("requestor", "anonymous"),
+    # A proposal writes to a shared, process-lifetime queue, so it is a governed
+    # write rather than an open endpoint: it ran no policy evaluation at all.
+    actor_id = _actor(payload)
+    decision = evaluate(
+        subject=actor_id, resource="ontology/patches", action="search", purpose="ontology"
     )
+    if decision.effect != "allow":
+        raise HTTPException(status_code=403, detail=decision.reason)
+    try:
+        return ontology.propose_patch(
+            concept=concept,
+            suggestion=suggestion,
+            requestor=actor_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @app.post("/ontology/patches/{patch_id}/review")

@@ -144,10 +144,19 @@ def discovery_view(dataset: Dataset) -> Dict[str, Any]:
     return published
 
 
+# The in-memory fallback logs were unbounded lists, so any caller that can reach
+# an audited route could grow process memory without limit. Denials stay audited -
+# dropping them would hide exactly the attempts an auditor looks for - but the
+# in-memory window is bounded, matching the observability ring buffer's design.
+MAX_IN_MEMORY_AUDIT_EVENTS = 2000
+
+
 def _record_audit_event(event: AuditEvent) -> AuditEvent:
     append_audit_event(event)
     if not has_configured_evidence_store():
         _AUDIT_LOG.append(event)
+        if len(_AUDIT_LOG) > MAX_IN_MEMORY_AUDIT_EVENTS:
+            del _AUDIT_LOG[:-MAX_IN_MEMORY_AUDIT_EVENTS]
     return event
 
 
@@ -275,12 +284,19 @@ def _to_set(values: list[str] | None) -> set[str]:
     return set(values or [])
 
 
-def _term_score(dataset: Dataset, tokens: list[str], query: str) -> float:
+def _compiled_query_tokens(tokens: list[str]) -> list[re.Pattern[str]]:
+    """Compile each search token once, for reuse across every dataset.
+
+    ``_term_score`` compiled inside its own loop and ``search_catalog`` calls it
+    once per dataset, making the cost datasets x tokens: at 1005 datasets a
+    10-token query took 0.03s, 500 tokens 1.39s and 2000 tokens 5.10s.
+    """
+    return [re.compile(re.escape(token), re.IGNORECASE) for token in tokens if token]
+
+
+def _term_score(dataset: Dataset, token_patterns: list[re.Pattern[str]], query: str) -> float:
     score = 0.0
-    for token in tokens:
-        if token == "":
-            continue
-        token_re = re.compile(re.escape(token), re.IGNORECASE)
+    for token_re in token_patterns:
         if token_re.search(dataset.title):
             score += 1.0
         if token_re.search(dataset.description):
@@ -319,6 +335,7 @@ def search_catalog(
     limit: int = 20,
 ) -> list[SearchResult]:
     tokens = [t.strip() for t in query.split() if t.strip()]
+    token_patterns = _compiled_query_tokens(tokens)
     if not tokens:
         return []
 
@@ -350,7 +367,7 @@ def search_catalog(
         if not include_inactive and dataset.metadata_completeness < 0.8:
             continue
 
-        score = _term_score(dataset, tokens, query)
+        score = _term_score(dataset, token_patterns, query)
         if score > 0:
             by_token.append(SearchResult(dataset=dataset, score=score))
 
@@ -366,11 +383,12 @@ def list_facet_counts(field: str, query: Optional[str] = None) -> Dict[str, int]
         tokens = [t.strip() for t in query.split() if t.strip()]
     else:
         tokens = []
+    token_patterns = _compiled_query_tokens(tokens)
 
     counts: Dict[str, int] = {}
     for dataset in _DATA.values():
         if tokens:
-            row = SearchResult(dataset=dataset, score=_term_score(dataset, tokens, query))
+            row = SearchResult(dataset=dataset, score=_term_score(dataset, token_patterns, query))
             if row.score <= 0:
                 continue
 

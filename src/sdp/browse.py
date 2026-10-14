@@ -82,6 +82,11 @@ def preview(dataset_id: str, user: str, purpose: str, limit: int = 100, offset: 
     if offset < 0:
         raise ValueError("offset must be greater than or equal to 0")
 
+    # Policy first, then the record. The missing-dataset branch used to write an
+    # audit event before evaluating anything, inverting the documented
+    # policy-before-access order and letting an unauthenticated caller grow the
+    # ledger: 5 anonymous previews of nonexistent ids gave audit +5, policy +0.
+    decision = evaluate(subject=user, resource=dataset_id, action="preview", purpose=purpose)
     dataset = get_dataset(dataset_id)
     if not dataset:
         ingest_event(
@@ -90,11 +95,11 @@ def preview(dataset_id: str, user: str, purpose: str, limit: int = 100, offset: 
             dataset_id=dataset_id,
             decision="denied",
             reason="dataset_not_found",
-            details={"policy_decision_id": None},
+            decision_id=decision.decision_id,
+            details={"policy_decision_id": decision.decision_id},
         )
         raise KeyError("dataset not found")
 
-    decision = evaluate(subject=user, resource=dataset_id, action="preview", purpose=purpose)
     if decision.effect != "allow":
         ingest_event(
             event_type="browse.preview",
