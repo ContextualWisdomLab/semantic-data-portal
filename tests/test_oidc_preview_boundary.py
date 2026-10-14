@@ -289,3 +289,52 @@ def test_the_verified_path_declares_the_same_truncation() -> None:
     source = inspect.getsource(api.enterprise_oidc_verify)
     assert '"declared_group_count": declared_group_count' in source
     assert '"withheld_group_count": withheld_group_count' in source
+
+
+def test_the_count_cap_can_only_withhold_a_role_never_grant_one() -> None:
+    """A security property I had asserted only in prose, now measured.
+
+    The group-count cap applies to matching, including on the verified route,
+    so it can change an authorization outcome. The commit that added it called
+    that fail-closed; this is the measurement behind the word. Enumerated over
+    the position of the privileged group in the claim, because a cap that
+    truncates a list is exactly where ordering could matter::
+
+        admins first   uncapped 401 roles | capped 256 | gained none
+        admins last    uncapped 401 roles | capped 256 | gained none
+        admins at 300  uncapped 401 roles | capped 256 | gained none
+
+    The ``admins last`` and ``admins at 300`` cases lose ``platform-admin`` -
+    withheld, which is the safe direction - and no case gains a role the
+    uncapped evaluation did not grant.
+    """
+    role_map = {"demo": {f"g-{index}": [f"role-{index}"] for index in range(400)}}
+    role_map["demo"]["admins"] = ["platform-admin"]
+
+    def granted(groups: list[str], cap: int) -> set[str]:
+        saved = authz.MAX_CLAIM_VALUES
+        authz.MAX_CLAIM_VALUES = cap
+        try:
+            context = authz.resolve_oidc_actor_context(
+                {
+                    "sub": "a",
+                    "tenant_id": "demo",
+                    "exp": int(time()) + 3600,
+                    "groups": groups,
+                },
+                role_map=role_map,
+            )
+            return set(context.roles)
+        finally:
+            authz.MAX_CLAIM_VALUES = saved
+
+    others = [f"g-{index}" for index in range(400)]
+    for label, groups in (
+        ("admins first", ["admins"] + others),
+        ("admins last", others + ["admins"]),
+        ("admins at 300", others[:300] + ["admins"] + others[300:]),
+    ):
+        uncapped = granted(groups, 10**6)
+        capped = granted(groups, authz.MAX_CLAIM_VALUES)
+        assert not (capped - uncapped), (label, sorted(capped - uncapped))
+        assert len(capped) <= len(uncapped), label
