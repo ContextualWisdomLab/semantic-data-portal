@@ -2722,6 +2722,64 @@ endpoint 공개이고, `distributions`는 discovery view에도 의도적으로 �
 검증: RED 2건 선확인 → 수리, 대조군 1건(저장 snapshot 불변)도 함께. 전체 **337 passed / 8 skipped**,
 `tests/fuzz` 10 passed, `sdp.demo_smoke` ready=true, 11개 라우트 재측정으로 `pii` 소멸 확인.
 
+### 독립 다중 렌즈 감사 (2026-10-14) — 32건 발견, 직접 재현 후 수리
+
+이전 감사 큐(11건)를 소진한 뒤, 같은 방식을 신뢰하지 않고 **독립적인 8개 렌즈**로
+다시 쓸었습니다(authz 공개 범위, tenant 격리, 자격증명 노출, 비신뢰 입력, 증빙 무결성,
+가용성, 컨테이너·공급망, 계약 드리프트). 렌즈별로 발견을 모으고 각 발견마다 **서로 다른
+관점의 반박자 3명**(control flow / 재현 / 영향)을 붙였습니다. 7개 렌즈가 32건을
+보고했습니다.
+
+**중요한 방법론 한계를 먼저 적습니다.** 저는 감사가 돌아가는 동안 확인된 항목을 먼저
+고쳤습니다. 그래서 반박 단계가 **"이미 수리됨"을 이유로 refute**하기 시작했습니다 —
+반박자들은 현재 트리를 정확히 읽고 "이 발견은 수리 이전 head를 서술한다"고 판정했습니다.
+따라서 이 워크플로의 최종 `confirmed` 목록은 **실재성의 척도가 아니라** 제 동시 수리의
+부작용입니다. 그 목록을 "32건 중 N건만 진짜였다"로 읽으면 틀립니다.
+
+실제 판정 기준은 **제가 직접 재현했는지**입니다. 아래가 그 결과입니다.
+
+| 수리 | 직접 측정한 증거 |
+| --- | --- |
+| evidence 읽기 경로 tenant scope 부재 | 미인증 `GET /audit/events` 한 번에 `{'bank-a': 1, 'bank-b': 1}`. 읽기 경로 **어느 함수에도 tenant 파라미터가 없었음** — 오늘 아침 제 stamp 수리가 소비자 없는 절반이었다는 뜻 |
+| `create`가 tenant 검사 건너뜀 | `data-admin`(tenant demo, platform-admin 아님)이 `tenant_id=acme-bank`로 심기 → 200, 같은 자산 PATCH/PREVIEW → 403 |
+| 그래프 표면 | `/graph/nodes/{id}` 인가 전무, `pii: true` 공개. traversal이 공유 concept 노드를 지나 depth 2에서 타 tenant 도달 — 진입 게이트만으로 불가 |
+| connector probe | `postgresql://svc_user:S3cr3t-Pa55@payroll.acme.internal:5432/payroll`을 **미인증** 호출자에게, 타 tenant `critical` 자산에 대해 |
+| SQL validator (재발) | `pg_catalog.sales`, `otherdb.otherschema.sales`, `JOIN finance.sales` 모두 통과 — leaf만 비교. **제가 오늘 추가한 대조군에 `analytics.customer`를 "허용"으로 넣은 것이 바로 그 구멍** |
+| `/profile` (재발) | `row_count: 1200000`과 컬럼별 `quality_issues`를 actor 없이. **제 형제-라우트 스윕이 리터럴 마커 3개만 grep해서 clean으로 표시** |
+| patch 감사 기록 | 패치된 `source_system` DSN이 `changes`/`before`/`after` 세 군데에 |
+| `append_audit_event` | store 없으면 이벤트를 버리면서 `audit_event_id`는 반환 — platform-admin 부여 기록이 사라짐 |
+| ontology steward 서명 | 익명 승인 + body로 `reviewed_by: biz-admin` 위조, 증빙 0건 |
+| 자원 상한 | 2 MiB semantic query → 2.87s CPU, `search_catalog` 2000토큰 → 5.10s, 5만 자 patch 제안에 **정책 평가 0건**, 없는 데이터셋 preview가 audit +5 / policy +0 |
+| 계수기 포화 | `sdp_request_observations_total`이 buffer 500 대비 **25에서 멈춤** |
+| `_relationship_label` | `$`가 개행 앞에서도 매칭 → `KeyError('\n')` → 500 |
+| pagination 강제 변환 | JSON 배열/객체에 `TypeError` → 500 |
+| `file://` sink | 절대 서버 경로와 UNC 내부 호스트명을 공개 manifest에 |
+| healthcheck | Dockerfile + compose 2곳이 상수 `/health`를 조회 — 백엔드 죽은 컨테이너가 healthy |
+| 앱 포트 | DB는 `127.0.0.1`인데 앱 3개는 모든 인터페이스에 공개 |
+| `/app` 소유권 | 서빙 uid가 자기 `PYTHONPATH`를 소유 |
+
+**세 건은 오늘 제 수리의 형제 경로였습니다** (governed 필드, SQL validator, sink
+redaction). 패턴이 분명합니다 — 수리는 맞았지만 **같은 결함 부류의 다른 경로를 전수
+확인하지 않았습니다.** 특히 `/profile`은 제가 "11개 라우트를 쓸었다"고 적은 그 스윕이
+놓친 것인데, 원인은 제가 **방금 정의한 governed 필드 목록과 대조하지 않고 리터럴 문자열
+3개만 grep**했기 때문입니다. 마커 검색은 경계 검증이 아닙니다.
+
+**에이전트 보고를 정정한 것 3건:**
+1. ontology review로 `buyer_handoff_ready`를 true로 되돌릴 수 있다 → **거짓**. 측정값은
+   `False -> False`. 실재하는 것은 미인증 승인과 reviewer 위조입니다.
+2. `/catalog/search` 4000토큰으로 93.4초 → **HTTP로 재현 불가**. httpx가 URL 길이로
+   클라이언트 측에서 거절하고 실제 edge도 request-line 한계를 갖습니다. 서버 내부
+   호출로는 5.10초를 확인했으므로 비용은 실재하나 도달 경로는 좁습니다.
+3. RBAC 매트릭스가 코드에 반박된다 → **진단이 어긋남**. 매트릭스는 역할 단위로 일관되고
+   `platform-admin` 행은 정직합니다. 실제는 seed가 그 역할을 `admin`/`security` subject에
+   묶는다는 **불완전한 공개**였습니다.
+4. 한 에이전트가 기준선을 "345 passed"로 보고 → 실제 **337**. 에이전트의 숫자는 제가
+   확인하기 전까지 증거가 아닙니다.
+
+**제품 결정이어서 남긴 것:** `security`가 `platform-admin`을 들고 있어야 하는지.
+역할을 빼앗는 쪽이든 매트릭스를 바꾸는 쪽이든 의도를 알아야 고를 수 있으므로, 번들링을
+공개하고 scope 주장이 grant보다 좁아지면 깨지는 contract test만 두었습니다.
+
 ### 수리하지 않고 기록만 한 항목 — pgvector 빌드 입력 핀 (2026-10-14)
 
 `docker/postgres-age-pgvector.Dockerfile`은 pgvector를 **가변 GitHub 태그 URL**에서
