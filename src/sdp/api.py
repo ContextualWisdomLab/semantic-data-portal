@@ -539,6 +539,43 @@ def dataset_detail(
     return catalog.discovery_view(dataset)
 
 
+# Inline JSON-LD context for the DCAT export.
+#
+# The export declared `@context` and `@type` but was not consumable as JSON-LD:
+#
+#   * the node identifier was `id`, which is an ordinary term rather than the
+#     `@id` keyword, so a processor read no subject IRI for the dataset;
+#   * `@context` pointed at https://www.w3.org/TR/vocab-dcat-3/ - the HTML
+#     specification page, not a context document - so a processor fetching it
+#     received HTML;
+#   * `@type` was the bare string "Dataset", and `title`, `description`,
+#     `owner`, `steward`, `domain` and the score fields had no mapping at all,
+#     so a processor would have *dropped every one of them* as unmapped terms.
+#
+# The context is inline so the document is self-describing and needs no network
+# fetch. Portal-specific fields get the portal's own vocabulary IRI rather than
+# being asserted as DCAT terms they are not.
+JSONLD_CONTEXT: dict[str, Any] = {
+    "dcat": "http://www.w3.org/ns/dcat#",
+    "dcterms": "http://purl.org/dc/terms/",
+    "sdp": "https://semantic-data-portal.local/ns#",
+    "title": "dcterms:title",
+    "description": "dcterms:description",
+    "license": "dcterms:license",
+    "distribution": "dcat:distribution",
+    "status": "sdp:status",
+    "domain": "sdp:domain",
+    "owner": "sdp:owner",
+    "steward": "sdp:steward",
+    "completeness_score": "sdp:completenessScore",
+    "metadata_completeness": "sdp:metadataCompleteness",
+    "metadata_recommendation_score": "sdp:metadataRecommendationScore",
+    "mappings": "sdp:businessMapping",
+}
+
+JSONLD_KEYWORDS = frozenset({"@context", "@id", "@type"})
+
+
 @app.get("/catalog/datasets/{dataset_id}/jsonld")
 def dataset_jsonld(
     dataset_id: str,
@@ -549,9 +586,9 @@ def dataset_jsonld(
     if not dataset:
         raise HTTPException(status_code=404, detail="dataset not found")
     return {
-        "@context": "https://www.w3.org/TR/vocab-dcat-3/",
-        "@type": "Dataset",
-        "id": f"https://semantic-data-portal.local/datasets/{dataset.id}",
+        "@context": JSONLD_CONTEXT,
+        "@type": "dcat:Dataset",
+        "@id": f"https://semantic-data-portal.local/datasets/{dataset.id}",
         "title": dataset.title,
         "description": dataset.description,
         "license": dataset.license,
