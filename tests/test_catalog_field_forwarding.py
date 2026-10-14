@@ -74,7 +74,14 @@ def test_register_dataset_forwards_every_request_field() -> None:
 
     from sdp import catalog
 
-    source = inspect.getsource(catalog.register_dataset)
+    # ``register_dataset`` is the locking wrapper; the constructor lives in the
+    # ``_locked`` helper it delegates to, so both are read. Inspecting only the
+    # public name silently passed the moment the mutation lock was introduced -
+    # the wrapper names no payload field, so "no field is named" read as
+    # "every field is spread".
+    source = inspect.getsource(catalog.register_dataset) + inspect.getsource(
+        catalog._register_dataset_locked
+    )
     # The constructor spreads the payload, so no field needs naming - and if a
     # future edit goes back to naming them, this catches the one left out.
     if "payload.model_dump()" not in source:

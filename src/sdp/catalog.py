@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import re
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -10,6 +13,10 @@ from uuid import uuid4
 from sdp_core import buyer_demo_datasets
 from sdp_core.contracts import REQUIRED_METADATA_FIELDS
 
+from .profile_provenance import (
+    declared_unavailable_metrics,
+    profile_metric_provenance,
+)
 from .quality_warnings import quality_warning_summary
 
 from .domain import (
@@ -370,6 +377,11 @@ def get_dataset_profile(dataset_id: str) -> dict[str, Any]:
         "profile_updated_at": dataset.profile.get("updated_at"),
         "quality_issues": dataset.profile.get("quality_issues", []),
         "schema_profile": schema_profile,
+        # LIN-003's acceptance criterion: the metric timestamp and the
+        # computation scope. Without them these figures read as measurements
+        # this service took, and it took none - there is no profiler here.
+        "metric_provenance": profile_metric_provenance(dataset.profile),
+        "declared_unavailable_metrics": declared_unavailable_metrics(),
     }
 
 
@@ -710,16 +722,86 @@ def validate_metadata(dataset: Dataset) -> Dict[str, object]:
     }
 
 
+# Every catalog mutation is a read-modify-write over this module's dicts:
+# ``get_dataset_or_404`` then ``model_dump`` then ``_bump_version`` then
+# ``_DATA[id] = updated``. FastAPI runs these ``def`` handlers in a worker
+# threadpool, so two requests genuinely interleave, and nothing serialised them.
+# Measured by forcing the interleaving (pause one writer between its read and
+# its write) through ``patch_dataset``:
+#
+#     PATCH description=FIRST   -> 200
+#     PATCH steward=SECOND      -> 200
+#     stored: description=FIRST, steward=<unchanged>, version=1.0.1
+#     audit: success {"description": "FIRST"}
+#     audit: success {"steward": "SECOND"}
+#
+# The lost write is bad; the audit row is worse. This product's governance
+# invariant is that a decision and an audit event accompany every governed
+# write, and here the ledger certified a change that is not in the store - the
+# event is built from the writer's own ``updates`` and never re-read from
+# ``_DATA``. Unsynchronised, 50 concurrent patches advanced the version by 25.
+#
+# Generated ids had the same shape of defect at the check-then-store boundary:
+# eight concurrent id-less creates each answered 200 and the catalog grew by
+# five, because ``len(_DATA) + 1`` and ``if dataset_id in _DATA`` and the store
+# write were three separate steps.
+#
+# Reentrant, because ``api`` holds this lock across a mutation *and* its graph
+# mirror (two unsynchronised steps let the catalog and the graph disagree
+# permanently) and the mutation it calls acquires the lock again.
+_MUTATION_LOCK = threading.RLock()
+
+
+@contextmanager
+def catalog_mutation_lock() -> Iterator[None]:
+    """Hold the catalog mutation lock across a caller-composed critical section.
+
+    ``api`` uses this to make "mutate the catalog, then mirror it into the
+    graph" one atomic step. Two concurrent schema patches otherwise applied in
+    one order to the catalog and the opposite order to the graph, leaving the
+    graph holding a ``pii: true`` column the catalog does not declare - which
+    ``/search/semantic`` then served and ``/browse/{id}/schema`` could not mask,
+    because for the catalog that column does not exist.
+    """
+    with _MUTATION_LOCK:
+        yield
+
+
+def _next_generated_dataset_id() -> str:
+    """The first free ``dataset-NNN`` id. Call with the mutation lock held.
+
+    ``len(_DATA) + 1`` collided for two independent reasons: concurrently,
+    several callers computed the same number before any of them stored; and
+    sequentially, the count says nothing about which ids are taken once a
+    caller has registered a ``dataset-NNN`` id of its own. Scanning for the
+    first free id answers the question actually being asked.
+    """
+    index = 1
+    while f"dataset-{index:03d}" in _DATA:
+        index += 1
+    return f"dataset-{index:03d}"
+
+
 def register_dataset(
     payload: DatasetCreateRequest,
     *,
     actor: str = "system",
     decision_id: str | None = None,
 ) -> Dataset:
-    if not payload.id:
-        dataset_id = f"dataset-{len(_DATA) + 1:03d}"
-    else:
-        dataset_id = payload.id
+    with _MUTATION_LOCK:
+        return _register_dataset_locked(
+            payload, actor=actor, decision_id=decision_id
+        )
+
+
+def _register_dataset_locked(
+    payload: DatasetCreateRequest,
+    *,
+    actor: str = "system",
+    decision_id: str | None = None,
+) -> Dataset:
+    """Register one dataset. Call with the mutation lock held."""
+    dataset_id = payload.id or _next_generated_dataset_id()
 
     if dataset_id in _DATA:
         raise ValueError("dataset already exists")
@@ -762,6 +844,20 @@ def patch_dataset(
     actor: str = "system",
     decision_id: str | None = None,
 ) -> Dataset:
+    with _MUTATION_LOCK:
+        return _patch_dataset_locked(
+            dataset_id, patch, actor=actor, decision_id=decision_id
+        )
+
+
+def _patch_dataset_locked(
+    dataset_id: str,
+    patch: DatasetPatchRequest,
+    *,
+    actor: str = "system",
+    decision_id: str | None = None,
+) -> Dataset:
+    """Apply one patch. Call with the mutation lock held."""
     dataset = get_dataset_or_404(dataset_id)
     before = dataset.model_dump()
     data = dataset.model_dump()
@@ -804,6 +900,19 @@ def publish_dataset(
     actor: str = "system",
     decision_id: str | None = None,
 ) -> Dataset:
+    with _MUTATION_LOCK:
+        return _publish_dataset_locked(
+            dataset_id, actor=actor, decision_id=decision_id
+        )
+
+
+def _publish_dataset_locked(
+    dataset_id: str,
+    *,
+    actor: str = "system",
+    decision_id: str | None = None,
+) -> Dataset:
+    """Publish one dataset. Call with the mutation lock held."""
     dataset = get_dataset_or_404(dataset_id)
     validation = validate_metadata(dataset)
     if not validation["is_valid"]:
@@ -848,6 +957,20 @@ def deprecate_dataset(
     reason: str = "deprecated",
     decision_id: str | None = None,
 ) -> Dataset:
+    with _MUTATION_LOCK:
+        return _deprecate_dataset_locked(
+            dataset_id, actor=actor, reason=reason, decision_id=decision_id
+        )
+
+
+def _deprecate_dataset_locked(
+    dataset_id: str,
+    *,
+    actor: str = "system",
+    reason: str = "deprecated",
+    decision_id: str | None = None,
+) -> Dataset:
+    """Deprecate one dataset. Call with the mutation lock held."""
     dataset = get_dataset_or_404(dataset_id)
     dataset_data = dataset.model_dump()
     dataset_data["status"] = "deprecated"

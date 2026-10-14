@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 from abc import ABC, abstractmethod
 from collections import deque
 from dataclasses import dataclass, field
@@ -247,9 +248,27 @@ class GraphStore(ABC):
 
 
 class InMemoryGraphStore(GraphStore):
+    # Every collection below is shared process state, and FastAPI runs this
+    # package's ``def`` handlers in a worker threadpool, so a reader genuinely
+    # interleaves with a writer. ``semantic_search`` iterated ``_embeddings``
+    # live, which is a hard error rather than a stale read:
+    #
+    #     POST /search/semantic, while datasets are being onboarded
+    #       -> 500 RuntimeError: dictionary changed size during iteration
+    #     measured at 17 of 42 searches (40%) with two readers and two writers
+    #
+    # A lock, rather than a snapshot at the one iteration that was reported:
+    # ``_edges`` is rebuilt wholesale by ``delete_edge``/``delete_node`` while
+    # ``edges_for``/``traverse`` iterate it, and ``delete_node`` mutates three
+    # collections in sequence - so a reader could see a node whose embedding
+    # was already gone. Fixing only the reported line would have left the rest.
+    #
+    # Reentrant because ``concept_graph`` and ``traverse`` call sibling methods
+    # that also take it.
     def __init__(self, config: Optional[AppConfig] = None) -> None:
         self._config = config or get_app_config()
         self.dimension = self._config.embedding_dimension
+        self._lock = threading.RLock()
         self._nodes: Dict[str, GraphNode] = {}
         self._edges: List[GraphEdge] = []
         self._embeddings: Dict[str, List[float]] = {}
@@ -267,16 +286,17 @@ class InMemoryGraphStore(GraphStore):
         properties: Optional[Dict[str, Any]] = None,
         text: Optional[str] = None,
     ) -> GraphNode:
-        node = GraphNode(
-            node_id=node_id,
-            kind=kind,
-            label=label or node_id,
-            properties=dict(properties or {}),
-        )
-        self._nodes[node_id] = node
-        embed_source = text or label or node_id
-        self._embeddings[node_id] = embed_text(embed_source, self.dimension)
-        return node
+        with self._lock:
+            node = GraphNode(
+                node_id=node_id,
+                kind=kind,
+                label=label or node_id,
+                properties=dict(properties or {}),
+            )
+            self._nodes[node_id] = node
+            embed_source = text or label or node_id
+            self._embeddings[node_id] = embed_text(embed_source, self.dimension)
+            return node
 
     def upsert_edge(
         self,
@@ -286,94 +306,99 @@ class InMemoryGraphStore(GraphStore):
         *,
         properties: Optional[Dict[str, Any]] = None,
     ) -> GraphEdge:
-        # Reject non-identifier relationship types for parity with the AGE
-        # backend (where the type occupies a cypher identifier position).
-        _relationship_label(edge_type)
-        for existing in self._edges:
-            if (
-                existing.edge_type == edge_type
-                and existing.source_id == source_id
-                and existing.target_id == target_id
-            ):
-                existing.properties.update(properties or {})
-                return existing
-        edge = GraphEdge(edge_type, source_id, target_id, dict(properties or {}))
-        self._edges.append(edge)
-        return edge
+        with self._lock:
+            # Reject non-identifier relationship types for parity with the AGE
+            # backend (where the type occupies a cypher identifier position).
+            _relationship_label(edge_type)
+            for existing in self._edges:
+                if (
+                    existing.edge_type == edge_type
+                    and existing.source_id == source_id
+                    and existing.target_id == target_id
+                ):
+                    existing.properties.update(properties or {})
+                    return existing
+            edge = GraphEdge(edge_type, source_id, target_id, dict(properties or {}))
+            self._edges.append(edge)
+            return edge
 
     def upsert_concept(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        concept = payload["concept"].strip()
-        record = {
-            "concept": concept,
-            "definition": payload.get("definition", ""),
-            "aliases": list(payload.get("aliases", [])),
-            "broader": payload.get("broader"),
-            "narrower": list(payload.get("narrower", [])),
-            "related": list(payload.get("related", [])),
-            "multilingual": list(payload.get("multilingual", [])),
-        }
-        self._concepts[concept] = record
+        with self._lock:
+            concept = payload["concept"].strip()
+            record = {
+                "concept": concept,
+                "definition": payload.get("definition", ""),
+                "aliases": list(payload.get("aliases", [])),
+                "broader": payload.get("broader"),
+                "narrower": list(payload.get("narrower", [])),
+                "related": list(payload.get("related", [])),
+                "multilingual": list(payload.get("multilingual", [])),
+            }
+            self._concepts[concept] = record
 
-        # alias index for canonicalisation
-        self._alias_to_concept[_normalize(concept)] = concept
-        for alias in record["aliases"] + record["multilingual"]:
-            self._alias_to_concept[_normalize(alias)] = concept
+            # alias index for canonicalisation
+            self._alias_to_concept[_normalize(concept)] = concept
+            for alias in record["aliases"] + record["multilingual"]:
+                self._alias_to_concept[_normalize(alias)] = concept
 
-        # mirror as a graph node with an embedding over concept + definition + aliases
-        embed_source = " ".join(
-            [concept, record["definition"]] + record["aliases"] + record["multilingual"]
-        )
-        self.upsert_node(
-            concept,
-            "concept",
-            label=concept,
-            properties={
-                "definition": record["definition"],
-                "aliases": record["aliases"],
-                "multilingual": record["multilingual"],
-            },
-            text=embed_source,
-        )
-        # edges to related/broader/narrower concepts
-        if record["broader"]:
-            self.upsert_edge("broader", concept, record["broader"])
-        for narrow in record["narrower"]:
-            self.upsert_edge("narrower", concept, narrow)
-        for related in record["related"]:
-            self.upsert_edge("related", concept, related)
-        return record
+            # mirror as a graph node with an embedding over concept + definition + aliases
+            embed_source = " ".join(
+                [concept, record["definition"]] + record["aliases"] + record["multilingual"]
+            )
+            self.upsert_node(
+                concept,
+                "concept",
+                label=concept,
+                properties={
+                    "definition": record["definition"],
+                    "aliases": record["aliases"],
+                    "multilingual": record["multilingual"],
+                },
+                text=embed_source,
+            )
+            # edges to related/broader/narrower concepts
+            if record["broader"]:
+                self.upsert_edge("broader", concept, record["broader"])
+            for narrow in record["narrower"]:
+                self.upsert_edge("narrower", concept, narrow)
+            for related in record["related"]:
+                self.upsert_edge("related", concept, related)
+            return record
 
-    # reads -------------------------------------------------------------------
+        # reads -------------------------------------------------------------------
 
     def get_node(self, node_id: str) -> Optional[GraphNode]:
-        return self._nodes.get(node_id)
+        with self._lock:
+            return self._nodes.get(node_id)
 
     def _canonical_concept(self, term: str) -> str:
-        return self._alias_to_concept.get(_normalize(term), term)
+        with self._lock:
+            return self._alias_to_concept.get(_normalize(term), term)
 
     def concept_graph(self, term: str) -> Dict[str, Any]:
-        canonical = self._canonical_concept(term)
-        record = self._concepts.get(canonical)
-        if not record:
-            return {"canonical": term, "not_found": True, "aliases": []}
-        dataset_ids = sorted(
-            {
-                edge.source_id
-                for edge in self._edges
-                if edge.edge_type == "mapping" and edge.target_id == canonical
+        with self._lock:
+            canonical = self._canonical_concept(term)
+            record = self._concepts.get(canonical)
+            if not record:
+                return {"canonical": term, "not_found": True, "aliases": []}
+            dataset_ids = sorted(
+                {
+                    edge.source_id
+                    for edge in self._edges
+                    if edge.edge_type == "mapping" and edge.target_id == canonical
+                }
+            )
+            return {
+                "canonical": canonical,
+                "concept": canonical,
+                "definition": record["definition"],
+                "aliases": [canonical] + record["aliases"],
+                "broader": record["broader"],
+                "narrower": record["narrower"],
+                "related": record["related"],
+                "multilingual": record["multilingual"],
+                "dataset_ids": dataset_ids,
             }
-        )
-        return {
-            "canonical": canonical,
-            "concept": canonical,
-            "definition": record["definition"],
-            "aliases": [canonical] + record["aliases"],
-            "broader": record["broader"],
-            "narrower": record["narrower"],
-            "related": record["related"],
-            "multilingual": record["multilingual"],
-            "dataset_ids": dataset_ids,
-        }
 
     def traverse(
         self,
@@ -383,69 +408,71 @@ class InMemoryGraphStore(GraphStore):
         direction: str = "both",
         max_depth: int = 2,
     ) -> Dict[str, Any]:
-        if start_id not in self._nodes:
-            raise KeyError(f"node not found: {start_id}")
-        if edge_types:
-            for etype in edge_types:
-                _relationship_label(etype)  # reject bad labels (AGE parity)
-        allowed = set(edge_types) if edge_types else None
-        visited_nodes: Dict[str, GraphNode] = {start_id: self._nodes[start_id]}
-        visited_edges: List[GraphEdge] = []
-        seen_edge_keys: set[Tuple[str, str, str]] = set()
-        frontier: deque[Tuple[str, int]] = deque([(start_id, 0)])
+        with self._lock:
+            if start_id not in self._nodes:
+                raise KeyError(f"node not found: {start_id}")
+            if edge_types:
+                for etype in edge_types:
+                    _relationship_label(etype)  # reject bad labels (AGE parity)
+            allowed = set(edge_types) if edge_types else None
+            visited_nodes: Dict[str, GraphNode] = {start_id: self._nodes[start_id]}
+            visited_edges: List[GraphEdge] = []
+            seen_edge_keys: set[Tuple[str, str, str]] = set()
+            frontier: deque[Tuple[str, int]] = deque([(start_id, 0)])
 
-        while frontier:
-            current, depth = frontier.popleft()
-            if depth >= max_depth:
-                continue
-            for edge in self._edges:
-                if allowed and edge.edge_type not in allowed:
+            while frontier:
+                current, depth = frontier.popleft()
+                if depth >= max_depth:
                     continue
-                neighbor: Optional[str] = None
-                if direction in {"out", "both"} and edge.source_id == current:
-                    neighbor = edge.target_id
-                elif direction in {"in", "both"} and edge.target_id == current:
-                    neighbor = edge.source_id
-                if neighbor is None:
-                    continue
-                key = (edge.edge_type, edge.source_id, edge.target_id)
-                if key not in seen_edge_keys:
-                    seen_edge_keys.add(key)
-                    visited_edges.append(edge)
-                if neighbor not in visited_nodes:
-                    node = self._nodes.get(neighbor)
-                    if node is None:
-                        node = GraphNode(neighbor, "unknown", neighbor)
-                    visited_nodes[neighbor] = node
-                    frontier.append((neighbor, depth + 1))
+                for edge in self._edges:
+                    if allowed and edge.edge_type not in allowed:
+                        continue
+                    neighbor: Optional[str] = None
+                    if direction in {"out", "both"} and edge.source_id == current:
+                        neighbor = edge.target_id
+                    elif direction in {"in", "both"} and edge.target_id == current:
+                        neighbor = edge.source_id
+                    if neighbor is None:
+                        continue
+                    key = (edge.edge_type, edge.source_id, edge.target_id)
+                    if key not in seen_edge_keys:
+                        seen_edge_keys.add(key)
+                        visited_edges.append(edge)
+                    if neighbor not in visited_nodes:
+                        node = self._nodes.get(neighbor)
+                        if node is None:
+                            node = GraphNode(neighbor, "unknown", neighbor)
+                        visited_nodes[neighbor] = node
+                        frontier.append((neighbor, depth + 1))
 
-        return {
-            "start_id": start_id,
-            "backend": "in_memory",
-            "nodes": [node.as_dict() for node in visited_nodes.values()],
-            "edges": [edge.as_dict() for edge in visited_edges],
-        }
+            return {
+                "start_id": start_id,
+                "backend": "in_memory",
+                "nodes": [node.as_dict() for node in visited_nodes.values()],
+                "edges": [edge.as_dict() for edge in visited_edges],
+            }
 
     def semantic_search(
         self, query: str, *, kind: Optional[str] = None, limit: int = 5
     ) -> List[Dict[str, Any]]:
-        query_vec = embed_text(query, self.dimension)
-        scored: List[Dict[str, Any]] = []
-        for node_id, vector in self._embeddings.items():
-            node = self._nodes[node_id]
-            if kind and node.kind != kind:
-                continue
-            score = cosine_similarity(query_vec, vector)
-            scored.append(
-                {
-                    "node_id": node_id,
-                    "kind": node.kind,
-                    "label": node.label,
-                    "score": round(score, 6),
-                }
-            )
-        scored.sort(key=lambda row: row["score"], reverse=True)
-        return scored[:limit]
+        with self._lock:
+            query_vec = embed_text(query, self.dimension)
+            scored: List[Dict[str, Any]] = []
+            for node_id, vector in self._embeddings.items():
+                node = self._nodes[node_id]
+                if kind and node.kind != kind:
+                    continue
+                score = cosine_similarity(query_vec, vector)
+                scored.append(
+                    {
+                        "node_id": node_id,
+                        "kind": node.kind,
+                        "label": node.label,
+                        "score": round(score, 6),
+                    }
+                )
+            scored.sort(key=lambda row: row["score"], reverse=True)
+            return scored[:limit]
 
     def readiness(self) -> Dict[str, Any]:
         return {
@@ -458,57 +485,61 @@ class InMemoryGraphStore(GraphStore):
         }
 
     def stats(self) -> Dict[str, int]:
-        return {
-            "nodes": len(self._nodes),
-            "edges": len(self._edges),
-            "concepts": len(self._concepts),
-            "embeddings": len(self._embeddings),
-        }
+        with self._lock:
+            return {
+                "nodes": len(self._nodes),
+                "edges": len(self._edges),
+                "concepts": len(self._concepts),
+                "embeddings": len(self._embeddings),
+            }
 
-    # removal ------------------------------------------------------------------
+        # removal ------------------------------------------------------------------
 
     def edges_for(
         self, node_id: str, edge_type: str, *, direction: str = "out"
     ) -> List[GraphEdge]:
         """Return this node's edges of one type, outgoing or incoming."""
-        if direction not in {"out", "in"}:
-            raise ValueError("direction must be 'out' or 'in'")
-        if direction == "out":
+        with self._lock:
+            if direction not in {"out", "in"}:
+                raise ValueError("direction must be 'out' or 'in'")
+            if direction == "out":
+                return [
+                    edge
+                    for edge in self._edges
+                    if edge.edge_type == edge_type and edge.source_id == node_id
+                ]
             return [
                 edge
                 for edge in self._edges
-                if edge.edge_type == edge_type and edge.source_id == node_id
+                if edge.edge_type == edge_type and edge.target_id == node_id
             ]
-        return [
-            edge
-            for edge in self._edges
-            if edge.edge_type == edge_type and edge.target_id == node_id
-        ]
 
     def delete_edge(self, edge_type: str, source_id: str, target_id: str) -> bool:
         """Remove one directed edge; ``True`` when something was removed."""
-        before = len(self._edges)
-        self._edges = [
-            edge
-            for edge in self._edges
-            if not (
-                edge.edge_type == edge_type
-                and edge.source_id == source_id
-                and edge.target_id == target_id
-            )
-        ]
-        return len(self._edges) != before
+        with self._lock:
+            before = len(self._edges)
+            self._edges = [
+                edge
+                for edge in self._edges
+                if not (
+                    edge.edge_type == edge_type
+                    and edge.source_id == source_id
+                    and edge.target_id == target_id
+                )
+            ]
+            return len(self._edges) != before
 
     def delete_node(self, node_id: str) -> bool:
         """Remove a node, its embedding and every edge touching it."""
-        existed = self._nodes.pop(node_id, None) is not None
-        self._embeddings.pop(node_id, None)
-        self._edges = [
-            edge
-            for edge in self._edges
-            if edge.source_id != node_id and edge.target_id != node_id
-        ]
-        return existed
+        with self._lock:
+            existed = self._nodes.pop(node_id, None) is not None
+            self._embeddings.pop(node_id, None)
+            self._edges = [
+                edge
+                for edge in self._edges
+                if edge.source_id != node_id and edge.target_id != node_id
+            ]
+            return existed
 
 
 # --- Postgres + Apache AGE + pgvector backend --------------------------------

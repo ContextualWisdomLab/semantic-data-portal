@@ -195,12 +195,24 @@ REQUIREMENT_COVERAGE: dict[str, RequirementCoverage] = {
         ],
     ),
     "CAT-005": RequirementCoverage(
-        status="implemented",
+        status="partial",
         evidence=[
             "route:GET /catalog/datasets/{dataset_id}/audit",
             "func:sdp.catalog.ingest_event",
             "test:tests/test_governed_write_evidence.py::test_a_governed_write_records_a_decision_and_an_audit_event",
+            "test:tests/test_catalog_mutation_atomicity.py::test_the_ledger_never_certifies_a_change_that_is_not_stored",
         ],
+        note=(
+            "Actor, timestamp, reason and the changed fields are recorded on "
+            "every catalog mutation, and the row is now guaranteed to be true: "
+            "concurrent patches used to record result=success for a change that "
+            "was not in the store, which the mutation lock closes. What the "
+            "acceptance criterion asks for and does not get is a full before/"
+            "after diff: `details.before`/`after` carry only the fields the "
+            "request named, so a field changed by a different concurrent writer "
+            "does not appear, and governed values (the source DSN, per-column "
+            "PII flags) are projected rather than recorded verbatim."
+        ),
     ),
     "CAT-006": RequirementCoverage(
         status="implemented",
@@ -387,8 +399,17 @@ REQUIREMENT_COVERAGE: dict[str, RequirementCoverage] = {
         evidence=[
             "route:POST /graph/query",
             "route:GET /graph/nodes/{node_id}",
+            "route:POST /search/semantic",
             "test:tests/test_graph_tenant_scope.py::test_graph_traversal_withholds_other_tenants_nodes",
+            "test:tests/test_graph_store_concurrency.py::test_a_search_survives_nodes_arriving_mid_iteration",
         ],
+        note=(
+            "Neighbour and bounded-path traversal plus semantic search, over "
+            "the in-memory store by default and Apache AGE + pgvector when a "
+            "DSN is configured. Search used to return 500 while datasets were "
+            "being onboarded (a dict iterated while it grew); the store is now "
+            "internally locked."
+        ),
     ),
     # --- LLM ---------------------------------------------------------------- #
     "LLM-001": RequirementCoverage(
@@ -518,11 +539,26 @@ REQUIREMENT_COVERAGE: dict[str, RequirementCoverage] = {
     ),
     # --- Lineage and quality ------------------------------------------------ #
     "LIN-001": RequirementCoverage(
-        status="implemented",
+        status="partial",
         evidence=[
             "route:GET /catalog/datasets/{dataset_id}/lineage",
-            "test:tests/test_graph_mirroring.py::test_every_mirrored_facet_is_reconciled_not_only_appended",
+            "route:POST /graph/query",
+            "test:tests/test_graph_mirroring.py::test_a_lineage_edge_is_reconciled_against_both_of_its_declarers",
+            "test:tests/test_graph_mirroring.py::test_mutating_a_dataset_keeps_edges_its_partners_declare",
         ],
+        note=(
+            "Dataset-level upstream and downstream are declared, mirrored into "
+            "the graph and traversable, and the mirror now agrees with the "
+            "catalog under concurrent and sequential mutation alike - seeding "
+            "or mutating one endpoint used to delete lineage edges the other "
+            "endpoint declared. The acceptance criterion's `source/job/target` "
+            "is not met: there is no job or activity node, only "
+            "dataset-to-dataset edges, so a lineage graph cannot show what "
+            "produced the edge. LIN-005 (PROV) is the same gap stated as its "
+            "own requirement. `lineage_inputs`/`lineage_outputs` are also "
+            "absent from `DatasetCreateRequest`, so lineage can only be "
+            "declared by a subsequent PATCH."
+        ),
     ),
     "LIN-002": RequirementCoverage(
         status="not_implemented",
@@ -530,10 +566,26 @@ REQUIREMENT_COVERAGE: dict[str, RequirementCoverage] = {
     ),
     "LIN-003": RequirementCoverage(
         status="partial",
-        evidence=["route:GET /catalog/datasets/{dataset_id}/profile"],
+        evidence=[
+            "route:GET /catalog/datasets/{dataset_id}/profile",
+            "func:sdp.profile_provenance.profile_metric_provenance",
+            "test:tests/test_profile_metric_provenance.py::test_the_profile_declares_it_computed_nothing",
+            "test:tests/test_profile_metric_provenance.py::test_distinct_count_is_declared_unavailable_rather_than_multiplied",
+        ],
         note=(
-            "null ratio, distinct ratio and freshness are present; duplicate "
-            "ratio is not computed anywhere."
+            "null ratio, distinct ratio and freshness are present, and the "
+            "acceptance criterion's two display requirements - metric timestamp "
+            "and computation scope - are now met. They are met by saying "
+            "something uncomfortable: `computed_by_this_service: false`. There "
+            "is no profiler here, so every figure is the source's or the "
+            "registering caller's declaration, and the published block says so "
+            "rather than letting `row_count: 1200000` read as a measurement. "
+            "The metric timestamp is the declared one or `null`, never the read "
+            "time. duplicate_ratio and distinct_count are named in "
+            "`declared_unavailable_metrics` with reasons rather than omitted; "
+            "distinct_count is deliberately not derived from distinct_ratio x "
+            "row_count, which would manufacture a measurement neither input "
+            "supports."
         ),
     ),
     "LIN-004": RequirementCoverage(
@@ -677,7 +729,17 @@ REQUIREMENT_COVERAGE: dict[str, RequirementCoverage] = {
         evidence=[
             "func:sdp.catalog.ingest_event",
             "test:tests/test_governed_write_evidence.py::test_a_governed_write_records_a_decision_and_an_audit_event",
+            "test:tests/test_catalog_mutation_atomicity.py::test_the_ledger_never_certifies_a_change_that_is_not_stored",
         ],
+        note=(
+            "Every preview, query, policy evaluation and catalog change records "
+            "a decision and an audit event. The recording is also now true "
+            "under concurrency: two interleaved patches used to record "
+            "result=success for a change that was not stored, so the ledger was "
+            "100% complete and partly false. 100% of writes being recorded is "
+            "what this requirement asks; CAT-005's note covers what those "
+            "records do and do not contain."
+        ),
     ),
     "NFR-SEC-006": RequirementCoverage(
         status="implemented",

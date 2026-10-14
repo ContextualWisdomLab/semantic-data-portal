@@ -30,8 +30,8 @@ PYTHONPATH=src python -m sdp_core.requirements
 
 | 상태 | 전체 | P0 |
 | --- | --- | --- |
-| `implemented` | 37 | 21 |
-| `partial` | 20 | 10 |
+| `implemented` | 35 | 19 |
+| `partial` | 22 | 12 |
 | `not_implemented` | 15 | 3 |
 | `external` | 2 | 0 |
 
@@ -43,7 +43,7 @@ PYTHONPATH=src python -m sdp_core.requirements
 | CAT-002 | P0 | `implemented` |
 | CAT-003 | P0 | `partial` |
 | CAT-004 | P0 | `implemented` |
-| CAT-005 | P0 | `implemented` |
+| CAT-005 | P0 | `partial` |
 | CAT-006 | P1 | `implemented` |
 | CAT-007 | P1 | `implemented` |
 | CAT-008 | P1 | `implemented` |
@@ -81,7 +81,7 @@ PYTHONPATH=src python -m sdp_core.requirements
 | POL-004 | P1 | `implemented` |
 | POL-005 | P0 | `implemented` |
 | POL-006 | P2 | `not_implemented` |
-| LIN-001 | P0 | `implemented` |
+| LIN-001 | P0 | `partial` |
 | LIN-002 | P1 | `not_implemented` |
 | LIN-003 | P0 | `partial` |
 | LIN-004 | P1 | `implemented` |
@@ -144,11 +144,12 @@ PYTHONPATH=src python -m sdp_core.requirements
 - **수락 기준**: concept mapping 상태: proposed/approved/deprecated
 - **증빙**: `route:GET /ontology/concept/{concept}`, `func:sdp.ontology.concept_assets`, `test:tests/test_concept_graph_scope.py::test_the_shared_vocabulary_itself_stays_open`
 
-#### CAT-005 · P0 · `implemented`
+#### CAT-005 · P0 · `partial`
 
 - **요구사항**: 카탈로그 등록/수정은 audit log를 남겨야 한다.
 - **수락 기준**: 변경 전후 diff, actor, timestamp, reason 기록
-- **증빙**: `route:GET /catalog/datasets/{dataset_id}/audit`, `func:sdp.catalog.ingest_event`, `test:tests/test_governed_write_evidence.py::test_a_governed_write_records_a_decision_and_an_audit_event`
+- **증빙**: `route:GET /catalog/datasets/{dataset_id}/audit`, `func:sdp.catalog.ingest_event`, `test:tests/test_governed_write_evidence.py::test_a_governed_write_records_a_decision_and_an_audit_event`, `test:tests/test_catalog_mutation_atomicity.py::test_the_ledger_never_certifies_a_change_that_is_not_stored`
+- **비고**: Actor, timestamp, reason and the changed fields are recorded on every catalog mutation, and the row is now guaranteed to be true: concurrent patches used to record result=success for a change that was not in the store, which the mutation lock closes. What the acceptance criterion asks for and does not get is a full before/after diff: `details.before`/`after` carry only the fields the request named, so a field changed by a different concurrent writer does not appear, and governed values (the source DSN, per-column PII flags) are projected rather than recorded verbatim.
 
 #### CAT-006 · P1 · `implemented`
 
@@ -292,7 +293,8 @@ PYTHONPATH=src python -m sdp_core.requirements
 
 - **요구사항**: graph/entity browsing을 지원해야 한다.
 - **수락 기준**: RDF/Graph DB source의 neighbors/path 조회
-- **증빙**: `route:POST /graph/query`, `route:GET /graph/nodes/{node_id}`, `test:tests/test_graph_tenant_scope.py::test_graph_traversal_withholds_other_tenants_nodes`
+- **증빙**: `route:POST /graph/query`, `route:GET /graph/nodes/{node_id}`, `route:POST /search/semantic`, `test:tests/test_graph_tenant_scope.py::test_graph_traversal_withholds_other_tenants_nodes`, `test:tests/test_graph_store_concurrency.py::test_a_search_survives_nodes_arriving_mid_iteration`
+- **비고**: Neighbour and bounded-path traversal plus semantic search, over the in-memory store by default and Apache AGE + pgvector when a DSN is configured. Search used to return 500 while datasets were being onboarded (a dict iterated while it grew); the store is now internally locked.
 
 ### LLM
 
@@ -395,11 +397,12 @@ PYTHONPATH=src python -m sdp_core.requirements
 
 ### LIN
 
-#### LIN-001 · P0 · `implemented`
+#### LIN-001 · P0 · `partial`
 
 - **요구사항**: dataset/table 수준 upstream/downstream lineage를 표시해야 한다.
 - **수락 기준**: lineage graph에서 source/job/target 표시
-- **증빙**: `route:GET /catalog/datasets/{dataset_id}/lineage`, `test:tests/test_graph_mirroring.py::test_every_mirrored_facet_is_reconciled_not_only_appended`
+- **증빙**: `route:GET /catalog/datasets/{dataset_id}/lineage`, `route:POST /graph/query`, `test:tests/test_graph_mirroring.py::test_a_lineage_edge_is_reconciled_against_both_of_its_declarers`, `test:tests/test_graph_mirroring.py::test_mutating_a_dataset_keeps_edges_its_partners_declare`
+- **비고**: Dataset-level upstream and downstream are declared, mirrored into the graph and traversable, and the mirror now agrees with the catalog under concurrent and sequential mutation alike - seeding or mutating one endpoint used to delete lineage edges the other endpoint declared. The acceptance criterion's `source/job/target` is not met: there is no job or activity node, only dataset-to-dataset edges, so a lineage graph cannot show what produced the edge. LIN-005 (PROV) is the same gap stated as its own requirement. `lineage_inputs`/`lineage_outputs` are also absent from `DatasetCreateRequest`, so lineage can only be declared by a subsequent PATCH.
 
 #### LIN-002 · P1 · `not_implemented`
 
@@ -411,8 +414,8 @@ PYTHONPATH=src python -m sdp_core.requirements
 
 - **요구사항**: 품질 profile은 null ratio, distinct count, freshness, duplicate ratio를 포함해야 한다.
 - **수락 기준**: metric timestamp와 계산 범위 표시
-- **증빙**: `route:GET /catalog/datasets/{dataset_id}/profile`
-- **비고**: null ratio, distinct ratio and freshness are present; duplicate ratio is not computed anywhere.
+- **증빙**: `route:GET /catalog/datasets/{dataset_id}/profile`, `func:sdp.profile_provenance.profile_metric_provenance`, `test:tests/test_profile_metric_provenance.py::test_the_profile_declares_it_computed_nothing`, `test:tests/test_profile_metric_provenance.py::test_distinct_count_is_declared_unavailable_rather_than_multiplied`
+- **비고**: null ratio, distinct ratio and freshness are present, and the acceptance criterion's two display requirements - metric timestamp and computation scope - are now met. They are met by saying something uncomfortable: `computed_by_this_service: false`. There is no profiler here, so every figure is the source's or the registering caller's declaration, and the published block says so rather than letting `row_count: 1200000` read as a measurement. The metric timestamp is the declared one or `null`, never the read time. duplicate_ratio and distinct_count are named in `declared_unavailable_metrics` with reasons rather than omitted; distinct_count is deliberately not derived from distinct_ratio x row_count, which would manufacture a measurement neither input supports.
 
 #### LIN-004 · P1 · `implemented`
 
@@ -537,7 +540,8 @@ PYTHONPATH=src python -m sdp_core.requirements
 
 - **요구사항**: audit
 - **수락 기준**: preview/query/policy/catalog change 100% 기록
-- **증빙**: `func:sdp.catalog.ingest_event`, `test:tests/test_governed_write_evidence.py::test_a_governed_write_records_a_decision_and_an_audit_event`
+- **증빙**: `func:sdp.catalog.ingest_event`, `test:tests/test_governed_write_evidence.py::test_a_governed_write_records_a_decision_and_an_audit_event`, `test:tests/test_catalog_mutation_atomicity.py::test_the_ledger_never_certifies_a_change_that_is_not_stored`
+- **비고**: Every preview, query, policy evaluation and catalog change records a decision and an audit event. The recording is also now true under concurrency: two interleaved patches used to record result=success for a change that was not stored, so the ledger was 100% complete and partly false. 100% of writes being recorded is what this requirement asks; CAT-005's note covers what those records do and do not contain.
 
 #### NFR-SEC-006 · NFR · `implemented`
 

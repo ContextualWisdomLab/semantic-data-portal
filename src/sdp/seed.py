@@ -149,6 +149,32 @@ def seed_dataset(dataset: Any, store: Optional[GraphStore] = None) -> None:
     )
 
 
+def _declaring_record(dataset: Any, dataset_id: str) -> Any:
+    """The catalog record for ``dataset_id``, preferring the one being seeded.
+
+    The dataset under reconciliation is passed in rather than re-read, so its
+    declaration is the one the caller is applying.
+    """
+    if dataset_id == dataset.id:
+        return dataset
+    return catalog.get_dataset(dataset_id)
+
+
+def _lineage_edge_is_declared(dataset: Any, source_id: str, target_id: str) -> bool:
+    """Whether either endpoint's catalog record declares this lineage edge.
+
+    A dataset that no longer exists declares nothing, so a dangling endpoint
+    does not keep an edge alive.
+    """
+    upstream = _declaring_record(dataset, source_id)
+    if upstream is not None and target_id in upstream.lineage_outputs:
+        return True
+    downstream = _declaring_record(dataset, target_id)
+    if downstream is not None and source_id in downstream.lineage_inputs:
+        return True
+    return False
+
+
 def _reconcile_removed(
     dataset: Any,
     store: GraphStore,
@@ -175,11 +201,28 @@ def _reconcile_removed(
         if edge.target_id not in declared_mappings:
             store.delete_edge("mapping", dataset.id, edge.target_id)
 
+    # A lineage edge has **two** possible declarers: ``A -> B`` exists because A
+    # lists B in ``lineage_outputs`` *or* because B lists A in
+    # ``lineage_inputs``. The upsert half above creates it from either side.
+    # Reconciling against only the mutated dataset's own half therefore deleted
+    # edges it does not own. Measured on two datasets where the upstream alone
+    # declares the link:
+    #
+    #     PATCH lin-up {"lineage_outputs": ["lin-down"]} ; seed lin-up
+    #       -> graph incoming edges of lin-down: [("lin-up", "lin-down")]
+    #     seed lin-down            (any mutation on it, or startup bootstrap)
+    #       -> graph incoming edges of lin-down: []
+    #       -> catalog still declares lin-up.lineage_outputs == ["lin-down"]
+    #
+    # The graph then contradicted the catalog permanently - nothing restored the
+    # edge short of re-seeding the upstream - and the startup bootstrap seeds
+    # every dataset in turn, so whichever was seeded second wiped the other's
+    # declaration. An edge is removed only when *neither* endpoint declares it.
     for edge in store.edges_for(dataset.id, "lineage", direction="out"):
-        if edge.target_id not in set(dataset.lineage_outputs):
+        if not _lineage_edge_is_declared(dataset, dataset.id, edge.target_id):
             store.delete_edge("lineage", dataset.id, edge.target_id)
     for edge in store.edges_for(dataset.id, "lineage", direction="in"):
-        if edge.source_id not in set(dataset.lineage_inputs):
+        if not _lineage_edge_is_declared(dataset, edge.source_id, dataset.id):
             store.delete_edge("lineage", edge.source_id, dataset.id)
 
     for edge in store.edges_for(dataset.id, "related_dataset"):

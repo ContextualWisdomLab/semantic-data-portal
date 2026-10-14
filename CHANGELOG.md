@@ -20,10 +20,69 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                    943 passed, 11 skipped
+    pytest                    965 passed, 11 skipped
     pytest (역방향/난수 순서)  순서 무관 통과 (역순 + seed 11/707/31337)
     pytest tests/fuzz          11 passed
     python -m sdp.demo_smoke   exit 0, "ready": true
+
+### Security — 동시성: 유실된 쓰기, 거짓 증빙, 그래프 모순
+
+4번째 적대적 스윕(8 에이전트, 모든 발견을 독립 재현으로 검증)이 올린 15건 중
+`high` 4건이 여기 있습니다. FastAPI는 이 패키지의 `def` 핸들러를 워커 스레드풀에서
+실행하므로 두 요청이 **실제로 교차**하는데, 모듈 dict에 대한 read-modify-write를
+직렬화하는 것이 아무것도 없었습니다.
+
+- **동시 PATCH가 쓰기를 유실시키고, 감사 원장이 그 유실을 `success`로 인증했습니다.**
+  읽기와 쓰기 사이에서 한쪽 작성자를 멈춰 교차를 강제해 측정:
+
+      PATCH description=FIRST  -> 200
+      PATCH steward=SECOND     -> 200
+      저장 상태: description=FIRST, steward=<변경 없음>, version=1.0.1
+      audit:  success {"description": "FIRST"}
+      audit:  success {"steward": "SECOND"}
+
+  유실된 쓰기도 나쁘지만 **감사 행이 더 나쁩니다**. 이 제품이 선언한 거버넌스
+  불변식은 모든 거버닝 쓰기에 정책 판단과 감사 이벤트가 따른다는 것인데, 여기서
+  원장은 **저장소에 없는 변경을 인증**했습니다 — 이벤트가 작성자 자신의 `updates`로
+  만들어지고 `_DATA`를 다시 읽지 않으므로 알아챌 수 없습니다. 직렬화 없이 동시 PATCH
+  50건이 version을 25만 전진시켰습니다. `catalog`에 재진입 가능한 mutation lock을 두어
+  네 개 mutation 전부를 감쌌습니다.
+- **동시 생성이 같은 생성 id를 여러 호출자에게 주고 데이터셋을 조용히 파괴했습니다.**
+  id 없는 동시 생성 8건이 각각 200을 받고 카탈로그는 5개만 늘었습니다(한 id가 세
+  호출자에게 간 경우도 있습니다). `len(_DATA) + 1`과 `if dataset_id in _DATA`와 저장이
+  세 개의 분리된 단계였기 때문입니다. 락 안에서 **비어 있는 첫 id를 스캔**합니다 —
+  개수는 "어떤 id가 비었나"라는 실제 질문에 답하지 않습니다(호출자가 `dataset-NNN`
+  형태 id를 직접 등록한 경우 순차 실행에서도 충돌합니다).
+- **카탈로그와 그래프가 영구히 모순되었습니다.** 두 개의 동시 schema PATCH가 카탈로그에는
+  한 순서로, 그래프에는 반대 순서로 적용되어(30회 중 11회 측정) 그래프가 카탈로그에
+  없는 `pii: true` 컬럼을 보유했습니다 — `/search/semantic`이 그것을 최상위로 반환하고
+  `/browse/{id}/schema`는 마스킹할 수 없었습니다(카탈로그에 없는 컬럼이므로).
+  `api`가 mutation lock을 **mutation과 그래프 미러에 걸쳐** 잡습니다.
+- **lineage 엣지를 선언한 쪽이 아닌 쪽의 변경이 그 엣지를 삭제했습니다.** `A -> B`는
+  A의 `lineage_outputs`나 B의 `lineage_inputs` **어느 쪽으로도** 선언되고 미러는 양쪽에서
+  만드는데, reconcile은 변경된 데이터셋 자신의 절반만 봤습니다. 상류만 선언한 쌍에서
+  측정: 상류 seed 후 엣지 존재 → 하류 seed(아무 변경이나, 또는 시작 부트스트랩) 후
+  엣지 소멸, 카탈로그는 계속 선언. 시작 부트스트랩이 모든 데이터셋을 차례로 seed하므로
+  나중에 seed된 쪽이 다른 쪽 선언을 지웠습니다. 이제 **어느 엔드포인트도 선언하지 않을
+  때만** 제거합니다.
+- **`/search/semantic`이 온보딩 중 500을 반환했습니다** — `_embeddings`를 순회 중에
+  증가시켜 `RuntimeError: dictionary changed size during iteration`. 리더 2 + 라이터 2로
+  42건 중 17건(40%) 실패. 보고된 한 줄만 스냅샷하지 않고 **스토어에 락**을 넣었습니다:
+  `_edges`는 `delete_edge`/`delete_node`가 통째로 재구성하는 동안 `edges_for`/`traverse`가
+  순회하고, `delete_node`는 세 컬렉션을 순차로 바꾸므로 리더가 임베딩이 이미 사라진 노드를
+  볼 수 있었습니다. 보고된 줄만 고치면 나머지가 남습니다.
+
+회귀 테스트는 **경쟁을 기다리지 않고 교차를 강제**합니다 — 한쪽 작성자를 읽기와 쓰기
+사이에서 멈추면 락이 없을 때 매번 실패하고 있을 때 매번 통과합니다. 임계 구역 **안의**
+barrier는 검증하려는 락과 교착하므로 barrier가 아니라 일시 정지입니다. 각 수리를
+되돌려(락을 no-op 컨텍스트 매니저로 교체) 해당 테스트가 실패하는 것을 확인했습니다.
+`test_an_edge_read_survives_edges_being_rebuilt`는 락 없이도 통과한다는 점을 자기
+docstring에 적어 둡니다 — 리스트 재할당은 CPython에서 예외를 내지 않으므로 그것은
+재현이 아니라 하드닝입니다.
+
+이에 따라 CAT-005와 LIN-001은 `implemented` → `partial`입니다(각각 수락 기준의
+before/after diff와 source/job/target이 여전히 없습니다). NFR-SEC-005는 `implemented`를
+유지하되 비고에 "원장이 100% 완전하면서 부분적으로 거짓이었다"는 사실을 적습니다.
 
 ### Security — 테넌트 경계와 존재 oracle
 
@@ -336,6 +395,31 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
   이미 pydantic 모델로 검증되고 있었지만 문서에는 `additionalProperties: true`로만
   나타났습니다. 런타임은 그대로이고(400 형태 유지), 게시한 모델이 핸들러가 실제로
   생성하는 모델인지 AST로 확인합니다.
+- **profile 수치가 "누가 언제 측정했는지"를 말하게 했습니다(LIN-003).** 수락 기준은
+  **metric timestamp와 계산 범위 표시**인데 라우트는 숫자만 공개하고 둘 다 공개하지
+  않았습니다 — 그래서 **선언이 측정으로 읽혔습니다**. 시드 카탈로그에서 측정:
+
+      GET /catalog/datasets/crm-customer-master/profile
+        -> row_count: 1200000
+           schema_profile[1]: {null_ratio: 0.01, distinct_ratio: 0.99}
+
+  이 중 아무것도 이 서비스가 계산하지 않았습니다. `demo_seed.py`의 픽스처 값이거나,
+  호출자가 등록 요청 본문에 넣은 값입니다. 프로파일러가 없으므로 소스의 행을 읽는
+  코드가 없고, 따라서 null 비율을 셀 수 없습니다. evidence 표면에서 "120만 행, 1% null"을
+  읽은 구매자는 **이 제품이 한 적 없는 주장**을 읽고 있었습니다.
+  숫자는 그대로 둡니다(소스 자신의 선언이고 그 자체로 유용합니다) — 대신 출처와 함께
+  보냅니다: `computed_by_this_service: false`, `measurement_status: declared_by_source`,
+  `computation_scope: source_declared_scope_unknown_to_this_service`,
+  그리고 `metric_timestamp`는 **선언된 값이거나 `null`**입니다. 읽은 시각을 찍는 것이
+  여기서 유일하게 적극적으로 오해를 만드는 선택입니다 — 측정 시점을 모르는 수치에
+  매 요청마다 새 timestamp를 붙이면 낡은 선언이 신선하게 보입니다. 값이 문자열이
+  아니면 `str()`로 강제하지 않고 없는 것으로 취급합니다.
+  `declared_unavailable_metrics`가 LIN-003이 요구하지만 이 제품에 없는 지표를 사유와
+  함께 적습니다. `duplicate_ratio`는 행을 훑어야 하므로 계산할 수 없습니다.
+  `distinct_count`는 `distinct_ratio * row_count`로 **유도하지 않습니다** — 둘 다
+  선언값이고, 곱하면 어느 입력도 뒷받침하지 않는 측정을 만들어냅니다. "없다"와
+  "유도하기를 거부한다"는 다른 주장이고 사실인 쪽은 후자이므로, 사유 문구가 그렇게
+  말하고 테스트가 그 문구를 고정합니다.
 - **품질 임계값을 선언하고 위반을 경고하게 했습니다(LIN-004).** 재료는 전부 있었고
   전부 쓰이지 않았습니다: `quality_score`·`freshness_score`·`metadata_completeness`와
   컬럼별 `nullable_ratio`·`distinct_ratio`·`quality_issues`가 저장되고 공개되고

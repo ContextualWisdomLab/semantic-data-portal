@@ -227,8 +227,6 @@ def test_the_graph_column_set_equals_the_catalog_after_a_rename() -> None:
     [
         ("terms", "mapping", "out"),
         ("mappings", "mapping", "out"),
-        ("lineage_outputs", "lineage", "out"),
-        ("lineage_inputs", "lineage", "in"),
         ("related_datasets", "related_dataset", "out"),
     ],
 )
@@ -241,6 +239,18 @@ def test_every_mirrored_facet_is_reconciled_not_only_appended(
     ``crm-event``: mapping 5 edges unchanged, lineage out 4 unchanged, lineage
     in 4 unchanged, related_dataset 2 unchanged, while
     ``GET /catalog/datasets/crm-event/lineage`` reported both lists empty.
+
+    The two ``lineage`` facets moved to
+    ``test_a_lineage_edge_is_reconciled_against_both_of_its_declarers`` below.
+    They are still covered, and still against the same defect; what changed is
+    that clearing one endpoint's list is not sufficient to make a lineage edge
+    undeclared. ``crm-event.lineage_outputs`` and
+    ``crm-customer-master.lineage_inputs`` name the *same* edge, so reconciling
+    it away on the strength of one side alone was itself the bug - it left the
+    graph contradicting the catalog, which still declared the edge from the
+    other side. The facets kept here (``terms``, ``mappings``,
+    ``related_datasets``) have one declarer each, so the original setup remains
+    exactly right for them.
     """
     before = get_store().edges_for("crm-event", edge_type, direction=direction)
     assert before, f"fixture must have {edge_type} ({direction}) edges to remove"
@@ -262,6 +272,83 @@ def test_every_mirrored_facet_is_reconciled_not_only_appended(
     assert not after, (
         f"{edge_type} ({direction}) survived the removal: "
         f"{[(e.source_id, e.target_id) for e in after]}"
+    )
+
+
+def _lineage_pairs(dataset_id: str, direction: str) -> set[tuple[str, str]]:
+    """The graph's lineage edges at one end of a dataset."""
+    return {
+        (edge.source_id, edge.target_id)
+        for edge in get_store().edges_for(dataset_id, "lineage", direction=direction)
+    }
+
+
+def _clear_lineage(dataset_id: str) -> None:
+    """Clear one dataset's own lineage declarations through the product route."""
+    cleared = client.patch(
+        f"/catalog/datasets/{dataset_id}",
+        json={"actor": "admin", "lineage_inputs": [], "lineage_outputs": []},
+    )
+    assert cleared.status_code == 200, cleared.text
+
+
+def test_a_lineage_edge_is_reconciled_against_both_of_its_declarers() -> None:
+    """A lineage edge survives until *neither* endpoint declares it.
+
+    ``A -> B`` exists because A lists B in ``lineage_outputs`` or because B
+    lists A in ``lineage_inputs``; the mirror creates it from either side. The
+    reconcile consulted only the mutated dataset's own half, so seeding or
+    mutating the non-declaring endpoint deleted an edge the catalog still
+    declared - and the startup bootstrap seeds every dataset in turn, so
+    whichever was seeded second wiped the other's declaration. Measured before
+    the repair, on a pair where only the upstream declares the link::
+
+        PATCH lin-up {"lineage_outputs": ["lin-down"]} ; seed lin-up
+          -> incoming edges of lin-down: [("lin-up", "lin-down")]
+        seed lin-down
+          -> incoming edges of lin-down: []
+          -> catalog still declares lin-up.lineage_outputs == ["lin-down"]
+    """
+    # The seeded pair declares one edge from both sides at once.
+    assert "crm-customer-master" in catalog._DATA["crm-event"].lineage_outputs
+    assert "crm-event" in catalog._DATA["crm-customer-master"].lineage_inputs
+    shared = ("crm-event", "crm-customer-master")
+    assert shared in _lineage_pairs("crm-event", "out")
+
+    # Clearing one declarer is not enough: the other still declares it.
+    _clear_lineage("crm-event")
+    assert shared in _lineage_pairs("crm-event", "out"), (
+        "the edge was removed although crm-customer-master.lineage_inputs "
+        "still declares it"
+    )
+    # An edge whose only declarer was the cleared list is gone, so this is not
+    # passing by way of a reconcile that removes nothing.
+    assert ("app-event-raw", "crm-event") not in _lineage_pairs("crm-event", "in")
+
+    # Clearing the second declarer removes it.
+    _clear_lineage("crm-customer-master")
+    assert shared not in _lineage_pairs("crm-event", "out"), (
+        "no declarer remains, so the edge should have been reconciled away"
+    )
+
+
+def test_mutating_a_dataset_keeps_edges_its_partners_declare() -> None:
+    """An unrelated mutation must not disturb a partner's declared lineage."""
+    incoming_before = _lineage_pairs("crm-event", "in")
+    declared_by_partners = {
+        pair
+        for pair in incoming_before
+        if pair[0] in catalog._DATA
+        and "crm-event" in catalog._DATA[pair[0]].lineage_outputs
+    }
+    assert declared_by_partners, "fixture must have partner-declared incoming edges"
+
+    renamed = client.patch(
+        "/catalog/datasets/crm-event", json={"actor": "admin", "title": "제목 변경"}
+    )
+    assert renamed.status_code == 200, renamed.text
+    assert declared_by_partners <= _lineage_pairs("crm-event", "in"), (
+        "a title change deleted lineage edges other datasets declare"
     )
 
 

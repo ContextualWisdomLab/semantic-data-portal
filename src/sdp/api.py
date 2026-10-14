@@ -992,12 +992,24 @@ def create_dataset(payload: dict[str, Any]) -> dict[str, Any]:
     if decision.effect != "allow":
         raise HTTPException(status_code=403, detail=decision.reason)
 
-    dataset = register_dataset(request, actor=actor_id, decision_id=decision.decision_id)
-    # Mirror the mutation into the graph through the same upsert path the
-    # startup bootstrap uses. That path ran only at startup, so an onboarded
-    # dataset was invisible to graph traversal and semantic search - two
-    # capabilities README names - and a status change left a stale node.
-    seed_dataset(dataset)
+    # The catalog write and its graph mirror are one critical section. They were
+    # two unsynchronised steps, so two concurrent schema patches could apply to
+    # the catalog in one order and to the graph in the opposite order: measured
+    # at 11 of 30 trials, the graph kept a ``pii: true`` column the catalog does
+    # not declare, ``/search/semantic`` returned it as the top hit, and
+    # ``/browse/{id}/schema`` could not mask it because for the catalog that
+    # column does not exist. The lock is reentrant, so the mutation inside may
+    # take it again.
+    #
+    # The mirror itself goes through the same upsert path the startup bootstrap
+    # uses. That path ran only at startup, so an onboarded dataset was invisible
+    # to graph traversal and semantic search - two capabilities README names -
+    # and a status change left a stale node.
+    with catalog.catalog_mutation_lock():
+        dataset = register_dataset(
+            request, actor=actor_id, decision_id=decision.decision_id
+        )
+        seed_dataset(dataset)
     return {"status": "created", "dataset": catalog.mutation_response_view(dataset)}
 
 
@@ -1016,12 +1028,16 @@ def publish_catalog_dataset(dataset_id: str, payload: dict[str, Any] | None = No
         raise HTTPException(status_code=403, detail=decision.reason)
 
     try:
-        dataset = publish_dataset(dataset_id, actor=actor_id, decision_id=decision.decision_id)
+        # Mutation and mirror in one critical section; see the create route.
+        with catalog.catalog_mutation_lock():
+            dataset = publish_dataset(
+                dataset_id, actor=actor_id, decision_id=decision.decision_id
+            )
+            seed_dataset(dataset)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    seed_dataset(dataset)
     return {"status": "published", "dataset": catalog.mutation_response_view(dataset)}
 
 
@@ -1041,12 +1057,16 @@ def patch_catalog_dataset(dataset_id: str, payload: dict[str, Any]) -> dict[str,
 
     try:
         request = DatasetPatchRequest(**payload)
-        dataset = patch_dataset(dataset_id, request, actor=actor_id, decision_id=decision.decision_id)
+        # Mutation and mirror in one critical section; see the create route.
+        with catalog.catalog_mutation_lock():
+            dataset = patch_dataset(
+                dataset_id, request, actor=actor_id, decision_id=decision.decision_id
+            )
+            seed_dataset(dataset)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=400, detail=_invalid_request_detail(exc))
-    seed_dataset(dataset)
     return {"status": "updated", "dataset": catalog.mutation_response_view(dataset)}
 
 
@@ -1066,13 +1086,15 @@ def deprecate_catalog_dataset(dataset_id: str, payload: dict[str, str] | None = 
 
     payload = payload or {}
     try:
-        dataset = deprecate_dataset(
-            dataset_id,
-            actor=actor_id,
-            reason=payload.get("reason", "deprecated"),
-            decision_id=decision.decision_id,
-        )
-        seed_dataset(dataset)
+        # Mutation and mirror in one critical section; see the create route.
+        with catalog.catalog_mutation_lock():
+            dataset = deprecate_dataset(
+                dataset_id,
+                actor=actor_id,
+                reason=payload.get("reason", "deprecated"),
+                decision_id=decision.decision_id,
+            )
+            seed_dataset(dataset)
         return {"status": "deprecated", "dataset": catalog.mutation_response_view(dataset)}
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
