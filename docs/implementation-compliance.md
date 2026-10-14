@@ -293,6 +293,23 @@ seed의 `security` subject는 `platform-admin`도 들고 있어 여전히 previe
 - `POST /enterprise/auth/oidc-verify`: issuer/audience/expiry/JWKS 서명 검증 후 tenant scoped group mapping으로 `ActorContext`를 생성하고 raw token은 응답에 포함하지 않는다. 신뢰 기준(issuer, audience, JWKS, role map)은 operator 환경 설정에서만 읽으며, request body가 이 네 필드를 보내면 검증 전에 400으로 거절한다.
 - `POST /enterprise/auth/oidc-preview`, `POST /enterprise/auth/oidc-verify`: group별 `group_role_bindings`(group 이름, 부여한 tenant scope, 부여된 role)와 `audit_event_id`를 반환하고 `enterprise/auth/oidc` resource audit event를 남긴다. `sso_oidc_adapter` control은 이로써 `implemented`가 되고 `GET /enterprise/controls`의 `planned_controls`는 0, `status`는 `pilot_ready`가 된다.
 - `GET /enterprise/evidence-pack`: metadata validation, SHACL-compatible validation, steward queue, ontology mapping coverage, policy/audit counts, controls, KPI ids, proof endpoints.
+  - **정정(shape catalog)**: 게시된 `required_properties`가 평가되지 않았습니다. 측정:
+    `format`/`endpoint`가 빈 distribution과 `concept`가 빈 mapping이 모두
+    `conforms: true`·violation 0건이었고, `DatasetShape`는 실제 강제되는 네 필드를
+    게시하지 않았습니다. 이제 게시된 모든 property가 평가되며
+    (`tests/test_semantic_validation.py::test_every_published_required_property_is_evaluated`가
+    shape별·property별로 열거해 강제), `shacl_compatible`은 "게시된 모든 shape가 평가되는가"로
+    유도되고 `validation_engine`/`shacl_engine_executed`를 함께 게시합니다. 시드는 이미 만족하므로
+    `validation_pass_rate`는 1.0 그대로입니다.
+  - **정정(ontology coverage)**: `ontology_mapping_coverage`는 `승인 mapping / 전체 mapping`이어서
+    **커버리지를 줄이면 올라갔습니다**(측정: mapping 12 → 5, 0.917 → 1.0). 분모를 glossary로 바꿨고
+    (측정 0.8), 옛 숫자는 `ontology_mapping_approval_rate`로 이름을 바꿔 유지합니다. 미정의 개념을
+    가리키는 mapping 3건은 분자에서 제외하고 `unregistered_mapping_concept_count`로 세며, mapping이
+    없는 glossary 개념은 `unmapped_glossary_concepts`로 선언합니다. KPI 정의가 자기 guardrail과
+    모순이던 부분도 정정했습니다. 0.8 ≥ 0.7이므로 gate와 `ready`는 불변입니다.
+    증빙: `tests/test_ontology_coverage_measurement.py` (11건).
+    `docs/product-technical-gap-baseline.md`의 `0.917` 표기는 head `52bc571` 당시의 보존된
+    스냅샷이며 그 문서가 이미 "현재 상태로 인용하지 말 것"이라고 명시하고 있습니다.
 - `GET /enterprise/console`: buyer/operator가 evidence, KPI, controls, connector 상태를 브라우저에서 확인하는 no-build-dependency UI.
 - 증빙 테스트:
   - `tests/test_api.py::test_enterprise_readiness_manifest_exposes_saleable_gates`

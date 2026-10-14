@@ -96,7 +96,15 @@ def enterprise_kpi_framework() -> KPIFramework:
                 id="ontology_mapping_coverage",
                 label="Ontology mapping coverage",
                 decision_question="Are enough critical buyer terms mapped for a credible pilot?",
-                definition="Share of buyer critical glossary terms mapped to approved concepts or active steward patch proposals.",
+                # The "or active steward patch proposals" clause contradicted
+                # this KPI's own guardrail below, and the implementation
+                # honoured the guardrail. The definition is corrected to the
+                # stricter reading rather than the number loosened to match the
+                # looser one. The denominator is the glossary, which is what
+                # "share of ... terms" means; it used to be "mappings that
+                # happen to exist", so the metric rose when mappings were
+                # deleted.
+                definition="Share of registered glossary concepts with at least one approved business mapping. Mappings naming a concept the ontology does not define are excluded from both numerator and denominator and reported as unregistered_mapping_concept_count.",
                 target=">=70 percent",
                 cadence="domain onboarding review",
                 source_endpoints=["/ontology/search", "/ontology/resolve", "/ontology/patches"],

@@ -17,7 +17,7 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                    642 passed, 11 skipped
+    pytest                    661 passed, 11 skipped
     pytest (역방향/난수 순서)  순서 무관 통과 (역순 + seed 11/29/77)
     pytest tests/fuzz          11 passed
     python -m sdp.demo_smoke   exit 0, "ready": true
@@ -123,6 +123,34 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
 - 거버닝 쓰기의 mutation 이전 감사 행이 `allowed`라고 주장했습니다 —
   `authorized`로 바꾸고, 결과를 아는 라우트는 실제 결과를 기록합니다. 리뷰 한 건이
   증거를 두 번 남기던 문제도 함께.
+- `ontology_mapping_coverage`는 **커버리지를 줄이면 올라갔습니다**. `승인 mapping /
+  전체 mapping`이었고, 자기 KPI 정의("buyer critical glossary terms 중 매핑된 비율")와 분모가
+  달랐습니다. 측정: mapping 12건 중 7건을 지우면 0.917 → **1.0**. 이 값은 `demo_smoke`의
+  `ready`와 saleability gate를 0.7 기준으로 통제합니다. 그 분모는 두 가지를 더 가렸습니다 —
+  mapping이 전혀 없는 glossary 개념 `이탈 고객`(분모에 없어서 유일한 실제 갭이 보이지 않았음),
+  그리고 ontology가 정의하지 않은 개념을 가리키는 mapping 3건(`고객 이탈`·`전환`·`캠페인`;
+  이 중 2건이 approved여서 **미정의 개념에 대한 승인 mapping이 ontology coverage의 분자**였습니다).
+  세 수치를 각자의 이름으로 게시합니다: glossary 기준 coverage(0.8), 옛 숫자인
+  `ontology_mapping_approval_rate`(0.917), 그리고 `unmapped_glossary_concepts` /
+  `unregistered_mapping_concept_count`. KPI 정의의 "또는 진행 중인 steward patch 제안" 구절은
+  같은 KPI의 guardrail과 모순이었고 구현이 guardrail을 따르고 있었으므로, 숫자를 느슨하게
+  맞추는 대신 정의를 엄격한 쪽으로 정정했습니다. **0.8 ≥ 0.7이므로 gate와 `ready`는
+  불변입니다** — 결함 수정이고 제품 결정이 아닙니다.
+
+- 게시된 SHACL shape catalog가 **평가되지 않았습니다**. `required_properties`를 읽은
+  사람은 그것이 `conforms`를 만든 제약이라고 받아들이는데, 실제로 돌던 것은 shape id만
+  빌려 쓴 손으로 쓴 규칙 세 개였습니다. 측정: `format`과 `endpoint`가 빈 distribution →
+  `conforms: true`, violation 0건. `concept`가 빈 mapping → `concept`를 지목하는 violation
+  없음. 그리고 `DatasetShape`는 실제로 강제되는 `description`·`sensitivity`·`title`·
+  `update_frequency`를 게시 목록에서 빠뜨렸습니다 — 카탈로그가 **양방향으로** 틀렸습니다
+  (검사하지 않는 property를 게시하고, 검사하는 property를 게시하지 않음). 이제 게시된 모든
+  property가 그것을 선언한 항목에 의해 평가되고, `DatasetShape`는 `REQUIRED_METADATA_FIELDS`에서
+  유도되어 다시 어긋날 수 없으며, "승인 mapping 최소 1건"은 property 존재 검사가 아니라
+  cardinality로 선언됩니다. `shacl_compatible`은 하드코딩 `true`에서 "게시된 모든 shape가
+  평가되는가"로 바뀌었고, SHACL 엔진이 돌지 않는다는 사실(`pyshacl`은 의존성이 아닙니다)을
+  `validation_engine`/`shacl_engine_executed`로 함께 게시합니다. **시드는 이미 모든 shape를
+  만족하므로 `validation_pass_rate`는 1.0에서 움직이지 않았습니다** — gate가 더 많이 측정하면서
+  숫자는 그대로입니다.
 
 ### Added — 기계가 읽는 계약
 
@@ -157,3 +185,10 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
 - http(s) sink의 `Authorization` 분리는 **로컬에서 포착한 요청 객체**로 검증했습니다
   (urllib이 다이얼하는 host, 재구성된 URL, 헤더). 실제 원격 sink에 대한 왕복은
   실행하지 않았습니다.
+- SHACL 엔진은 돌지 않습니다. 게시된 shape가 SHACL로 표현 가능하고 동등한 in-process
+  검사로 강제된다는 것이 이 표면이 할 수 있는 정직한 주장이며, 그 둘을 모두 게시합니다.
+  `pyshacl`을 의존성으로 들이는 것은 (RDF 스택을 끌어오고 CI가 hash-pinned 설치를 쓰므로)
+  별도 결정입니다.
+- `docs/product-technical-gap-baseline.md`의 `ontology_mapping_coverage | 0.917` 표기는
+  head `52bc571` 당시의 보존된 스냅샷이라 고치지 않았습니다. 그 문서가 이미 해당 문단을
+  "현재 상태로 인용하지 말 것"이라고 표시하고 있습니다.

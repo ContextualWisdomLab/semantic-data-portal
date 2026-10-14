@@ -48,6 +48,32 @@ PYTHONPATH=src uvicorn sdp.api:app --reload
 http(s) sink도 지원합니다. URL에 credential을 담은 형태(`https://sdp-ingest:TOKEN@logs.example.net/loki/api/v1/push` — Loki·Elastic·서명 webhook의 문서화된 push URL 형태)는 userinfo를 URL에서 분리해 `Authorization` 헤더로 보냅니다(password가 있으면 `Basic`, token 하나면 `Bearer`; `@`·`:`를 담은 password는 percent-encoding). 이전에는 URL 전체를 `urllib`에 넘겨 userinfo가 연결 host로 남았고(`sdp-ingest:TOKEN@logs.example.net` → `InvalidURL: nonnumeric port`), 모든 export가 실패하는 동안 manifest는 `configured: true`로 보고했으며 예외 메시지가 authority를 인용해 credential이 export error ring에 남았습니다. host가 없거나 port가 숫자가 아닌 http sink도 이제 file sink와 같은 경로로 `configured: false` + `invalid_configuration`으로 보고합니다.
 `SDP_ALERT_WEBHOOK_URL`은 **선언만 되어 있고 구현되지 않았습니다**. 이 값을 읽는 코드는 `_sink_status`가 설정 여부(`alert_webhook_configured`)를 보고하는 한 곳뿐이고, 이 URL로 POST하는 코드도 `GET /enterprise/observability`가 공개하는 alert 조건을 평가하는 코드도 없습니다. 그래서 이 변수는 `required_environment`에서 빠지고 `declared_unimplemented_environment`로 이동했습니다 — 라우팅하지 않는 값을 설정해서 paid-pilot gate를 통과할 수 있으면 그 gate는 아무것도 측정하지 않습니다. 공개되는 alert 규칙은 삭제하지 않고(조건 자체는 올바르고 operator가 자기 모니터링 스택에 그대로 구현할 수 있습니다) `alert_evaluation: declared_not_evaluated`, 규칙별 `evaluated: false`, `alert_webhook_routing: declared_unimplemented`로 표시합니다.
 sink export breaker는 closed/open에 half-open을 추가했습니다. 이전에는 cooldown이 끝나는 순간 모든 요청이 죽은 sink를 동시에 다시 호출해 (모든 동기 route가 공유하는) anyio threadpool의 빈 slot을 전부 `SDP_LOG_SINK_TIMEOUT_MS`만큼 점유했습니다 — 측정: 동시 요청 20건에서 slot 8개면 sink 호출 8회, 무제한이면 20회, outage가 계속되는 동안 cooldown마다 반복. 이제 cooldown 만료 후 정확히 한 요청만 probe하고(측정: 1회) 나머지는 skip하며, probe가 성공하면 그 즉시 모두에게 breaker가 닫힙니다.
+`GET /enterprise/shacl-validation`과 `/catalog/datasets/{id}/semantic-validation`이 게시하는
+shape catalog는 **실제로 평가됩니다**. 이전에는 `required_properties`를 게시하면서 평가하지 않았습니다 —
+측정: `format`과 `endpoint`가 빈 distribution은 `conforms: true`에 violation 0건이었고,
+`concept`가 빈 mapping도 마찬가지였으며, `DatasetShape`는 실제로 강제되는
+`description`·`sensitivity`·`title`·`update_frequency`를 게시 목록에서 빠뜨렸습니다(양방향 오류).
+이제 `DatasetShape.required_properties`는 `REQUIRED_METADATA_FIELDS`에서 유도되고, mapping과
+distribution은 각자의 shape로 평가되며(violation path는 `distributions[0].format`처럼 색인됩니다),
+"승인된 mapping 최소 1건"은 property 존재 검사가 아니라 `min_approved_count` cardinality로 선언됩니다.
+`shacl_compatible`은 하드코딩 `true`가 아니라 "게시된 모든 shape가 평가되는가"로 유도되고,
+`validation_engine: builtin_shape_checks` / `shacl_engine_executed: false`를 함께 게시합니다
+(`pyshacl`은 이 저장소의 의존성이 아닙니다 — SHACL 엔진이 돌았다고 주장하지 않습니다).
+시드 데이터셋은 모두 게시된 shape를 이미 만족하므로 `validation_pass_rate`는 1.0에서 변하지 않습니다.
+
+`ontology_mapping_coverage`는 **glossary 기준으로 측정**합니다. 이전에는 `승인 mapping / 전체
+mapping`이었고, 자기 KPI 정의("buyer critical glossary terms 중 매핑된 비율")와 분모가 달랐습니다 —
+분모가 "우연히 존재하는 mapping"이었기 때문에 **커버리지를 줄이면 숫자가 올라갔습니다**(측정: mapping
+12건 중 7건을 지우면 0.917 → 1.0). 이 값은 `sdp.demo_smoke`의 `ready`와 saleability gate를 0.7
+기준으로 통제합니다. 또한 그 분모는 두 가지를 가렸습니다: mapping이 전혀 없는 glossary 개념
+`이탈 고객`(분모에 없어서 유일한 실제 갭이 보이지 않았음)과, ontology에 정의되지 않은 개념을 가리키는
+mapping 3건(`고객 이탈`·`전환`·`캠페인` — 이 중 2건이 approved여서 **미정의 개념에 대한 승인 mapping이
+ontology coverage의 분자로 계산**되었습니다). 이제 세 수치를 각자의 이름으로 게시합니다:
+`ontology_mapping_coverage`(승인 mapping이 1건 이상인 glossary 개념 비율, 측정 0.8),
+`ontology_mapping_approval_rate`(옛 숫자, 0.917), `unmapped_glossary_concepts`,
+`unregistered_mapping_concept_count`. KPI 정의의 "또는 진행 중인 steward patch 제안" 구절은 같은 KPI의
+guardrail("제안 mapping은 승인으로 취급하지 않는다")과 모순이었고, 구현이 guardrail을 따르고 있었으므로
+정의를 엄격한 쪽으로 정정했습니다. 0.8 ≥ 0.7이므로 gate와 `ready`는 그대로입니다.
 REST connector secret은 `SDP_CONNECTOR_SECRET_REF_PREFIX=SDP_CONNECTOR_SECRET_` 기준의 env secret reference로 조회합니다. 예: `SDP_CONNECTOR_SECRET_REST_CONNECTOR_MARKETING_CAMPAIGN_TOKEN` 값은 presence만 검증하며 API 응답에는 노출하지 않습니다.
 OIDC token verification은 `SDP_OIDC_ISSUER`, `SDP_OIDC_AUDIENCE`, `SDP_OIDC_JWKS_URL`(또는 JWKS 문서를 그대로 담는 `SDP_OIDC_JWKS`), `SDP_OIDC_GROUP_ROLE_MAP`를 사용합니다. 이 네 가지는 **operator 설정 전용**입니다. `POST /enterprise/auth/oidc-verify`의 body는 `token` 하나만 받고, `issuer`·`audience`·`jwks`·`role_map`이 body에 오면 400으로 거절합니다 — 호출자가 자기 토큰의 신뢰 기준을 지정할 수 있으면 스스로 서명한 토큰으로 임의 tenant의 platform-admin을 발급받을 수 있기 때문입니다.
 `SDP_OIDC_GROUP_ROLE_MAP`은 두 가지 형태를 받습니다. flat `{"group": ["role"]}`은 모든 tenant에 적용되는 wildcard scope(`*`)가 되고, tenant scoped `{"tenant": {"group": ["role"]}}`은 해당 tenant에만 적용됩니다. 같은 group이 두 scope에 모두 있으면 tenant scope가 wildcard를 대체하므로, tenant scope에 빈 role 목록을 쓰면 wildcard 부여를 해당 tenant에서만 회수할 수 있습니다. 두 형태를 한 map에 섞으면 tenant 식별자를 group 이름으로 잘못 읽는 설정 오류이므로 요청이 400으로 거절됩니다.

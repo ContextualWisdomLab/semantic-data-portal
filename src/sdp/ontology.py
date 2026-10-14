@@ -291,6 +291,20 @@ def list_concepts() -> List[str]:
     return sorted(_CONCEPT_DEFINITIONS.keys())
 
 
+def canonical_concept_or_none(concept: str) -> str | None:
+    """The registered canonical name for this term, or ``None`` if unregistered.
+
+    ``_canonicalize_concept`` returns its input unchanged for a term the
+    glossary does not know, which is the right behaviour for resolution but
+    cannot distinguish "canonical already" from "not in the glossary". Coverage
+    measurement needs that distinction: a business mapping naming a concept the
+    ontology never defined is not ontology coverage, and counting it as such is
+    how the published number credited three such mappings.
+    """
+    canonical = _canonicalize_concept(concept)
+    return canonical if canonical in _CONCEPT_DEFINITIONS else None
+
+
 def search_concepts(q: str) -> List[ConceptTerm]:
     q = q.strip().lower()
     if not q:

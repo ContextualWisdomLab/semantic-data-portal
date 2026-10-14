@@ -355,7 +355,7 @@ def enterprise_readiness_manifest() -> EnterpriseReadinessManifest:
             EnterpriseGate(
                 id="ontology_mapping_coverage",
                 label="Semantic coverage",
-                target="70 percent or higher mapping coverage for critical business glossary terms before paid pilot conversion.",
+                target="70 percent or higher of registered glossary concepts carrying at least one approved business mapping, before paid pilot conversion.",
                 evidence=["/ontology/search", "/ontology/resolve", "/ontology/patches"],
                 status="implemented",
             ),
