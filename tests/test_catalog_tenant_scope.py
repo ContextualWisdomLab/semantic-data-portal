@@ -132,3 +132,97 @@ def test_platform_admin_still_sees_every_tenant() -> None:
     response = client.get("/catalog/search", params={"q": "HR", "user": "admin"})
     assert response.status_code == 200
     assert any(item["id"] == FOREIGN for item in response.json()["items"])
+
+
+def test_every_per_dataset_catalog_route_hides_an_out_of_scope_dataset() -> None:
+    """Structural, not per-route: the route list is read from the app.
+
+    Three times now a fix to one catalog read has been bypassed by a sibling.
+    ``/catalog/datasets/{id}`` returns 404 for an out-of-scope dataset, but
+    ``/jsonld`` still returned its title, owner and description, ``/lineage``
+    returned its upstream and downstream ids, and ``/related``, ``/validate``,
+    ``/semantic-validation`` and ``/schema-versions`` answered 200 — which is an
+    existence oracle for a dataset the detail route just hid. Checking for
+    particular strings misses that: the *status code* is the disclosure.
+
+    Enumerating the routes from ``app.routes`` means the next sibling added to
+    this prefix is covered without anyone remembering to extend this test.
+    """
+    paths = sorted(
+        route.path
+        for route in app.routes
+        if getattr(route, "path", "").startswith("/catalog/datasets/{dataset_id}")
+        and "GET" in getattr(route, "methods", set())
+    )
+    assert len(paths) >= 8, paths
+
+    offenders = []
+    for path in paths:
+        url = path.replace("{dataset_id}", FOREIGN)
+        params = {"user": "analyst"}
+        if path.endswith("/schema-diff"):
+            # Required query params; 422 is schema validation, which precedes auth
+            # and discloses nothing, so supply them to reach the scope check.
+            params |= {"from_version": "1.0.0", "to_version": "2.0.0"}
+        response = client.get(url, params=params)
+        if response.status_code != 404:
+            offenders.append((path, response.status_code))
+    assert not offenders, f"out-of-scope dataset still reachable: {offenders}"
+
+
+def test_per_dataset_routes_still_serve_the_owning_tenant() -> None:
+    """The uniform 404 must not break the legitimate reader.
+
+    A snapshot is recorded first so that a 404 can only mean "refused", never
+    "legitimately absent" — ``/schema-history`` answers 404 for a dataset with no
+    snapshot yet, which is correct and must not read as a refusal here.
+    """
+    catalog._record_schema_snapshot(catalog._DATA[FOREIGN])
+    paths = sorted(
+        route.path
+        for route in app.routes
+        if getattr(route, "path", "").startswith("/catalog/datasets/{dataset_id}")
+        and "GET" in getattr(route, "methods", set())
+    )
+    broken = []
+    for path in paths:
+        url = path.replace("{dataset_id}", FOREIGN)
+        params = {"user": "external-analyst"}
+        if path.endswith("/schema-diff"):
+            params |= {"from_version": "1.0.0", "to_version": "2.0.0"}
+        response = client.get(url, params=params)
+        if response.status_code == 404:
+            broken.append(path)
+    assert not broken, f"owning tenant refused on: {broken}"
+
+
+def test_no_per_dataset_route_lets_a_domain_exception_escape_as_500() -> None:
+    """``/schema-history`` raised an uncaught ``KeyError('no schema history
+    found')`` for any dataset with no snapshot yet, so a legitimate reader asking
+    a reasonable question got a 500. This violates the repository's own documented
+    mapping (CLAUDE.md: domain modules raise ``KeyError``→404, ``ValueError``→400,
+    ``PermissionError``→403, and ``api.py`` converts them).
+
+    Pre-existing, not introduced by the tenant scoping — the structural sweep
+    above is what surfaced it. Enumerated from ``app.routes`` for the same reason.
+    """
+    from fastapi.testclient import TestClient as _TestClient
+
+    quiet = _TestClient(app, raise_server_exceptions=False)
+    base = catalog._DATA["crm-customer-master"]
+    catalog._DATA["no-history-ds"] = base.model_copy(update={"id": "no-history-ds"})
+
+    failures = []
+    for route in app.routes:
+        path = getattr(route, "path", "")
+        if not path.startswith("/catalog/datasets/{dataset_id}"):
+            continue
+        if "GET" not in getattr(route, "methods", set()):
+            continue
+        params = {"user": "analyst"}
+        if path.endswith("/schema-diff"):
+            params |= {"from_version": "1.0.0", "to_version": "2.0.0"}
+        response = quiet.get(path.replace("{dataset_id}", "no-history-ds"), params=params)
+        if response.status_code >= 500:
+            failures.append((path, response.status_code))
+    assert not failures, f"domain exception escaped as a server error: {failures}"

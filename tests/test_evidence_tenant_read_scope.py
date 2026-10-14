@@ -103,7 +103,12 @@ def test_dataset_audit_feed_is_scoped_too() -> None:
     refused = client.get(
         "/catalog/datasets/bank-a-ds/audit", params={"user": "external-analyst"}
     )
-    assert refused.status_code == 403
+    # An actor outside the owning tenant gets 404, matching the rest of the
+    # per-dataset discovery surface: a 403 here would confirm the dataset
+    # exists, which is the disclosure this scoping exists to prevent. The
+    # anonymous 403 above is a different answer to a different question -
+    # "no actor at all" is refused before any dataset is looked up.
+    assert refused.status_code == 404
     allowed = client.get("/catalog/datasets/bank-a-ds/audit", params={"user": "admin"})
     assert allowed.status_code == 200
 

@@ -149,7 +149,12 @@ def test_enterprise_kpis_expose_saleability_measurement_plan():
 
 
 def test_catalog_dataset_semantic_validation_exposes_shacl_report():
-    response = client.get("/catalog/datasets/crm-customer-master/semantic-validation")
+    # The per-dataset discovery surface is tenant scoped, so the SHACL report
+    # needs a resolvable actor; this call site pinned an anonymous read of it.
+    response = client.get(
+        "/catalog/datasets/crm-customer-master/semantic-validation",
+        params={"user": "analyst"},
+    )
     assert response.status_code == 200
 
     body = response.json()
@@ -1229,14 +1234,18 @@ def test_draft_query_sanitizes_group_by_identifier():
 def test_catalog_schema_history_and_diff():
     patch = client.patch("/catalog/datasets/crm-event", json={"actor": "admin", "schema": []})
     assert patch.status_code == 200
-    versions = client.get("/catalog/datasets/crm-event/schema-versions")
-    assert versions.status_code == 200
+    versions = client.get(
+        "/catalog/datasets/crm-event/schema-versions", params={"user": "analyst"}
+    )
+    assert versions.status_code == 200, versions.text
     payload = versions.json()
     assert "versions" in payload
     assert payload["versions"]
 
-    history = client.get("/catalog/datasets/crm-event/schema-history")
-    assert history.status_code == 200
+    history = client.get(
+        "/catalog/datasets/crm-event/schema-history", params={"user": "analyst"}
+    )
+    assert history.status_code == 200, history.text
     history_payload = history.json()
     assert history_payload["history"]
     first_version = history_payload["history"][0]["schema_version"]
@@ -1244,7 +1253,11 @@ def test_catalog_schema_history_and_diff():
 
     diff = client.get(
         "/catalog/datasets/crm-event/schema-diff",
-        params={"from_version": first_version, "to_version": last_version},
+        params={
+            "from_version": first_version,
+            "to_version": last_version,
+            "user": "analyst",
+        },
     )
     assert diff.status_code == 200
     diff_payload = diff.json()
@@ -1301,8 +1314,10 @@ def test_dataset_mutation_policy_and_lifecycle():
     assert patched.status_code == 200
     assert patched.json()["dataset"]["title"] == "테스트 데이터셋 v2"
 
-    lineage = client.get("/catalog/datasets/temp-dataset/lineage")
-    assert lineage.status_code == 200
+    lineage = client.get(
+        "/catalog/datasets/temp-dataset/lineage", params={"user": "analyst"}
+    )
+    assert lineage.status_code == 200, lineage.text
     assert lineage.json()["dataset_id"] == "temp-dataset"
 
     deprecated = client.post("/catalog/datasets/temp-dataset/deprecate", json={"actor": "admin", "reason": "e2e cleanup"})
@@ -2031,7 +2046,13 @@ def test_create_route_refuses_to_plant_a_dataset_in_another_tenant():
 
 def test_profile_route_refuses_an_out_of_tenant_caller():
     """End-to-end: the profile route no longer serves governed profiling data to a
-    caller the governed schema path refuses."""
+    caller the governed schema path refuses.
+
+    The refusal is 404, not 403: this is the discovery surface, where the defect
+    being fixed is existence disclosure. A 403 would answer "this dataset exists
+    and is not yours", which is the disclosure itself. ``/browse`` keeps 403
+    because reaching it already requires knowing the dataset.
+    """
     base = app_catalog._DATA["crm-customer-master"]
     app_catalog._DATA["external-profile-ds"] = base.model_copy(
         update={"id": "external-profile-ds", "tenant_id": "external"}
@@ -2039,7 +2060,8 @@ def test_profile_route_refuses_an_out_of_tenant_caller():
     denied = client.get(
         "/catalog/datasets/external-profile-ds/profile", params={"user": "analyst"}
     )
-    assert denied.status_code == 403, denied.text
+    assert denied.status_code == 404, denied.text
+    assert "external-profile-ds" not in denied.text
 
     allowed = client.get(
         "/catalog/datasets/external-profile-ds/profile", params={"user": "external-analyst"}

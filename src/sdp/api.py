@@ -491,6 +491,34 @@ def list_datasets_endpoint(user: str = Query(default="anonymous")) -> list[dict[
     return [catalog.discovery_view(dataset) for dataset in list_datasets(tenant_ids)]
 
 
+def _scoped_dataset_and_tenants(dataset_id: str, user: str) -> tuple[Any, list[str] | None]:
+    """Resolve a dataset and the reader's tenant scope, or 404.
+
+    Used directly by the routes that need the scope itself; the rest go through
+    :func:`_require_scoped_dataset`.
+    """
+    tenant_ids = _authorize_catalog_discovery(user)
+    dataset = catalog.dataset_in_scope(dataset_id, tenant_ids)
+    if not dataset:
+        raise HTTPException(status_code=404, detail="dataset not found")
+    return dataset, tenant_ids
+
+
+def _require_scoped_dataset(dataset_id: str, user: str) -> Any:
+    """Resolve a dataset for a per-dataset catalog read, or 404.
+
+    Applied uniformly to every ``/catalog/datasets/{dataset_id}/...`` route: a
+    dataset outside the reader's tenant scope must be indistinguishable from one
+    that does not exist. Three per-route fixes were each bypassed by a sibling -
+    ``/jsonld`` kept returning a hidden dataset's title, owner and description,
+    ``/lineage`` its upstream and downstream ids, and ``/related``, ``/validate``,
+    ``/semantic-validation`` and ``/schema-versions`` answered 200, which is an
+    existence oracle on its own. ``tests/test_catalog_tenant_scope.py`` enumerates
+    the routes from ``app.routes`` so the next sibling is covered automatically.
+    """
+    return _scoped_dataset_and_tenants(dataset_id, user)[0]
+
+
 @app.get("/catalog/datasets/{dataset_id}")
 def dataset_detail(
     dataset_id: str, user: str = Query(default="anonymous")
@@ -507,7 +535,11 @@ def dataset_detail(
 
 
 @app.get("/catalog/datasets/{dataset_id}/jsonld")
-def dataset_jsonld(dataset_id: str) -> dict[str, Any]:
+def dataset_jsonld(
+    dataset_id: str,
+    user: str = Query(default="anonymous"),
+) -> dict[str, Any]:
+    _require_scoped_dataset(dataset_id, user)
     dataset = get_dataset(dataset_id)
     if not dataset:
         raise HTTPException(status_code=404, detail="dataset not found")
@@ -531,7 +563,11 @@ def dataset_jsonld(dataset_id: str) -> dict[str, Any]:
 
 
 @app.get("/catalog/datasets/{dataset_id}/semantic-validation")
-def catalog_dataset_semantic_validation(dataset_id: str) -> dict[str, Any]:
+def catalog_dataset_semantic_validation(
+    dataset_id: str,
+    user: str = Query(default="anonymous"),
+) -> dict[str, Any]:
+    _require_scoped_dataset(dataset_id, user)
     try:
         return validate_dataset_semantics(dataset_id)
     except KeyError:
@@ -539,12 +575,25 @@ def catalog_dataset_semantic_validation(dataset_id: str) -> dict[str, Any]:
 
 
 @app.get("/catalog/datasets/{dataset_id}/schema-history")
-def catalog_dataset_schema_history(dataset_id: str) -> dict[str, Any]:
-    return get_dataset_schema_history(dataset_id)
+def catalog_dataset_schema_history(
+    dataset_id: str,
+    user: str = Query(default="anonymous"),
+) -> dict[str, Any]:
+    _require_scoped_dataset(dataset_id, user)
+    try:
+        return get_dataset_schema_history(dataset_id)
+    except KeyError as exc:
+        # A dataset with no snapshot yet is a 404, per the repository's documented
+        # mapping; it was escaping as an uncaught KeyError, i.e. a 500.
+        raise HTTPException(status_code=404, detail=str(exc))
 
 
 @app.get("/catalog/datasets/{dataset_id}/schema-versions")
-def catalog_dataset_schema_versions(dataset_id: str) -> dict[str, Any]:
+def catalog_dataset_schema_versions(
+    dataset_id: str,
+    user: str = Query(default="anonymous"),
+) -> dict[str, Any]:
+    _require_scoped_dataset(dataset_id, user)
     return {"dataset_id": dataset_id, "versions": list_dataset_schema_versions(dataset_id)}
 
 
@@ -554,7 +603,7 @@ def catalog_dataset_join_candidates(
     limit: int = Query(default=10, ge=1, le=100),
     user: str = Query(default="anonymous"),
 ) -> dict[str, Any]:
-    tenant_ids = _authorize_catalog_discovery(user)
+    _, tenant_ids = _scoped_dataset_and_tenants(dataset_id, user)
     return {
         "dataset_id": dataset_id,
         "join_candidates": get_join_candidates(dataset_id, limit=limit, tenant_ids=tenant_ids),
@@ -567,6 +616,9 @@ def catalog_dataset_profile(
     user: str = Query(default="anonymous"),
     purpose: str = Query(default="analysis"),
 ) -> dict[str, Any]:
+    # Scope first, and as a 404: under this prefix a dataset outside the reader's
+    # tenant must be indistinguishable from a missing one.
+    _require_scoped_dataset(dataset_id, user)
     try:
         return browse.dataset_profile(dataset_id, user=user, purpose=purpose)
     except KeyError as exc:
@@ -580,7 +632,9 @@ def catalog_dataset_schema_diff(
     dataset_id: str,
     from_version: str = Query(...),
     to_version: str = Query(...),
+    user: str = Query(default="anonymous"),
 ) -> dict[str, Any]:
+    _require_scoped_dataset(dataset_id, user)
     try:
         return {"dataset_id": dataset_id, "diff": get_dataset_schema_diff(dataset_id, from_version, to_version)}
     except ValueError as exc:
@@ -588,7 +642,11 @@ def catalog_dataset_schema_diff(
 
 
 @app.get("/catalog/datasets/{dataset_id}/validate")
-def validate(dataset_id: str) -> dict[str, Any]:
+def validate(
+    dataset_id: str,
+    user: str = Query(default="anonymous"),
+) -> dict[str, Any]:
+    _require_scoped_dataset(dataset_id, user)
     dataset = get_dataset(dataset_id)
     if not dataset:
         raise HTTPException(status_code=404, detail="dataset not found")
@@ -596,7 +654,11 @@ def validate(dataset_id: str) -> dict[str, Any]:
 
 
 @app.get("/catalog/datasets/{dataset_id}/lineage")
-def dataset_lineage(dataset_id: str) -> dict[str, Any]:
+def dataset_lineage(
+    dataset_id: str,
+    user: str = Query(default="anonymous"),
+) -> dict[str, Any]:
+    _require_scoped_dataset(dataset_id, user)
     try:
         return get_dataset_lineage(dataset_id)
     except KeyError as exc:
@@ -604,7 +666,11 @@ def dataset_lineage(dataset_id: str) -> dict[str, Any]:
 
 
 @app.get("/catalog/datasets/{dataset_id}/related")
-def dataset_related(dataset_id: str) -> dict[str, Any]:
+def dataset_related(
+    dataset_id: str,
+    user: str = Query(default="anonymous"),
+) -> dict[str, Any]:
+    _require_scoped_dataset(dataset_id, user)
     try:
         return {"dataset_id": dataset_id, "related_datasets": get_related_datasets(dataset_id)}
     except KeyError as exc:
@@ -620,9 +686,12 @@ def dataset_audit_events(
     # The same ledger behind a per-dataset path, so it carries the same gate plus
     # the dataset's own tenant check.
     _, tenant_ids = _authorize_evidence_read(user)
+    # 404, matching every other /catalog/datasets/{id}/... route: a 403 here would
+    # distinguish "exists but denied" from "does not exist" and reopen the
+    # existence oracle the detail route was fixed to close.
     dataset = catalog.get_dataset(dataset_id)
     if dataset and not can_access_tenant(user, dataset.tenant_id):
-        raise HTTPException(status_code=403, detail="tenant boundary denied")
+        raise HTTPException(status_code=404, detail="dataset not found")
     return [
         event.model_dump()
         for event in get_dataset_audit_events(dataset_id, limit=limit, tenant_ids=tenant_ids)
