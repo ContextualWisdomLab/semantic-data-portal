@@ -147,12 +147,33 @@ class SQLiteEvidenceStore:
         i.e. precisely the upgrade-in-place case.
         """
         columns = {row[1] for row in connection.execute(f"PRAGMA table_info({table})").fetchall()}
-        if "tenant_id" in columns:
-            return
-        connection.execute(
-            f"ALTER TABLE {table} ADD COLUMN tenant_id TEXT NOT NULL "
-            f"DEFAULT '{UNRESOLVED_TENANT_ID}'"
-        )
+        if "tenant_id" not in columns:
+            connection.execute(
+                f"ALTER TABLE {table} ADD COLUMN tenant_id TEXT NOT NULL "
+                f"DEFAULT '{UNRESOLVED_TENANT_ID}'"
+            )
+        # The backfill runs whether or not the column was just added, because
+        # returning early when it already exists made it **unreachable for the
+        # databases that need it most**. This method shipped in an ALTER-only
+        # form first (that is what the paragraph above records), so every SQLite
+        # ledger upgraded by that build already has the column and would never
+        # be backfilled; a process killed between the ALTER and the UPDATE
+        # leaves the same state. Measured on a ledger in exactly that shape,
+        # whose payloads carry ``tenant_id: "demo"``::
+        #
+        #     before opening with the current store -> ['unresolved']
+        #     after  opening with the current store -> ['unresolved']
+        #
+        # so a half-applied migration stripped recoverable tenant attribution
+        # from the whole ledger permanently, the owning tenant's auditor lost
+        # every historical row, and SQLite is the documented demo/pilot
+        # deployment on a persistent volume - precisely the upgrade-in-place
+        # case.
+        #
+        # It is safe to re-run: the UPDATE touches only rows still at the
+        # unresolved default, and a row whose payload carries no recoverable
+        # tenant stays unresolved, so it converges to zero affected rows and is
+        # idempotent.
         paths = self._TENANT_BACKFILL_PATHS.get(table, ())
         if not paths:
             return

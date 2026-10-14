@@ -145,7 +145,17 @@ def test_enterprise_kpis_expose_saleability_measurement_plan():
     all_kpis = body["primary_kpis"] + body["guardrail_kpis"]
     kpis = {item["id"]: item for item in all_kpis}
     assert kpis["discovery_time_reduction"]["target"] == ">=50 percent reduction"
-    assert kpis["metadata_completeness"]["target"] == ">=90 percent display coverage"
+    # The target text changed with the gate that now measures it. It said
+    # ">=90 percent display coverage" with ``status: implemented`` while nothing
+    # in the code compared anything to 0.90 - the only thresholds in the
+    # evidence path were 0.95 on ``metadata_validation_pass_rate`` (the share of
+    # datasets with no missing field, a different and stricter measure) and 0.7
+    # on ontology coverage. A target nothing compares to is not a gate, so the
+    # target now names the number ``/enterprise/evidence-pack`` publishes and
+    # gates: see ``test_the_metadata_completeness_target_is_compared``.
+    assert kpis["metadata_completeness"]["target"] == (
+        ">=90 percent mean metadata_completeness across datasets"
+    )
     assert kpis["policy_audit_coverage"]["target"] == "100 percent"
     assert kpis["nl_catalog_search_success"]["target"] == ">=80 percent"
     assert kpis["ontology_mapping_coverage"]["target"] == ">=70 percent"
@@ -2453,3 +2463,130 @@ def test_published_test_evidence_references_all_exist():
 
     dangling = [(src, ref) for src, ref, name in referenced if name not in defined]
     assert not dangling, f"published evidence references no such test: {dangling}"
+
+
+def test_a_half_applied_tenant_migration_is_still_backfilled(tmp_path) -> None:
+    """``_add_tenant_column`` returned before its own backfill once the column existed.
+
+    This method shipped in an ALTER-only form first, so every SQLite ledger
+    upgraded by that build already has the column and would never be
+    backfilled; a process killed between the ALTER and the UPDATE leaves the
+    same state. Measured on a ledger in exactly that shape, whose payloads carry
+    a recoverable tenant::
+
+        before opening with the current store -> ['unresolved']
+        after  opening with the current store -> ['unresolved']
+
+    So a half-applied migration stripped recoverable tenant attribution from the
+    whole ledger permanently: the owning tenant's auditor lost every historical
+    row to ``GET /audit/events`` and ``GET /policy/decisions``, and SQLite is the
+    documented demo/pilot deployment on a persistent volume - precisely the
+    upgrade-in-place case.
+    """
+    import json as json_module
+    import sqlite3
+
+    import sdp_core
+
+    path = tmp_path / "half-applied.sqlite3"
+    connection = sqlite3.connect(path)
+    connection.executescript(
+        """
+        CREATE TABLE policy_decisions (decision_id TEXT PRIMARY KEY, subject TEXT,
+          resource TEXT, action TEXT, effect TEXT, payload TEXT, recorded_at TEXT);
+        CREATE TABLE audit_events (id TEXT PRIMARY KEY, event_type TEXT, actor TEXT,
+          resource TEXT, decision TEXT, payload TEXT, created_at TEXT);
+        """
+    )
+    connection.execute(
+        "INSERT INTO policy_decisions VALUES (?,?,?,?,?,?,?)",
+        (
+            "d1",
+            "analyst",
+            "crm-event",
+            "preview",
+            "allow",
+            json_module.dumps({"obligations": {"tenant_id": "demo"}}),
+            "2026-01-01T00:00:00Z",
+        ),
+    )
+    # ``details.tenant`` is the other spelling the SQLite backfill honours and
+    # the Postgres one does not.
+    connection.execute(
+        "INSERT INTO audit_events VALUES (?,?,?,?,?,?,?)",
+        (
+            "a1",
+            "browse.preview",
+            "analyst",
+            "crm-event",
+            "allowed",
+            json_module.dumps({"details": {"tenant": "zeta"}}),
+            "2026-01-01T00:00:00Z",
+        ),
+    )
+    # The ALTER-only step: column present, UPDATE never run.
+    for table in ("policy_decisions", "audit_events"):
+        connection.execute(
+            f"ALTER TABLE {table} ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'unresolved'"
+        )
+    connection.commit()
+    connection.close()
+
+    sdp_core.SQLiteEvidenceStore(path)
+
+    connection = sqlite3.connect(path)
+    try:
+        decisions = [row[0] for row in connection.execute("SELECT tenant_id FROM policy_decisions")]
+        audits = [row[0] for row in connection.execute("SELECT tenant_id FROM audit_events")]
+    finally:
+        connection.close()
+    assert decisions == ["demo"], decisions
+    assert audits == ["zeta"], audits
+
+
+def test_the_tenant_backfill_is_idempotent_and_keeps_unrecoverable_rows(tmp_path) -> None:
+    """Re-running it must converge, and must not invent a tenant.
+
+    The backfill now runs on every open, so it has to be safe to re-run: it
+    touches only rows still at the unresolved default, and a row whose payload
+    carries no recoverable tenant stays unresolved.
+    """
+    import json as json_module
+    import sqlite3
+
+    import sdp_core
+
+    path = tmp_path / "idempotent.sqlite3"
+    connection = sqlite3.connect(path)
+    connection.executescript(
+        """
+        CREATE TABLE policy_decisions (decision_id TEXT PRIMARY KEY, subject TEXT,
+          resource TEXT, action TEXT, effect TEXT, payload TEXT, recorded_at TEXT,
+          tenant_id TEXT NOT NULL DEFAULT 'unresolved');
+        CREATE TABLE audit_events (id TEXT PRIMARY KEY, event_type TEXT, actor TEXT,
+          resource TEXT, decision TEXT, payload TEXT, created_at TEXT,
+          tenant_id TEXT NOT NULL DEFAULT 'unresolved');
+        """
+    )
+    connection.execute(
+        "INSERT INTO policy_decisions VALUES (?,?,?,?,?,?,?,?)",
+        ("recoverable", "a", "r", "preview", "allow",
+         json_module.dumps({"obligations": {"tenant_id": "demo"}}), "t", "unresolved"),
+    )
+    connection.execute(
+        "INSERT INTO policy_decisions VALUES (?,?,?,?,?,?,?,?)",
+        ("unrecoverable", "a", "r", "preview", "allow",
+         json_module.dumps({"obligations": {}}), "t", "unresolved"),
+    )
+    connection.commit()
+    connection.close()
+
+    for _ in range(3):
+        sdp_core.SQLiteEvidenceStore(path)
+
+    connection = sqlite3.connect(path)
+    try:
+        rows = dict(connection.execute("SELECT decision_id, tenant_id FROM policy_decisions"))
+    finally:
+        connection.close()
+    assert rows == {"recoverable": "demo", "unrecoverable": "unresolved"}, rows

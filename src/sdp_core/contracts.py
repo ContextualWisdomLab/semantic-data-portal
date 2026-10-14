@@ -264,6 +264,15 @@ class DatasetCreateRequest(BaseModel):
     source_system: str
     sensitivity: str
     update_frequency: str
+    # ``Dataset`` has carried a ``license`` all along and neither request model
+    # exposed it, so a supplied value was silently dropped:
+    # ``POST /catalog/datasets`` with ``license: "CC-BY-4.0"`` answered 200 and
+    # stored ``None``; ``PATCH`` with ``license: "MIT"`` answered 200 and left
+    # ``internal``; every seeded dataset reads ``internal``. A data catalog whose
+    # licence cannot be set is missing the field a diligence reader checks
+    # first - and the ``metadata_completeness`` KPI's own definition names
+    # ``license`` among the fields it counts.
+    license: str = "internal"
     quality_score: float = Field(ge=0, le=1)
     freshness_score: float = Field(ge=0, le=1)
     tags: list[str] = Field(default_factory=list)
@@ -283,6 +292,7 @@ class DatasetPatchRequest(BaseModel):
     source_system: Optional[str] = None
     sensitivity: Optional[str] = None
     update_frequency: Optional[str] = None
+    license: Optional[str] = None
     quality_score: Optional[float] = None
     freshness_score: Optional[float] = None
     tags: Optional[list[str]] = None

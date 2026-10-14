@@ -47,9 +47,21 @@ def enterprise_kpi_framework() -> KPIFramework:
                 label="Metadata completeness",
                 decision_question="Are buyer priority datasets complete enough for diligence and analyst use?",
                 definition="Share of priority datasets with owner, steward, schema, lineage, quality, freshness, license, and sensitivity present.",
-                target=">=90 percent display coverage",
+                # This target was published with ``status: implemented`` while
+                # nothing in the code compared anything to 0.90 - the only
+                # thresholds in the evidence path were 0.95 on
+                # ``metadata_validation_pass_rate`` (a different, stricter
+                # measure: the share of datasets with *no* missing field) and
+                # 0.7 on ontology coverage. A target nothing compares to is not
+                # a gate. ``/enterprise/evidence-pack`` now measures and gates
+                # this one, so the number and the target meet.
+                target=">=90 percent mean metadata_completeness across datasets",
                 cadence="dataset onboarding review",
-                source_endpoints=["/catalog/datasets/{dataset_id}/validate", "/catalog/datasets/{dataset_id}/lineage"],
+                source_endpoints=[
+                    "/catalog/datasets/{dataset_id}/validate",
+                    "/catalog/datasets/{dataset_id}",
+                    "/enterprise/evidence-pack",
+                ],
                 owner="data steward",
                 guardrails=["Completeness must not hide failed validation.", "Deprecated datasets stay visible with status."],
                 status="implemented",

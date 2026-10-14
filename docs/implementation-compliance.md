@@ -301,6 +301,15 @@ seed의 `security` subject는 `platform-admin`도 들고 있어 여전히 previe
   선언하며, verify 경로에도 같은 카운터를 노출합니다(상한이 권한 결과를 바꿀 수 있으므로).
   증빙: `tests/test_oidc_preview_boundary.py` (13건).(group 이름, 부여한 tenant scope, 부여된 role)와 `audit_event_id`를 반환하고 `enterprise/auth/oidc` resource audit event를 남긴다. `sso_oidc_adapter` control은 이로써 `implemented`가 되고 `GET /enterprise/controls`의 `planned_controls`는 0, `status`는 `pilot_ready`가 된다.
 - `GET /enterprise/evidence-pack`: metadata validation, SHACL-compatible validation, steward queue, ontology mapping coverage, policy/audit counts, controls, KPI ids, proof endpoints.
+  - **정정(게시 수치/계약 4건)**: (1) 감사·정책 카운트가 `list_*(limit=500)`의 `len()`이어서 700건을
+    500으로 보고(세 표면) — 실제 카운트 + `*_is_lower_bound`, 그리고 이 모양을 AST로 열거하는 검사.
+    (2) `_add_tenant_column`이 컬럼 존재 시 backfill 전에 반환해 반쯤 적용된 마이그레이션이 영구히
+    복구되지 않음(ALTER만 하는 빌드가 먼저 출시됨) — 매번 실행되는 idempotent backfill.
+    (3) `license`를 create/patch로 설정할 수 없었고 `register_dataset`도 무시 — request 필드를
+    펼쳐 생성 + 전 필드 forwarding 기계 검사. (4) `metadata_completeness` target(≥90%)을 비교하는
+    코드가 없었음 — `mean_metadata_completeness` 측정 + 게이트. 증빙:
+    `tests/test_honest_metrics.py` (+3건), `tests/test_api.py` (+2건),
+    `tests/test_catalog_field_forwarding.py` (34건).
   - **정정(SQL 게이트 4건)**: (1) 토큰이 `$`·0x80+ 에서 끊겨 `FROM customer$pii_raw`가 경고 0건
     (parsed `['customer']`)으로 통과 — PostgreSQL identifier continuation 전체를 포함하도록 확장.
     (2) 함수 allowlist 부재로 `pg_terminate_backend(12345)`·`pg_sleep(100000)`·`pg_reload_conf()`가

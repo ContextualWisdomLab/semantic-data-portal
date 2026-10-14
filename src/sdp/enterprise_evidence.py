@@ -11,8 +11,8 @@ from sdp_core import (
     enterprise_readiness_manifest,
 )
 
-from .catalog import list_audit_events, list_datasets, validate_metadata
-from .evidence import list_policy_decisions
+from .catalog import count_audit_events, list_audit_events, list_datasets, validate_metadata
+from .evidence import count_policy_decisions, list_policy_decisions
 from .ontology import canonical_concept_or_none, list_concepts
 from .semantic_validation import enterprise_shacl_validation_summary
 from .steward_review import build_steward_review_summary
@@ -22,6 +22,24 @@ def _ratio(numerator: int, denominator: int) -> float:
     if denominator == 0:
         return 0.0
     return round(numerator / denominator, 3)
+
+
+def _mean_metadata_completeness() -> float:
+    """The number behind the ``metadata_completeness`` KPI's own target.
+
+    That KPI published ``target: ">=90 percent display coverage"`` with
+    ``status: implemented`` while nothing in the code compared anything to 0.90.
+    The two thresholds that existed were 0.95 on
+    ``metadata_validation_pass_rate`` - the share of datasets with *no* missing
+    field, which is a different and stricter measure - and 0.7 on ontology
+    coverage. A target nothing compares to is not a gate.
+    """
+    datasets = list_datasets()
+    if not datasets:
+        return 0.0
+    return round(
+        sum(dataset.metadata_completeness for dataset in datasets) / len(datasets), 3
+    )
 
 
 def _metadata_validation_pass_rate() -> float:
@@ -140,6 +158,10 @@ def build_enterprise_evidence_pack() -> dict[str, Any]:
     datasets = list_datasets()
     audit_events = list_audit_events(limit=500)
     policy_decisions = list_policy_decisions(limit=500)
+    # Real counts, not the size of the page above. See
+    # ``catalog.count_audit_events``.
+    audit_event_count, audit_count_is_lower_bound = count_audit_events()
+    policy_decision_count, policy_count_is_lower_bound = count_policy_decisions()
 
     return {
         "product": readiness.product,
@@ -148,6 +170,7 @@ def build_enterprise_evidence_pack() -> dict[str, Any]:
         "dataset_count": len(datasets),
         "demo_seed_datasets": [dataset.id for dataset in demo_plan.demo_datasets],
         "metadata_validation_pass_rate": _metadata_validation_pass_rate(),
+        "mean_metadata_completeness": _mean_metadata_completeness(),
         "shacl_validation_pass_rate": shacl_validation["validation_pass_rate"],
         "steward_review_queue_count": steward_review["review_queue_count"],
         "steward_buyer_handoff_ready": steward_review["buyer_handoff_ready"],
@@ -156,8 +179,11 @@ def build_enterprise_evidence_pack() -> dict[str, Any]:
             for key, value in ontology_mapping_coverage_detail().items()
             if key != "unregistered_mapping_concepts"
         },
-        "policy_decision_count": len(policy_decisions),
-        "audit_event_count": len(audit_events),
+        "policy_decision_count": policy_decision_count,
+        "audit_event_count": audit_event_count,
+        # Declared rather than silently wrong, if the ceiling is ever reached.
+        "policy_decision_count_is_lower_bound": policy_count_is_lower_bound,
+        "audit_event_count_is_lower_bound": audit_count_is_lower_bound,
         "production_demo_release_ready": production.demo_release_ready,
         "production_paid_pilot_ready": production.paid_pilot_ready,
         "production_paid_pilot_blockers": len(production.paid_pilot_blockers),
@@ -181,6 +207,9 @@ def build_enterprise_evidence_pack() -> dict[str, Any]:
         ),
         "saleability_gates": {
             "metadata_validation_pass_rate": "pass" if _metadata_validation_pass_rate() >= 0.95 else "gap",
+            # The KPI of this id publishes ">=90 percent"; this is the
+            # comparison that was missing.
+            "metadata_completeness": "pass" if _mean_metadata_completeness() >= 0.90 else "gap",
             "shacl_validation_pass_rate": "pass" if shacl_validation["validation_pass_rate"] >= 0.95 else "gap",
             "steward_review_queue": "pass" if steward_review["buyer_handoff_ready"] else "needs_review",
             "ontology_mapping_coverage": "pass" if _ontology_mapping_coverage() >= 0.7 else "gap",

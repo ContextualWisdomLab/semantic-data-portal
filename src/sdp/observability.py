@@ -18,8 +18,8 @@ from anyio import to_thread
 
 from sdp_core import enterprise_controls_manifest
 
-from .catalog import list_audit_events, list_datasets
-from .evidence import list_policy_decisions
+from .catalog import count_audit_events, list_audit_events, list_datasets
+from .evidence import count_policy_decisions, list_policy_decisions
 
 
 _REQUEST_OBSERVATIONS: deque[dict[str, Any]] = deque(maxlen=500)
@@ -602,6 +602,8 @@ def build_observability_manifest() -> dict[str, Any]:
     datasets = list_datasets()
     audit_events = list_audit_events(limit=500)
     policy_decisions = list_policy_decisions(limit=500)
+    audit_event_count, audit_count_is_lower_bound = count_audit_events()
+    policy_decision_count, policy_count_is_lower_bound = count_policy_decisions()
     controls = enterprise_controls_manifest()
     request_observations = list_request_observations(limit=25)
     export_errors = list_observability_export_errors()
@@ -629,8 +631,12 @@ def build_observability_manifest() -> dict[str, Any]:
         },
         "metrics": {
             "catalog_datasets_total": len(datasets),
-            "audit_events_observed_total": len(audit_events),
-            "policy_decisions_observed_total": len(policy_decisions),
+            # Real counts; these were ``len()`` of the 500-row page above and
+            # reported 500 for 700 events on three published surfaces.
+            "audit_events_observed_total": audit_event_count,
+            "policy_decisions_observed_total": policy_decision_count,
+            "audit_events_observed_total_is_lower_bound": audit_count_is_lower_bound,
+            "policy_decisions_observed_total_is_lower_bound": policy_count_is_lower_bound,
             "enterprise_controls_implemented": controls.implemented_controls,
             "enterprise_controls_planned": controls.planned_controls,
             "enterprise_controls_external": controls.external_controls,

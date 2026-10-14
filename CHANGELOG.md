@@ -17,7 +17,7 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                    853 passed, 11 skipped
+    pytest                    892 passed, 11 skipped
     pytest (역방향/난수 순서)  순서 무관 통과 (역순 + seed 11/29/77)
     pytest tests/fuzz          11 passed
     python -m sdp.demo_smoke   exit 0, "ready": true
@@ -90,6 +90,13 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
   수 없으므로 단조 카운터를 함께 추가했습니다.
 
 ### Fixed — 문서화된 워크플로가 실제로 동작하지 않던 것들
+- **반쯤 적용된 tenant 마이그레이션이 영구히 복구되지 않았습니다.** `_add_tenant_column`이
+  컬럼이 이미 있으면 **자기 backfill 전에** 반환했습니다. 이 메서드는 ALTER만 하는 형태로 먼저
+  출시되었으니, 그 빌드로 업그레이드된 SQLite 원장은 전부 컬럼이 있고 backfill이 영원히 돌지
+  않습니다. 측정(payload에 복구 가능한 tenant가 있는 원장): 현재 스토어로 열어도
+  `['unresolved']` — 소유 테넌트의 감사자가 모든 과거 행을 잃습니다. SQLite는 문서화된
+  데모/파일럿 배포(영속 볼륨)이므로 정확히 이 in-place 업그레이드 경우입니다. backfill이 매번
+  돌고 미복구 행만 건드리므로 idempotent이며, 복구 불가한 행은 `unresolved`로 남습니다.
 - **drafter가 자기 validator가 거부하는 SQL을 내보냈습니다**(이 부류 세 번째). source table
   이름이 SQL 절 키워드(`order` 등 24개)와 겹치면 파서가 테이블 목록을 벗어나 `None`을 반환하고
   validator가 `unauthorized_table_reference`로 거부합니다 — 측정: draft **200** → execute
@@ -183,6 +190,19 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
   다시 걸되 claim을 놓아 주므로 복구가 영구히 막히지 않습니다.
 
 ### Changed — 정직한 측정
+- **거버넌스 카운트가 자기 페이지 크기였습니다.** `sdp_request_observations_total`은 이미
+  고쳤는데 감사·정책 gauge는 같은 방식으로 읽혀 남아 있었습니다. 측정(거버닝 mutation 700건):
+  실제 700 → `/metrics` **500**, `/enterprise/evidence-pack` **500**,
+  `/enterprise/observability` **500**. 세 표면 모두 `list_*(limit=500)`의 `len()`입니다. 실제
+  카운트로 바꾸고, 상한 도달 시 값이 아니라 하한으로 게시합니다. 다음 사례는 **AST 검사**가
+  잡습니다 — `list_*(limit=N)`에서 대입된 변수의 `len()`이 `*_count`/`*_total`로 게시되는 모양.
+- **`license`를 어떤 API 경로로도 설정할 수 없었습니다.** 두 request 모델에 필드가 없어 값이
+  조용히 버려졌습니다(create `CC-BY-4.0` → `internal`, patch `MIT` → `internal`, 시드 전체
+  `internal`). 노출만으로는 부족했습니다: `register_dataset`이 필드를 손으로 나열해 새 필드를 또
+  무시했습니다. request 필드를 펼쳐 생성하고 **전 필드 forwarding을 기계적으로** 검사합니다.
+- **`metadata_completeness` KPI의 target을 비교하는 코드가 없었습니다.** `>=90 percent` +
+  `status: implemented`인데 0.90 비교가 어디에도 없었습니다(있던 임계값은 다른 측정의 0.95와
+  ontology의 0.7). `mean_metadata_completeness`를 측정해 게이트합니다.
 - **가정적 판정이 실제 접근 시도처럼 기록**되었습니다. `POST /policy/decision`은 "이 subject라면
   정책이 뭐라고 할까"에 답하는 것이 목적이므로 `subject`는 의도적으로 호출자 지정입니다. 그런데
   그 가정적 답이 **라벨 없이** 증빙 원장에 저장되었고, 지목된 subject에 귀속되며, **누가 물었는지는

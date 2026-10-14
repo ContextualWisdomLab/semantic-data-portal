@@ -715,26 +715,25 @@ def register_dataset(
         raise ValueError("dataset already exists")
 
     now = datetime.now(timezone.utc)
+    # Built from the request's own fields rather than a hand-written list of
+    # them. The hand-written version silently dropped ``license``: ``Dataset``
+    # has carried the field all along, ``DatasetCreateRequest`` did not expose
+    # it, and when it was exposed this constructor still ignored it - so a
+    # ``POST`` naming a licence answered 200 and stored the default. A catalog
+    # whose licence cannot be set is missing the field a diligence reader checks
+    # first, and ``metadata_completeness``'s own definition counts it.
+    #
+    # ``DatasetCreateRequest``'s fields are a strict subset of ``Dataset``'s
+    # (asserted by ``tests/test_catalog_field_forwarding.py``), so the spread is
+    # exact rather than lenient, and a field added to the request in future
+    # reaches the stored dataset without a second edit here.
     dataset = Dataset(
+        **{
+            key: value
+            for key, value in payload.model_dump().items()
+            if key != "id"
+        },
         id=dataset_id,
-        tenant_id=payload.tenant_id,
-        title=payload.title,
-        description=payload.description,
-        owner=payload.owner,
-        steward=payload.steward,
-        domain=payload.domain,
-        source_system=payload.source_system,
-        sensitivity=payload.sensitivity,
-        update_frequency=payload.update_frequency,
-        quality_score=payload.quality_score,
-        freshness_score=payload.freshness_score,
-        tags=list(payload.tags),
-        terms=list(payload.terms),
-        related_datasets=list(payload.related_datasets),
-        schema=list(payload.schema),
-        distributions=list(payload.distributions),
-        mappings=list(payload.mappings),
-        profile=dict(payload.profile),
         status="registered",
         created_at=now,
         updated_at=now,
@@ -889,6 +888,42 @@ def list_audit_events(
 
     events = sorted(events, key=lambda row: row.created_at, reverse=True)
     return events[:limit]
+
+
+# A published count must not be the size of the page it was read from.
+#
+# ``sdp_request_observations_total`` had this defect and was fixed; the audit and
+# policy gauges were read the same way and were left behind. Measured with 700
+# governed mutations in the ledger::
+#
+#     catalog._AUDIT_LOG                              700
+#     /metrics sdp_audit_events_observed_total         500
+#     /enterprise/evidence-pack audit_event_count      500
+#     /enterprise/observability audit_events_observed  500
+#
+# Three published surfaces reported 500 for 700 events, because each read
+# ``list_*(limit=500)`` and took ``len()`` of the page. A counter that cannot
+# exceed its page is not a counter, and these are the numbers a buyer's
+# procurement reader uses to judge whether the governance trail is real.
+#
+# The ceiling exists because the store-backed path needs a bound, and a count
+# that hits it is published as a **lower bound** rather than as the count - the
+# same rule the rest of this product follows for a truncated list.
+EVIDENCE_COUNT_CEILING = 100_000
+
+
+def count_audit_events(
+    *, resource: str | None = None, tenant_ids: list[str] | None = None
+) -> tuple[int, bool]:
+    """How many audit events exist in scope, and whether that is a lower bound.
+
+    Scoped exactly as :func:`list_audit_events` scopes its page, so the count
+    and the page agree about what they are counting.
+    """
+    events = list_audit_events(
+        limit=EVIDENCE_COUNT_CEILING, resource=resource, tenant_ids=tenant_ids
+    )
+    return len(events), len(events) >= EVIDENCE_COUNT_CEILING
 
 
 def get_dataset_audit_events(

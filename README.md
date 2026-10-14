@@ -179,6 +179,37 @@ drift(코드와 일치하지 않는 게시된 주장)이기 때문입니다. `te
   하이픈이 SQL에 닿지 않게 하는 기존 계약도 있습니다). 대신 `emitted_identifiers`로 **보고**하고,
   변환이 다른 선언 컬럼과 충돌해 **모호하면 거부**합니다(매핑이 injective가 아니므로 엉뚱한 컬럼을
   집계할 수 있었습니다).
+**게시된 수치/계약 4건 수리.**
+
+- **거버넌스 카운트가 페이지 크기였습니다.** `sdp_request_observations_total`은 이미 고쳤지만 감사·정책
+  gauge는 같은 방식으로 읽히고 있었습니다. 측정(원장에 거버닝 mutation 700건): `catalog._AUDIT_LOG`
+  700, 그런데 `/metrics` `sdp_audit_events_observed_total` **500**,
+  `/enterprise/evidence-pack` `audit_event_count` **500**, `/enterprise/observability` **500** —
+  세 표면 모두 `list_*(limit=500)`의 `len()`이었습니다. 자기 페이지를 넘을 수 없는 카운터는 카운터가
+  아니며, 이 숫자는 구매자가 거버넌스 추적이 실재하는지 판단하는 근거입니다. 실제 카운트를 쓰고,
+  상한에 도달하면 값이 아니라 **하한**으로 게시합니다(`*_is_lower_bound`). 다음 사례는 AST 검사가
+  잡습니다 — `list_*(limit=N)`에서 대입된 변수의 `len()`이 `*_count`/`*_total` 키로 게시되는 모양을
+  열거합니다.
+- **반쯤 적용된 tenant 마이그레이션이 영구히 복구되지 않았습니다.** `_add_tenant_column`이 컬럼이
+  이미 있으면 **자기 backfill 전에** 반환했습니다. 이 메서드는 ALTER만 하는 형태로 먼저 출시되었으므로
+  그 빌드로 업그레이드된 SQLite 원장은 전부 컬럼이 있는 상태이고 backfill이 영원히 돌지 않습니다
+  (ALTER와 UPDATE 사이에서 죽은 프로세스도 같은 상태). 측정(payload에 복구 가능한 tenant가 있는
+  원장): 현재 스토어로 열어도 `['unresolved']` 그대로 — 소유 테넌트의 감사자가 모든 과거 행을
+  잃습니다. SQLite는 문서화된 데모/파일럿 배포(영속 볼륨)이므로 바로 이 in-place 업그레이드
+  경우입니다. 이제 backfill이 매번 돌고(미복구 행만 건드리므로 idempotent), 두 가지 tenant 표기를
+  모두 복구합니다.
+- **`license`를 어떤 API 경로로도 설정할 수 없었습니다.** `Dataset`은 처음부터 이 필드를 갖고
+  있었지만 두 request 모델에 없어 값이 조용히 버려졌습니다 — 측정: create에 `CC-BY-4.0`을 보내도
+  `internal`, patch에 `MIT`를 보내도 `internal`, 시드 전체가 `internal`. 데이터 카탈로그에서
+  라이선스는 diligence 독자가 가장 먼저 확인하는 필드이고, `metadata_completeness` KPI 정의가
+  세는 필드 목록에도 들어 있습니다. 노출만으로는 부족했습니다: `register_dataset`이 필드를 손으로
+  나열해 생성했기 때문에 새 필드를 또 무시했습니다. 이제 request의 필드를 그대로 펼쳐 생성하고,
+  **모든 request 필드가 저장 모델에 도달하는지 기계적으로** 검사합니다.
+- **`metadata_completeness` KPI의 target을 아무것도 비교하지 않았습니다.**
+  `target: ">=90 percent display coverage"`, `status: implemented`인데 코드에 0.90 비교가
+  없었습니다(증빙 경로의 임계값은 `metadata_validation_pass_rate` 0.95 — 더 엄격한 다른 측정 —
+  과 ontology coverage 0.7뿐). 비교하지 않는 target은 게이트가 아닙니다.
+  `/enterprise/evidence-pack`이 `mean_metadata_completeness`를 측정해 0.90으로 게이트합니다.
 REST connector secret은 `SDP_CONNECTOR_SECRET_REF_PREFIX=SDP_CONNECTOR_SECRET_` 기준의 env secret reference로 조회합니다. 예: `SDP_CONNECTOR_SECRET_REST_CONNECTOR_MARKETING_CAMPAIGN_TOKEN` 값은 presence만 검증하며 API 응답에는 노출하지 않습니다.
 OIDC token verification은 `SDP_OIDC_ISSUER`, `SDP_OIDC_AUDIENCE`, `SDP_OIDC_JWKS_URL`(또는 JWKS 문서를 그대로 담는 `SDP_OIDC_JWKS`), `SDP_OIDC_GROUP_ROLE_MAP`를 사용합니다. 이 네 가지는 **operator 설정 전용**입니다. `POST /enterprise/auth/oidc-verify`의 body는 `token` 하나만 받고, `issuer`·`audience`·`jwks`·`role_map`이 body에 오면 400으로 거절합니다 — 호출자가 자기 토큰의 신뢰 기준을 지정할 수 있으면 스스로 서명한 토큰으로 임의 tenant의 platform-admin을 발급받을 수 있기 때문입니다.
 `SDP_OIDC_GROUP_ROLE_MAP`은 두 가지 형태를 받습니다. flat `{"group": ["role"]}`은 모든 tenant에 적용되는 wildcard scope(`*`)가 되고, tenant scoped `{"tenant": {"group": ["role"]}}`은 해당 tenant에만 적용됩니다. 같은 group이 두 scope에 모두 있으면 tenant scope가 wildcard를 대체하므로, tenant scope에 빈 role 목록을 쓰면 wildcard 부여를 해당 tenant에서만 회수할 수 있습니다. 두 형태를 한 map에 섞으면 tenant 식별자를 group 이름으로 잘못 읽는 설정 오류이므로 요청이 400으로 거절됩니다.

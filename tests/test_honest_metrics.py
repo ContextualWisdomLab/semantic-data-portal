@@ -568,3 +568,130 @@ def test_only_one_of_many_concurrent_callers_probes(monkeypatch: pytest.MonkeyPa
     for thread in threads:
         thread.join(timeout=5)
     assert attempts["n"] == 1, "a second caller probed while the first was in flight"
+
+
+# --------------------------------------------------------------------------- #
+# A published count must not be the size of the page it was read from.
+#
+# ``sdp_request_observations_total`` had this defect and was fixed; the audit and
+# policy gauges were read the same way and were left behind. Measured with 700
+# governed mutations in the ledger:
+#
+#     catalog._AUDIT_LOG                               700
+#     /metrics sdp_audit_events_observed_total          500
+#     /enterprise/evidence-pack audit_event_count       500
+#     /enterprise/observability audit_events_observed   500
+#
+# Three published surfaces reported 500 for 700 events, each taking ``len()`` of
+# a ``list_*(limit=500)`` page. These are the numbers a procurement reader uses
+# to judge whether the governance trail is real.
+# --------------------------------------------------------------------------- #
+
+
+def _flood_audit_events(count: int) -> int:
+    from sdp import catalog
+
+    for index in range(count):
+        catalog.ingest_event(
+            event_type="probe.event",
+            actor="admin",
+            dataset_id="crm-event",
+            decision="allowed",
+            reason="probe",
+            decision_id=f"count-probe-{index}",
+            details={},
+        )
+    return len(catalog._AUDIT_LOG)
+
+
+def test_the_audit_gauge_exceeds_the_page_it_is_read_from() -> None:
+    real = _flood_audit_events(700)
+    assert real >= 700, real
+
+    metrics = {
+        line.split()[0]: float(line.split()[1])
+        for line in client.get("/metrics").text.splitlines()
+        if line and not line.startswith("#") and len(line.split()) == 2
+    }
+    assert metrics["sdp_audit_events_observed_total"] == real, metrics
+
+    pack = client.get("/enterprise/evidence-pack").json()
+    assert pack["audit_event_count"] == real, pack["audit_event_count"]
+    assert pack["audit_event_count_is_lower_bound"] is False
+
+    observability = client.get("/enterprise/observability").json()["metrics"]
+    assert observability["audit_events_observed_total"] == real
+
+
+def test_a_saturated_count_is_declared_a_lower_bound(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The ceiling exists for the store-backed path; hitting it must not lie.
+
+    A count that reaches its bound is published as a lower bound rather than as
+    the count - the rule this product applies to every truncated list.
+    """
+    from sdp import catalog
+
+    _flood_audit_events(20)
+    monkeypatch.setattr(catalog, "EVIDENCE_COUNT_CEILING", 5)
+    count, is_lower_bound = catalog.count_audit_events()
+    assert count == 5
+    assert is_lower_bound is True
+
+
+def test_no_published_count_is_the_length_of_a_paged_read() -> None:
+    """The enumeration that catches the next instance, by AST rather than by eye.
+
+    The defect shape is: a variable assigned from ``list_*(..., limit=N)`` whose
+    ``len()`` is then published under a ``*_count`` or ``*_total`` key. It has
+    now appeared three times (request observations, audit events, policy
+    decisions) and been fixed twice, each time for the surface that was
+    reported.
+    """
+    import ast
+    import pathlib
+
+    source_root = pathlib.Path(__file__).resolve().parents[1] / "src"
+    offenders: list[str] = []
+
+    for path in source_root.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        paged: set[str] = set()
+        for node in ast.walk(tree):
+            # X = list_something(..., limit=...)
+            if (
+                isinstance(node, ast.Assign)
+                and isinstance(node.value, ast.Call)
+                and any(kw.arg == "limit" for kw in node.value.keywords)
+            ):
+                callee = node.value.func
+                name = getattr(callee, "id", None) or getattr(callee, "attr", None) or ""
+                if name.startswith("list_"):
+                    for target in node.targets:
+                        if isinstance(target, ast.Name):
+                            paged.add(target.id)
+        if not paged:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Dict):
+                continue
+            for key, value in zip(node.keys, node.values):
+                if not isinstance(key, ast.Constant) or not isinstance(key.value, str):
+                    continue
+                if not (key.value.endswith("_count") or key.value.endswith("_total")):
+                    continue
+                if (
+                    isinstance(value, ast.Call)
+                    and getattr(value.func, "id", "") == "len"
+                    and value.args
+                    and isinstance(value.args[0], ast.Name)
+                    and value.args[0].id in paged
+                ):
+                    offenders.append(
+                        f"{path.relative_to(source_root)}:{key.lineno} "
+                        f"{key.value} = len({value.args[0].id}) (a paged read)"
+                    )
+
+    assert not offenders, (
+        "these published counts are the size of the page they were read from, "
+        f"so they saturate instead of counting: {offenders}"
+    )

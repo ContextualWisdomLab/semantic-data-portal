@@ -150,6 +150,22 @@ def list_policy_decisions(
     return decisions[:limit]
 
 
+def count_policy_decisions(
+    *, resource: str | None = None, tenant_ids: list[str] | None = None
+) -> tuple[int, bool]:
+    """How many policy decisions exist in scope, and whether that is a lower bound.
+
+    See ``catalog.count_audit_events`` for the measurement that made the
+    published gauges wrong: both were ``len()`` of a 500-row page.
+    """
+    from .catalog import EVIDENCE_COUNT_CEILING
+
+    decisions = list_policy_decisions(
+        resource=resource, limit=EVIDENCE_COUNT_CEILING, tenant_ids=tenant_ids
+    )
+    return len(decisions), len(decisions) >= EVIDENCE_COUNT_CEILING
+
+
 def list_persisted_policy_decisions(
     *, resource: str | None = None, limit: int = 100, tenant_ids: list[str] | None = None
 ) -> list[PolicyDecision]:
