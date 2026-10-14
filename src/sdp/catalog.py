@@ -702,6 +702,36 @@ def get_dataset_schema_diff(dataset_id: str, from_version: str, to_version: str)
     }
 
 
+# CAT-005's acceptance criterion names four things a catalog-write audit row
+# must carry: the before/after diff, the actor, the timestamp and the **reason**.
+# The first three were recorded; the reason was not. ``_build_dataset_payload``
+# hardcodes ``reason="ok"`` - which is the row's *outcome*, not the caller's
+# reason for the change - and only ``deprecate`` accepted one at all. Measured
+# before this:
+#
+#     PATCH /catalog/datasets/{id} {"reason": "buyer audit reason"}
+#       -> 200, details keys: after, before, changes, tenant_id  (no reason)
+#
+# A caller's reason was accepted with 200 and dropped, because the request
+# models declare no such field and pydantic ignores an extra one.
+#
+# The reason is read from the raw request payload rather than added to
+# ``DatasetCreateRequest``/``DatasetPatchRequest`` deliberately: it is metadata
+# *about* the change, not dataset state, and those models' fields are a strict
+# subset of ``Dataset``'s - an invariant ``tests/test_catalog_field_forwarding``
+# asserts and a ``reason`` field would break.
+#
+# The key is published even when no reason was given, as ``None``. Omitting it
+# would leave a reader unable to tell "the caller gave no reason" from "this
+# surface does not record one", which is the distinction the row exists to make.
+CHANGE_REASON_DETAIL_KEY = "change_reason"
+
+
+def change_reason_details(change_reason: str | None) -> dict[str, Any]:
+    """The audit-detail fragment carrying a caller-supplied change reason."""
+    return {CHANGE_REASON_DETAIL_KEY: change_reason}
+
+
 def _build_dataset_payload(
     dataset: Dataset,
     *,
@@ -803,10 +833,14 @@ def register_dataset(
     *,
     actor: str = "system",
     decision_id: str | None = None,
+    change_reason: str | None = None,
 ) -> Dataset:
     with _MUTATION_LOCK:
         return _register_dataset_locked(
-            payload, actor=actor, decision_id=decision_id
+            payload,
+            actor=actor,
+            decision_id=decision_id,
+            change_reason=change_reason,
         )
 
 
@@ -815,6 +849,7 @@ def _register_dataset_locked(
     *,
     actor: str = "system",
     decision_id: str | None = None,
+    change_reason: str | None = None,
 ) -> Dataset:
     """Register one dataset. Call with the mutation lock held."""
     dataset_id = payload.id or _next_generated_dataset_id()
@@ -849,7 +884,15 @@ def _register_dataset_locked(
     dataset.recompute_scores()
     _DATA[dataset.id] = dataset
     _record_schema_snapshot(dataset)
-    _record_audit_event(_build_dataset_payload(dataset, actor=actor, action="dataset.register", decision_id=decision_id))
+    _record_audit_event(
+        _build_dataset_payload(
+            dataset,
+            actor=actor,
+            action="dataset.register",
+            decision_id=decision_id,
+            details=change_reason_details(change_reason),
+        )
+    )
     return dataset
 
 
@@ -859,10 +902,15 @@ def patch_dataset(
     *,
     actor: str = "system",
     decision_id: str | None = None,
+    change_reason: str | None = None,
 ) -> Dataset:
     with _MUTATION_LOCK:
         return _patch_dataset_locked(
-            dataset_id, patch, actor=actor, decision_id=decision_id
+            dataset_id,
+            patch,
+            actor=actor,
+            decision_id=decision_id,
+            change_reason=change_reason,
         )
 
 
@@ -872,6 +920,7 @@ def _patch_dataset_locked(
     *,
     actor: str = "system",
     decision_id: str | None = None,
+    change_reason: str | None = None,
 ) -> Dataset:
     """Apply one patch. Call with the mutation lock held."""
     dataset = get_dataset_or_404(dataset_id)
@@ -901,7 +950,13 @@ def _patch_dataset_locked(
                 actor=actor,
                 decision_id=decision_id,
                 action="dataset.patch",
-                details={"changes": {}, "before": {}, "after": {}, "noop": True},
+                details={
+                    "changes": {},
+                    "before": {},
+                    "after": {},
+                    "noop": True,
+                    **change_reason_details(change_reason),
+                },
             )
         )
         return dataset
@@ -925,6 +980,7 @@ def _patch_dataset_locked(
                 "changes": audited_patch_values(effective),
                 "before": audited_patch_values({k: before[k] for k in effective}),
                 "after": audited_patch_values({k: data[k] for k in effective}),
+                **change_reason_details(change_reason),
             },
         )
     )
@@ -936,10 +992,14 @@ def publish_dataset(
     *,
     actor: str = "system",
     decision_id: str | None = None,
+    change_reason: str | None = None,
 ) -> Dataset:
     with _MUTATION_LOCK:
         return _publish_dataset_locked(
-            dataset_id, actor=actor, decision_id=decision_id
+            dataset_id,
+            actor=actor,
+            decision_id=decision_id,
+            change_reason=change_reason,
         )
 
 
@@ -948,6 +1008,7 @@ def _publish_dataset_locked(
     *,
     actor: str = "system",
     decision_id: str | None = None,
+    change_reason: str | None = None,
 ) -> Dataset:
     """Publish one dataset. Call with the mutation lock held."""
     dataset = get_dataset_or_404(dataset_id)
@@ -962,7 +1023,11 @@ def _publish_dataset_locked(
                 actor=actor,
                 decision_id=decision_id,
                 action="dataset.publish",
-                details={"status": dataset.status, "noop": True},
+                details={
+                    "status": dataset.status,
+                    "noop": True,
+                    **change_reason_details(change_reason),
+                },
             )
         )
         return dataset
@@ -981,7 +1046,10 @@ def _publish_dataset_locked(
             actor=actor,
             decision_id=decision_id,
             action="dataset.publish",
-            details={"previous_status": dataset.status},
+            details={
+                "previous_status": dataset.status,
+                **change_reason_details(change_reason),
+            },
         )
     )
     return published
@@ -991,7 +1059,7 @@ def deprecate_dataset(
     dataset_id: str,
     *,
     actor: str = "system",
-    reason: str = "deprecated",
+    reason: str | None = None,
     decision_id: str | None = None,
 ) -> Dataset:
     with _MUTATION_LOCK:
@@ -1004,7 +1072,7 @@ def _deprecate_dataset_locked(
     dataset_id: str,
     *,
     actor: str = "system",
-    reason: str = "deprecated",
+    reason: str | None = None,
     decision_id: str | None = None,
 ) -> Dataset:
     """Deprecate one dataset. Call with the mutation lock held."""
@@ -1023,7 +1091,11 @@ def _deprecate_dataset_locked(
                 actor=actor,
                 decision_id=decision_id,
                 action="dataset.deprecate",
-                details={"status": dataset.status, "reason": reason, "noop": True},
+                details={
+                    "status": dataset.status,
+                    "noop": True,
+                    **change_reason_details(reason),
+                },
             )
         )
         return dataset
@@ -1042,7 +1114,7 @@ def _deprecate_dataset_locked(
             actor=actor,
             action="dataset.deprecate",
             decision_id=decision_id,
-            details={"reason": reason},
+            details=change_reason_details(reason),
         )
     )
     return deprecated

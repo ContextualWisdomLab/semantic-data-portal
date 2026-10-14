@@ -150,6 +150,37 @@ async def record_request_observability(request: Request, call_next):
         await record_request_observation_async(observation)
 
 
+def _change_reason(payload: dict[str, Any] | None) -> str | None:
+    """A caller-supplied reason for a catalog change, or ``None``.
+
+    CAT-005's acceptance criterion names the reason alongside the diff, the
+    actor and the timestamp, and only ``deprecate`` accepted one: a ``reason``
+    sent to ``POST /catalog/datasets`` or ``PATCH /catalog/datasets/{id}``
+    answered 200 and was dropped, because the request models declare no such
+    field and pydantic ignores an extra one.
+
+    Read from the raw payload rather than added to those models on purpose: a
+    change reason is metadata *about* the change, not dataset state, and the
+    models' fields are a strict subset of ``Dataset``'s - an invariant
+    ``tests/test_catalog_field_forwarding.py`` asserts and a ``reason`` field
+    would break.
+
+    Bounded and normalised here rather than at four call sites. A blank or
+    whitespace-only string is ``None``: "the caller sent an empty reason" and
+    "the caller sent none" are the same fact, and recording the first as a
+    reason would put an empty string where a ledger reader expects prose.
+    """
+    if not payload:
+        return None
+    reason = payload.get("reason")
+    if not isinstance(reason, str):
+        return None
+    reason = reason.strip()
+    if not reason:
+        return None
+    return reason[:MAX_CHANGE_REASON_CHARS]
+
+
 def _audit_refused_catalog_mutation(
     *, event_type: str, actor: str, dataset_id: str, decision: Any
 ) -> None:
@@ -191,6 +222,11 @@ def _audit_refused_catalog_mutation(
         decision_id=decision.decision_id,
         details={"purpose": "catalog", "policy_decision_id": decision.decision_id},
     )
+
+
+# A reason is prose for a human auditor, and the payload is caller-supplied, so
+# it is bounded like every other caller-supplied string this product retains.
+MAX_CHANGE_REASON_CHARS = 512
 
 
 def _actor(payload: dict[str, Any] | None) -> str:
@@ -1056,7 +1092,14 @@ def create_dataset(payload: dict[str, Any]) -> dict[str, Any]:
     # and a status change left a stale node.
     with catalog.catalog_mutation_lock():
         dataset = register_dataset(
-            request, actor=actor_id, decision_id=decision.decision_id
+            request,
+            actor=actor_id,
+            decision_id=decision.decision_id,
+            # CAT-005's acceptance criterion names a change reason. Read from
+            # the raw payload because it is metadata about the change, not
+            # dataset state: the request models' fields are a strict subset of
+            # ``Dataset``'s, and a ``reason`` field would break that.
+            change_reason=_change_reason(payload),
         )
         seed_dataset(dataset)
     return {"status": "created", "dataset": catalog.mutation_response_view(dataset)}
@@ -1086,7 +1129,10 @@ def publish_catalog_dataset(dataset_id: str, payload: dict[str, Any] | None = No
         # Mutation and mirror in one critical section; see the create route.
         with catalog.catalog_mutation_lock():
             dataset = publish_dataset(
-                dataset_id, actor=actor_id, decision_id=decision.decision_id
+                dataset_id,
+                actor=actor_id,
+                decision_id=decision.decision_id,
+                change_reason=_change_reason(payload),
             )
             seed_dataset(dataset)
     except KeyError as exc:
@@ -1121,7 +1167,11 @@ def patch_catalog_dataset(dataset_id: str, payload: dict[str, Any]) -> dict[str,
         # Mutation and mirror in one critical section; see the create route.
         with catalog.catalog_mutation_lock():
             dataset = patch_dataset(
-                dataset_id, request, actor=actor_id, decision_id=decision.decision_id
+                dataset_id,
+                request,
+                actor=actor_id,
+                decision_id=decision.decision_id,
+                change_reason=_change_reason(payload),
             )
             seed_dataset(dataset)
     except KeyError as exc:
@@ -1158,7 +1208,13 @@ def deprecate_catalog_dataset(dataset_id: str, payload: dict[str, str] | None = 
             dataset = deprecate_dataset(
                 dataset_id,
                 actor=actor_id,
-                reason=payload.get("reason", "deprecated"),
+                # ``payload.get("reason", "deprecated")`` before this, which
+                # turned "the caller gave no reason" into the literal reason
+                # "deprecated" - a reason the caller never gave, recorded as
+                # though they had. The other three verbs report ``None``, and a
+                # fabricated default is the one answer this surface must not
+                # give.
+                reason=_change_reason(payload),
                 decision_id=decision.decision_id,
             )
             seed_dataset(dataset)

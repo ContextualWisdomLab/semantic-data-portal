@@ -25,10 +25,47 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 77
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                    994 passed, 11 skipped
+    pytest                    1008 passed, 11 skipped
     pytest (역방향/난수 순서)  순서 무관 통과 (역순 + seed 11/707/31337)
     pytest tests/fuzz          11 passed
     python -m sdp.demo_smoke   exit 0, "ready": true
+
+### Security — 카탈로그 변경 사유가 기록되지 않았고, 하나는 날조되었습니다
+
+CAT-005의 수락 기준은 네 가지를 호명합니다: "변경 전후 diff, actor, timestamp,
+**reason** 기록". 앞의 셋은 기록되고 있었고 **사유는 기록되지 않았습니다**.
+`_build_dataset_payload`가 모든 카탈로그 쓰기에 `reason="ok"`를 하드코딩하는데 그것은
+행의 **결과**이고 호출자의 변경 사유가 아니며, 사유를 받는 경로는
+`POST .../deprecate` 하나뿐이었습니다. 측정:
+
+    PATCH /catalog/datasets/{id} {"reason": "buyer audit reason"}
+      -> 200, details 키: after, before, changes, tenant_id  (reason 없음)
+
+호출자의 사유가 200과 함께 **버려졌습니다** — 요청 모델이 그 필드를 선언하지 않고
+pydantic은 추가 키를 무시하기 때문입니다.
+
+이제 네 경로 전부 `details.change_reason`으로 기록합니다. 사유를 요청 모델에 추가하지
+않고 **원시 payload에서 읽는** 이유는, 그것이 변경에 **대한** 메타데이터이고 데이터셋
+상태가 아니기 때문입니다 — 요청 모델의 필드는 `Dataset` 필드의 **부분집합**이어야 하고
+(`tests/test_catalog_field_forwarding.py`가 단언합니다) `reason` 필드는 그 불변식을
+깨뜨립니다. 모델 밖에서 읽는 키는 문서에 선언해야 클라이언트가 보낼 수 있으므로
+`REQUEST_BODY_EXTRA_PROPERTIES`에 등록했습니다 — **request-contract 테스트가 바로 그
+누락을 잡았습니다**.
+
+키는 사유가 없을 때도 `None`으로 **게시합니다**. 생략하면 "호출자가 사유를 주지
+않았다"와 "이 표면은 사유를 기록하지 않는다"를 독자가 구별할 수 없고, 그 구별이 바로
+이 행이 존재하는 이유입니다.
+
+**이 작업에서 제 테스트가 날조된 기본값 하나를 잡았습니다.** `deprecate`는
+`payload.get("reason", "deprecated")`로 사유 없는 호출을 **문자열 "deprecated"** 라는
+사유로 바꿔 기록하고 있었습니다 — 호출자가 주지 않은 사유를 준 것처럼 적은 것이고,
+이 표면이 절대 하지 말아야 할 한 가지입니다. 네 경로 모두 `None`을 보고합니다.
+`deprecate`의 `details["reason"]`도 `change_reason`으로 통일했습니다 — 한 값에 두 키가
+있으면 한 키로 필터링하는 원장 독자가 넷 중 셋을 찾거나 하나만 찾습니다.
+
+빈 문자열·공백만·문자열 아님은 모두 `None`입니다("빈 사유를 보냈다"와 "사유를 보내지
+않았다"는 같은 사실이고, 전자를 사유로 기록하면 산문이 있어야 할 자리에 빈 문자열이
+들어갑니다). 512자 상한을 둡니다 — 호출자가 주는 값이고 행은 보존됩니다.
 
 ### Security — 거부된 카탈로그 변경이 감사 기록을 남기지 않았습니다
 

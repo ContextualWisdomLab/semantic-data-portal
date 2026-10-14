@@ -77,6 +77,18 @@ REQUEST_BODY_MODELS: dict[tuple[str, str], type[BaseModel]] = {
 # publish, so the next one cannot be forgotten.
 REQUEST_BODY_EXTRA_PROPERTIES: dict[tuple[str, str], dict[str, Any]] = {
     ("POST", "/catalog/datasets"): {
+        "reason": {
+            "type": "string",
+            "maxLength": 512,
+            "description": (
+                "이 변경의 사유. 모델 밖에서 읽혀 감사 행의 "
+                "`details.change_reason`으로 기록됩니다(CAT-005의 수락 기준). "
+                "모델 필드가 아닌 이유는 변경에 **대한** 메타데이터이고 데이터셋 "
+                "상태가 아니기 때문입니다 — 요청 모델의 필드는 `Dataset` 필드의 "
+                "부분집합이어야 합니다. 생략하거나 공백만 보내면 `None`으로 "
+                "기록됩니다(둘은 같은 사실입니다)."
+            ),
+        },
         "actor": {
             "type": "string",
             "description": (
@@ -86,6 +98,18 @@ REQUEST_BODY_EXTRA_PROPERTIES: dict[tuple[str, str], dict[str, Any]] = {
         }
     },
     ("PATCH", "/catalog/datasets/{dataset_id}"): {
+        "reason": {
+            "type": "string",
+            "maxLength": 512,
+            "description": (
+                "이 변경의 사유. 모델 밖에서 읽혀 감사 행의 "
+                "`details.change_reason`으로 기록됩니다(CAT-005의 수락 기준). "
+                "모델 필드가 아닌 이유는 변경에 **대한** 메타데이터이고 데이터셋 "
+                "상태가 아니기 때문입니다 — 요청 모델의 필드는 `Dataset` 필드의 "
+                "부분집합이어야 합니다. 생략하거나 공백만 보내면 `None`으로 "
+                "기록됩니다(둘은 같은 사실입니다)."
+            ),
+        },
         "actor": {
             "type": "string",
             "description": (
