@@ -56,6 +56,7 @@ from .domain import (
 )
 from .enterprise_evidence import build_enterprise_evidence_pack
 from .evidence import list_policy_decisions
+from .latency_budgets import latency_budget_report
 from .observability import (
     build_observability_manifest,
     build_request_observation,
@@ -217,6 +218,11 @@ def enterprise_rbac() -> dict[str, Any]:
 @app.get("/enterprise/observability")
 def enterprise_observability() -> dict[str, Any]:
     return build_observability_manifest()
+
+
+@app.get("/enterprise/latency-budgets")
+def enterprise_latency_budgets() -> dict[str, Any]:
+    return latency_budget_report()
 
 
 @app.get("/enterprise/production-readiness")

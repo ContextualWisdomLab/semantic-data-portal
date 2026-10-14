@@ -153,14 +153,19 @@ REQUIREMENT_COVERAGE: dict[str, RequirementCoverage] = {
             "test:tests/test_api.py::test_catalog_search_filter_by_quality",
         ],
         note=(
-            "Every search dimension the requirement names is filterable. Neither "
-            "half of the acceptance criterion holds, though: the search response "
-            "is {query, count, items} and carries no facet counts (facets are a "
-            "separate route, GET /catalog/facets), and no p95 latency is measured "
-            "or compared to the 2-second budget anywhere. The one latency figure "
-            "this repository does record is against it - src/sdp/catalog.py:468 "
+            "Every search dimension the requirement names is filterable. The "
+            "acceptance criterion is a different matter. Its facet half does "
+            "not hold: the search response is {query, count, items} and carries "
+            "no facet counts, which come from a separate route "
+            "(GET /catalog/facets). Its latency half - the same 2-second p95 "
+            "NFR-PERF-001 declares - is now measured, under the same one-sided "
+            "limitation recorded there: GET /enterprise/latency-budgets reports "
+            "a measured p95 for this surface and refutes the budget when it is "
+            "exceeded in-process, but an under-budget result does not establish "
+            "the deployed p95. The one latency figure this repository records "
+            "is what such a refutation looks like: src/sdp/catalog.py:468 "
             "measures 5.10s for a 2000-token query over 1005 datasets, which is "
-            "why the input is bounded rather than optimised."
+            "why the query length is bounded rather than optimised."
         ),
     ),
     "CAT-002": RequirementCoverage(
@@ -577,13 +582,33 @@ REQUIREMENT_COVERAGE: dict[str, RequirementCoverage] = {
         ),
     ),
     # --- NFR: performance --------------------------------------------------- #
+    # Each budget is declared in ``sdp.latency_budgets`` against the routes it
+    # governs and compared to a measured p95, which is why these are no longer
+    # ``not_implemented``. They are not ``implemented`` either: the measurement
+    # is one-sided. An in-process p95 is a lower bound on the deployed p95, so
+    # it can refute a budget and cannot confirm one - and the requirement is a
+    # statement about the deployment.
     **{
         f"NFR-PERF-{index:03d}": RequirementCoverage(
-            status="not_implemented",
+            status="partial",
+            evidence=[
+                "route:GET /enterprise/latency-budgets",
+                "func:sdp.latency_budgets.latency_budget_report",
+                "test:tests/test_latency_budget_measurement.py::test_no_declared_budget_is_refuted_in_process",
+                "test:tests/test_latency_budget_measurement.py::test_the_refutation_path_actually_fires",
+            ],
             note=(
-                "No latency target is measured or asserted anywhere. "
-                "/enterprise/observability publishes per-request latency for "
-                "requests it observed, but nothing compares it to a p95 budget."
+                "The budget is declared against the routes it governs and "
+                "compared to a measured nearest-rank p95 over successful "
+                "responses, with a minimum sample below which no verdict is "
+                "produced in either direction. What it cannot establish is the "
+                "requirement as stated: the observations come from one "
+                "in-process worker over in-memory stores and seed data, so the "
+                "measured p95 is a lower bound on a deployment's. The published "
+                "field is therefore `budget_refuted`, not `within_budget` - an "
+                "over-budget result is conclusive, an under-budget one is not. "
+                "Confirming a deployed p95 needs a load test against a deployed "
+                "instance, which is outside this repository."
             ),
         )
         for index in range(1, 7)

@@ -46,6 +46,20 @@ PYTHONPATH=src uvicorn sdp.api:app --reload
 `SDP_SQLITE_PATH=.local/sdp-evidence.sqlite3`를 지정하면 production credential 없이도 같은 evidence store protocol을 로컬 SQLite fallback으로 검증할 수 있습니다. `SDP_DATABASE_URL`이 있으면 Postgres가 SQLite보다 우선합니다.
 `SDP_LOG_SINK_URL=file:///data/sdp-requests.jsonl`(절대 경로, `file://` 뒤 authority 없이 슬래시 세 개)과 `SDP_REQUEST_ID_HEADER=X-Request-Id`를 지정하면 request id, tenant, actor, route, status, latency, evidence ids만 body 없이 request observation log로 기록됩니다. `file://.local/...`처럼 상대 경로로 보이는 값은 **거부됩니다** — authority가 경로로 접혀 들어가 파일시스템 루트(`//.local/...`)를 가리켰고, 컨테이너는 `USER 10001`로 `/data`만 쓸 수 있어 매 요청이 `PermissionError`로 실패하는데 manifest는 계속 `implemented`라고 보고했습니다. 이제 쓸 수 없는 설정은 `GET /enterprise/observability`가 `configured: false`와 `invalid_configuration` 사유로 보고합니다(설정값 자체는 공개하지 않습니다 — sink의 내부 호스트와 경로가 담겨 있습니다).
 http(s) sink도 지원합니다. URL에 credential을 담은 형태(`https://sdp-ingest:TOKEN@logs.example.net/loki/api/v1/push` — Loki·Elastic·서명 webhook의 문서화된 push URL 형태)는 userinfo를 URL에서 분리해 `Authorization` 헤더로 보냅니다(password가 있으면 `Basic`, token 하나면 `Bearer`; `@`·`:`를 담은 password는 percent-encoding). 이전에는 URL 전체를 `urllib`에 넘겨 userinfo가 연결 host로 남았고(`sdp-ingest:TOKEN@logs.example.net` → `InvalidURL: nonnumeric port`), 모든 export가 실패하는 동안 manifest는 `configured: true`로 보고했으며 예외 메시지가 authority를 인용해 credential이 export error ring에 남았습니다. host가 없거나 port가 숫자가 아닌 http sink도 이제 file sink와 같은 경로로 `configured: false` + `invalid_configuration`으로 보고합니다.
+`GET /enterprise/latency-budgets`는 PRD가 선언한 여섯 개 p95 예산(NFR-PERF-001~006)을
+그 예산이 적용되는 라우트에 묶어 두고, 이 워커가 실제로 관측한 성공 응답의 nearest-rank p95와
+비교합니다. 이전에는 미들웨어가 요청별 `latency_ms`를 기록하고 manifest가 그것을 공개하면서도
+어떤 코드도 예산을 호명하지 않았습니다 — 비교 대상이 없는 목표는 gate가 아닙니다.
+**측정은 단방향입니다.** 관측은 이 프로세스(in-memory store, seed 데이터, 단일 워커, 클라이언트와
+앱 사이에 네트워크 없음)에서 나오고, 배포에는 데이터베이스·실제 데이터셋 규모·동시성·네트워크 홉이
+더해져 요청이 느려지기만 합니다. 따라서 in-process p95는 배포 p95의 **하한**이고, 예산 초과는
+결정적이지만 예산 미달은 배포에 대해 아무것도 증명하지 않습니다. 그래서 공개하는 필드는
+`within_budget`이 아니라 `budget_refuted`이며, `budget_confirmation_possible: false`와 그 사유를
+함께 적습니다. 표본이 `minimum_sample`(20) 미만인 표면은 `insufficient_sample`로 보고하고
+**어느 방향으로도** 판정하지 않습니다 — 표본 몇 개의 p95는 이름만 백분위인 표본 최댓값입니다.
+공개되는 것은 라우트 **템플릿**뿐입니다(구체 경로에는 dataset id가 박혀 있어 manifest가 요청별
+피드를 withhold하는 것과 같은 경계입니다).
+
 `SDP_ALERT_WEBHOOK_URL`은 **선언만 되어 있고 구현되지 않았습니다**. 이 값을 읽는 코드는 `_sink_status`가 설정 여부(`alert_webhook_configured`)를 보고하는 한 곳뿐이고, 이 URL로 POST하는 코드도 `GET /enterprise/observability`가 공개하는 alert 조건을 평가하는 코드도 없습니다. 그래서 이 변수는 `required_environment`에서 빠지고 `declared_unimplemented_environment`로 이동했습니다 — 라우팅하지 않는 값을 설정해서 paid-pilot gate를 통과할 수 있으면 그 gate는 아무것도 측정하지 않습니다. 공개되는 alert 규칙은 삭제하지 않고(조건 자체는 올바르고 operator가 자기 모니터링 스택에 그대로 구현할 수 있습니다) `alert_evaluation: declared_not_evaluated`, 규칙별 `evaluated: false`, `alert_webhook_routing: declared_unimplemented`로 표시합니다.
 sink export breaker는 closed/open에 half-open을 추가했습니다. 이전에는 cooldown이 끝나는 순간 모든 요청이 죽은 sink를 동시에 다시 호출해 (모든 동기 route가 공유하는) anyio threadpool의 빈 slot을 전부 `SDP_LOG_SINK_TIMEOUT_MS`만큼 점유했습니다 — 측정: 동시 요청 20건에서 slot 8개면 sink 호출 8회, 무제한이면 20회, outage가 계속되는 동안 cooldown마다 반복. 이제 cooldown 만료 후 정확히 한 요청만 probe하고(측정: 1회) 나머지는 skip하며, probe가 성공하면 그 즉시 모두에게 breaker가 닫힙니다.
 `GET /enterprise/shacl-validation`과 `/catalog/datasets/{id}/semantic-validation`이 게시하는
@@ -373,6 +387,7 @@ SDP_DATABASE_DSN='postgresql+psycopg://sdp_graph_app:<url-encoded-password>@loca
 - `GET /enterprise/controls`
 - `GET /enterprise/rbac-matrix`
 - `GET /enterprise/observability`
+- `GET /enterprise/latency-budgets`
 - `GET /enterprise/production-readiness`
 - `GET /enterprise/evidence-pack`
 - `GET /enterprise/shacl-validation`

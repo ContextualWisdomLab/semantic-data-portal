@@ -573,6 +573,17 @@ def list_request_observations(limit: int = 100) -> list[dict[str, Any]]:
     return list(_REQUEST_OBSERVATIONS)[-limit:]
 
 
+def observation_buffer_capacity() -> int:
+    """How many observations the ring buffer retains.
+
+    Published rather than assumed: every latency figure derived from this buffer
+    is over a bounded recent window, and a reader cannot judge the figure
+    without knowing the window. Read from the deque itself so the published
+    number cannot drift from the structure.
+    """
+    return _REQUEST_OBSERVATIONS.maxlen or 0
+
+
 def count_request_observations() -> int:
     """Return how many observations the ring buffer actually holds.
 
@@ -596,6 +607,19 @@ def reset_request_observability() -> None:
     _REQUEST_OBSERVATIONS.clear()
     _EXPORT_ERRORS.clear()
     reset_sink_breaker()
+
+
+def _latency_budget_report() -> dict[str, Any]:
+    """The latency-budget report, imported at call time to break an import cycle.
+
+    ``latency_budgets`` classifies a concrete request path with the app's own
+    compiled route patterns, so it imports ``sdp.api``, which imports this
+    module. The local import is the same pattern ``connectors`` uses for its
+    served-route check.
+    """
+    from .latency_budgets import latency_budget_report
+
+    return latency_budget_report()
 
 
 def build_observability_manifest() -> dict[str, Any]:
@@ -658,6 +682,8 @@ def build_observability_manifest() -> dict[str, Any]:
             "local_evidence_store": "SDP_SQLITE_PATH",
             "production_target": "tenant-configurable append-only log sink plus queryable hot store",
         },
+        # The PRD's six p95 budgets, compared to what this worker observed.
+        "latency_budgets": _latency_budget_report(),
         # Declared conditions an operator can implement in their own monitoring
         # stack, not rules this service evaluates. See ALERT_EVALUATION_STATUS.
         "alert_evaluation": ALERT_EVALUATION_STATUS,

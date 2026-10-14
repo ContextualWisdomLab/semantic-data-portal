@@ -20,7 +20,7 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                    909 passed, 11 skipped
+    pytest                    924 passed, 11 skipped
     pytest (역방향/난수 순서)  순서 무관 통과 (역순 + seed 11/707/31337)
     pytest tests/fuzz          11 passed
     python -m sdp.demo_smoke   exit 0, "ready": true
@@ -321,7 +321,7 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
   **0개**(54개가 `{"type":"object","additionalProperties":true}`, 4개 bare array, 1개 빈
   스키마, 1개 타입만). 모든 핸들러가 `-> dict[str, Any]`여서 사실이지만 소비자에게는 무정보였고,
   문서로 클라이언트를 만드는 구매자는 카탈로그·evidence pack·모든 거버닝 읽기에 `Dict[str, Any]`를
-  받았습니다. JSON을 반환하는 GET **38개**에 스키마를 게시합니다 — **라우트를 실행해 유도**하고
+  받았습니다. JSON을 반환하는 GET **39개**에 스키마를 게시합니다 — **라우트를 실행해 유도**하고
   (손으로 쓴 응답 스키마는 이 제품이 거부하는 drift 그 자체입니다) 테스트가 실제 응답과 대조합니다.
   그 테스트가 제 유도 코드의 narrowing 버그를 잡았습니다: `{}`("any")가 타입에 흡수되어 `null`로
   관측된 `mappings[].steward`/`approved_at`에 `string`을 게시하고 있었습니다. 유도 규칙은
@@ -336,6 +336,38 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
   이미 pydantic 모델로 검증되고 있었지만 문서에는 `additionalProperties: true`로만
   나타났습니다. 런타임은 그대로이고(400 형태 유지), 게시한 모델이 핸들러가 실제로
   생성하는 모델인지 AST로 확인합니다.
+- **PRD가 선언한 여섯 개 지연 예산을 측정하게 했습니다 — 단방향으로.**
+  `docs/prd-trd.md`는 표면별 p95 예산을 선언합니다(NFR-PERF-001~006: catalog 검색 2초,
+  dataset 상세 1.5초, schema browsing 3초, preview 10초, LLM 답변 15초, ontology term
+  resolution 500ms). 이 중 **어느 것도** 저장소의 어떤 코드와도 관계가 없었습니다.
+  미들웨어는 요청별 `latency_ms`를 처음부터 기록했고 `/enterprise/observability`가 그것을
+  공개했지만, 예산을 호명하는 코드가 없었으므로 선언된 여섯 개 목표는 비교 대상이
+  없었습니다 — **비교 대상이 없는 목표는 gate가 아닙니다**. CAT-001의 수락 기준도 같은
+  2초를 말하면서 같은 상태였습니다.
+  `GET /enterprise/latency-budgets`가 각 예산을 그것이 적용되는 라우트에 묶고(라우트
+  분류는 앱 자신의 컴파일된 패턴으로 하므로 dispatch와 어긋날 수 없습니다) 성공 응답의
+  nearest-rank p95와 비교합니다. **측정은 의도적으로 단방향입니다.** 관측은 이
+  프로세스에서 나오고(in-memory store, seed 데이터, 단일 워커, 네트워크 없음) 배포는
+  데이터베이스·실제 데이터 규모·동시성·네트워크 홉을 더해 느려지기만 하므로, in-process
+  p95는 배포 p95의 **하한**입니다. 예산 초과는 결정적이고 예산 미달은 배포에 대해 아무것도
+  증명하지 않습니다. 그래서 필드 이름이 `within_budget`이 아니라 `budget_refuted`이고,
+  `budget_confirmation_possible: false`와 그 사유를 함께 게시합니다 — `within_budget: true`는
+  "SLO를 충족한다"로 읽히고 이 측정은 정작 중요한 방향으로 그것을 뒷받침할 수 없습니다.
+  표본이 20 미만인 표면은 `insufficient_sample`로 보고하고 **어느 방향으로도** 판정하지
+  않습니다(표본 몇 개의 p95는 이름만 백분위인 표본 최댓값입니다). 거부 응답은 세지
+  않습니다 — 거부는 검색이 아니고, 빠른 4xx를 세면 가장 일을 덜 한 요청들이 모든 p95를
+  끌어내립니다. 공개하는 것은 라우트 **템플릿**뿐이어서, 요청별 피드를 withhold하는
+  manifest의 공개 경계 안에 머무릅니다.
+  `tests/test_latency_budget_measurement.py`가 각 표면에 실제 트래픽을 흘려 여섯 개 전부를
+  평가시키고 어느 것도 반증되지 않음을 확인합니다. 그리고 **반증 경로가 실제로 작동하는
+  것을 증명합니다** — 예산보다 느린 관측을 넣어 판정이 뒤집히는 것을 봅니다. 이것이 없으면
+  모든 `budget_refuted: false`는 한 번도 일어나지 않은 비교일 수 있습니다. 이 gate가 잡을
+  종류의 결함이 이미 저장소에 기록되어 있습니다: `src/sdp/catalog.py:468`이 데이터셋
+  1005개에 대해 2000-토큰 질의 **5.10초**를 측정하고 있고, 이는 NFR-PERF-001의 2초 예산을
+  넘습니다(그래서 질의 길이가 최적화가 아니라 상한으로 막혀 있습니다).
+  이에 따라 NFR-PERF-001~006은 `not_implemented` → `partial`로, CAT-001의 비고는 지연
+  측면이 측정되었음을 반영해 갱신했습니다. `implemented`가 아닌 이유는 위의 단방향성
+  그대로입니다 — 요구사항은 배포에 대한 진술이고 이 측정은 그것을 확인할 수 없습니다.
 - **요구사항 대응 매트릭스를 전수로 만들고 기계가 강제하게 했습니다.**
   `CLAUDE.md`가 요구사항 대응 매트릭스로 지목하는 `docs/implementation-compliance.md`를
   PRD에 대고 측정한 결과: PRD의 요구사항 **74건**(기능 52 + NFR 22) 중 문서가 언급하는 것은

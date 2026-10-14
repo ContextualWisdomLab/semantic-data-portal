@@ -31,8 +31,8 @@ PYTHONPATH=src python -m sdp_core.requirements
 | 상태 | 전체 | P0 |
 | --- | --- | --- |
 | `implemented` | 36 | 21 |
-| `partial` | 14 | 10 |
-| `not_implemented` | 22 | 3 |
+| `partial` | 20 | 10 |
+| `not_implemented` | 16 | 3 |
 | `external` | 2 | 0 |
 
 ## 전체 색인
@@ -91,12 +91,12 @@ PYTHONPATH=src python -m sdp_core.requirements
 | ADM-003 | P1 | `implemented` |
 | ADM-004 | P1 | `not_implemented` |
 | ADM-005 | P1 | `partial` |
-| NFR-PERF-001 | NFR | `not_implemented` |
-| NFR-PERF-002 | NFR | `not_implemented` |
-| NFR-PERF-003 | NFR | `not_implemented` |
-| NFR-PERF-004 | NFR | `not_implemented` |
-| NFR-PERF-005 | NFR | `not_implemented` |
-| NFR-PERF-006 | NFR | `not_implemented` |
+| NFR-PERF-001 | NFR | `partial` |
+| NFR-PERF-002 | NFR | `partial` |
+| NFR-PERF-003 | NFR | `partial` |
+| NFR-PERF-004 | NFR | `partial` |
+| NFR-PERF-005 | NFR | `partial` |
+| NFR-PERF-006 | NFR | `partial` |
 | NFR-SEC-001 | NFR | `partial` |
 | NFR-SEC-002 | NFR | `implemented` |
 | NFR-SEC-003 | NFR | `partial` |
@@ -123,7 +123,7 @@ PYTHONPATH=src python -m sdp_core.requirements
 - **요구사항**: 사용자는 데이터셋을 키워드, 태그, 도메인, owner, freshness, quality score, sensitivity로 검색할 수 있어야 한다.
 - **수락 기준**: 검색 결과는 2초 이내 95p 응답, facet count 포함
 - **증빙**: `route:GET /catalog/search`, `route:GET /catalog/facets`, `func:sdp.catalog.search_catalog`, `test:tests/test_api.py::test_catalog_search_and_detail`, `test:tests/test_api.py::test_catalog_search_filter_by_quality`
-- **비고**: Every search dimension the requirement names is filterable. Neither half of the acceptance criterion holds, though: the search response is {query, count, items} and carries no facet counts (facets are a separate route, GET /catalog/facets), and no p95 latency is measured or compared to the 2-second budget anywhere. The one latency figure this repository does record is against it - src/sdp/catalog.py:468 measures 5.10s for a 2000-token query over 1005 datasets, which is why the input is bounded rather than optimised.
+- **비고**: Every search dimension the requirement names is filterable. The acceptance criterion is a different matter. Its facet half does not hold: the search response is {query, count, items} and carries no facet counts, which come from a separate route (GET /catalog/facets). Its latency half - the same 2-second p95 NFR-PERF-001 declares - is now measured, under the same one-sided limitation recorded there: GET /enterprise/latency-budgets reports a measured p95 for this surface and refutes the budget when it is exceeded in-process, but an under-budget result does not establish the deployed p95. The one latency figure this repository records is what such a refutation looks like: src/sdp/catalog.py:468 measures 5.10s for a 2000-token query over 1005 datasets, which is why the query length is bounded rather than optimised.
 
 #### CAT-002 · P0 · `implemented`
 
@@ -461,41 +461,47 @@ PYTHONPATH=src python -m sdp_core.requirements
 
 ### NFR-PERF
 
-#### NFR-PERF-001 · NFR · `not_implemented`
+#### NFR-PERF-001 · NFR · `partial`
 
 - **요구사항**: catalog keyword search latency
 - **수락 기준**: p95 2초 이하
-- **비고**: No latency target is measured or asserted anywhere. /enterprise/observability publishes per-request latency for requests it observed, but nothing compares it to a p95 budget.
+- **증빙**: `route:GET /enterprise/latency-budgets`, `func:sdp.latency_budgets.latency_budget_report`, `test:tests/test_latency_budget_measurement.py::test_no_declared_budget_is_refuted_in_process`, `test:tests/test_latency_budget_measurement.py::test_the_refutation_path_actually_fires`
+- **비고**: The budget is declared against the routes it governs and compared to a measured nearest-rank p95 over successful responses, with a minimum sample below which no verdict is produced in either direction. What it cannot establish is the requirement as stated: the observations come from one in-process worker over in-memory stores and seed data, so the measured p95 is a lower bound on a deployment's. The published field is therefore `budget_refuted`, not `within_budget` - an over-budget result is conclusive, an under-budget one is not. Confirming a deployed p95 needs a load test against a deployed instance, which is outside this repository.
 
-#### NFR-PERF-002 · NFR · `not_implemented`
+#### NFR-PERF-002 · NFR · `partial`
 
 - **요구사항**: dataset detail API latency
 - **수락 기준**: p95 1.5초 이하
-- **비고**: No latency target is measured or asserted anywhere. /enterprise/observability publishes per-request latency for requests it observed, but nothing compares it to a p95 budget.
+- **증빙**: `route:GET /enterprise/latency-budgets`, `func:sdp.latency_budgets.latency_budget_report`, `test:tests/test_latency_budget_measurement.py::test_no_declared_budget_is_refuted_in_process`, `test:tests/test_latency_budget_measurement.py::test_the_refutation_path_actually_fires`
+- **비고**: The budget is declared against the routes it governs and compared to a measured nearest-rank p95 over successful responses, with a minimum sample below which no verdict is produced in either direction. What it cannot establish is the requirement as stated: the observations come from one in-process worker over in-memory stores and seed data, so the measured p95 is a lower bound on a deployment's. The published field is therefore `budget_refuted`, not `within_budget` - an over-budget result is conclusive, an under-budget one is not. Confirming a deployed p95 needs a load test against a deployed instance, which is outside this repository.
 
-#### NFR-PERF-003 · NFR · `not_implemented`
+#### NFR-PERF-003 · NFR · `partial`
 
 - **요구사항**: schema browsing latency
 - **수락 기준**: p95 3초 이하
-- **비고**: No latency target is measured or asserted anywhere. /enterprise/observability publishes per-request latency for requests it observed, but nothing compares it to a p95 budget.
+- **증빙**: `route:GET /enterprise/latency-budgets`, `func:sdp.latency_budgets.latency_budget_report`, `test:tests/test_latency_budget_measurement.py::test_no_declared_budget_is_refuted_in_process`, `test:tests/test_latency_budget_measurement.py::test_the_refutation_path_actually_fires`
+- **비고**: The budget is declared against the routes it governs and compared to a measured nearest-rank p95 over successful responses, with a minimum sample below which no verdict is produced in either direction. What it cannot establish is the requirement as stated: the observations come from one in-process worker over in-memory stores and seed data, so the measured p95 is a lower bound on a deployment's. The published field is therefore `budget_refuted`, not `within_budget` - an over-budget result is conclusive, an under-budget one is not. Confirming a deployed p95 needs a load test against a deployed instance, which is outside this repository.
 
-#### NFR-PERF-004 · NFR · `not_implemented`
+#### NFR-PERF-004 · NFR · `partial`
 
 - **요구사항**: preview latency
 - **수락 기준**: p95 10초 이하, source별 예외 가능
-- **비고**: No latency target is measured or asserted anywhere. /enterprise/observability publishes per-request latency for requests it observed, but nothing compares it to a p95 budget.
+- **증빙**: `route:GET /enterprise/latency-budgets`, `func:sdp.latency_budgets.latency_budget_report`, `test:tests/test_latency_budget_measurement.py::test_no_declared_budget_is_refuted_in_process`, `test:tests/test_latency_budget_measurement.py::test_the_refutation_path_actually_fires`
+- **비고**: The budget is declared against the routes it governs and compared to a measured nearest-rank p95 over successful responses, with a minimum sample below which no verdict is produced in either direction. What it cannot establish is the requirement as stated: the observations come from one in-process worker over in-memory stores and seed data, so the measured p95 is a lower bound on a deployment's. The published field is therefore `budget_refuted`, not `within_budget` - an over-budget result is conclusive, an under-budget one is not. Confirming a deployed p95 needs a load test against a deployed instance, which is outside this repository.
 
-#### NFR-PERF-005 · NFR · `not_implemented`
+#### NFR-PERF-005 · NFR · `partial`
 
 - **요구사항**: LLM catalog answer latency
 - **수락 기준**: p95 15초 이하
-- **비고**: No latency target is measured or asserted anywhere. /enterprise/observability publishes per-request latency for requests it observed, but nothing compares it to a p95 budget.
+- **증빙**: `route:GET /enterprise/latency-budgets`, `func:sdp.latency_budgets.latency_budget_report`, `test:tests/test_latency_budget_measurement.py::test_no_declared_budget_is_refuted_in_process`, `test:tests/test_latency_budget_measurement.py::test_the_refutation_path_actually_fires`
+- **비고**: The budget is declared against the routes it governs and compared to a measured nearest-rank p95 over successful responses, with a minimum sample below which no verdict is produced in either direction. What it cannot establish is the requirement as stated: the observations come from one in-process worker over in-memory stores and seed data, so the measured p95 is a lower bound on a deployment's. The published field is therefore `budget_refuted`, not `within_budget` - an over-budget result is conclusive, an under-budget one is not. Confirming a deployed p95 needs a load test against a deployed instance, which is outside this repository.
 
-#### NFR-PERF-006 · NFR · `not_implemented`
+#### NFR-PERF-006 · NFR · `partial`
 
 - **요구사항**: ontology term resolution latency
 - **수락 기준**: p95 500ms 이하
-- **비고**: No latency target is measured or asserted anywhere. /enterprise/observability publishes per-request latency for requests it observed, but nothing compares it to a p95 budget.
+- **증빙**: `route:GET /enterprise/latency-budgets`, `func:sdp.latency_budgets.latency_budget_report`, `test:tests/test_latency_budget_measurement.py::test_no_declared_budget_is_refuted_in_process`, `test:tests/test_latency_budget_measurement.py::test_the_refutation_path_actually_fires`
+- **비고**: The budget is declared against the routes it governs and compared to a measured nearest-rank p95 over successful responses, with a minimum sample below which no verdict is produced in either direction. What it cannot establish is the requirement as stated: the observations come from one in-process worker over in-memory stores and seed data, so the measured p95 is a lower bound on a deployment's. The published field is therefore `budget_refuted`, not `within_budget` - an over-budget result is conclusive, an under-budget one is not. Confirming a deployed p95 needs a load test against a deployed instance, which is outside this repository.
 
 ### NFR-SEC
 
