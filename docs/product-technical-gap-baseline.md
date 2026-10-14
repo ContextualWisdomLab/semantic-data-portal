@@ -2437,8 +2437,7 @@ ready=true. 문서(README, enterprise-readiness, implementation-compliance)와 `
 위 표는 **보고된 그대로의 기록**이고, 소진 상황은 아래 "감사 큐 소진" 절들이 가집니다. 2026-10-14 기준
 11건 중 9건이 닫혔습니다 — orchestrator 3건(소진 1), observability 1건(소진 2), `api.py:427` + `/catalog/datasets`
 목록(소진 3), `browse.py:60`(소진 4), `stores.py:21`+`:25`(소진 5), `entrypoint.sh:13`(소진 6).
-2026-10-14 두 번째 묶음까지 포함하면 10건이 닫혔고(소진 7이 `api.py:131`), 남은 1건은
-`tests/test_api.py:1258`(catalog mutation 인가 가드에 테스트 없음)입니다.
+2026-10-14 기준 **11건 전부 닫혔습니다** — 소진 1~8 절이 각 항목의 재현·수리·검증 기록입니다.
 
 이 목록 자체는 증거가 아니라 **작업 큐**입니다. 다음 순서로 직접 재현 → RED → 수리 → 로컬 검증을 반복합니다:
 SQL validator 세 건(`FROM a, b` 콤마 조인으로 allowlist 우회, `SELECT ... INTO`가 read-only 가드를 통과,
@@ -2652,6 +2651,46 @@ write만 `anyio.to_thread.run_sync`로 worker 스레드에 넘깁니다. 동기 
 두어 머신 속도가 아니라 blocking 성질을 측정합니다. async 분기 2건(export=False, sink 실패 시 오류
 기록만 하고 요청을 깨지 않음)도 동기 쪽과 동등하게 덮었습니다. 전체 **319 passed / 8 skipped**,
 `tests/fuzz` 10 passed, `sdp.demo_smoke` ready=true.
+
+### 감사 큐 소진 (8) — mutation 인가 가드에 테스트가 없었습니다 (2026-10-14)
+
+마지막 항목은 코드 결함이 아니라 **커버리지 공백**이었습니다. 먼저 돌아가는 앱에 직접 물어
+가드가 실제로 동작하는지 확인했습니다 — 결함이 아님을 확인하는 것이 먼저입니다.
+
+| actor | publish | patch | deprecate |
+| --- | --- | --- | --- |
+| `admin` | 200 | 200 | 200 |
+| `analyst` | 403 | 403 | 403 |
+| `guest` | 403 | 403 | 403 |
+| `anonymous` | 403 | 403 | 403 |
+| `actor` 키 자체를 생략 | 403 | 403 | 403 |
+
+가드는 정확합니다. 그런데 이를 고정하는 테스트가 없었습니다. `test_create_requires_admin`은
+`create` 하나만 덮고, `test_dataset_mutation_policy_and_lifecycle`은 세 verb를 **`admin`으로만**
+구동하는 happy path입니다. `tests/test_policy.py`는 정책 함수 수준에서 `patch` 하나만 덮고 있었습니다.
+즉 라우트 수준 인가는 세 verb 모두 무방비였습니다.
+
+테스트가 실제로 효력이 있는지 **가드를 제거한 mutant로 검증**했습니다(이 경우 RED가 자연히 나지
+않으므로 이것이 RED의 등가물입니다). `if decision.effect != "allow": raise HTTPException(403)`을
+6개 지점에서 모두 지우고 돌렸습니다.
+
+| | 결과 |
+| --- | --- |
+| `test_catalog_mutation_guard_denies_non_admin_actors` 12건 | **전부 실패** (가드 제거를 잡음) |
+| `test_catalog_mutation_denial_is_recorded_as_evidence` 3건 | 통과 |
+
+살아남은 3건이 무엇인지도 확인했습니다. `evaluate()`는 `raise`를 지워도 여전히 deny decision을
+기록하므로, 증빙 테스트는 **기록**을 고정하고 **집행**은 고정하지 않습니다. 둘은 다른 것을 재는
+테스트이고 합쳐서 완전합니다 — 집행은 앞의 12건이, 기록은 뒤의 3건이 책임집니다. 전자는 거부
+*후* 상태가 변하지 않았는지(`status`/`title` 불변)까지 확인합니다. 변경 후 거부하는 가드는 가드가
+없는 것보다 나쁩니다.
+
+검증: 전체 **334 passed / 8 skipped**. mutant는 복원했고 `git diff`로 `api.py`에 미커밋 변경이
+없음을 확인했습니다.
+
+**이로써 2026-10-14 감사 큐 11건이 모두 소진되었습니다.** 9건은 직접 재현한 결함(수리), 1건은
+커버리지 공백(테스트 추가), 그리고 큐에 올라온 `api.py:427`은 목록 라우트까지 범위가 넓어져
+2건으로 처리되었습니다.
 
 ## 운영 메모
 

@@ -133,6 +133,9 @@
   - `tests/test_api.py::test_create_requires_admin`
   - `tests/test_api.py::test_dataset_mutation_policy_and_lifecycle`
   - `tests/test_api.py::test_browse_schema_requires_purpose`
+  - `tests/test_api.py::test_catalog_mutation_guard_denies_non_admin_actors`
+    (publish/patch/deprecate x analyst/guest/anonymous/actor 키 없음 = 12건, 거부 후 상태 불변까지 확인)
+  - `tests/test_api.py::test_catalog_mutation_denial_is_recorded_as_evidence`
   - `tests/test_policy.py::test_every_decision_branch_stamps_the_owning_tenant`
   - `tests/test_policy.py::test_decision_without_a_resolvable_tenant_is_not_attributed_to_demo`
   - `tests/test_browse.py::test_browse_audit_events_carry_the_owning_tenant`

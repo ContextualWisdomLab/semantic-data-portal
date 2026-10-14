@@ -1907,3 +1907,57 @@ def test_catalog_discovery_payload_field_set_is_pinned():
         "metadata_recommendation_score",
         "completeness_badge",
     }
+
+
+@pytest.mark.parametrize("actor", ["analyst", "guest", "anonymous", None])
+@pytest.mark.parametrize("verb", ["publish", "patch", "deprecate"])
+def test_catalog_mutation_guard_denies_non_admin_actors(verb: str, actor: str | None):
+    """``publish``/``patch``/``deprecate`` authorization was defended by no test.
+
+    ``test_create_requires_admin`` covers only ``create``, and
+    ``test_dataset_mutation_policy_and_lifecycle`` drives all three mutation
+    verbs as ``admin`` — the happy path only. The guard itself is correct (this
+    was verified against the running app before adding the test, for every verb
+    and actor class including a payload with no ``actor`` key), so this is
+    regression protection, not a fix for a live hole.
+    """
+    base = app_catalog._DATA["crm-customer-master"]
+    app_catalog._DATA["guard-probe"] = base.model_copy(
+        update={"id": "guard-probe", "status": "draft", "title": "원래 제목"}
+    )
+
+    payload: dict = {} if actor is None else {"actor": actor}
+    if verb == "publish":
+        response = client.post("/catalog/datasets/guard-probe/publish", json=payload)
+    elif verb == "patch":
+        response = client.patch("/catalog/datasets/guard-probe", json={**payload, "title": "탈취된 제목"})
+    else:
+        response = client.post("/catalog/datasets/guard-probe/deprecate", json={**payload, "reason": "probe"})
+
+    assert response.status_code == 403, response.text
+    # A guard that denies *after* mutating would be worse than no guard.
+    unchanged = app_catalog._DATA["guard-probe"]
+    assert unchanged.status == "draft"
+    assert unchanged.title == "원래 제목"
+
+
+@pytest.mark.parametrize("verb", ["publish", "patch", "deprecate"])
+def test_catalog_mutation_denial_is_recorded_as_evidence(verb: str):
+    """A refused mutation is exactly the event an auditor looks for, so the
+    denial must leave a policy decision behind rather than only an HTTP 403."""
+    base = app_catalog._DATA["crm-customer-master"]
+    app_catalog._DATA["guard-probe"] = base.model_copy(update={"id": "guard-probe", "status": "draft"})
+
+    before = len(app_evidence._POLICY_DECISION_LOG)
+    if verb == "publish":
+        client.post("/catalog/datasets/guard-probe/publish", json={"actor": "analyst"})
+    elif verb == "patch":
+        client.patch("/catalog/datasets/guard-probe", json={"actor": "analyst", "title": "x"})
+    else:
+        client.post("/catalog/datasets/guard-probe/deprecate", json={"actor": "analyst", "reason": "x"})
+
+    recorded = app_evidence._POLICY_DECISION_LOG[before:]
+    denials = [d for d in recorded if d.effect != "allow" and d.resource == "guard-probe"]
+    assert denials, f"{verb} denial left no policy decision"
+    assert denials[-1].action.lower() == verb
+    assert denials[-1].subject == "analyst"
