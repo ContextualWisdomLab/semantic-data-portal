@@ -2692,6 +2692,59 @@ write만 `anyio.to_thread.run_sync`로 worker 스레드에 넘깁니다. 동기 
 커버리지 공백(테스트 추가), 그리고 큐에 올라온 `api.py:427`은 목록 라우트까지 범위가 넓어져
 2건으로 처리되었습니다.
 
+### 병합 게이트 실측 (2026-10-14)
+
+감사 큐를 소진한 뒤 병합 가능성을 다시 측정했습니다. **열린 비-draft PR 7건 전부 APPROVED 리뷰가
+0건**이고, 이것이 유일한 구속 조건입니다. 아래는 추측이 아니라 API 응답입니다.
+
+| PR | head | mergeable_state | 리뷰 | 비고 |
+| --- | --- | --- | --- | --- |
+| #112 | `dec20969` | blocked | 0건 | 실패 3건(billing lock) |
+| #111 | `7ec43999` | blocked | 0건 | |
+| #109 | `409ae68d` | blocked | 0건 | |
+| #107 | `742e7a7e` | blocked | 0건 | |
+| #104 | `2856e91f` | blocked | COMMENTED 5건 | **실패 0건**, 성공 25 / skipped 9, 리뷰 스레드 2건 모두 resolved |
+| #102 | `9d97a7e0` | unstable | COMMENTED 3건 | 체크 2건 모두 실패(billing lock) |
+| #82 | `93321a98` | blocked | COMMENTED 5건 | |
+
+`CHANGES_REQUESTED` 리뷰는 **한 건도 없습니다** — 7건 모두 `COMMENTED`뿐입니다.
+
+저장소 ruleset(`Lock default branch`, id `18259549`)을 읽었습니다. 핵심은
+`required_approving_review_count = 0`입니다 — **GitHub 자체는 승인을 요구하지 않습니다.**
+함께 걸린 것은 `required_review_thread_resolution = true`,
+`require_extra_approval_for_unattributed_changes = true`, `dismiss_stale_reviews_on_push = true`이고,
+이 ruleset에는 required status check 규칙이 **없습니다**(중앙 필수 워크플로는 org 레벨에서 옵니다. org
+ruleset은 이 세션 권한으로 403이라 직접 읽지 못했습니다).
+
+#104가 왜 `blocked`인지 추적했습니다. 승인 요구 0, 실패 0, 스레드 resolved, 커밋 4건 전부
+`seonghobae` 계정에 귀속(unattributed 아님) — 그런데도 blocked입니다. 남은 non-success 컨텍스트는
+**skipped 9건**뿐이고 그 중 6건이 중앙 security 게이트 job입니다.
+
+| skipped 컨텍스트 | |
+| --- | --- |
+| `osv-scan` / `dependency-review` / `trivy-fs` | 중앙 Security Scan 3종 |
+| `gitleaks (secret scan)` / `scorecard` / `strix` | 중앙 보안 게이트 |
+| `Dispatch current-head CodeQL scan` / `cancel-closed-pr-runs` / `publish-manual-pr-evidence-status` | |
+
+#104는 문서 전용 PR이므로 `Detect changed scope` 게이트(성공 4건)가 이 job들을 올바르게 skip했습니다.
+**required 컨텍스트가 `skipped`로 끝나면 `success`가 아니므로 영구히 blocked됩니다.** 이것은 중앙
+`.github`의 CLAUDE.md가 경고하는 바로 그 실패 양식입니다 — "always keep one job with no
+output-dependent `if:` so the run concludes `success` rather than `skipped`". 다만 org ruleset을
+읽지 못했으므로 이 6건이 실제로 required라는 것은 **추론이고 확정이 아닙니다**. `unstable`인 #102가
+그 컨텍스트를 아예 보고하지 않았는데도 `blocked`이 아닌 점은 이 추론과 맞지 않으며, 확정에는
+org ruleset 읽기 권한이 필요합니다.
+
+#102의 커밋 100건 중 4건(`254054d6`, `f5c50b3f`, `63b8d937`, `6f5918e3`, git email `seonghobae@me.com`)은
+GitHub 계정에 귀속되지 않아 `require_extra_approval_for_unattributed_changes`를 추가로 발동시킵니다.
+이 세션이 만든 커밋 7건은 모두 `claude` 계정에 정상 귀속되는 것을 확인했으므로(`noreply@anthropic.com`)
+히스토리 재작성은 하지 않았습니다 — 열린 PR의 100커밋을 force-push하는 비용이 이득을 넘고, 어차피
+거버넌스가 요구하는 동일한 승인 1건으로 함께 해소됩니다.
+
+**근본 원인은 변하지 않았습니다**: 계정 수준 Actions billing lock으로 hosted job이 dispatch 전에
+거부되므로(`runner=""`, 3~4초, `The job was not started because your account is locked due to a billing
+issue.`), 새 head에서 required check가 green이 될 수 있는 경로가 없습니다. 이 세션이 할 수 없는 일로
+남은 것: 독립 승인, billing 해제, artifact storage 회수, isolated runner 용량 등록.
+
 ## 운영 메모
 
 - Database objects: 두 단어 이상 `snake_case`, 3NF. Catalog plane 테이블은 #73의 `migrations/0002_ontology_catalog_plane.sql`.
