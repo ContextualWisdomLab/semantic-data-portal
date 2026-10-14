@@ -22,10 +22,17 @@
 
 ### CAT-002 상세 정보
 - 대응: `GET /catalog/datasets/{dataset_id}`, `GET /catalog/datasets/{dataset_id}/lineage`, `GET /catalog/datasets/{dataset_id}/schema-history`, `GET /catalog/datasets/{dataset_id}/schema-versions`, `GET /catalog/datasets/{dataset_id}/schema-diff`
-- 핵심 코드: [src/sdp/catalog.py: get_dataset](src/sdp/catalog.py), [get_dataset_lineage](src/sdp/catalog.py), [get_dataset_schema_history](src/sdp/catalog.py), [get_dataset_schema_diff](src/sdp/catalog.py), [list_dataset_schema_versions](src/sdp/catalog.py)
+- 핵심 코드: [src/sdp/catalog.py: get_dataset](src/sdp/catalog.py), [discovery_view](src/sdp/catalog.py), [get_dataset_lineage](src/sdp/catalog.py), [get_dataset_schema_history](src/sdp/catalog.py), [get_dataset_schema_diff](src/sdp/catalog.py), [list_dataset_schema_versions](src/sdp/catalog.py)
+- 경계: 목록/상세는 actor 없이 서비스되는 discovery 표면이므로 `catalog.discovery_view()`가
+  publish 가능한 필드만 투영한다. 컬럼 스키마(`pii` 플래그 포함), `source_system` 접속 문자열,
+  row-count `profile`, 소유 `tenant_id`은 withhold하고 `schema_field_count`만 공개한다. 해당
+  필드는 정책을 평가하고 감사 기록을 남기는 `GET /browse/{dataset_id}/schema` 경로가 유일한
+  공개 지점이다.
 - 증빙 테스트:
   - `tests/test_api.py::test_catalog_search_and_detail`
   - `tests/test_api.py::test_dataset_profile_endpoint`
+  - `tests/test_api.py::test_catalog_discovery_routes_do_not_publish_governed_dataset_internals`
+  - `tests/test_api.py::test_catalog_discovery_payload_field_set_is_pinned`
   - `tests/test_api.py::test_catalog_schema_history_and_diff`
 
 ### CAT-003 DCAT 구조

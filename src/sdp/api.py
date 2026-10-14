@@ -419,14 +419,7 @@ def catalog_facets(
 
 @app.get("/catalog/datasets")
 def list_datasets_endpoint() -> list[dict[str, Any]]:
-    return [
-        {
-            **dataset.model_dump(),
-            "metadata_recommendation_score": dataset.metadata_recommendation_score,
-            "completeness_badge": "good" if dataset.metadata_recommendation_score >= 0.8 else "partial",
-        }
-        for dataset in list_datasets()
-    ]
+    return [catalog.discovery_view(dataset) for dataset in list_datasets()]
 
 
 @app.get("/catalog/datasets/{dataset_id}")
@@ -434,11 +427,7 @@ def dataset_detail(dataset_id: str) -> dict[str, Any]:
     dataset = get_dataset(dataset_id)
     if not dataset:
         raise HTTPException(status_code=404, detail="dataset not found")
-    return {
-        **dataset.model_dump(),
-        "metadata_recommendation_score": dataset.metadata_recommendation_score,
-        "completeness_badge": "good" if dataset.metadata_recommendation_score >= 0.8 else "partial",
-    }
+    return catalog.discovery_view(dataset)
 
 
 @app.get("/catalog/datasets/{dataset_id}/jsonld")

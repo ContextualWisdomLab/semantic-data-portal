@@ -29,6 +29,34 @@ _AUDIT_LOG: list[AuditEvent] = []
 _SCHEMA_HISTORY: dict[str, list[dict[str, Any]]] = {}
 
 
+# The catalog discovery surface is served without an actor, so it must publish
+# strictly less than the governed paths do. ``/browse/{id}/schema`` evaluates the
+# tenant/role/sensitivity policy and audits the release of a dataset's column
+# schema; a discovery payload that carried the same schema - with its ``pii``
+# flags - plus the source-system connection string would make that denial
+# decorative. These fields therefore stay behind the governed path.
+_GOVERNED_DATASET_FIELDS = ("schema", "source_system", "profile", "tenant_id")
+
+
+def discovery_view(dataset: Dataset) -> Dict[str, Any]:
+    """Project a dataset onto the fields the ungated catalog surface may publish.
+
+    The per-column schema (and its ``pii`` flags), the source-system connection
+    string, the row-count profile, and the owning tenant id are withheld; the
+    column count is published in their place so discovery still describes the
+    dataset's shape. ``tests/test_api.py`` pins the resulting key set so that a
+    new ``Dataset`` field is an explicit publish-or-withhold decision.
+    """
+    published = dataset.model_dump()
+    for field in _GOVERNED_DATASET_FIELDS:
+        published.pop(field, None)
+    published["schema_field_count"] = len(dataset.schema)
+    published["metadata_completeness"] = dataset.metadata_completeness
+    published["metadata_recommendation_score"] = dataset.metadata_recommendation_score
+    published["completeness_badge"] = "good" if dataset.metadata_recommendation_score >= 0.8 else "partial"
+    return published
+
+
 def _record_audit_event(event: AuditEvent) -> AuditEvent:
     append_audit_event(event)
     if not has_configured_evidence_store():

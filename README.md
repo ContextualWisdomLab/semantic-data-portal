@@ -113,7 +113,10 @@ SDP_DATABASE_DSN='postgresql+psycopg://sdp_graph_app:<url-encoded-password>@loca
 - `GET /metrics`
 - `GET /catalog/search?q=...`
 - `GET /catalog/datasets`
-- `GET /catalog/datasets/{dataset_id}`
+- `GET /catalog/datasets/{dataset_id}` — discovery 표면. 컬럼 스키마(`pii` 플래그),
+  `source_system`, row-count `profile`, `tenant_id`은 응답에 포함되지 않는다
+  (`schema_field_count`만 공개). 스키마는 정책을 평가·감사하는
+  `GET /browse/{dataset_id}/schema`에서만 받는다.
 - `GET /catalog/datasets/{dataset_id}/jsonld`
 - `GET /catalog/datasets/{dataset_id}/validate`
 - `GET /catalog/datasets/{dataset_id}/semantic-validation`

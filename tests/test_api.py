@@ -1841,3 +1841,69 @@ def test_observability_manifest_does_not_publish_sink_credentials(monkeypatch):
     assert "s3cr3t-token" not in rendered
     assert "sdp-ingest" not in rendered
     assert response.json()["structured_logs"]["sink"]["target"] == "logs.example.net"
+
+
+def test_catalog_discovery_routes_do_not_publish_governed_dataset_internals():
+    """``/browse/{id}/schema`` denies an out-of-tenant caller and audits the denial,
+    so the ungated catalog surface must not hand the same caller that dataset's
+    column schema with its ``pii`` flags, its source-system connection string, or
+    its row-count profile. Before this contract the detail payload was a full
+    ``Dataset.model_dump()`` and the browse denial protected nothing.
+    """
+    denied = client.get(
+        "/browse/crm-customer-master/schema",
+        params={"user": "nobody", "purpose": "analysis"},
+    )
+    assert denied.status_code == 403
+
+    detail = client.get("/catalog/datasets/crm-customer-master")
+    assert detail.status_code == 200
+    body = detail.json()
+    for governed in ("schema", "source_system", "profile", "tenant_id"):
+        assert governed not in body, f"{governed} must stay behind the governed path"
+    assert "analytics.dw" not in json.dumps(body)
+    # Discovery still describes the shape, without the per-column PII flags.
+    assert body["schema_field_count"] == 3
+
+    listed = client.get("/catalog/datasets")
+    assert listed.status_code == 200
+    for row in listed.json():
+        for governed in ("schema", "source_system", "profile", "tenant_id"):
+            assert governed not in row
+
+
+def test_catalog_discovery_payload_field_set_is_pinned():
+    """A new ``Dataset`` field must be an explicit publish-or-withhold decision,
+    not an automatic addition to an unauthenticated payload."""
+    body = client.get("/catalog/datasets/crm-customer-master").json()
+    assert set(body) == {
+        "id",
+        "title",
+        "description",
+        "owner",
+        "steward",
+        "domain",
+        "sensitivity",
+        "update_frequency",
+        "quality_score",
+        "freshness_score",
+        "tags",
+        "terms",
+        "license",
+        "related_datasets",
+        "distributions",
+        "mappings",
+        "lineage_inputs",
+        "lineage_outputs",
+        "completeness_score",
+        "recommended_score",
+        "version",
+        "schema_version",
+        "status",
+        "created_at",
+        "updated_at",
+        "schema_field_count",
+        "metadata_completeness",
+        "metadata_recommendation_score",
+        "completeness_badge",
+    }
