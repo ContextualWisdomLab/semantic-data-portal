@@ -924,7 +924,7 @@ def create_dataset(payload: dict[str, Any]) -> dict[str, Any]:
     # dataset was invisible to graph traversal and semantic search - two
     # capabilities README names - and a status change left a stale node.
     seed_dataset(dataset)
-    return {"status": "created", "dataset": dataset.model_dump()}
+    return {"status": "created", "dataset": catalog.mutation_response_view(dataset)}
 
 
 @app.post("/catalog/datasets/{dataset_id}/publish")
@@ -948,7 +948,7 @@ def publish_catalog_dataset(dataset_id: str, payload: dict[str, Any] | None = No
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     seed_dataset(dataset)
-    return {"status": "published", "dataset": dataset.model_dump()}
+    return {"status": "published", "dataset": catalog.mutation_response_view(dataset)}
 
 
 @app.patch("/catalog/datasets/{dataset_id}")
@@ -973,7 +973,7 @@ def patch_catalog_dataset(dataset_id: str, payload: dict[str, Any]) -> dict[str,
     except Exception as exc:
         raise HTTPException(status_code=400, detail=_invalid_request_detail(exc))
     seed_dataset(dataset)
-    return {"status": "updated", "dataset": dataset.model_dump()}
+    return {"status": "updated", "dataset": catalog.mutation_response_view(dataset)}
 
 
 @app.post("/catalog/datasets/{dataset_id}/deprecate")
@@ -999,7 +999,7 @@ def deprecate_catalog_dataset(dataset_id: str, payload: dict[str, str] | None = 
             decision_id=decision.decision_id,
         )
         seed_dataset(dataset)
-        return {"status": "deprecated", "dataset": dataset.model_dump()}
+        return {"status": "deprecated", "dataset": catalog.mutation_response_view(dataset)}
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 

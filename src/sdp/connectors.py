@@ -23,6 +23,32 @@ _IMPLEMENTED_PROOF = {
 }
 
 
+def _named_graph(source_system: str) -> str:
+    """The SPARQL named graph, derived from the **redacted** locator.
+
+    ``dataset.source_system.removeprefix("sparql://")`` kept whatever the DSN
+    carried, so a dataset registered as
+    ``sparql://graphuser:RDFPASS999@semantic.graph/ci`` put the cleartext
+    credential into the audit event's ``details`` - which
+    ``GET /catalog/datasets/{id}/audit?user=analyst`` and
+    ``GET /audit/events?user=analyst`` return, to the roles for which the
+    governed read routes withhold ``source_system`` entirely.
+    ``connector_probe`` redacted; the adapter methods the probe advertises as
+    the product's contract (``contract_methods: ["inspect_schema", "preview"]``)
+    did not. Eight values across the four adapters were derived from the raw DSN.
+    """
+    return redacted_source_system(source_system).removeprefix("sparql://")
+
+
+def _manifest_path(source_system: str) -> str:
+    """The object-store manifest path, derived from the **redacted** locator.
+
+    Same defect as :func:`_named_graph`: an ``s3://`` DSN can carry an access
+    key id and its secret in the userinfo component.
+    """
+    return f"{redacted_source_system(source_system).rstrip('/')}/_manifest.json"
+
+
 class DemoSQLConnector(SourceConnector):
     connector_id = "sql_connector"
     source_type = "warehouse_or_rdbms"
@@ -35,7 +61,7 @@ class DemoSQLConnector(SourceConnector):
             raise ValueError("dataset is not backed by the demo SQL connector")
         return {
             "dataset_id": dataset.id,
-            "source_system": dataset.source_system,
+            "source_system": redacted_source_system(dataset.source_system),
             "columns": [column.model_dump() for column in dataset.schema],
         }
 
@@ -58,8 +84,8 @@ class DemoRDFConnector(SourceConnector):
             raise ValueError("dataset is not backed by the demo RDF connector")
         return {
             "dataset_id": dataset.id,
-            "source_system": dataset.source_system,
-            "named_graph": dataset.source_system.removeprefix("sparql://"),
+            "source_system": redacted_source_system(dataset.source_system),
+            "named_graph": _named_graph(dataset.source_system),
             "columns": [column.model_dump() for column in dataset.schema],
         }
 
@@ -116,7 +142,7 @@ class DemoRDFConnector(SourceConnector):
                 "requested_offset": offset,
                 "requested_limit": limit,
                 "returned_rows": len(selected),
-                "named_graph": dataset.source_system.removeprefix("sparql://"),
+                "named_graph": _named_graph(dataset.source_system),
             },
         )
         return selected
@@ -134,8 +160,8 @@ class DemoFileLakeConnector(SourceConnector):
             raise ValueError("dataset is not backed by the demo file lake connector")
         return {
             "dataset_id": dataset.id,
-            "source_system": dataset.source_system,
-            "manifest_path": f"{dataset.source_system.rstrip('/')}/_manifest.json",
+            "source_system": redacted_source_system(dataset.source_system),
+            "manifest_path": _manifest_path(dataset.source_system),
             "columns": [column.model_dump() for column in dataset.schema],
         }
 
@@ -190,7 +216,7 @@ class DemoFileLakeConnector(SourceConnector):
                 "requested_limit": limit,
                 "returned_rows": len(selected),
                 "sample_budget": limit,
-                "manifest_path": f"{dataset.source_system.rstrip('/')}/_manifest.json",
+                "manifest_path": _manifest_path(dataset.source_system),
             },
         )
         return selected
@@ -208,7 +234,7 @@ class DemoRESTConnector(SourceConnector):
             raise ValueError("dataset is not backed by the demo REST connector")
         return {
             "dataset_id": dataset.id,
-            "source_system": dataset.source_system,
+            "source_system": redacted_source_system(dataset.source_system),
             "auth_mode": "service_account_reference",
             "columns": [column.model_dump() for column in dataset.schema],
         }

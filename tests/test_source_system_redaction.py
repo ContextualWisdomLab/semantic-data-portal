@@ -32,6 +32,8 @@ listed, which is the same mistake one level down.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -127,3 +129,103 @@ def test_the_connector_probe_does_not_republish_a_secret() -> None:
     )
     assert probe.status_code == 200, probe.text
     assert SECRET not in probe.text, probe.text[:300]
+
+
+# --------------------------------------------------------------------------- #
+# The other places a source-system-derived value escapes.
+#
+# Enumerated rather than fixed one at a time: ``connector_probe`` redacted while
+# the adapter methods it advertises as the product's contract
+# (``contract_methods: ["inspect_schema", "preview"]``) did not, and the four
+# catalog mutations handed the whole DSN back in their response. Eight values
+# across the adapters were derived from the raw DSN.
+# --------------------------------------------------------------------------- #
+
+CONNECTOR_PLANTS = [
+    ("sql_connector", "postgresql://svc:{secret}@analytics.dw:5432/crm"),
+    ("rdf_connector", "sparql://graphuser:{secret}@semantic.graph/ci"),
+    ("file_lake_connector", "s3://AKIAEXAMPLE:{secret}@analytics/events/crm"),
+    ("rest_connector", "https://svc:{secret}@api.example.internal/crm"),
+]
+
+
+@pytest.mark.parametrize(
+    "connector_id,dsn_template", CONNECTOR_PLANTS, ids=[row[0] for row in CONNECTOR_PLANTS]
+)
+@pytest.mark.parametrize("method", ["inspect_schema", "preview"])
+def test_no_connector_adapter_method_returns_a_secret(
+    connector_id: str, dsn_template: str, method: str
+) -> None:
+    """Both contract methods, all four adapters.
+
+    ``preview`` recorded ``named_graph``/``manifest_path`` built from the raw
+    ``source_system``, so the credential landed in the audit event's details -
+    returned by ``GET /audit/events?user=analyst`` to roles the governed read
+    routes deny ``source_system`` to. ``inspect_schema`` returned the raw DSN to
+    any in-process caller.
+    """
+    from sdp import connectors
+
+    dataset_id = f"adapter-{connector_id}"
+    base = catalog._DATA["crm-customer-master"]
+    catalog._DATA[dataset_id] = base.model_copy(
+        update={"id": dataset_id, "source_system": dsn_template.format(secret=SECRET)}
+    )
+
+    connector = connectors._SOURCE_CONNECTORS[connector_id]
+    call = getattr(connector, method)
+    result = call(dataset_id) if method == "inspect_schema" else call(
+        dataset_id, limit=2, offset=0
+    )
+    assert SECRET not in repr(result), repr(result)[:400]
+
+
+MUTATIONS = [
+    ("create", "POST", "/catalog/datasets"),
+    ("publish", "POST", "/catalog/datasets/{dataset_id}/publish"),
+    ("patch", "PATCH", "/catalog/datasets/{dataset_id}"),
+    ("deprecate", "POST", "/catalog/datasets/{dataset_id}/deprecate"),
+]
+
+
+@pytest.mark.parametrize(
+    "label,method,path", MUTATIONS, ids=[row[0] for row in MUTATIONS]
+)
+def test_no_mutation_response_republishes_the_dsn(label: str, method: str, path: str) -> None:
+    """All four, because fixing one would have left three.
+
+    Measured before the repair on a dataset registered with
+    ``postgresql://dsnuser:PGPASS42@analytics.dw:5432/crm?sslcert=TOKENINQUERY``:
+    publish, patch and deprecate each returned 200 with the secret *and* the
+    query token in the body, while every read surface withheld the field. The
+    deprecate request carries no ``source_system`` at all and still handed it
+    back.
+    """
+    dataset_id = f"mutation-{label}-ds"
+    base = catalog._DATA["crm-customer-master"]
+    dsn = f"postgresql://dsnuser:{SECRET}@analytics.dw:5432/crm?sslcert=TOKENINQUERY"
+    catalog._DATA[dataset_id] = base.model_copy(
+        update={"id": dataset_id, "source_system": dsn, "status": "draft"}
+    )
+
+    if label == "create":
+        # ``model_dump()`` leaves pydantic URL objects in place, which the test
+        # client cannot serialise; ``model_dump_json`` round-trips to plain JSON.
+        body = {
+            **json.loads(catalog._DATA[dataset_id].model_dump_json()),
+            "id": "mutation-create-new-ds",
+            "actor": "admin",
+        }
+        response = client.post("/catalog/datasets", json=body)
+    else:
+        resolved = path.format(dataset_id=dataset_id)
+        payload = {"actor": "admin"}
+        if method == "PATCH":
+            payload["owner"] = "new_owner"
+        response = client.request(method, resolved, json=payload)
+
+    assert response.status_code == 200, response.text
+    assert SECRET not in response.text, response.text[:400]
+    assert "TOKENINQUERY" not in response.text
+    # The response still confirms the mutation, unlike discovery_view.
+    assert response.json()["dataset"]["source_system"]

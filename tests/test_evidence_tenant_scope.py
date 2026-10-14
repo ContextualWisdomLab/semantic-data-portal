@@ -182,3 +182,165 @@ def test_an_unauthenticated_create_leaves_its_refusal_in_no_ones_ledger() -> Non
         assert decision.obligations["tenant_id"] == stores.UNRESOLVED_TENANT_ID, (
             f"filed under {decision.obligations['tenant_id']!r}"
         )
+
+
+# --------------------------------------------------------------------------- #
+# Upgrade in place: the two backends must recover the same tenant.
+#
+# ``SQLiteEvidenceStore._add_tenant_column`` added the column with the
+# unresolved default and stopped, while ``PostgresEvidenceStore._initialize``
+# recovers the tenant from the stored payload. The two ship as
+# protocol-equivalent - docker-compose runs an instance of each to check exactly
+# that - so the same upgrade on the same row gave ``unresolved`` on SQLite and
+# ``demo`` on Postgres. Measured on a pre-tenant_id database whose payloads
+# carry ``tenant_id: "demo"``:
+#
+#     after upgrade, policy_decisions.tenant_id -> ['unresolved']
+#     after upgrade, audit_events.tenant_id     -> ['unresolved']
+#
+# On SQLite the row then became invisible to its owning tenant's auditor and
+# visible only to platform-admin, and SQLite is the documented demo/pilot
+# deployment on a persistent volume - the upgrade-in-place case.
+# --------------------------------------------------------------------------- #
+
+LEGACY_DECISION_COLUMNS = (
+    "decision_id TEXT PRIMARY KEY, subject TEXT NOT NULL, resource TEXT NOT NULL, "
+    "action TEXT NOT NULL, effect TEXT NOT NULL, payload TEXT NOT NULL, "
+    "recorded_at TEXT NOT NULL"
+)
+LEGACY_EVENT_COLUMNS = (
+    "id TEXT PRIMARY KEY, actor TEXT NOT NULL, action TEXT NOT NULL, "
+    "resource TEXT NOT NULL, result TEXT NOT NULL, decision_id TEXT, "
+    "payload TEXT NOT NULL, created_at TEXT NOT NULL"
+)
+
+
+def _legacy_sqlite_evidence(path, *, detail_key: str = "tenant_id"):
+    """Build a pre-``tenant_id`` evidence database with attributable payloads."""
+    import json
+    import sqlite3
+
+    connection = sqlite3.connect(path)
+    connection.execute(f"CREATE TABLE policy_decisions ({LEGACY_DECISION_COLUMNS})")
+    connection.execute(f"CREATE TABLE audit_events ({LEGACY_EVENT_COLUMNS})")
+    connection.execute(
+        "INSERT INTO policy_decisions VALUES (?,?,?,?,?,?,?)",
+        (
+            "d-legacy",
+            "analyst",
+            "crm-customer-master",
+            "preview",
+            "allow",
+            json.dumps(
+                {
+                    "decision_id": "d-legacy",
+                    "subject": "analyst",
+                    "resource": "crm-customer-master",
+                    "action": "preview",
+                    "effect": "allow",
+                    "reason": "ok",
+                    "obligations": {"tenant_id": "demo", "masking": []},
+                }
+            ),
+            "2026-01-01T00:00:00Z",
+        ),
+    )
+    connection.execute(
+        "INSERT INTO audit_events VALUES (?,?,?,?,?,?,?,?)",
+        (
+            "a-legacy",
+            "analyst",
+            "browse.preview",
+            "crm-customer-master",
+            "allowed",
+            "d-legacy",
+            json.dumps(
+                {
+                    "id": "a-legacy",
+                    "actor": "analyst",
+                    "action": "browse.preview",
+                    "resource": "crm-customer-master",
+                    "result": "allowed",
+                    "reason": "ok",
+                    "decision_id": "d-legacy",
+                    "details": {detail_key: "demo"},
+                    "created_at": "2026-01-01T00:00:00Z",
+                }
+            ),
+            "2026-01-01T00:00:00Z",
+        ),
+    )
+    connection.commit()
+    connection.close()
+
+
+def test_the_sqlite_upgrade_recovers_the_tenant_from_the_payload(tmp_path) -> None:
+    from sdp_core import SQLiteEvidenceStore
+
+    path = tmp_path / "legacy-evidence.sqlite3"
+    _legacy_sqlite_evidence(path)
+
+    store = SQLiteEvidenceStore(path)  # upgrade in place
+
+    # The row belongs to its owning tenant's auditor, not only to platform-admin.
+    assert len(store.list_decisions(tenant_ids=["demo"])) == 1
+    assert len(store.list_events(tenant_ids=["demo"])) == 1
+    # and is not readable by another tenant
+    assert store.list_decisions(tenant_ids=["other"]) == []
+    assert store.list_events(tenant_ids=["other"]) == []
+
+
+def test_the_sqlite_upgrade_honours_the_tenant_spelling_the_reader_honours(tmp_path) -> None:
+    """``_audit_tenant_id`` accepts ``details.tenant`` as well as ``tenant_id``.
+
+    A backfill that recovers only one spelling drops rows the reader would have
+    attributed correctly. The Postgres statement had the same gap.
+    """
+    from sdp_core import SQLiteEvidenceStore
+
+    path = tmp_path / "legacy-evidence-alt-key.sqlite3"
+    _legacy_sqlite_evidence(path, detail_key="tenant")
+
+    store = SQLiteEvidenceStore(path)
+    assert len(store.list_events(tenant_ids=["demo"])) == 1
+
+
+def test_an_unattributable_legacy_row_still_falls_back_to_unresolved(tmp_path) -> None:
+    """Recovering what is there must not invent what is not."""
+    import json
+    import sqlite3
+
+    from sdp_core import SQLiteEvidenceStore
+
+    path = tmp_path / "legacy-evidence-no-tenant.sqlite3"
+    connection = sqlite3.connect(path)
+    connection.execute(f"CREATE TABLE policy_decisions ({LEGACY_DECISION_COLUMNS})")
+    connection.execute(f"CREATE TABLE audit_events ({LEGACY_EVENT_COLUMNS})")
+    connection.execute(
+        "INSERT INTO policy_decisions VALUES (?,?,?,?,?,?,?)",
+        (
+            "d-anon",
+            "analyst",
+            "some-dataset",
+            "preview",
+            "deny",
+            json.dumps(
+                {
+                    "decision_id": "d-anon",
+                    "subject": "analyst",
+                    "resource": "some-dataset",
+                    "action": "preview",
+                    "effect": "deny",
+                    "reason": "no tenant recorded",
+                    "obligations": {},
+                }
+            ),
+            "2026-01-01T00:00:00Z",
+        ),
+    )
+    connection.commit()
+    connection.close()
+
+    store = SQLiteEvidenceStore(path)
+    assert store.list_decisions(tenant_ids=["demo"]) == []
+    assert len(store.list_decisions(tenant_ids=None)) == 1

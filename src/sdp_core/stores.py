@@ -110,11 +110,41 @@ class SQLiteEvidenceStore:
                 "ON audit_events (tenant_id, resource)"
             )
 
+    # Where each table's legacy rows keep their tenant inside the stored payload.
+    # ``_audit_tenant_id`` honours ``details.tenant`` as well as
+    # ``details.tenant_id``, so the backfill honours both - the Postgres
+    # equivalent reads only ``tenant_id`` and silently drops the other spelling.
+    _TENANT_BACKFILL_PATHS = {
+        "policy_decisions": ("$.obligations.tenant_id",),
+        "audit_events": ("$.details.tenant_id", "$.details.tenant"),
+    }
+
     def _add_tenant_column(self, connection: Any, table: str) -> None:
-        """Add ``tenant_id`` to an evidence table created before it existed.
+        """Add ``tenant_id`` to an evidence table created before it existed, and backfill it.
 
         SQLite has no ``ADD COLUMN IF NOT EXISTS``, so the column list is read
-        first. Legacy rows take the unresolved marker rather than a real tenant.
+        first.
+
+        The backfill is the point. This method used to add the column with the
+        unresolved default and stop, while ``PostgresEvidenceStore._initialize``
+        recovers the tenant from the stored payload
+        (``COALESCE(..., payload -> 'obligations' ->> 'tenant_id', ...)``). The
+        two backends ship as protocol-equivalent - ``docker-compose`` runs an
+        instance of each to check exactly that - so the same upgrade on the same
+        row produced ``unresolved`` on SQLite and ``demo`` on Postgres. Measured
+        on a hand-built pre-tenant_id database whose payloads carry
+        ``tenant_id: "demo"``::
+
+            after upgrade, policy_decisions.tenant_id -> ['unresolved']
+            after upgrade, audit_events.tenant_id     -> ['unresolved']
+
+        On SQLite the row then becomes invisible to its owning tenant's auditor
+        (``GET /audit/events``, ``GET /policy/decisions``,
+        ``GET /catalog/datasets/{id}/audit``) and visible only to platform-admin
+        - the ledger loses recoverable attribution for all of its history. And
+        SQLite is the documented demo/pilot deployment
+        (``SDP_SQLITE_PATH=/data/sdp-evidence.sqlite3`` on a persistent volume),
+        i.e. precisely the upgrade-in-place case.
         """
         columns = {row[1] for row in connection.execute(f"PRAGMA table_info({table})").fetchall()}
         if "tenant_id" in columns:
@@ -122,6 +152,14 @@ class SQLiteEvidenceStore:
         connection.execute(
             f"ALTER TABLE {table} ADD COLUMN tenant_id TEXT NOT NULL "
             f"DEFAULT '{UNRESOLVED_TENANT_ID}'"
+        )
+        paths = self._TENANT_BACKFILL_PATHS.get(table, ())
+        if not paths:
+            return
+        extracted = ", ".join(f"NULLIF(json_extract(payload, '{path}'), '')" for path in paths)
+        connection.execute(
+            f"UPDATE {table} SET tenant_id = COALESCE({extracted}, '{UNRESOLVED_TENANT_ID}') "
+            f"WHERE tenant_id = '{UNRESOLVED_TENANT_ID}' OR tenant_id IS NULL OR tenant_id = ''"
         )
 
     def record_decision(self, decision: PolicyDecision) -> PolicyDecision:
@@ -353,6 +391,10 @@ class PostgresEvidenceStore:
                 SET tenant_id = COALESCE(
                     NULLIF(tenant_id, ''),
                     NULLIF(payload -> 'details' ->> 'tenant_id', ''),
+                    -- ``_audit_tenant_id`` honours this spelling too, so a row
+                    -- carrying only ``details.tenant`` was being dropped to
+                    -- unresolved by the backfill that is supposed to recover it.
+                    NULLIF(payload -> 'details' ->> 'tenant', ''),
                     '{UNRESOLVED_TENANT_ID}'
                 )
                 WHERE tenant_id IS NULL OR tenant_id = ''

@@ -180,6 +180,41 @@ def _changed_governed_column_fields(before: Dict[str, Any], after: Dict[str, Any
     ]
 
 
+def mutation_response_view(dataset: Dataset) -> Dict[str, Any]:
+    """Project a mutated dataset for the response that confirms the mutation.
+
+    The four catalog mutations returned ``dataset.model_dump()`` verbatim, which
+    carries ``source_system`` with its credential - userinfo *and* query - while
+    every read surface withholds that field entirely
+    (``_GOVERNED_DATASET_FIELDS``) and ``redacted_source_system``'s own docstring
+    says the credential is dropped "on every path - including the authorized
+    one, since no caller needs the credential". Measured on a dataset registered
+    with ``postgresql://dsnuser:SUPERSEKRET123@analytics.dw:5432/crm?sslcert=TOKENINQUERY``:
+
+        POST   /catalog/datasets/{id}/publish    -> 200, secret in response: True
+        POST   /catalog/datasets/{id}/deprecate  -> 200, secret in response: True
+        PATCH  /catalog/datasets/{id}            -> 200, secret in response: True
+
+        GET    /catalog/datasets/{id}            -> secret in response: False
+        GET    /catalog/datasets/{id}/jsonld     -> secret in response: False
+        GET    /browse/{id}/schema               -> secret in response: False
+
+    ``deprecate`` carries no ``source_system`` in its request at all and still
+    handed it back, so the DSN the governance boundary says nobody may read was
+    retrievable on demand by any admin-role principal - and copied into whatever
+    logs, proxies and browser consoles handle the mutation response.
+
+    Unlike ``discovery_view`` this keeps the governed fields: the response
+    confirms what the mutation did, and an admin who just wrote the schema may
+    see it back. Only the credential is removed.
+    """
+    projected = dataset.model_dump()
+    source_system = projected.get("source_system")
+    if isinstance(source_system, str):
+        projected["source_system"] = redacted_source_system(source_system)
+    return projected
+
+
 def audited_patch_values(values: Dict[str, Any]) -> Dict[str, Any]:
     """Project patched field values for an audit record.
 
