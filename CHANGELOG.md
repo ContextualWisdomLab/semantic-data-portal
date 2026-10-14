@@ -17,7 +17,7 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                    688 passed, 11 skipped
+    pytest                    690 passed, 11 skipped
     pytest (역방향/난수 순서)  순서 무관 통과 (역순 + seed 11/29/77)
     pytest tests/fuzz          11 passed
     python -m sdp.demo_smoke   exit 0, "ready": true
@@ -71,6 +71,14 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
   (요청보다 큰 응답). 상한은 256개/256자이고 지금은 각각 17.8 KB와 1.2 KB이며, 잘린 양은
   `declared_group_count`/`withheld_group_count`와 `...[truncated]` 표시로 선언합니다.
   `observability.py`의 무제한 관측 행과 같은 결함 범주를 다른 표면에서 만난 것입니다.
+  이 상한의 **첫 구현은 권한 결과를 조용히 바꿨습니다**: 길이 제한을 `_claim_values` 안에 두어
+  group→role 조회에 쓰이는 값까지 잘랐는데, map의 **키**는 자르지 않으므로 256자를 넘는 정상적인
+  group 이름이 자기 map 항목과 더 이상 일치하지 않았습니다(측정: 300자 group 이름 →
+  `roles: []`, 이전 `["data-analyst"]`). 부여가 아니라 보류이므로 fail-closed이지만 조용했고,
+  group이 개수 상한 안에 있었으므로 `withheld_group_count`가 0이어서 사라진 이유를 알 수 없었습니다.
+  매칭은 실제 값으로 하고 **내보낼 때만** 자릅니다 — 증폭기 수정에 필요했던 것은 그것뿐이었습니다
+  (커진 것은 응답이었습니다). 개수 상한은 매칭에도 적용되며(group당 작업량이 미인증 호출자가
+  곱할 수 있는 비용), 그쪽은 `withheld_group_count`로 선언합니다.
 
 
 - 문서화된 draft→execute 워크플로에 **통과 경로가 없었습니다**. 통과합니다.

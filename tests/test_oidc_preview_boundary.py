@@ -186,6 +186,57 @@ def test_one_group_name_is_bounded_in_length_with_a_marker() -> None:
     assert echoed.endswith("...[truncated]")
 
 
+def test_the_length_cap_does_not_change_an_authorization_outcome() -> None:
+    """The cap belongs at the emit site, and the first version of it did not.
+
+    Capping inside ``_claim_values`` also capped the value feeding the group ->
+    role lookup, while the map's **keys** are not capped - so a legitimately long
+    group name stopped matching its own entry. Measured with that version, a
+    300-character group name present in both the token and the role map::
+
+        granted roles  []            (was ["data-analyst"])
+
+    Fail-closed, so not a privilege grant, but silent: the group was inside the
+    count cap, so ``withheld_group_count`` was 0 and nothing said why the role
+    had vanished. Matching now uses the real value; only the echo is capped,
+    which is all the amplifier fix needed.
+    """
+    long_group = "g" * (authz.MAX_CLAIM_VALUE_CHARS + 44)
+    body = _preview(
+        claims={"tenant_id": "demo", "groups": [long_group]},
+        role_map={"demo": {long_group: ["data-analyst"]}},
+    )
+    assert body["actor_context"]["roles"] == ["data-analyst"], body
+    assert body["withheld_group_count"] == 0
+    row = body["group_role_bindings"][0]
+    assert row["granted_roles"] == ["data-analyst"]
+    # Still capped on the way out, with the marker.
+    assert len(row["group_name"]) == authz.MAX_CLAIM_VALUE_CHARS
+    assert row["group_name"].endswith("...[truncated]")
+
+
+def test_two_long_group_names_stay_distinct_for_matching() -> None:
+    """They collapsed to one string and the duplicate guard dropped the second.
+
+    The echoed names are still identical - both truncate to the same prefix, and
+    disambiguating a 300-character group name in the output would be
+    over-engineering - but the rows are distinguishable by their granted roles,
+    and the marker says the name was cut.
+    """
+    first = "x" * 250 + "A" * 80
+    second = "x" * 250 + "B" * 80
+    body = _preview(
+        claims={"tenant_id": "demo", "groups": [first, second]},
+        role_map={"demo": {first: ["data-analyst"], second: ["security"]}},
+    )
+    assert sorted(body["actor_context"]["roles"]) == ["data-analyst", "security"], body
+    assert len(body["group_role_bindings"]) == 2
+    assert {tuple(row["granted_roles"]) for row in body["group_role_bindings"]} == {
+        ("data-analyst",),
+        ("security",),
+    }
+
+
 def test_the_response_is_not_larger_than_the_request() -> None:
     """The amplification property, directly.
 

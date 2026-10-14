@@ -96,12 +96,26 @@ MAX_CLAIM_VALUE_CHARS = 256
 _CLAIM_TRUNCATION_MARKER = "...[truncated]"
 
 
-def _bounded_claim_value(value: str) -> str:
-    """Cap one claim string, marking what was cut.
+def bounded_claim_value(value: str) -> str:
+    """Cap one claim string **for output**, marking what was cut.
 
-    The marker keeps the row honest: a silently shortened group name reads as
-    the whole name, and a reviewer comparing it against the IdP's group list
-    would not know why it does not match.
+    Length capping belongs at the emit site, not in matching. The first version
+    of this bound capped inside :func:`_claim_values`, which feeds the group ->
+    role lookup, and that silently changed an authorization outcome: the map's
+    keys are not capped, so a legitimately long group name no longer matched its
+    own entry. Measured, with ``role_map={"demo": {"g"*300: ["data-analyst"]}}``
+    and the same 300-character name in the token's ``groups``::
+
+        granted roles  []            (was ["data-analyst"])
+
+    Fail-closed, so not a privilege grant - but a silent one, and
+    ``withheld_group_count`` does not describe it, because the group was within
+    the count cap and only its name was shortened. Two distinct long names
+    sharing a 242-character prefix also collapsed to one string and the second
+    was dropped by the duplicate guard.
+
+    Matching now uses the real value and only the echoed copy is capped, which
+    was all the amplifier fix ever needed: the response was the thing growing.
     """
     if len(value) <= MAX_CLAIM_VALUE_CHARS:
         return value
@@ -110,7 +124,12 @@ def _bounded_claim_value(value: str) -> str:
 
 
 def _claim_values(value: Any) -> list[str]:
-    """Coerce a scalar, list, or absent claim value into a bounded string list."""
+    """Coerce a scalar, list, or absent claim value into a count-bounded list.
+
+    Bounded in count, because the per-group work is what an unauthenticated
+    caller could multiply (100,000 groups cost 642 ms), and **not** in value
+    length, because this list feeds matching - see :func:`bounded_claim_value`.
+    """
     if value is None:
         return []
     if isinstance(value, str):
@@ -119,7 +138,7 @@ def _claim_values(value: Any) -> list[str]:
         values = [str(item) for item in value]
     else:
         values = [str(value)]
-    return [_bounded_claim_value(item) for item in values[:MAX_CLAIM_VALUES]]
+    return values[:MAX_CLAIM_VALUES]
 
 
 def claim_value_count(value: Any) -> int:
@@ -142,9 +161,10 @@ def oidc_role_claims(claims: dict[str, Any]) -> list[str]:
     """Read the direct role claims that mapping deliberately ignores.
 
     Roles are granted only through group bindings, so these values are
-    reported for audit rather than honoured as grants.
+    reported for audit rather than honoured as grants. That makes this a pure
+    echo of a caller claim, so it is capped in length as well as count.
     """
-    return _claim_values(claims.get("roles"))
+    return [bounded_claim_value(value) for value in _claim_values(claims.get("roles"))]
 
 
 def oidc_role_map_is_operator_configured() -> bool:
@@ -269,7 +289,9 @@ def oidc_group_role_bindings(
             granted_roles = []
         group_bindings.append(
             {
-                "group_name": group_name,
+                # Capped for output only; ``group_name`` above did the matching
+                # at full length.
+                "group_name": bounded_claim_value(group_name),
                 "tenant_scope": granting_scope,
                 "granted_roles": sorted(set(granted_roles)),
             }
