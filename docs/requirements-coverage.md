@@ -30,8 +30,8 @@ PYTHONPATH=src python -m sdp_core.requirements
 
 | 상태 | 전체 | P0 |
 | --- | --- | --- |
-| `implemented` | 13 | 6 |
-| `partial` | 45 | 25 |
+| `implemented` | 14 | 7 |
+| `partial` | 44 | 24 |
 | `not_implemented` | 12 | 3 |
 | `external` | 4 | 0 |
 
@@ -77,7 +77,7 @@ PYTHONPATH=src python -m sdp_core.requirements
 | LLM-009 | P1 | `external` |
 | POL-001 | P0 | `implemented` |
 | POL-002 | P0 | `partial` |
-| POL-003 | P0 | `partial` |
+| POL-003 | P0 | `implemented` |
 | POL-004 | P1 | `implemented` |
 | POL-005 | P0 | `partial` |
 | POL-006 | P2 | `not_implemented` |
@@ -381,12 +381,12 @@ PYTHONPATH=src python -m sdp_core.requirements
 - **증빙**: `func:sdp.policy.evaluate`, `test:tests/test_governance_boundary.py::test_a_foreign_tenant_admin_cannot_overwrite_a_node_it_cannot_read`
 - **비고**: Dataset level is genuine subject-dependent access control: tenant boundary, metadata-reader vs data-reader role, critical sensitivity (admin only) and external-export purpose each change the decision (policy.py:348-395). There is no per-table level, because a dataset is the table here. Column level is classification-driven redaction, not access control: the `masking` obligation is `[col.name for col in dataset.schema if col.pii]` (policy.py:408), so the masked set is identical for admin, data-admin, analyst and security; no role, purpose or configuration releases a PII value, and no per-role column grant exists. The ACCEPT's "숨김 또는 마스킹" is met for preview rows (`***`, tests/test_browse.py::test_preview_masks_every_declared_pii_column) and the ungated catalog detail withholds the column schema entirely; what is missing is any notion of a column a given subject is or is not authorized for. Also unredacted: `orchestrator.draft_sql` names a requested PII column in the drafted SELECT, carrying only an advisory assumption (orchestrator.py:569).
 
-#### POL-003 · P0 · `partial`
+#### POL-003 · P0 · `implemented`
 
 - **요구사항**: PII, sensitive, confidential tag 기반 masking을 지원해야 한다.
 - **수락 기준**: policy decision 결과에 masking rule 포함
-- **증빙**: `func:sdp.browse.preview`, `test:tests/test_browse.py::test_preview_masks_every_declared_pii_column`
-- **비고**: Masking keys off the per-column `pii` boolean only: `ColumnMetadata` carries no `sensitive` or `confidential` classification, and dataset `tags` are used only for search facets. Dataset-level `sensitivity` never produces a mask — `critical` is a full deny for non-admins (its `masking: True` obligation is never consumed) and `high` + `analysis` produces a row filter — so a `confidential`-tagged dataset whose columns are not flagged `pii` is previewed unmasked. The masking rule is carried on the policy decision and enforced by `browse.preview`; `orchestrator.execute_query` does not apply it, which is latent rather than a live leak because that path executes nothing and returns mock aggregates.
+- **증빙**: `func:sdp_core.contracts.column_masking_bases`, `func:sdp_core.contracts.masked_column_rules`, `func:sdp.browse.preview`, `test:tests/test_classification_masking.py::test_every_declared_basis_masks`, `test:tests/test_classification_masking.py::test_a_rule_carries_the_column_the_bases_and_the_action`, `test:tests/test_classification_masking.py::test_a_classified_non_pii_column_is_actually_masked_in_a_preview`
+- **비고**: All three bases the requirement names now mask, and the decision carries the rule the acceptance criterion asks for: `obligations.masking_rules` gives each masked column its bases and its action, beside the `masking` name list that `apply_mask` and the published response read. Before this the policy consulted only the `pii` bool - a column classified sensitive or confidential was released, and there was nowhere on ColumnMetadata to classify one. An unrecognised label masks as well, reported as `unrecognized_classification`: masking is a withholding control, so releasing a column because its label was misspelled is the failure that matters. `pii: true` and `classification: ["pii"]` are one statement. `classification` is governed exactly like `pii` - withheld from the discovery surface, reported as drift in the schema diff without publishing the value. What this does not do is suppress rather than mask (the obligation's action is always `mask`), and nothing classifies a column automatically: the label is operator-supplied, like `pii`.
 
 #### POL-004 · P1 · `implemented`
 

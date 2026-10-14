@@ -5,6 +5,7 @@ from typing import Any, Dict, List
 from .authz import can_access_tenant
 from .catalog import get_dataset, get_dataset_profile, ingest_event
 from .domain import ColumnMetadata, Dataset
+from sdp_core.contracts import masked_column_rules
 from .policy import evaluate, evaluate_dataset_scope_refusal
 from .quality_warnings import quality_warning_summary
 
@@ -138,8 +139,12 @@ def preview(dataset_id: str, user: str, purpose: str, limit: int = 100, offset: 
     # instruction, and a column the dataset itself declares as PII is masked even
     # if a future policy change stopped listing it.
     obligated = decision.obligations.get("masking") or []
-    declared_pii = [column.name for column in dataset.schema if column.pii]
-    masked_columns = list(dict.fromkeys([*obligated, *declared_pii]))
+    # The floor is every column the dataset's own declarations require masking
+    # for, not just the ``pii`` bool: POL-003 names sensitive and confidential
+    # too, and a floor narrower than the policy would release a column the
+    # policy masked if a future policy change stopped listing it.
+    declared = [rule["column"] for rule in masked_column_rules(dataset.schema)]
+    masked_columns = list(dict.fromkeys([*obligated, *declared]))
 
     selected = rows[offset : offset + limit]
     masked = [apply_mask(row.copy(), masked_columns) for row in selected]

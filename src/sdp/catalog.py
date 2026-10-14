@@ -169,7 +169,7 @@ def redacted_source_system(source_system: str) -> str:
 # The same boundary at column granularity. The schema-history and schema-diff
 # routes publish stored column signatures, so without this they re-published the
 # per-column PII classification that discovery_view withholds.
-_GOVERNED_COLUMN_FIELDS = ("pii", "quality_issues")
+_GOVERNED_COLUMN_FIELDS = ("pii", "quality_issues", "classification")
 
 
 def discovery_column_view(column: Dict[str, Any]) -> Dict[str, Any]:

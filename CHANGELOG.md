@@ -25,10 +25,46 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 77
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                    1008 passed, 11 skipped
+    pytest                    1023 passed, 11 skipped
     pytest (역방향/난수 순서)  순서 무관 통과 (역순 + seed 11/707/31337)
     pytest tests/fuzz          11 passed
     python -m sdp.demo_smoke   exit 0, "ready": true
+
+### Security — 마스킹이 선언된 세 근거 중 하나만 보고 있었습니다
+
+POL-003(P0)은 "**PII, sensitive, confidential** tag 기반 masking을 지원해야 한다"이고
+수락 기준은 "policy decision 결과에 **masking rule** 포함"입니다. 정책은 세 근거 중
+하나만 읽고 rule은 전혀 게시하지 않았습니다:
+
+    obligations["masking"] = [col.name for col in dataset.schema if col.pii]
+
+그래서 **sensitive나 confidential로 분류된 컬럼은 공개되었습니다** — `ColumnMetadata`에
+분류를 적을 자리가 없었고 그것을 마스킹하는 코드도 없었습니다. 그리고 판단은 어떤
+컬럼이 마스킹되는지만 말하고 **어떤 근거로**인지는 말하지 않았으므로, 감사자는 PII
+마스킹과 기밀 마스킹을 구별할 수 없고 선언된 세 근거 중 둘이 한 번도 조회되지 않았다는
+사실도 알 수 없었습니다.
+
+`ColumnMetadata.classification`을 두고 세 근거 전부가 마스킹하게 했습니다.
+`obligations.masking_rules`가 컬럼마다 `bases`와 `action`을 담고,
+`masking` 이름 목록은 형태를 유지합니다(`apply_mask`와 게시된 응답이 읽습니다).
+
+**알 수 없는 라벨도 마스킹합니다** — `unrecognized_classification`을 근거로 보고합니다.
+마스킹은 **보류하는** 통제이므로 fail-closed 방향은 이해하지 못한 것을 마스킹하는
+쪽입니다: 라벨 오타 때문에 컬럼이 공개되는 것이 문제가 되는 실패입니다.
+`pii: true`와 `classification: ["pii"]`는 같은 진술이고 어느 쪽이든 마스킹하므로 둘이
+결과를 두고 어긋날 수 없습니다. 대소문자와 앞뒤 공백은 라벨을 무력화하지 못합니다.
+
+`classification`은 `pii`와 **정확히 같은 방식으로** 거버닝됩니다 — discovery 표면에서
+withhold하고(컬럼의 민감도 라벨은 PII 플래그만큼 노출적입니다), schema diff는 값을
+공개하지 않으면서 그 필드가 바뀌었다고 보고합니다.
+
+`browse.preview`의 마스킹 **floor도 같이 넓혔습니다**. floor가 `column.pii`만 읽고
+있었으므로 정책이 confidential 컬럼을 더 이상 나열하지 않게 되면 그것이 공개됩니다 —
+정책보다 좁은 floor는 floor가 아닙니다. 테스트가 소스에서 그것을 단언합니다.
+
+이에 따라 POL-003은 `implemented`입니다. 하지 않는 것도 적어 둡니다: obligation의
+action은 항상 `mask`이고(suppression이 아니라) 컬럼을 자동 분류하는 것은 없습니다 —
+라벨은 `pii`와 마찬가지로 운영자가 선언합니다.
 
 ### Security — 카탈로그 변경 사유가 기록되지 않았고, 하나는 날조되었습니다
 

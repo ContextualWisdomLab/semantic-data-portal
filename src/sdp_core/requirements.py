@@ -796,23 +796,33 @@ REQUIREMENT_COVERAGE: dict[str, RequirementCoverage] = {
         ),
     ),
     "POL-003": RequirementCoverage(
-        status="partial",
+        status="implemented",
         evidence=[
+            "func:sdp_core.contracts.column_masking_bases",
+            "func:sdp_core.contracts.masked_column_rules",
             "func:sdp.browse.preview",
-            "test:tests/test_browse.py::test_preview_masks_every_declared_pii_column",
+            "test:tests/test_classification_masking.py::test_every_declared_basis_masks",
+            "test:tests/test_classification_masking.py::test_a_rule_carries_the_column_the_bases_and_the_action",
+            "test:tests/test_classification_masking.py::test_a_classified_non_pii_column_is_actually_masked_in_a_preview",
         ],
         note=(
-            "Masking keys off the per-column `pii` boolean only: `ColumnMetadata` "
-            "carries no `sensitive` or `confidential` classification, and dataset "
-            "`tags` are used only for search facets. Dataset-level `sensitivity` "
-            "never produces a mask — `critical` is a full deny for non-admins "
-            "(its `masking: True` obligation is never consumed) and `high` + "
-            "`analysis` produces a row filter — so a `confidential`-tagged "
-            "dataset whose columns are not flagged `pii` is previewed unmasked. "
-            "The masking rule is carried on the policy decision and enforced by "
-            "`browse.preview`; `orchestrator.execute_query` does not apply it, "
-            "which is latent rather than a live leak because that path executes "
-            "nothing and returns mock aggregates."
+            "All three bases the requirement names now mask, and the decision "
+            "carries the rule the acceptance criterion asks for: "
+            "`obligations.masking_rules` gives each masked column its bases and "
+            "its action, beside the `masking` name list that `apply_mask` and "
+            "the published response read. Before this the policy consulted only "
+            "the `pii` bool - a column classified sensitive or confidential was "
+            "released, and there was nowhere on ColumnMetadata to classify one. "
+            "An unrecognised label masks as well, reported as "
+            "`unrecognized_classification`: masking is a withholding control, "
+            "so releasing a column because its label was misspelled is the "
+            "failure that matters. `pii: true` and `classification: [\"pii\"]` "
+            "are one statement. `classification` is governed exactly like `pii` "
+            "- withheld from the discovery surface, reported as drift in the "
+            "schema diff without publishing the value. What this does not do is "
+            "suppress rather than mask (the obligation's action is always "
+            "`mask`), and nothing classifies a column automatically: the label "
+            "is operator-supplied, like `pii`."
         ),
     ),
     "POL-004": RequirementCoverage(

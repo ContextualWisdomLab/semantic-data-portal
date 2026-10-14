@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from typing import Any
 from uuid import uuid4
 
+from sdp_core.contracts import masked_column_rules
 from sdp_core.stores import UNRESOLVED_TENANT_ID
 
 from .authz import can_access_tenant, has_role, resolve_actor_context
@@ -403,9 +404,19 @@ def evaluate(
     if action_key in {"query", "preview"} and purpose_key == "analysis" and dataset.sensitivity == "high":
         row_filter.append("business_unit = current_user_unit")
 
+    # POL-003 names three classification bases - PII, sensitive, confidential -
+    # and this read only the ``pii`` bool, so a column classified sensitive or
+    # confidential was released. Its acceptance criterion also asks the decision
+    # to carry the masking *rule*; a bare list of names says which columns and
+    # not on what grounds, so an auditor could not tell a PII mask from a
+    # confidentiality mask, nor notice that two of the three declared bases were
+    # never consulted. ``masking`` keeps its shape - ``browse.apply_mask`` and
+    # the published response both read it - and ``masking_rules`` carries why.
+    masking_rules = masked_column_rules(dataset.schema)
     obligations = {
         "tenant_id": dataset.tenant_id,
-        "masking": [col.name for col in dataset.schema if col.pii],
+        "masking": [rule["column"] for rule in masking_rules],
+        "masking_rules": masking_rules,
     }
     if row_filter:
         obligations["row_filter"] = row_filter
