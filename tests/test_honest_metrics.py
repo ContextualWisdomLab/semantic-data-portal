@@ -120,3 +120,75 @@ def test_file_sink_path_is_not_published(monkeypatch: pytest.MonkeyPatch) -> Non
     local = obs._sink_status()
     assert "/srv/sdp/private" not in str(local)
     assert local["configured"] is True
+
+
+# --- the sink must not bound API throughput when it is down ---------------
+
+
+def test_sink_breaker_stops_paying_the_timeout_for_a_dead_sink(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Moving the export off the event loop removed the *serialization*, but every
+    request still paid the full ``SDP_LOG_SINK_TIMEOUT_MS`` in a worker thread, and
+    the same bounded anyio threadpool serves every sync route. Measured against a
+    socket that accepts and never answers, 40 concurrent ``/health`` took 1.95s
+    with a 500ms timeout, and one episode filled all 50 export-error slots.
+
+    After a run of failures the breaker opens and the export is skipped until the
+    cooldown expires, so a telemetry outage stops being an API throughput ceiling.
+    """
+    import time
+
+    monkeypatch.setenv("SDP_LOG_SINK_URL", "https://sink.example/ingest")
+    attempts = {"n": 0}
+
+    def _always_fails(request, timeout=None):
+        attempts["n"] += 1
+        raise OSError("sink unreachable")
+
+    monkeypatch.setattr(obs, "urlopen", _always_fails)
+
+    for _ in range(obs.SINK_FAILURE_THRESHOLD):
+        obs.record_request_observation({"event": "http_request"}, export=True)
+    assert attempts["n"] == obs.SINK_FAILURE_THRESHOLD
+
+    state = obs.sink_breaker_state()
+    assert state["open"] is True
+    assert state["consecutive_failures"] >= obs.SINK_FAILURE_THRESHOLD
+
+    # Further observations are buffered but no longer touch the sink.
+    before = attempts["n"]
+    for _ in range(20):
+        obs.record_request_observation({"event": "http_request"}, export=True)
+    assert attempts["n"] == before, "the breaker is open; the sink must not be attempted"
+    assert obs.sink_breaker_state()["skipped_exports"] == 20
+
+    # The skip is reported, not silent.
+    manifest = obs.build_observability_manifest()
+    assert manifest["structured_logs"]["sink_breaker"]["open"] is True
+
+
+def test_sink_breaker_closes_after_the_cooldown(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SDP_LOG_SINK_URL", "https://sink.example/ingest")
+
+    def _always_fails(request, timeout=None):
+        raise OSError("sink unreachable")
+
+    monkeypatch.setattr(obs, "urlopen", _always_fails)
+    for _ in range(obs.SINK_FAILURE_THRESHOLD):
+        obs.record_request_observation({"event": "http_request"}, export=True)
+    assert obs.sink_breaker_state()["open"] is True
+
+    # Expire the cooldown rather than sleeping through it.
+    monkeypatch.setattr(obs, "SINK_COOLDOWN_SECONDS", 0.0)
+    obs._SINK_BREAKER["open_until"] = 0.0
+    assert obs.sink_breaker_state()["open"] is False
+
+    class _Ok:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(obs, "urlopen", lambda request, timeout=None: _Ok())
+    obs.record_request_observation({"event": "http_request"}, export=True)
+    assert obs.sink_breaker_state()["consecutive_failures"] == 0

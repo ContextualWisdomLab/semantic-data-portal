@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
@@ -195,12 +196,72 @@ def record_request_observation(observation: dict[str, Any], *, export: bool = Tr
     _export_buffered_observation(observation)
 
 
+# A telemetry sink that is down must not become an API throughput ceiling.
+# Moving the export off the event loop removed the serialization, but every
+# request still paid the full SDP_LOG_SINK_TIMEOUT_MS in a worker thread drawn
+# from the same bounded anyio pool that serves every sync route: measured against
+# a socket that accepts and never answers, 40 concurrent requests took 1.95s at a
+# 500ms timeout, and one episode filled all 50 export-error slots.
+SINK_FAILURE_THRESHOLD = 5
+SINK_COOLDOWN_SECONDS = 30.0
+_SINK_BREAKER: dict[str, Any] = {
+    "consecutive_failures": 0,
+    "open_until": 0.0,
+    "skipped_exports": 0,
+}
+
+
+def sink_breaker_state() -> dict[str, Any]:
+    """Report the export breaker, so an outage is visible rather than silent."""
+    return {
+        "open": _SINK_BREAKER["open_until"] > time.monotonic(),
+        "consecutive_failures": _SINK_BREAKER["consecutive_failures"],
+        "skipped_exports": _SINK_BREAKER["skipped_exports"],
+        "failure_threshold": SINK_FAILURE_THRESHOLD,
+        "cooldown_seconds": SINK_COOLDOWN_SECONDS,
+    }
+
+
+def reset_sink_breaker() -> None:
+    """Clear the breaker (used by tests and by reset_request_observability)."""
+    _SINK_BREAKER["consecutive_failures"] = 0
+    _SINK_BREAKER["open_until"] = 0.0
+    _SINK_BREAKER["skipped_exports"] = 0
+
+
+def _sink_breaker_is_open() -> bool:
+    return _SINK_BREAKER["open_until"] > time.monotonic()
+
+
+def _record_sink_failure(message: str) -> None:
+    """Count one export failure and open the breaker once the run is long enough."""
+    _SINK_BREAKER["consecutive_failures"] += 1
+    if _SINK_BREAKER["consecutive_failures"] >= SINK_FAILURE_THRESHOLD:
+        _SINK_BREAKER["open_until"] = time.monotonic() + SINK_COOLDOWN_SECONDS
+    record_observability_export_error(message)
+
+
+def _record_sink_success() -> None:
+    _SINK_BREAKER["consecutive_failures"] = 0
+    _SINK_BREAKER["open_until"] = 0.0
+
+
+
 def _export_buffered_observation(observation: dict[str, Any]) -> None:
-    """Export one already-buffered observation, recording a sink failure."""
+    """Export one already-buffered observation, recording a sink failure.
+
+    While the breaker is open the sink is not attempted at all, so a dead sink
+    costs nothing per request instead of a timeout and a threadpool slot.
+    """
+    if _sink_breaker_is_open():
+        _SINK_BREAKER["skipped_exports"] += 1
+        return
     try:
         _export_to_sink(observation)
-    except Exception as exc:  # pragma: no cover - defensive around external sinks
-        record_observability_export_error(str(exc))
+    except Exception as exc:
+        _record_sink_failure(str(exc))
+    else:
+        _record_sink_success()
 
 
 async def record_request_observation_async(
@@ -252,6 +313,7 @@ def count_observability_export_errors() -> int:
 def reset_request_observability() -> None:
     _REQUEST_OBSERVATIONS.clear()
     _EXPORT_ERRORS.clear()
+    reset_sink_breaker()
 
 
 def build_observability_manifest() -> dict[str, Any]:
@@ -281,6 +343,7 @@ def build_observability_manifest() -> dict[str, Any]:
                 "evidence_ids",
             ],
             "body_logging": "disabled",
+            "sink_breaker": sink_breaker_state(),
         },
         "metrics": {
             "catalog_datasets_total": len(datasets),
