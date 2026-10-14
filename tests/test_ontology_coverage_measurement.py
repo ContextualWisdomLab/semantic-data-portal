@@ -263,3 +263,120 @@ def test_the_raw_unregistered_concept_names_stay_off_the_evidence_pack() -> None
     assert "unregistered_mapping_concept_count" in pack
     assert "unregistered_mapping_concepts" not in pack
     assert ontology_mapping_coverage_detail()["unregistered_mapping_concepts"]
+
+
+# --------------------------------------------------------------------------- #
+# Two more directions the old metric failed, surfaced by an adversarial review
+# of the first repair.
+# --------------------------------------------------------------------------- #
+
+
+def test_proposing_a_mapping_for_the_uncovered_concept_does_not_lower_coverage() -> None:
+    """The old metric moved the wrong way for the single most useful action.
+
+    A steward proposing a mapping for the one genuinely uncovered glossary
+    concept is the action that most improves real coverage. Under
+    ``approved / all mappings`` the new proposed row landed in the denominator
+    only, so the published figure **fell**: measured 0.917 -> 0.846. The metric
+    was anti-correlated with the thing it claimed to measure.
+
+    Glossary-based coverage holds steady instead - the concept is not covered
+    until the mapping is approved, which is what the guardrail says - and
+    approving it then raises coverage.
+    """
+    before = ontology_mapping_coverage_detail()
+    target = before["unmapped_glossary_concepts"][0]
+    base = catalog._DATA["crm-customer-master"]
+    proposed = base.mappings[0].model_copy(
+        update={"concept": target, "status": MappingStatus.PROPOSED}
+    )
+    catalog._DATA["crm-customer-master"] = base.model_copy(
+        update={"mappings": list(base.mappings) + [proposed]}
+    )
+    after = ontology_mapping_coverage_detail()
+    assert after["ontology_mapping_coverage"] >= before["ontology_mapping_coverage"], (
+        f"proposing a mapping for {target!r} lowered coverage: "
+        f"{before['ontology_mapping_coverage']} -> {after['ontology_mapping_coverage']}"
+    )
+    assert target in after["unmapped_glossary_concepts"], "proposed is not approved"
+
+    # Approving it is what moves the number.
+    approved = proposed.model_copy(update={"status": MappingStatus.APPROVED})
+    catalog._DATA["crm-customer-master"] = base.model_copy(
+        update={"mappings": list(base.mappings) + [approved]}
+    )
+    final = ontology_mapping_coverage_detail()
+    assert final["ontology_mapping_coverage"] > before["ontology_mapping_coverage"]
+    assert target not in final["unmapped_glossary_concepts"]
+
+
+def test_the_published_evidence_names_the_surfaces_the_measurement_reads() -> None:
+    """``/ontology/patches`` was published as evidence and is never consulted.
+
+    The KPI's definition also promised "or active steward patch proposals",
+    which no code implemented - that clause was corrected to the stricter
+    reading the guardrail already stated, but the endpoint stayed in both the
+    gate's ``evidence`` and the KPI's ``source_endpoints``. A diligence reader
+    following the published evidence fetched a queue contributing nothing to the
+    number.
+
+    The queue is genuine evidence for the steward-review surface, which does
+    read it; it is not evidence for this measurement.
+    """
+    from sdp_core import enterprise_kpi_framework, enterprise_readiness_manifest
+
+    framework = enterprise_kpi_framework()
+    kpi = next(
+        item
+        for item in framework.primary_kpis + framework.guardrail_kpis
+        if item.id == "ontology_mapping_coverage"
+    )
+    gate = next(
+        item
+        for item in enterprise_readiness_manifest().enterprise_gates
+        if item.id == "ontology_mapping_coverage"
+    )
+
+    for published in (kpi.source_endpoints, gate.evidence):
+        assert "/ontology/patches" not in published, published
+        # The denominator, the numerator, and where the figure is published.
+        assert "/ontology/concepts" in published, published
+        assert "/catalog/datasets/{dataset_id}" in published, published
+        assert "/enterprise/evidence-pack" in published, published
+
+
+def test_every_published_evidence_endpoint_is_a_real_route() -> None:
+    """Enumerated across every manifest, because one dangling pointer is enough.
+
+    Measured: 34 endpoint-shaped evidence pointers across the readiness gates,
+    KPIs, controls and production integrations, all of which currently resolve.
+    Pinned so a renamed route cannot leave a diligence reader following a 404.
+    """
+    from fastapi.routing import APIRoute
+
+    from sdp.api import app
+    from sdp_core import (
+        enterprise_controls_manifest,
+        enterprise_kpi_framework,
+        enterprise_production_readiness_manifest,
+        enterprise_readiness_manifest,
+    )
+
+    routes = {route.path for route in app.routes if isinstance(route, APIRoute)}
+    pointers: list[tuple[str, str, str]] = []
+    for item in enterprise_readiness_manifest().enterprise_gates:
+        pointers.extend(("gate", item.id, ref) for ref in item.evidence)
+    framework = enterprise_kpi_framework()
+    for item in framework.primary_kpis + framework.guardrail_kpis:
+        pointers.extend(("kpi", item.id, ref) for ref in item.source_endpoints)
+    for item in enterprise_controls_manifest().controls:
+        pointers.extend(
+            ("control", item.id, ref) for ref in (getattr(item, "proof_endpoints", None) or [])
+        )
+    for item in enterprise_production_readiness_manifest().integrations:
+        pointers.extend(("integration", item.id, ref) for ref in item.current_evidence)
+
+    endpoint_like = [row for row in pointers if row[2].startswith("/")]
+    assert len(endpoint_like) >= 34, len(endpoint_like)
+    dangling = [row for row in endpoint_like if row[2] not in routes]
+    assert not dangling, f"published evidence pointing at routes that do not exist: {dangling}"

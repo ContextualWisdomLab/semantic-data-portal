@@ -107,7 +107,18 @@ def enterprise_kpi_framework() -> KPIFramework:
                 definition="Share of registered glossary concepts with at least one approved business mapping. Mappings naming a concept the ontology does not define are excluded from both numerator and denominator and reported as unregistered_mapping_concept_count.",
                 target=">=70 percent",
                 cadence="domain onboarding review",
-                source_endpoints=["/ontology/search", "/ontology/resolve", "/ontology/patches"],
+                # The endpoints that actually produce this number, not the ones
+                # a reader might associate with the topic. ``/ontology/patches``
+                # was listed and the measurement never reads the patch queue -
+                # a diligence reader following the published evidence fetched a
+                # queue that contributes nothing. The inputs are the glossary
+                # (the denominator) and each dataset's mappings (the numerator);
+                # the evidence pack is where the computed figure is published.
+                source_endpoints=[
+                    "/ontology/concepts",
+                    "/catalog/datasets/{dataset_id}",
+                    "/enterprise/evidence-pack",
+                ],
                 owner="ontology engineer",
                 guardrails=["Proposed mappings are not treated as approved mappings."],
                 status="implemented",
