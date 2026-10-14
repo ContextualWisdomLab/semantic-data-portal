@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
+from base64 import b64encode
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse, urlunsplit
 from urllib.request import Request as UrlRequest, urlopen
 from urllib.request import url2pathname
 from uuid import uuid4
@@ -117,6 +119,65 @@ def _file_sink_path(sink_url: str, parsed: Any) -> Path:
     return path
 
 
+def _http_sink_request_parts(sink_url: str, parsed: Any) -> tuple[str, dict[str, str]]:
+    """Resolve an ``http(s)`` sink to a connectable URL plus request headers.
+
+    The whole configured value was handed to ``urlopen``, and
+    ``urllib.request.Request`` keeps the authority verbatim - userinfo
+    included - as the connection host. So the documented form of a push URL for
+    every common log sink (Loki, Elastic, a signed webhook) could not work.
+    Measured before the repair with
+    ``SDP_LOG_SINK_URL=https://sdp-ingest:s3cr3t-token@logs.example.net/push``::
+
+        urllib connects to      sdp-ingest:s3cr3t-token@logs.example.net
+        http.client            -> InvalidURL: nonnumeric port
+        _sink_status()         -> {"configured": true, "target": "logs.example.net"}
+
+    Every export failed, the breaker opened after five, and the manifest kept
+    reporting a configured sink - the exact "published number disagrees with the
+    code enforcing it" shape this product exists to refuse. Worse, the
+    ``InvalidURL`` message quotes the authority, so ``str(exc)`` carried the sink
+    credential into the retained ``_EXPORT_ERRORS`` ring. Removing the userinfo
+    before the value reaches urllib closes that too.
+
+    The credential moves to the header it belongs in: ``Basic`` when a password
+    is present, ``Bearer`` when the userinfo is a single token. Both
+    subcomponents are percent-decoded, because a password containing ``@`` or
+    ``:`` has to be encoded in the URL. The returned URL is rebuilt from the
+    parsed parts with the userinfo and fragment dropped, so nothing downstream
+    re-derives them.
+    """
+    try:
+        host = parsed.hostname
+    except ValueError as exc:  # pragma: no cover - defensive: malformed authority
+        raise SinkConfigurationError(
+            "SDP_LOG_SINK_URL has an authority that cannot be parsed as a host"
+        ) from exc
+    if not host:
+        raise SinkConfigurationError(
+            "an http(s) SDP_LOG_SINK_URL must name a host (https://host/path)"
+        )
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise SinkConfigurationError(
+            "SDP_LOG_SINK_URL has a port that is not a number"
+        ) from exc
+
+    headers = {"Content-Type": "application/json"}
+    username = unquote(parsed.username) if parsed.username else ""
+    password = unquote(parsed.password) if parsed.password else ""
+    if password:
+        credential = b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
+        headers["Authorization"] = f"Basic {credential}"
+    elif username:
+        headers["Authorization"] = f"Bearer {username}"
+
+    netloc = f"{host}:{port}" if port is not None else host
+    url = urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, ""))
+    return url, headers
+
+
 # A caller-supplied observation field is bounded in length, and the evidence-id
 # list in count. The ring buffer is bounded at 500 *rows* and the rows were
 # unbounded in bytes: uvicorn accepts a header of roughly 64 KB, so one
@@ -188,6 +249,17 @@ def build_request_observation(
     return observation
 
 
+# The alert conditions below are authored rules, not evaluated ones. No code
+# computes any of them and no code posts to ``SDP_ALERT_WEBHOOK_URL`` - its only
+# read in the whole package is ``bool()`` of it for ``alert_webhook_configured``.
+# Published as a list named "alerts" next to ``alert_webhook_configured: true``,
+# they read as monitoring that exists. The rules are kept because the conditions
+# are the right ones and an operator can wire them up in their own stack; what
+# changes is that every surface now says they are declared rather than live.
+ALERT_ROUTING_STATUS = "declared_unimplemented"
+ALERT_EVALUATION_STATUS = "declared_not_evaluated"
+
+
 def _redacted_sink_target(parsed: Any) -> str:
     """Describe a sink endpoint without the credentials its URL may carry.
 
@@ -220,6 +292,7 @@ def _sink_status() -> dict[str, Any]:
             "scheme": "memory",
             "target": "in_process_ring_buffer",
             "alert_webhook_configured": bool(alert_webhook_url),
+            "alert_webhook_routing": ALERT_ROUTING_STATUS,
         }
 
     parsed = urlparse(sink_url)
@@ -232,7 +305,15 @@ def _sink_status() -> dict[str, Any]:
             _file_sink_path(sink_url, parsed)
         except SinkConfigurationError as exc:
             invalid_reason = str(exc)
-    elif scheme not in {"http", "https"}:
+    elif scheme in {"http", "https"}:
+        # Validated through the same resolver the export uses, so "configured"
+        # cannot mean "set but unconnectable" for an http sink either. A
+        # credential-bearing URL used to report configured and fail every export.
+        try:
+            _http_sink_request_parts(sink_url, parsed)
+        except SinkConfigurationError as exc:
+            invalid_reason = str(exc)
+    else:
         invalid_reason = "SDP_LOG_SINK_URL must use the file, http or https scheme"
     if scheme == "file":
         # A file sink published its absolute server path verbatim, and for the UNC
@@ -253,6 +334,10 @@ def _sink_status() -> dict[str, Any]:
         "scheme": scheme,
         "target": target,
         "alert_webhook_configured": bool(alert_webhook_url),
+        # ``alert_webhook_configured`` reports whether the variable is set, which
+        # a reader took for "alerts reach this endpoint". Nothing posts to it, so
+        # the capability is stated next to the configuration fact.
+        "alert_webhook_routing": ALERT_ROUTING_STATUS,
     }
     if invalid_reason is not None:
         status["invalid_configuration"] = invalid_reason
@@ -279,10 +364,11 @@ def _export_to_sink(observation: dict[str, Any]) -> None:
 
     if scheme in {"http", "https"}:
         timeout_ms = int(os.getenv("SDP_LOG_SINK_TIMEOUT_MS", "500"))
+        url, headers = _http_sink_request_parts(sink_url, parsed)
         request = UrlRequest(
-            sink_url,
+            url,
             data=payload.encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers=headers,
             method="POST",
         )
         # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected -- scheme is allow-listed to {http,https} at the guard above (file:// et al. raise below)
@@ -323,57 +409,134 @@ def record_request_observation(observation: dict[str, Any], *, export: bool = Tr
 # 500ms timeout, and one episode filled all 50 export-error slots.
 SINK_FAILURE_THRESHOLD = 5
 SINK_COOLDOWN_SECONDS = 30.0
+# The breaker had two states, and the missing third one gave back the throughput
+# ceiling it was added to remove. Once ``open_until`` elapsed, *every* request
+# attempted the sink again, concurrently, each paying the full
+# ``SDP_LOG_SINK_TIMEOUT_MS`` from the same bounded anyio threadpool that serves
+# every sync route - so a sink that stays down turns each cooldown expiry into a
+# fresh stampede. Measured on the real path (``record_request_observation_async``
+# -> ``anyio.to_thread``) against a sink that accepts and never answers, 20
+# concurrent requests arriving the instant the cooldown expired:
+#
+#     pool slots   sink attempts (before)   sink attempts (after)
+#     8                                8                       1
+#     unbounded                       20                       1
+#
+# Wall-clock for the burst is unchanged (~205ms, one timeout) because the
+# attempts run in parallel; what the stampede costs is *threadpool slots* - it
+# occupies every free slot of the pool that serves every sync route, for the full
+# ``SDP_LOG_SINK_TIMEOUT_MS``, once per cooldown for as long as the outage lasts.
+#
+# Half-open fixes it: when the cooldown expires on a tripped breaker, exactly one
+# caller probes the sink and everyone else keeps skipping until that probe
+# answers. Recovery is still immediate - the probe's success closes the breaker
+# for all subsequent callers - and it costs one request's timeout per cooldown
+# instead of every concurrent request's.
+#
+# The lock is not optional: exports run in worker threads via
+# ``to_thread.run_sync``, so the read-decide-write on these counters is genuinely
+# concurrent, and "exactly one probe" cannot be expressed without it.
 _SINK_BREAKER: dict[str, Any] = {
     "consecutive_failures": 0,
     "open_until": 0.0,
     "skipped_exports": 0,
+    "probe_in_flight": False,
+    "probes_started": 0,
 }
+_SINK_BREAKER_LOCK = threading.Lock()
 
 
 def sink_breaker_state() -> dict[str, Any]:
     """Report the export breaker, so an outage is visible rather than silent."""
-    return {
-        "open": _SINK_BREAKER["open_until"] > time.monotonic(),
-        "consecutive_failures": _SINK_BREAKER["consecutive_failures"],
-        "skipped_exports": _SINK_BREAKER["skipped_exports"],
-        "failure_threshold": SINK_FAILURE_THRESHOLD,
-        "cooldown_seconds": SINK_COOLDOWN_SECONDS,
-    }
+    with _SINK_BREAKER_LOCK:
+        return {
+            "open": _SINK_BREAKER["open_until"] > time.monotonic(),
+            "half_open": _sink_breaker_is_half_open_locked(),
+            "consecutive_failures": _SINK_BREAKER["consecutive_failures"],
+            "skipped_exports": _SINK_BREAKER["skipped_exports"],
+            # How many single-probe recovery attempts the cooldown has allowed.
+            # A rising count with the breaker still tripped is a sink that is
+            # still down, distinguishable from one that never recovered because
+            # nothing retried.
+            "probes_started": _SINK_BREAKER["probes_started"],
+            "probe_in_flight": _SINK_BREAKER["probe_in_flight"],
+            "failure_threshold": SINK_FAILURE_THRESHOLD,
+            "cooldown_seconds": SINK_COOLDOWN_SECONDS,
+        }
 
 
 def reset_sink_breaker() -> None:
     """Clear the breaker (used by tests and by reset_request_observability)."""
-    _SINK_BREAKER["consecutive_failures"] = 0
-    _SINK_BREAKER["open_until"] = 0.0
-    _SINK_BREAKER["skipped_exports"] = 0
+    with _SINK_BREAKER_LOCK:
+        _SINK_BREAKER["consecutive_failures"] = 0
+        _SINK_BREAKER["open_until"] = 0.0
+        _SINK_BREAKER["skipped_exports"] = 0
+        _SINK_BREAKER["probe_in_flight"] = False
+        _SINK_BREAKER["probes_started"] = 0
 
 
-def _sink_breaker_is_open() -> bool:
-    return _SINK_BREAKER["open_until"] > time.monotonic()
+def _sink_breaker_is_half_open_locked() -> bool:
+    """Whether a tripped breaker's cooldown has elapsed without a success yet.
+
+    Caller holds ``_SINK_BREAKER_LOCK``.
+    """
+    return (
+        _SINK_BREAKER["consecutive_failures"] >= SINK_FAILURE_THRESHOLD
+        and _SINK_BREAKER["open_until"] <= time.monotonic()
+    )
+
+
+def _claim_sink_export() -> bool:
+    """Whether this caller may attempt the sink now, counting what it skips.
+
+    Three outcomes, all decided under one lock:
+
+    * closed - the sink has not failed enough to trip; attempt it.
+    * open - the cooldown has not elapsed; skip, and count the skip.
+    * half-open - the cooldown elapsed on a tripped breaker; the first caller
+      claims the single probe, every other caller skips.
+    """
+    with _SINK_BREAKER_LOCK:
+        if _SINK_BREAKER["open_until"] > time.monotonic():
+            _SINK_BREAKER["skipped_exports"] += 1
+            return False
+        if not _sink_breaker_is_half_open_locked():
+            return True
+        if _SINK_BREAKER["probe_in_flight"]:
+            _SINK_BREAKER["skipped_exports"] += 1
+            return False
+        _SINK_BREAKER["probe_in_flight"] = True
+        _SINK_BREAKER["probes_started"] += 1
+        return True
 
 
 def _record_sink_failure(message: str) -> None:
     """Count one export failure and open the breaker once the run is long enough."""
-    _SINK_BREAKER["consecutive_failures"] += 1
-    if _SINK_BREAKER["consecutive_failures"] >= SINK_FAILURE_THRESHOLD:
-        _SINK_BREAKER["open_until"] = time.monotonic() + SINK_COOLDOWN_SECONDS
+    with _SINK_BREAKER_LOCK:
+        _SINK_BREAKER["consecutive_failures"] += 1
+        if _SINK_BREAKER["consecutive_failures"] >= SINK_FAILURE_THRESHOLD:
+            _SINK_BREAKER["open_until"] = time.monotonic() + SINK_COOLDOWN_SECONDS
+        # A failed probe re-arms the cooldown above; releasing the claim here
+        # lets the *next* expiry probe again rather than deadlocking recovery.
+        _SINK_BREAKER["probe_in_flight"] = False
     record_observability_export_error(message)
 
 
 def _record_sink_success() -> None:
-    _SINK_BREAKER["consecutive_failures"] = 0
-    _SINK_BREAKER["open_until"] = 0.0
-
+    with _SINK_BREAKER_LOCK:
+        _SINK_BREAKER["consecutive_failures"] = 0
+        _SINK_BREAKER["open_until"] = 0.0
+        _SINK_BREAKER["probe_in_flight"] = False
 
 
 def _export_buffered_observation(observation: dict[str, Any]) -> None:
     """Export one already-buffered observation, recording a sink failure.
 
     While the breaker is open the sink is not attempted at all, so a dead sink
-    costs nothing per request instead of a timeout and a threadpool slot.
+    costs nothing per request instead of a timeout and a threadpool slot. After
+    the cooldown it costs exactly one probe, not one per concurrent request.
     """
-    if _sink_breaker_is_open():
-        _SINK_BREAKER["skipped_exports"] += 1
+    if not _claim_sink_export():
         return
     try:
         _export_to_sink(observation)
@@ -489,16 +652,24 @@ def build_observability_manifest() -> dict[str, Any]:
             "local_evidence_store": "SDP_SQLITE_PATH",
             "production_target": "tenant-configurable append-only log sink plus queryable hot store",
         },
+        # Declared conditions an operator can implement in their own monitoring
+        # stack, not rules this service evaluates. See ALERT_EVALUATION_STATUS.
+        "alert_evaluation": ALERT_EVALUATION_STATUS,
+        "alert_routing": ALERT_ROUTING_STATUS,
         "alerts": [
             {
                 "id": "policy_audit_gap",
                 "condition": "preview/query count exceeds policy decision or audit event count",
                 "severity": "critical",
+                "evaluated": False,
+                "evaluation": ALERT_EVALUATION_STATUS,
             },
             {
                 "id": "central_workflow_backlog",
                 "condition": "required workflow queued or in_progress beyond stale threshold",
                 "severity": "warning",
+                "evaluated": False,
+                "evaluation": ALERT_EVALUATION_STATUS,
             },
         ],
     }

@@ -23,6 +23,8 @@ from __future__ import annotations
 
 from pathlib import Path
 import sys
+import time
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -199,3 +201,370 @@ def test_sink_breaker_closes_after_the_cooldown(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(obs, "urlopen", lambda request, timeout=None: _Ok())
     obs.record_request_observation({"event": "http_request"}, export=True)
     assert obs.sink_breaker_state()["consecutive_failures"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# A sink URL that carries its own credential must work, and the credential must
+# not reach the connection host, the published status, or the retained errors.
+#
+# ``urllib.request.Request`` keeps the authority verbatim, userinfo included, as
+# the connection host, so the documented push-URL form of every common log sink
+# could not work. Measured before the repair with
+# ``SDP_LOG_SINK_URL=https://sdp-ingest:s3cr3t-token@logs.example.net/push``:
+#
+#     urllib connects to   sdp-ingest:s3cr3t-token@logs.example.net
+#     http.client         -> InvalidURL: nonnumeric port
+#     _sink_status()      -> {"configured": true, "target": "logs.example.net"}
+#
+# Every export failed while the manifest reported a configured sink, and the
+# InvalidURL message quotes the authority, so ``str(exc)`` carried the credential
+# into the retained _EXPORT_ERRORS ring.
+# --------------------------------------------------------------------------- #
+
+
+def _sink_requests(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    """Capture what the export would actually put on the wire."""
+    sent: list[Any] = []
+
+    class _Ok:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def _capture(request, timeout=None):
+        sent.append(request)
+        return _Ok()
+
+    monkeypatch.setattr(obs, "urlopen", _capture)
+    return sent
+
+
+def test_a_credential_bearing_sink_url_is_connectable(monkeypatch: pytest.MonkeyPatch) -> None:
+    sent = _sink_requests(monkeypatch)
+    monkeypatch.setenv(
+        "SDP_LOG_SINK_URL", "https://sdp-ingest:s3cr3t-token@logs.example.net/loki/api/v1/push"
+    )
+    obs.record_request_observation({"event": "http_request"}, export=True)
+
+    assert obs.sink_breaker_state()["consecutive_failures"] == 0, (
+        f"the export failed: {obs.list_observability_export_errors()}"
+    )
+    assert len(sent) == 1
+    request = sent[0]
+    # The host urllib dials - this was the userinfo-bearing authority.
+    assert request.host == "logs.example.net"
+    assert "s3cr3t-token" not in request.full_url
+    assert "sdp-ingest" not in request.full_url
+    assert request.full_url == "https://logs.example.net/loki/api/v1/push"
+
+
+def test_the_sink_credential_moves_into_the_authorization_header(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Where it belongs, and in both forms a sink URL expresses it."""
+    import base64
+
+    sent = _sink_requests(monkeypatch)
+    monkeypatch.setenv("SDP_LOG_SINK_URL", "https://user:p%40ss%3Aword@logs.example.net/push")
+    obs.record_request_observation({"event": "http_request"}, export=True)
+    header = sent[-1].get_header("Authorization")
+    assert header.startswith("Basic ")
+    # Percent-decoded: a password containing @ or : has to be encoded in the URL.
+    assert base64.b64decode(header.split()[1]).decode() == "user:p@ss:word"
+
+    monkeypatch.setenv("SDP_LOG_SINK_URL", "https://deadbeefcafe@logs.example.net/push")
+    obs.record_request_observation({"event": "http_request"}, export=True)
+    assert sent[-1].get_header("Authorization") == "Bearer deadbeefcafe"
+
+    monkeypatch.setenv("SDP_LOG_SINK_URL", "https://logs.example.net/push")
+    obs.record_request_observation({"event": "http_request"}, export=True)
+    assert sent[-1].get_header("Authorization") is None, (
+        "a credential-free sink URL must not grow an empty Authorization header"
+    )
+
+
+def test_no_sink_credential_reaches_the_published_status_or_the_error_ring(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The reason the credential is split out before urllib sees it."""
+    monkeypatch.setenv(
+        "SDP_LOG_SINK_URL", "https://sdp-ingest:s3cr3t-token@logs.example.net/push"
+    )
+
+    def _fails(request, timeout=None):
+        # A real failure quotes the URL it was given; that URL is now
+        # credential-free, so the retained message cannot carry the secret.
+        raise OSError(f"cannot reach {request.full_url}")
+
+    monkeypatch.setattr(obs, "urlopen", _fails)
+    obs.record_request_observation({"event": "http_request"}, export=True)
+
+    published = str(obs.build_observability_manifest())
+    retained = str(obs.list_observability_export_errors())
+    for secret in ("s3cr3t-token", "sdp-ingest"):
+        assert secret not in published, "the manifest is unauthenticated"
+        assert secret not in retained, "export errors are retained for the process lifetime"
+
+
+def test_an_unconnectable_http_sink_is_not_reported_as_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``configured`` means "set AND writable" for http, as it already did for file."""
+    for sink_url, expected in (
+        ("https:///push", "must name a host"),
+        ("https://host:notaport/push", "port that is not a number"),
+    ):
+        monkeypatch.setenv("SDP_LOG_SINK_URL", sink_url)
+        status = obs._sink_status()
+        assert status["configured"] is False, sink_url
+        assert expected in status["invalid_configuration"], status
+
+
+# --------------------------------------------------------------------------- #
+# A gate may only measure capabilities that exist - the alert path.
+# --------------------------------------------------------------------------- #
+
+
+def test_the_alert_webhook_is_declared_unimplemented_rather_than_required() -> None:
+    """``SDP_ALERT_WEBHOOK_URL`` gated paid-pilot readiness and does nothing.
+
+    Measured: its only read in the whole package is
+    ``observability._sink_status`` taking ``bool()`` of it for the
+    ``alert_webhook_configured`` field. Nothing posts to the URL, and nothing
+    evaluates the alert conditions the manifest publishes next to it - so the
+    gate could be cleared by setting a variable that routes nothing, exactly like
+    ``SDP_EVIDENCE_RETENTION_DAYS`` before it.
+    """
+    from sdp_core.production import (
+        enterprise_production_readiness_manifest,
+        production_integration_registry,
+    )
+
+    integration = next(
+        item
+        for item in production_integration_registry()
+        if item.id == "request_observability_export"
+    )
+    assert "SDP_ALERT_WEBHOOK_URL" not in integration.required_environment
+    assert integration.declared_unimplemented_environment == ["SDP_ALERT_WEBHOOK_URL"]
+    # The gap stays visible to a buyer rather than being deleted with the claim.
+    manifest = enterprise_production_readiness_manifest({})
+    assert manifest.unimplemented_environment["request_observability_export"] == [
+        "SDP_ALERT_WEBHOOK_URL"
+    ]
+    assert "Alert routing is NOT implemented" in integration.buyer_risk
+    # No acceptance criterion may still claim the capability.
+    claims = [item for item in integration.acceptance_criteria if "alertable signals" in item]
+    assert not claims, claims
+
+
+def test_setting_the_alert_webhook_cannot_clear_the_readiness_gate() -> None:
+    from sdp_core.production import enterprise_production_readiness_manifest
+
+    base = {"SDP_LOG_SINK_URL": "file:///data/requests.jsonl", "SDP_REQUEST_ID_HEADER": "X-Request-Id"}
+    without = enterprise_production_readiness_manifest(base)
+    for value in ("https://alerts.example/hook", "banana", "0"):
+        with_variable = enterprise_production_readiness_manifest(
+            {**base, "SDP_ALERT_WEBHOOK_URL": value}
+        )
+        assert with_variable.paid_pilot_ready == without.paid_pilot_ready
+        assert with_variable.missing_environment == without.missing_environment
+
+
+def test_the_published_alert_rules_say_they_are_not_evaluated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A list named "alerts" beside ``alert_webhook_configured: true`` read as monitoring.
+
+    The conditions are kept - they are the right ones and an operator can wire
+    them into their own stack - but every surface now says so.
+    """
+    monkeypatch.setenv("SDP_ALERT_WEBHOOK_URL", "https://alerts.example/hook")
+    manifest = obs.build_observability_manifest()
+
+    assert manifest["alert_evaluation"] == "declared_not_evaluated"
+    assert manifest["alert_routing"] == "declared_unimplemented"
+    assert manifest["alerts"], "the declared conditions must stay published"
+    for alert in manifest["alerts"]:
+        assert alert["evaluated"] is False, alert
+        assert alert["evaluation"] == "declared_not_evaluated", alert
+
+    sink = manifest["structured_logs"]["sink"]
+    assert sink["alert_webhook_configured"] is True
+    assert sink["alert_webhook_routing"] == "declared_unimplemented", (
+        "the configuration fact must not stand alone as a capability claim"
+    )
+
+
+def test_nothing_posts_to_the_alert_webhook() -> None:
+    """The reason the variable is declared-unimplemented, pinned.
+
+    ``test_every_required_variable_has_a_consumer`` did not catch this one and
+    cannot: ``_sink_status`` *is* a consumer, it just reads the variable to
+    report whether the variable is set. A name read solely for its own presence
+    passes an "is it read anywhere" check while routing nothing - so the proof
+    has to be about the capability, not the name.
+
+    If a routing path is ever added, this fails and whoever added it moves the
+    variable back into ``required_environment`` deliberately.
+    """
+    import pathlib
+
+    source_root = pathlib.Path(obs.__file__).resolve().parents[1]
+    mentions = {
+        path.relative_to(source_root).as_posix(): [
+            line.strip()
+            for line in path.read_text().splitlines()
+            if "SDP_ALERT_WEBHOOK_URL" in line
+        ]
+        for path in source_root.rglob("*.py")
+        if "SDP_ALERT_WEBHOOK_URL" in path.read_text()
+    }
+    # Only the declaration site and the single presence check.
+    assert sorted(mentions) == ["sdp/observability.py", "sdp_core/production.py"], mentions
+    reads = [line for line in mentions["sdp/observability.py"] if "os.getenv" in line]
+    assert len(reads) == 1, reads
+    assert 'alert_webhook_url = os.getenv("SDP_ALERT_WEBHOOK_URL", "").strip()' in reads[0]
+
+
+# --------------------------------------------------------------------------- #
+# The breaker's missing third state.
+#
+# It had only closed and open. Once ``open_until`` elapsed, every request
+# attempted the dead sink again, concurrently, each paying the full
+# SDP_LOG_SINK_TIMEOUT_MS from the same bounded anyio threadpool that serves
+# every sync route. Measured on the real async path against a sink that accepts
+# and never answers, 20 concurrent requests arriving the instant the cooldown
+# expired: 8 sink attempts with an 8-slot pool, 20 with an unbounded one - once
+# per cooldown, for as long as the outage lasts.
+# --------------------------------------------------------------------------- #
+
+
+def _trip_the_breaker(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
+    monkeypatch.setenv("SDP_LOG_SINK_URL", "https://sink.example/ingest")
+    attempts = {"n": 0}
+
+    def _always_fails(request, timeout=None):
+        attempts["n"] += 1
+        raise OSError("sink unreachable")
+
+    monkeypatch.setattr(obs, "urlopen", _always_fails)
+    for _ in range(obs.SINK_FAILURE_THRESHOLD):
+        obs.record_request_observation({"event": "http_request"}, export=True)
+    assert obs.sink_breaker_state()["open"] is True
+    attempts["n"] = 0
+    return attempts
+
+
+def test_a_cooldown_expiry_costs_one_probe_not_one_per_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts = _trip_the_breaker(monkeypatch)
+
+    # Expire the cooldown rather than sleeping through it.
+    obs._SINK_BREAKER["open_until"] = 0.0
+    assert obs.sink_breaker_state()["half_open"] is True
+
+    for _ in range(20):
+        obs.record_request_observation({"event": "http_request"}, export=True)
+    assert attempts["n"] == 1, (
+        "every request after the cooldown attempted the dead sink; the half-open "
+        "state exists so exactly one does"
+    )
+    state = obs.sink_breaker_state()
+    assert state["probes_started"] == 1
+    assert state["open"] is True, "the failed probe must re-arm the cooldown"
+    assert state["skipped_exports"] == 19
+
+
+def test_each_cooldown_expiry_gets_a_fresh_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failed probe must not latch the breaker shut forever."""
+    attempts = _trip_the_breaker(monkeypatch)
+    for expected in (1, 2, 3):
+        obs._SINK_BREAKER["open_until"] = 0.0
+        obs.record_request_observation({"event": "http_request"}, export=True)
+        assert attempts["n"] == expected
+        assert obs.sink_breaker_state()["probes_started"] == expected
+
+
+def test_a_successful_probe_closes_the_breaker_for_everyone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Recovery must still be immediate, not one request per cooldown."""
+    _trip_the_breaker(monkeypatch)
+
+    class _Ok:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    sent = {"n": 0}
+
+    def _recovered(request, timeout=None):
+        sent["n"] += 1
+        return _Ok()
+
+    monkeypatch.setattr(obs, "urlopen", _recovered)
+    obs._SINK_BREAKER["open_until"] = 0.0
+
+    for _ in range(10):
+        obs.record_request_observation({"event": "http_request"}, export=True)
+    assert sent["n"] == 10, "the probe succeeded; every later export must go through"
+    state = obs.sink_breaker_state()
+    assert state["open"] is False
+    assert state["half_open"] is False
+    assert state["consecutive_failures"] == 0
+    assert state["probe_in_flight"] is False
+
+
+def test_only_one_of_many_concurrent_callers_probes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The property the single-probe claim rests on, exercised concurrently.
+
+    Exports run in worker threads via ``to_thread.run_sync``, so the
+    read-decide-write on the breaker counters is genuinely concurrent and
+    "exactly one probe" cannot hold without the lock.
+    """
+    import threading
+
+    monkeypatch.setenv("SDP_LOG_SINK_URL", "https://sink.example/ingest")
+    attempts = {"n": 0}
+    counter_lock = threading.Lock()
+    release = threading.Event()
+
+    def _slow_dead_sink(request, timeout=None):
+        with counter_lock:
+            attempts["n"] += 1
+        release.wait(timeout=5)  # hold the probe open while the others arrive
+        raise OSError("sink unreachable")
+
+    monkeypatch.setattr(obs, "urlopen", _slow_dead_sink)
+    for _ in range(obs.SINK_FAILURE_THRESHOLD):
+        release.set()
+        obs.record_request_observation({"event": "http_request"}, export=True)
+    release.clear()
+    attempts["n"] = 0
+    obs._SINK_BREAKER["open_until"] = 0.0
+
+    threads = [
+        threading.Thread(
+            target=obs.record_request_observation, args=({"event": "http_request"},)
+        )
+        for _ in range(20)
+    ]
+    for thread in threads:
+        thread.start()
+    # The probe is blocked in the sink; every other caller must have skipped.
+    for _ in range(500):
+        if obs.sink_breaker_state()["skipped_exports"] >= 19:
+            break
+        time.sleep(0.01)
+    assert attempts["n"] == 1, attempts
+    assert obs.sink_breaker_state()["probe_in_flight"] is True
+    release.set()
+    for thread in threads:
+        thread.join(timeout=5)
+    assert attempts["n"] == 1, "a second caller probed while the first was in flight"

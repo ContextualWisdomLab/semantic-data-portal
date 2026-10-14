@@ -269,6 +269,27 @@ seed의 `security` subject는 `platform-admin`도 들고 있어 여전히 previe
     `tests/test_production_readiness_measurement.py::test_every_required_variable_has_a_consumer`.
   - `local_evidence_retention` control은 이름이 보존 정책을 주장하면서 실제로는
     **내구성**(재시작 생존)만 제공했습니다. label과 설명을 사실에 맞췄습니다.
+  - 같은 이유로 `SDP_ALERT_WEBHOOK_URL`도 `required_environment`에서
+    `declared_unimplemented_environment`로 옮겼습니다. 이 변수를 읽는 코드는
+    `observability._sink_status`가 **설정 여부**(`alert_webhook_configured`)를 보고하는
+    한 곳뿐이고, 이 URL로 POST하는 코드도 `GET /enterprise/observability`가 게시하는 alert
+    조건을 평가하는 코드도 없습니다. 이 사례는
+    `test_every_required_variable_has_a_consumer`의 한계를 드러냅니다 — 소비자가
+    **존재**했고(자기 자신의 존재 여부만 읽는 소비자) 검사를 통과했습니다. 능력에 대한
+    증빙은 이름 검색이 아니라
+    `tests/test_honest_metrics.py::test_nothing_posts_to_the_alert_webhook`이 담당합니다.
+    게시되는 alert 규칙은 삭제하지 않고 `alert_evaluation: declared_not_evaluated`,
+    규칙별 `evaluated: false`, `alert_webhook_routing: declared_unimplemented`로 표시합니다.
+  - `SDP_LOG_SINK_URL`의 http(s) 형태는 URL에 담긴 credential을 `Authorization` 헤더로
+    분리합니다. 이전에는 URL 전체를 `urllib`에 넘겨 userinfo가 연결 host로 남아
+    (`sdp-ingest:TOKEN@logs.example.net` → `InvalidURL: nonnumeric port`) 모든 export가
+    실패하는 동안 manifest가 `configured: true`를 보고했고, 예외 메시지가 authority를
+    인용해 credential이 `_EXPORT_ERRORS`에 보존되었습니다. http sink도 file sink와 같은
+    resolver를 통과해야 `configured: true`가 됩니다.
+  - sink export breaker에 half-open 상태를 추가했습니다. cooldown이 끝나는 순간 모든
+    요청이 죽은 sink를 동시에 재시도해 (모든 동기 route가 공유하는) anyio threadpool slot을
+    전부 점유했습니다 — 측정: 동시 20건에서 slot 8개면 sink 호출 8회, 무제한이면 20회.
+    이제 cooldown 만료 후 정확히 1회만 probe합니다.
 - `POST /enterprise/auth/oidc-verify`: issuer/audience/expiry/JWKS 서명 검증 후 tenant scoped group mapping으로 `ActorContext`를 생성하고 raw token은 응답에 포함하지 않는다. 신뢰 기준(issuer, audience, JWKS, role map)은 operator 환경 설정에서만 읽으며, request body가 이 네 필드를 보내면 검증 전에 400으로 거절한다.
 - `POST /enterprise/auth/oidc-preview`, `POST /enterprise/auth/oidc-verify`: group별 `group_role_bindings`(group 이름, 부여한 tenant scope, 부여된 role)와 `audit_event_id`를 반환하고 `enterprise/auth/oidc` resource audit event를 남긴다. `sso_oidc_adapter` control은 이로써 `implemented`가 되고 `GET /enterprise/controls`의 `planned_controls`는 0, `status`는 `pilot_ready`가 된다.
 - `GET /enterprise/evidence-pack`: metadata validation, SHACL-compatible validation, steward queue, ontology mapping coverage, policy/audit counts, controls, KPI ids, proof endpoints.

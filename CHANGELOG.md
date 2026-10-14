@@ -17,8 +17,8 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                    573 passed, 11 skipped
-    pytest (역방향/난수 순서)  순서 무관 통과
+    pytest                    642 passed, 11 skipped
+    pytest (역방향/난수 순서)  순서 무관 통과 (역순 + seed 11/29/77)
     pytest tests/fuzz          11 passed
     python -m sdp.demo_smoke   exit 0, "ready": true
 
@@ -76,6 +76,26 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
   event loop에서 내렸습니다.
 - 마이그레이션이 끝까지 실패하면 컨테이너가 기동을 거부합니다.
 
+- URL에 credential을 담은 http(s) 로그 sink는 **단 한 건도 전송되지 않았습니다**.
+  URL 전체를 `urllib`에 넘겨 userinfo가 연결 host로 남았기 때문입니다 — Loki·Elastic·
+  서명 webhook의 문서화된 push URL 형태가 전부 여기에 해당합니다. 측정:
+  `https://sdp-ingest:TOKEN@logs.example.net/push`로 설정하면 urllib가
+  `sdp-ingest:TOKEN@logs.example.net`에 접속을 시도해 `InvalidURL: nonnumeric port`로
+  실패하는데, manifest는 `configured: true, target: logs.example.net`을 계속
+  보고했습니다. 게다가 그 예외 메시지가 authority를 인용해 **credential이
+  `_EXPORT_ERRORS` 링에 프로세스 수명 내내 보존**되었습니다. 이제 userinfo를 URL에서
+  분리해 `Authorization` 헤더(password 있으면 `Basic`, token 하나면 `Bearer`)로
+  보내고, host가 없거나 port가 숫자가 아닌 http sink도 file sink와 같은 resolver를
+  통과해야 `configured: true`가 됩니다.
+- sink export breaker에 **half-open 상태가 없었습니다**. cooldown이 끝나는 순간 모든
+  요청이 죽은 sink를 동시에 재시도해, 모든 동기 route가 공유하는 anyio threadpool의
+  빈 slot을 `SDP_LOG_SINK_TIMEOUT_MS`만큼 전부 점유했습니다 — breaker를 추가한 이유
+  그 자체가 cooldown마다 되돌아왔습니다. 측정(실제 async 경로, 응답하지 않는 sink,
+  cooldown 만료 직후 동시 20건): slot 8개면 sink 호출 **8회**, 무제한이면 **20회**,
+  outage가 계속되는 동안 cooldown마다 반복. 이제 정확히 **1회**만 probe하고 나머지는
+  skip하며, probe가 성공하면 그 즉시 모두에게 닫힙니다. 실패한 probe는 cooldown을
+  다시 걸되 claim을 놓아 주므로 복구가 영구히 막히지 않습니다.
+
 ### Changed — 정직한 측정
 
 - `paid_pilot_ready`가 작성된 `status` 리터럴에서만 유도되어 **반증 불가능**했습니다.
@@ -87,6 +107,16 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
   기계적 검사를 추가했습니다.
 - `local_evidence_retention` 컨트롤은 이름이 보존 정책을 주장하는데 실제로는
   **내구성**(재시작 생존)만 제공했습니다. label과 설명을 사실에 맞췄습니다.
+- 같은 이유로 `SDP_ALERT_WEBHOOK_URL`도 게이트에서 뺐습니다. 이 변수를 읽는 코드는
+  `_sink_status`가 **설정 여부**를 보고하는 한 곳뿐이고, 이 URL로 POST하는 코드도
+  `GET /enterprise/observability`가 게시하는 alert 조건을 평가하는 코드도 없습니다.
+  이 사례는 위의 "소비자 없는 변수 금지" 검사의 한계를 드러냅니다 — 소비자가
+  **존재**했고(자기 자신의 존재 여부만 읽는 소비자) 검사를 통과했습니다. 그래서
+  능력에 대한 증빙은 이름 검색이 아니라 전용 테스트가 담당합니다. 게시되는 alert
+  규칙은 삭제하지 않았습니다(조건 자체는 올바르고 operator가 자기 모니터링 스택에
+  그대로 구현할 수 있습니다) — 대신 `alert_evaluation: declared_not_evaluated`,
+  규칙별 `evaluated: false`, `alert_webhook_routing: declared_unimplemented`로
+  표시합니다. alert 평가와 라우팅은 구현하지 않았습니다.
 - mock 실행의 수치에 출처 라벨을 붙였습니다. 하나의 라벨
   (`catalog_profile_estimate`)이 세 가지 provenance에 쓰이고 있었고, 그 중 하나는
   주장하는 추정값과 **600배** 차이나는 상한이었습니다. 네 provenance에 네 라벨.
@@ -122,4 +152,8 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
   써 붙이면 핸들러가 읽는 것과 어긋날 수 있고, 모델을 주면 400이 422로 바뀝니다.
 - 그래프 스토어 싱글턴은 테스트 격리 대상에서 제외했습니다(snapshot API가 없고,
   테스트를 위해 제품 API를 만드는 것은 범위를 넘습니다).
-- 증빙의 age-based 보존은 구현되지 않았습니다(위 참조).
+- alert 조건 평가와 `SDP_ALERT_WEBHOOK_URL` 라우팅은 구현되지 않았습니다(위 참조).
+  조건은 게시하지만 계산하지 않습니다.
+- http(s) sink의 `Authorization` 분리는 **로컬에서 포착한 요청 객체**로 검증했습니다
+  (urllib이 다이얼하는 host, 재구성된 URL, 헤더). 실제 원격 sink에 대한 왕복은
+  실행하지 않았습니다.

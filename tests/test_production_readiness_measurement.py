@@ -163,10 +163,20 @@ DECLARATION_FILE = "production.py"
 def _consumers(variable: str) -> list[str]:
     """Source files that mention this variable, excluding its declaration site.
 
-    The limit is worth stating: a name appearing in a source file is not proof
-    that behaviour depends on it. It is a far better check than none, and it
-    catches this defect class exactly - a variable that appears *only* where it
-    is declared as required cannot be changing anything.
+    The limit is worth stating, and it is no longer hypothetical: a name
+    appearing in a source file is not proof that behaviour depends on it. This
+    check passed for ``SDP_ALERT_WEBHOOK_URL`` - which had a consumer, in
+    ``observability._sink_status``, that read it only to report *whether it was
+    set* - while nothing posted to the URL and nothing evaluated the alert
+    conditions the manifest published beside it. A variable read solely for its
+    own presence satisfies this test and still gates readiness on a capability
+    that does not exist.
+
+    So this remains the cheap enumeration that catches the easy case - a variable
+    appearing *only* at its declaration site cannot be changing anything - and
+    the per-variable proof lives with the capability:
+    ``tests/test_honest_metrics.py::test_nothing_posts_to_the_alert_webhook`` and
+    ``test_no_evidence_store_claims_a_retention_path_it_does_not_have`` below.
     """
     return sorted(
         path.relative_to(SOURCE_ROOT).as_posix()

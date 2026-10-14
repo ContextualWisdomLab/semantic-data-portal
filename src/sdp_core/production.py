@@ -156,7 +156,14 @@ def production_integration_registry() -> list[ProductionIntegration]:
             id="request_observability_export",
             label="Request observability export",
             status="implemented",
-            buyer_risk="Local metrics are enough for pilot review, but paid operation needs tenant-scoped logs and external alert routing.",
+            buyer_risk=(
+                "Local metrics are enough for pilot review, but paid operation needs "
+                "tenant-scoped logs and external alert routing. Alert routing is NOT "
+                "implemented: SDP_ALERT_WEBHOOK_URL is read only to report whether it "
+                "is set, nothing posts to it, and the alert rules published by "
+                "GET /enterprise/observability are declared conditions that no code "
+                "evaluates. Log export to a file or http(s) sink IS implemented."
+            ),
             current_evidence=[
                 "SDP_LOG_SINK_URL",
                 "SDP_REQUEST_ID_HEADER",
@@ -169,12 +176,22 @@ def production_integration_registry() -> list[ProductionIntegration]:
             ],
             required_environment=[
                 "SDP_LOG_SINK_URL",
-                "SDP_ALERT_WEBHOOK_URL",
                 "SDP_REQUEST_ID_HEADER",
             ],
+            # Same reasoning as SDP_EVIDENCE_RETENTION_DAYS: the only read of
+            # this variable is ``observability._sink_status`` taking ``bool()`` of
+            # it for the ``alert_webhook_configured`` field. No code posts to the
+            # URL and no code evaluates the published alert conditions, so a
+            # readiness gate it could clear would measure a capability that does
+            # not exist. Declared rather than deleted, so an operator who sets it
+            # can learn from the readiness document itself that nothing honours it.
+            declared_unimplemented_environment=["SDP_ALERT_WEBHOOK_URL"],
             acceptance_criteria=[
                 "Request logs include request id, tenant, actor, route, status, latency, and evidence ids without request bodies.",
-                "Policy/audit gaps, failed connector probes, and queue drift emit alertable signals.",
+                "Policy/audit gap, connector-probe failure and queue-drift conditions are DECLARED by "
+                "GET /enterprise/observability and are not evaluated: no code computes them and no code "
+                "routes them to SDP_ALERT_WEBHOOK_URL. Implementing this criterion means evaluating the "
+                "conditions and moving the variable back into required_environment.",
                 "Operators can correlate health, metrics, audit events, and policy decisions for a buyer pilot.",
             ],
         ),
