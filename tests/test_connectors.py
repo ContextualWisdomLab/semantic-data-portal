@@ -41,6 +41,7 @@ def _isolate_state():
     data = {k: v.model_copy(deep=True) for k, v in catalog._DATA.items()}
     audit = list(catalog._AUDIT_LOG)
     decisions = list(evidence._POLICY_DECISION_LOG)
+    audit_events = list(evidence._AUDIT_EVENT_LOG)
     try:
         yield
     finally:
@@ -50,6 +51,8 @@ def _isolate_state():
         catalog._AUDIT_LOG.extend(audit)
         evidence._POLICY_DECISION_LOG.clear()
         evidence._POLICY_DECISION_LOG.extend(decisions)
+        evidence._AUDIT_EVENT_LOG.clear()
+        evidence._AUDIT_EVENT_LOG.extend(audit_events)
 
 
 def _seed(ds_id: str, *, source_system: str, sensitivity: str = "medium"):

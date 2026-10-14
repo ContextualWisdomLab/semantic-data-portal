@@ -30,6 +30,7 @@ def _isolate_state():
     audit = list(catalog._AUDIT_LOG)
     history = {k: list(v) for k, v in catalog._SCHEMA_HISTORY.items()}
     decisions = list(evidence._POLICY_DECISION_LOG)
+    audit_events = list(evidence._AUDIT_EVENT_LOG)
     try:
         yield
     finally:
@@ -41,6 +42,8 @@ def _isolate_state():
         catalog._SCHEMA_HISTORY.update(history)
         evidence._POLICY_DECISION_LOG.clear()
         evidence._POLICY_DECISION_LOG.extend(decisions)
+        evidence._AUDIT_EVENT_LOG.clear()
+        evidence._AUDIT_EVENT_LOG.extend(audit_events)
 
 
 # --- version-bump helper (line 154) --------------------------------------
@@ -367,3 +370,58 @@ def test_schema_diff_withholds_governed_column_fields_but_keeps_the_signal() -> 
     entry = changed["customer_email"]
     assert "pii" not in entry["before"] and "pii" not in entry["after"]
     assert entry["changed_withheld_fields"] == ["pii"]
+
+
+def test_patch_audit_details_do_not_republish_governed_values() -> None:
+    """``patch_dataset`` stored the raw ``before``/``after`` of every patched
+    field, so patching ``source_system`` put the DSN in the audit record and
+    patching ``schema`` put the per-column ``pii`` flags there — three copies
+    each, in ``changes``/``before``/``after``. The audit feed then republished
+    exactly what ``discovery_view`` and ``discovery_column_view`` withhold.
+    """
+    import json
+
+    from sdp.domain import DatasetPatchRequest
+
+    before_count = len(catalog._AUDIT_LOG)
+    catalog.patch_dataset(
+        "crm-customer-master",
+        DatasetPatchRequest(
+            source_system="postgresql://svc_catalog:S3cr3t@analytics.dw:5432/customer",
+            schema=[
+                {
+                    "name": "customer_email",
+                    "datatype": "string",
+                    "nullable_ratio": 0.0,
+                    "distinct_ratio": 1.0,
+                    "pii": True,
+                    "quality_issues": ["null_spike"],
+                }
+            ],
+        ),
+        actor="admin",
+    )
+    recorded = catalog._AUDIT_LOG[before_count:]
+    assert recorded
+    body = json.dumps([event.model_dump(mode="json") for event in recorded], ensure_ascii=False)
+    assert "S3cr3t" not in body
+    assert "svc_catalog" not in body
+    assert '"pii"' not in body
+    assert "null_spike" not in body
+    # The change is still auditable: the locator and the column names survive.
+    assert "analytics.dw" in body
+    assert "customer_email" in body
+
+
+def test_patch_audit_still_names_which_withheld_field_changed() -> None:
+    """Withholding the value must not erase the signal that it changed."""
+    from sdp.domain import DatasetPatchRequest
+
+    before_count = len(catalog._AUDIT_LOG)
+    catalog.patch_dataset(
+        "crm-customer-master",
+        DatasetPatchRequest(source_system="postgresql://analytics.dw:5432/other"),
+        actor="admin",
+    )
+    details = catalog._AUDIT_LOG[before_count].details
+    assert "source_system" in details["changes"]

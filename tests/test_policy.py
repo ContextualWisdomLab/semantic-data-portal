@@ -25,6 +25,7 @@ def _isolate_state():
     """Snapshot/restore the module-level catalog + policy-decision evidence log."""
     data = {k: v.model_copy(deep=True) for k, v in catalog._DATA.items()}
     decisions = list(evidence._POLICY_DECISION_LOG)
+    audit_events = list(evidence._AUDIT_EVENT_LOG)
     try:
         yield
     finally:
@@ -32,6 +33,8 @@ def _isolate_state():
         catalog._DATA.update(data)
         evidence._POLICY_DECISION_LOG.clear()
         evidence._POLICY_DECISION_LOG.extend(decisions)
+        evidence._AUDIT_EVENT_LOG.clear()
+        evidence._AUDIT_EVENT_LOG.extend(audit_events)
 
 
 def test_evaluate_denies_nonexistent_dataset() -> None:

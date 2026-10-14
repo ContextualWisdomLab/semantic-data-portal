@@ -70,3 +70,32 @@ def test_postgres_migration_backfill_does_not_claim_the_demo_tenant() -> None:
     source = ddl.read_text(encoding="utf-8")
     assert "'demo')" not in source, "the DDL must not backfill legacy rows into the demo tenant"
     assert source.count("UNRESOLVED_TENANT_ID") >= 3
+
+
+def test_append_audit_event_does_not_discard_the_event_without_a_store() -> None:
+    """``append_audit_event`` returned the event but wrote nothing when no store
+    was configured, so the OIDC group-to-role mapping audit events — the record of
+    who was granted admin or platform-admin — were lost while the API still
+    handed back an ``audit_event_id``. Catalog events survived the same
+    configuration only because ``catalog._record_audit_event`` has its own
+    in-memory fallback that this path did not use.
+    """
+    from sdp import evidence
+
+    previous = evidence.configure_evidence_store(None)
+    try:
+        evidence._AUDIT_EVENT_LOG.clear()
+        event = AuditEvent(
+            id="oidc-1",
+            actor="someone@example.com",
+            action="oidc_group_role_mapping",
+            resource="enterprise/auth/oidc",
+            result="mapped",
+            details={"tenant_id": "demo", "granted_roles": ["platform-admin"]},
+        )
+        evidence.append_audit_event(event)
+        stored = evidence.list_persisted_audit_events(limit=10)
+        assert [e.id for e in stored] == ["oidc-1"]
+    finally:
+        evidence._AUDIT_EVENT_LOG.clear()
+        evidence.configure_evidence_store(previous)

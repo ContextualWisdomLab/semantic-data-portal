@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
 from sdp_core import buyer_demo_datasets
@@ -44,6 +45,35 @@ _SCHEMA_HISTORY: dict[str, list[dict[str, Any]]] = {}
 _GOVERNED_DATASET_FIELDS = ("schema", "source_system", "profile", "tenant_id")
 
 
+def redacted_source_system(source_system: str) -> str:
+    """Describe a dataset's source system without the credentials its DSN may carry.
+
+    ``source_system`` is a governed field that ``catalog.discovery_view``
+    withholds, and a DSN routinely carries a password in its userinfo component
+    (``postgresql://user:secret@host/db``). The connector evidence needs the
+    locator, never the secret, so userinfo and query are dropped on every path -
+    including the authorized one, since no caller needs the credential.
+    """
+    try:
+        parts = urlsplit(source_system)
+    except ValueError:
+        return "redacted"
+    if not parts.scheme:
+        return source_system
+    try:
+        host = parts.hostname
+    except ValueError:
+        return f"{parts.scheme}://redacted"
+    if host is None:
+        return urlunsplit((parts.scheme, "", parts.path, "", ""))
+    try:
+        port = parts.port
+    except ValueError:
+        port = None
+    authority = f"{host}:{port}" if port else host
+    return urlunsplit((parts.scheme, authority, parts.path, "", ""))
+
+
 # The same boundary at column granularity. The schema-history and schema-diff
 # routes publish stored column signatures, so without this they re-published the
 # per-column PII classification that discovery_view withholds.
@@ -66,6 +96,33 @@ def _changed_governed_column_fields(before: Dict[str, Any], after: Dict[str, Any
         for field in _GOVERNED_COLUMN_FIELDS
         if before.get(field) != after.get(field)
     ]
+
+
+def audited_patch_values(values: Dict[str, Any]) -> Dict[str, Any]:
+    """Project patched field values for an audit record.
+
+    The audit feed is a read surface like any other, so it must not republish
+    what ``discovery_view``/``discovery_column_view`` withhold: a patched
+    ``source_system`` would put the DSN - credentials included - into the record,
+    and a patched ``schema`` would put the per-column ``pii`` classification
+    there. The change stays auditable: the field name is kept, the source keeps
+    its non-secret locator, columns keep their names and types, and a profile
+    keeps the list of keys that moved.
+    """
+    projected: Dict[str, Any] = {}
+    for key, value in values.items():
+        if key == "source_system" and isinstance(value, str):
+            projected[key] = redacted_source_system(value)
+        elif key == "schema" and isinstance(value, list):
+            projected[key] = [
+                discovery_column_view(column if isinstance(column, dict) else column.model_dump())
+                for column in value
+            ]
+        elif key == "profile" and isinstance(value, dict):
+            projected[key] = {"withheld_keys": sorted(value)}
+        else:
+            projected[key] = value
+    return projected
 
 
 def discovery_view(dataset: Dataset) -> Dict[str, Any]:
@@ -524,7 +581,11 @@ def patch_dataset(
             actor=actor,
             decision_id=decision_id,
             action="dataset.patch",
-            details={"changes": updates, "before": {k: before[k] for k in updates}, "after": {k: data[k] for k in updates},},
+            details={
+                "changes": audited_patch_values(updates),
+                "before": audited_patch_values({k: before[k] for k in updates}),
+                "after": audited_patch_values({k: data[k] for k in updates}),
+            },
         )
     )
     return updated
@@ -619,12 +680,14 @@ def list_audit_events(
         events = [event for event in events if event.resource == resource]
     events = [event for event in events if tenant_is_in_scope(audit_tenant_id(event), tenant_ids)]
 
-    if has_configured_evidence_store():
-        persisted = list_persisted_audit_events(resource=resource, limit=limit, tenant_ids=tenant_ids)
-        by_id = {event.id: event for event in events}
-        for event in persisted:
-            by_id[event.id] = event
-        events = list(by_id.values())
+    # Always merge: with no store configured the evidence module keeps its own
+    # fallback log, which is where the OIDC mapping events live. Deduping by id
+    # absorbs the overlap with _AUDIT_LOG.
+    persisted = list_persisted_audit_events(resource=resource, limit=limit, tenant_ids=tenant_ids)
+    by_id = {event.id: event for event in events}
+    for event in persisted:
+        by_id[event.id] = event
+    events = list(by_id.values())
 
     events = sorted(events, key=lambda row: row.created_at, reverse=True)
     return events[:limit]

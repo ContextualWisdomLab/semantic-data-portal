@@ -22,6 +22,12 @@ def _build_configured_evidence_store(environ: Mapping[str, str]) -> EvidenceStor
 
 _STORE: EvidenceStore = _build_configured_evidence_store(os.environ)
 _POLICY_DECISION_LOG: list[PolicyDecision] = []
+# Audit events recorded while no store is configured. Without this the event was
+# returned to the caller and written nowhere, so the OIDC group-to-role mapping
+# records - who was granted admin or platform-admin - were lost in the documented
+# `uvicorn sdp.api:app` configuration while the API still handed back an
+# `audit_event_id`. Policy decisions already had this fallback.
+_AUDIT_EVENT_LOG: list[AuditEvent] = []
 
 
 def configure_evidence_store(store: EvidenceStore) -> EvidenceStore:
@@ -46,6 +52,8 @@ def record_policy_decision(decision: PolicyDecision) -> PolicyDecision:
 def append_audit_event(event: AuditEvent) -> AuditEvent:
     if _STORE:
         _STORE.append_event(event)
+    else:
+        _AUDIT_EVENT_LOG.append(event)
     return event
 
 
@@ -69,9 +77,16 @@ def tenant_is_in_scope(tenant_id: str, tenant_ids: list[str] | None) -> bool:
 def list_persisted_audit_events(
     *, resource: str | None = None, limit: int = 100, tenant_ids: list[str] | None = None
 ) -> list[AuditEvent]:
-    if not _STORE:
-        return []
-    return _STORE.list_events(resource=resource, limit=limit, tenant_ids=tenant_ids)
+    if _STORE:
+        return _STORE.list_events(resource=resource, limit=limit, tenant_ids=tenant_ids)
+
+    events = [
+        event
+        for event in reversed(_AUDIT_EVENT_LOG)
+        if (not resource or event.resource == resource)
+        and tenant_is_in_scope(_audit_tenant_id(event), tenant_ids)
+    ]
+    return events[:limit]
 
 
 def list_policy_decisions(

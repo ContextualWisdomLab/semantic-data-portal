@@ -29,6 +29,7 @@ def isolate_in_memory_app_state():
     audit_log = list(app_catalog._AUDIT_LOG)
     schema_history = deepcopy(app_catalog._SCHEMA_HISTORY)
     policy_log = list(app_evidence._POLICY_DECISION_LOG)
+    audit_event_log = list(app_evidence._AUDIT_EVENT_LOG)
     request_observations = app_observability.list_request_observations()
     export_errors = app_observability.list_observability_export_errors()
     yield
@@ -38,6 +39,7 @@ def isolate_in_memory_app_state():
     app_catalog._SCHEMA_HISTORY.clear()
     app_catalog._SCHEMA_HISTORY.update(schema_history)
     app_evidence._POLICY_DECISION_LOG[:] = policy_log
+    app_evidence._AUDIT_EVENT_LOG[:] = audit_event_log
     app_observability.reset_request_observability()
     for observation in request_observations:
         app_observability.record_request_observation(observation, export=False)
