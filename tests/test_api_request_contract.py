@@ -113,15 +113,28 @@ def test_the_published_model_is_the_one_the_handler_validates_with(
 def test_each_route_publishes_its_model_as_a_resolvable_ref(
     method: str, path: str
 ) -> None:
+    from sdp.api_request_contract import (
+        REQUEST_BODY_EXTRA_PROPERTIES,
+        _body_component_name,
+    )
+
     spec = client.get("/openapi.json").json()
     operation = spec["paths"][path][method.lower()]
     schema = operation["requestBody"]["content"]["application/json"]["schema"]
     model = REQUEST_BODY_MODELS[(method, path)]
+    extras = REQUEST_BODY_EXTRA_PROPERTIES.get((method, path), {})
+    # A route whose handler reads body keys outside its model publishes a
+    # ``<Model>Body`` variant carrying them; the model's own component is left
+    # untouched. Publishing the bare model shipped a schema that produced a 403.
+    component = _body_component_name(model, extras)
     # A bare ``$ref`` with no siblings: a ``$ref`` beside other keys is ignored
     # by OpenAPI 3.0 tooling, which is what merging via ``openapi_extra``
     # produced - a document that looked typed and was not.
-    assert schema == {"$ref": f"#/components/schemas/{model.__name__}"}, schema
-    assert model.__name__ in spec["components"]["schemas"]
+    assert schema == {"$ref": f"#/components/schemas/{component}"}, schema
+    assert component in spec["components"]["schemas"]
+    assert model.__name__ in spec["components"]["schemas"], (
+        "the model's own component must survive for anything already referencing it"
+    )
 
 
 def test_no_published_reference_dangles() -> None:
@@ -224,8 +237,213 @@ def test_the_custom_generator_does_not_drop_app_level_openapi_settings() -> None
         schema = spec["paths"]["/catalog/datasets"]["post"]["requestBody"]["content"][
             "application/json"
         ]["schema"]
-        assert schema == {"$ref": "#/components/schemas/DatasetCreateRequest"}
+        assert schema == {"$ref": "#/components/schemas/DatasetCreateRequestBody"}
     finally:
         app.servers = original_servers
         app.contact = original_contact
         app.openapi_schema = original_schema
+
+
+# --------------------------------------------------------------------------- #
+# The check that would have caught the first version of this module.
+#
+# Publishing the model alone made the document typed and WRONG: a client built
+# from the published ``DatasetCreateRequest`` schema sends exactly its nineteen
+# fields, and ``actor`` is not one of them. Measured:
+#
+#     POST /catalog/datasets  <only the published fields>   -> 403
+#                             "create 작업은 admin 권한만 가능"
+#     POST /catalog/datasets  <same body + "actor": "admin"> -> 200
+#
+# A schema that cannot be used to make the call it describes is the
+# "more useful-looking lie" this module's own docstring warns about. Asserting
+# that a schema is present was not enough; what matters is whether it is
+# sufficient.
+# --------------------------------------------------------------------------- #
+
+# Helper name -> (index of the argument naming the body key, published type).
+BODY_KEY_HELPERS = {"_payload_str": (1, "string"), "_pagination_int": (1, "integer")}
+
+
+def _body_keys_read(handler: str) -> tuple[set[str], set[str]]:
+    """Body keys a handler reads, and the reads this scan cannot resolve.
+
+    Fail-closed: a read whose key is not a literal, or a call that hands the
+    body to something this scan cannot follow, lands in the second set. A route
+    with unresolved reads is not allowed to publish a schema, because an
+    incomplete schema is what broke the create call.
+    """
+    tree = ast.parse(API_SOURCE.read_text())
+    functions = {
+        node.name: node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    def body_param(node: ast.AST) -> str | None:
+        for argument in node.args.args:
+            if argument.annotation is not None and "dict" in ast.unparse(argument.annotation):
+                return argument.arg
+        return None
+
+    def scan(node: ast.AST, param: str, seen: set[str]) -> tuple[set[str], set[str]]:
+        found: set[str] = set()
+        unresolved: set[str] = set()
+        for sub in ast.walk(node):
+            if isinstance(sub, ast.Subscript) and getattr(sub.value, "id", None) == param:
+                if isinstance(sub.slice, ast.Constant):
+                    found.add(sub.slice.value)
+                else:
+                    unresolved.add(ast.unparse(sub))
+            if isinstance(sub, ast.Compare):
+                for comparator in sub.comparators:
+                    if getattr(comparator, "id", None) == param and isinstance(
+                        sub.left, ast.Constant
+                    ):
+                        found.add(sub.left.value)
+            if not isinstance(sub, ast.Call):
+                continue
+            if (
+                getattr(sub.func, "attr", None) == "get"
+                and getattr(sub.func.value, "id", None) == param
+            ):
+                if sub.args and isinstance(sub.args[0], ast.Constant):
+                    found.add(sub.args[0].value)
+                else:
+                    unresolved.add(ast.unparse(sub))
+                continue
+            name = getattr(sub.func, "id", None)
+            if not name or not any(getattr(a, "id", None) == param for a in sub.args):
+                continue
+            if name in BODY_KEY_HELPERS:
+                index, _kind = BODY_KEY_HELPERS[name]
+                if len(sub.args) > index and isinstance(sub.args[index], ast.Constant):
+                    found.add(sub.args[index].value)
+                else:
+                    unresolved.add(ast.unparse(sub))
+            elif name in functions:
+                if name not in seen:
+                    seen.add(name)
+                    nested_found, nested_unresolved = scan(
+                        functions[name], body_param(functions[name]) or param, seen
+                    )
+                    found |= nested_found
+                    unresolved |= nested_unresolved
+            else:
+                unresolved.add(f"{name}(<body>)")
+        return found, unresolved
+
+    node = functions[handler]
+    param = body_param(node)
+    if param is None:
+        return set(), set()
+    found, unresolved = scan(node, param, set())
+    # ``_payload_str``'s own ``payload.get(field, default)`` is dynamic by
+    # design; each call site supplies the literal, which is captured above.
+    unresolved = {item for item in unresolved if item != "payload.get(field, default)"}
+    return {key for key in found if isinstance(key, str)}, unresolved
+
+
+def _handler_name(method: str, path: str) -> str:
+    tree = ast.parse(API_SOURCE.read_text())
+    for node in tree.body:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for deco in node.decorator_list:
+            if (
+                isinstance(deco, ast.Call)
+                and isinstance(deco.func, ast.Attribute)
+                and deco.func.attr == method.lower()
+                and getattr(deco.func.value, "id", "") == "app"
+                and deco.args
+                and deco.args[0].value == path
+            ):
+                return node.name
+    raise AssertionError(f"no handler for {method} {path}")
+
+
+@pytest.mark.parametrize(
+    "method,path", sorted(REQUEST_BODY_MODELS), ids=lambda value: str(value)
+)
+def test_the_published_schema_covers_every_body_key_the_handler_reads(
+    method: str, path: str
+) -> None:
+    """A key read outside the model must still be published."""
+    from sdp.api_request_contract import REQUEST_BODY_EXTRA_PROPERTIES
+
+    read, unresolved = _body_keys_read(_handler_name(method, path))
+    assert not unresolved, (
+        f"{method} {path} has body reads this scan cannot resolve, so its "
+        f"published schema may be incomplete: {sorted(unresolved)}"
+    )
+
+    model = REQUEST_BODY_MODELS[(method, path)]
+    published = set(model.model_fields) | set(
+        REQUEST_BODY_EXTRA_PROPERTIES.get((method, path), {})
+    )
+    missing = read - published
+    assert not missing, (
+        f"{method} {path} reads {sorted(missing)} from the body and publishes "
+        "neither in its model nor in REQUEST_BODY_EXTRA_PROPERTIES, so a client "
+        "generated from the document cannot make the call"
+    )
+
+
+def test_a_body_built_from_the_published_schema_is_accepted() -> None:
+    """The round trip, on the call a buyer makes first.
+
+    Not "is a schema published" but "is the published schema enough". The two
+    measured outcomes below are the regression: before the repair the first one
+    was a 403.
+    """
+    spec = client.get("/openapi.json").json()
+    component = spec["paths"]["/catalog/datasets"]["post"]["requestBody"]["content"][
+        "application/json"
+    ]["schema"]["$ref"].rsplit("/", 1)[-1]
+    published = spec["components"]["schemas"][component]
+
+    assert "actor" in published["properties"], sorted(published["properties"])
+    assert "actor" in published["required"], published["required"]
+
+    body = {
+        "id": "published-schema-roundtrip",
+        "title": "제목",
+        "description": "설명",
+        "domain": "customer_intelligence",
+        "owner": "owner",
+        "steward": "steward",
+        "tags": ["tag_one"],
+        "terms": ["고객"],
+        "sensitivity": "internal",
+        "source_system": "source_system",
+        "update_frequency": "daily",
+        "quality_score": 0.9,
+        "freshness_score": 0.9,
+        "schema": [
+            {
+                "name": "column_one",
+                "datatype": "string",
+                "nullable_ratio": 0.0,
+                "distinct_ratio": 1.0,
+                "quality_issues": [],
+                "pii": False,
+            }
+        ],
+        "distributions": [],
+        "mappings": [],
+        "related_datasets": [],
+        "profile": {},
+        "actor": "admin",
+    }
+    # Every key sent is one the document publishes.
+    assert set(body) <= set(published["properties"]), (
+        sorted(set(body) - set(published["properties"]))
+    )
+    created = client.post("/catalog/datasets", json=body)
+    assert created.status_code == 200, created.text
+
+    # And the field whose omission caused the 403 really is the cause.
+    without_actor = {key: value for key, value in body.items() if key != "actor"}
+    without_actor["id"] = "published-schema-roundtrip-no-actor"
+    refused = client.post("/catalog/datasets", json=without_actor)
+    assert refused.status_code == 403, refused.text

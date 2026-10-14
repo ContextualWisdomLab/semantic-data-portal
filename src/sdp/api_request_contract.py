@@ -57,7 +57,47 @@ REQUEST_BODY_MODELS: dict[tuple[str, str], type[BaseModel]] = {
     ("POST", "/api/v1/browse/query"): QueryExecutionRequest,
 }
 
+# Body keys a handler reads **outside** its model. Publishing the model alone
+# made the document typed and wrong: a client built from the published
+# ``DatasetCreateRequest`` schema sends exactly its nineteen fields, and
+# ``actor`` is not one of them. Measured:
+#
+#     POST /catalog/datasets  <only the published fields>  -> 403
+#                             "create 작업은 admin 권한만 가능"
+#     POST /catalog/datasets  <same body + "actor": "admin"> -> 200
+#
+# So the first version of this module shipped a schema that cannot be used to
+# make the call it describes - the "more useful-looking lie" its own docstring
+# warns about. ``actor`` is marked required because the call is refused without
+# it, even though the model's validation does not require it: a generator that
+# treats it as optional produces a client that always gets 403.
+#
+# ``tests/test_api_request_contract.py`` derives these keys from the AST of
+# ``sdp.api`` and fails if a handler reads a body key this table does not
+# publish, so the next one cannot be forgotten.
+REQUEST_BODY_EXTRA_PROPERTIES: dict[tuple[str, str], dict[str, Any]] = {
+    ("POST", "/catalog/datasets"): {
+        "actor": {
+            "type": "string",
+            "description": (
+                "인가 주체. 모델 밖에서 읽히며, 없으면 anonymous로 취급되어 "
+                "403으로 거부됩니다 — 생성 호출에는 사실상 필수입니다."
+            ),
+        }
+    },
+    ("PATCH", "/catalog/datasets/{dataset_id}"): {
+        "actor": {
+            "type": "string",
+            "description": (
+                "인가 주체. 모델 밖에서 읽히며, 없으면 anonymous로 취급되어 "
+                "403으로 거부됩니다 — 변경 호출에는 사실상 필수입니다."
+            ),
+        }
+    },
+}
+
 _REF_TEMPLATE = "#/components/schemas/{model}"
+_BODY_COMPONENT_SUFFIX = "Body"
 
 
 def _model_component_schemas(model: type[BaseModel]) -> dict[str, Any]:
@@ -78,12 +118,38 @@ def _model_component_schemas(model: type[BaseModel]) -> dict[str, Any]:
     return components
 
 
-def _published_body(model: type[BaseModel]) -> dict[str, Any]:
-    """The ``requestBody`` object naming this model's component schema."""
+def _body_component_name(model: type[BaseModel], extras: dict[str, Any]) -> str:
+    """The component a route publishes: the model, or a model+extras variant."""
+    if not extras:
+        return model.__name__
+    return f"{model.__name__}{_BODY_COMPONENT_SUFFIX}"
+
+
+def _composed_body_schema(
+    model: type[BaseModel], extras: dict[str, Any], components: dict[str, Any]
+) -> dict[str, Any]:
+    """The model's schema with the handler's extra body keys merged in.
+
+    A separate component rather than ``allOf``: a client generator handles one
+    flat object schema reliably, and ``allOf`` with a sibling property object is
+    where generators differ most. The model's own component is left untouched so
+    anything already referencing it is unaffected.
+    """
+    base = dict(components[model.__name__])
+    properties = dict(base.get("properties", {}))
+    properties.update(extras)
+    base["properties"] = properties
+    base["required"] = sorted({*base.get("required", []), *extras})
+    base["title"] = _body_component_name(model, extras)
+    return base
+
+
+def _published_body(component: str) -> dict[str, Any]:
+    """The ``requestBody`` object naming a component schema."""
     return {
         "required": True,
         "content": {
-            "application/json": {"schema": {"$ref": _REF_TEMPLATE.format(model=model.__name__)}}
+            "application/json": {"schema": {"$ref": f"#/components/schemas/{component}"}}
         },
     }
 
@@ -127,8 +193,14 @@ def document_request_bodies(app: FastAPI) -> Callable[[], dict[str, Any]]:
                 if model is None:
                     continue
                 components.update(_model_component_schemas(model))
+                extras = REQUEST_BODY_EXTRA_PROPERTIES.get((method, route.path), {})
+                component = _body_component_name(model, extras)
+                if extras:
+                    components[component] = _composed_body_schema(
+                        model, extras, components
+                    )
                 operation = schema["paths"][route.path][method.lower()]
-                operation["requestBody"] = _published_body(model)
+                operation["requestBody"] = _published_body(component)
         app.openapi_schema = schema
         return schema
 
