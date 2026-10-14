@@ -1,0 +1,168 @@
+"""The refusals each route can return, published in the OpenAPI document.
+
+The product's distinguishing behaviour is its *refusals*: a governed read is
+refused 403 for a role, sensitivity or purpose, 404 when the dataset is outside
+the caller's tenant scope or absent, 400 for a malformed request, 409 when a
+bounded resource is full. None of it reached the machine-readable contract.
+Measured against ``GET /openapi.json`` before this module existed:
+
+    routes with a typed request body               5 of 20
+    operations with a ``$ref`` 200 response schema 0 of 60
+    operations documenting ANY error status        0 of 60
+
+So a buyer generating a client from the spec got no refusal in the type system
+at all - every governed route looked like it either returns 200 or raises 422.
+The error contract is stated in ``README.md`` and ``CLAUDE.md``
+(``KeyError`` -> 404, ``ValueError`` -> 400, ``PermissionError`` -> 403) and
+enforced by the suite; it just was not published.
+
+The table below is the contract. It is applied to the routes after
+registration rather than as a ``responses=`` argument on 42 decorators, so the
+contract is readable in one place and cannot drift between routes that share a
+family. ``tests/test_api_error_contract.py`` compares it against the statuses
+the source can actually raise, derived by walking the AST of ``sdp.api``, so a
+route that gains a refusal without declaring it fails the suite.
+
+Only statuses a route can really return are listed. Documenting a refusal a
+route cannot produce would be the same kind of false claim as the mislabelled
+measurement provenance repaired elsewhere in this series - an answer that is
+wrong rather than a question left open.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from fastapi import FastAPI
+from fastapi.routing import APIRoute
+
+# ``HTTPException(detail=...)`` is a string on most paths here and a structured
+# object on a few (for example the unknown-status-filter refusal, which returns
+# the requested value and the known set). Both are declared rather than only the
+# common one.
+ERROR_RESPONSE_SCHEMA: dict[str, Any] = {
+    "title": "RefusalDetail",
+    "type": "object",
+    "properties": {
+        "detail": {
+            "title": "Detail",
+            "description": (
+                "거부 사유. 대부분의 경로는 문자열이고, 일부 경로는 구조화된 "
+                "객체를 반환한다 (예: 알 수 없는 status 필터는 requested와 "
+                "known_statuses를 함께 반환)."
+            ),
+            "anyOf": [{"type": "string"}, {"type": "object"}, {"type": "array"}],
+        }
+    },
+    "required": ["detail"],
+}
+
+REFUSAL_DESCRIPTIONS: dict[int, str] = {
+    400: (
+        "잘못된 요청. 요청 본문/파라미터가 계약을 위반했거나, 금지된 SQL 키워드 "
+        "또는 허용되지 않은 식별자가 포함되어 정책 평가 전에 거부되었다."
+    ),
+    403: (
+        "정책 거부. 역할(RBAC), 민감도, 목적(purpose) 중 하나가 허용되지 않았다. "
+        "호출자가 데이터셋의 테넌트에는 접근할 수 있는 경우에만 403이며, 거부는 "
+        "정책 결정과 감사 이벤트로 함께 기록된다."
+    ),
+    404: (
+        "찾을 수 없음. 리소스가 존재하지 않거나 호출자의 테넌트 범위 밖이다. "
+        "두 경우의 응답은 상태 코드와 본문이 동일하다 — 데이터셋 id는 열거 "
+        "가능하므로 구별 가능한 응답 자체가 존재 oracle이 된다. 실제 사유는 "
+        "호출자가 읽을 수 없는 증빙 원장에만 남는다."
+    ),
+    409: (
+        "충돌. 상한이 있는 리소스가 가득 찼고 비울 수 있는 항목이 없다 "
+        "(시드 개념 어휘는 eviction 대상이 아니다)."
+    ),
+}
+
+# Statuses a literal-scanning reader cannot see, declared explicitly.
+#
+# ``POST /llm/draft-query`` resolves its status through
+# ``_DRAFT_QUERY_ERROR_STATUS.get(error, 400)``, so 403 and 404 never appear as
+# literals in the route body. The contract test knows to expect these from here
+# rather than from the AST.
+DYNAMIC_REFUSALS: dict[tuple[str, str], tuple[int, ...]] = {
+    ("POST", "/llm/draft-query"): (403, 404),
+}
+
+ROUTE_REFUSALS: dict[tuple[str, str], tuple[int, ...]] = {
+    ("POST", "/api/v1/browse/query"): (400, 403),
+    ("GET", "/audit/events"): (403,),
+    ("POST", "/browse/query"): (400, 403),
+    ("POST", "/browse/{dataset_id}/preview"): (400, 403, 404),
+    ("GET", "/browse/{dataset_id}/schema"): (403, 404),
+    ("GET", "/catalog/datasets"): (403,),
+    ("POST", "/catalog/datasets"): (400, 403),
+    ("GET", "/catalog/datasets/{dataset_id}"): (403, 404),
+    ("PATCH", "/catalog/datasets/{dataset_id}"): (400, 403, 404),
+    ("GET", "/catalog/datasets/{dataset_id}/audit"): (403, 404),
+    ("POST", "/catalog/datasets/{dataset_id}/deprecate"): (403, 404),
+    ("GET", "/catalog/datasets/{dataset_id}/join-candidates"): (403, 404),
+    ("GET", "/catalog/datasets/{dataset_id}/jsonld"): (403, 404),
+    ("GET", "/catalog/datasets/{dataset_id}/lineage"): (403, 404),
+    ("GET", "/catalog/datasets/{dataset_id}/profile"): (403, 404),
+    ("POST", "/catalog/datasets/{dataset_id}/publish"): (400, 403, 404),
+    ("GET", "/catalog/datasets/{dataset_id}/related"): (403, 404),
+    ("GET", "/catalog/datasets/{dataset_id}/schema-diff"): (400, 403, 404),
+    ("GET", "/catalog/datasets/{dataset_id}/schema-history"): (403, 404),
+    ("GET", "/catalog/datasets/{dataset_id}/schema-versions"): (403, 404),
+    ("GET", "/catalog/datasets/{dataset_id}/semantic-validation"): (403, 404),
+    ("GET", "/catalog/datasets/{dataset_id}/validate"): (403, 404),
+    ("GET", "/catalog/facets"): (400, 403),
+    ("GET", "/catalog/search"): (403,),
+    ("POST", "/enterprise/auth/oidc-preview"): (400,),
+    ("POST", "/enterprise/auth/oidc-verify"): (400,),
+    ("GET", "/enterprise/connectors/{connector_id}/probe"): (400, 403, 404),
+    ("GET", "/enterprise/demo-plan"): (400,),
+    ("POST", "/graph/edges"): (400, 403),
+    ("POST", "/graph/nodes"): (403,),
+    ("GET", "/graph/nodes/{node_id}"): (403, 404),
+    ("POST", "/graph/query"): (400, 403, 404),
+    ("POST", "/llm/draft-query"): (400, 403, 404),
+    ("POST", "/llm/search"): (400, 403),
+    ("POST", "/ontology/concepts"): (400, 403, 409),
+    ("GET", "/ontology/patches"): (400,),
+    ("POST", "/ontology/patches"): (400, 403),
+    ("POST", "/ontology/patches/{patch_id}/review"): (400, 403, 404),
+    ("POST", "/ontology/resolve"): (400,),
+    ("POST", "/policy/decision"): (403, 404),
+    ("GET", "/policy/decisions"): (403,),
+    ("POST", "/search/semantic"): (403,),
+}
+
+
+def refusal_responses(statuses: tuple[int, ...]) -> dict[int, dict[str, Any]]:
+    """Build the OpenAPI ``responses`` fragment for one route's refusals."""
+    return {
+        status: {
+            "description": REFUSAL_DESCRIPTIONS[status],
+            "content": {"application/json": {"schema": ERROR_RESPONSE_SCHEMA}},
+        }
+        for status in statuses
+    }
+
+
+def document_refusals(app: FastAPI) -> dict[tuple[str, str], tuple[int, ...]]:
+    """Attach the refusal contract to every route that declares one.
+
+    Returns the routes that were annotated, so a caller (and the contract test)
+    can see that no table entry named a path the app does not serve - a stale
+    entry would otherwise sit in the table documenting nothing.
+    """
+    applied: dict[tuple[str, str], tuple[int, ...]] = {}
+    for route in app.routes:
+        if not isinstance(route, APIRoute):
+            continue
+        for method in route.methods:
+            statuses = ROUTE_REFUSALS.get((method, route.path))
+            if not statuses:
+                continue
+            route.responses = {**route.responses, **refusal_responses(statuses)}
+            applied[(method, route.path)] = statuses
+    # Regenerating is required: FastAPI caches the document on first request.
+    app.openapi_schema = None
+    return applied

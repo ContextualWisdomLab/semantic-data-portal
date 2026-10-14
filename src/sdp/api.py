@@ -64,6 +64,7 @@ from .observability import (
     request_id_from_headers,
     request_id_header,
 )
+from .api_error_contract import document_refusals
 from .authz import can_access_tenant, resolve_actor_context
 from .policy import (
     accessible_tenant_ids,
@@ -1645,3 +1646,19 @@ def browse_query(payload: dict[str, Any]) -> dict[str, Any]:
 @app.post("/api/v1/browse/query")
 def browse_query_v1(payload: dict[str, Any]) -> dict[str, Any]:
     return browse_query(payload)
+
+
+# --- Published refusal contract ---------------------------------------------
+#
+# Attached after every route is registered, from the single table in
+# ``sdp.api_error_contract``. Before this, ``GET /openapi.json`` documented an
+# error status on **0 of 60** operations, so a buyer generating a client saw
+# none of the product's governed refusals in the type system - while the error
+# contract itself (KeyError -> 404, ValueError -> 400, PermissionError -> 403)
+# was stated in README.md and enforced by the suite.
+#
+# One table rather than a ``responses=`` argument on 42 decorators, so the
+# contract is readable in one place and cannot drift between routes of the same
+# family. ``tests/test_api_error_contract.py`` checks it against the statuses
+# the source can actually raise, in both directions.
+DOCUMENTED_REFUSALS = document_refusals(app)
