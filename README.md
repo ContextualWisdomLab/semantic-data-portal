@@ -408,4 +408,14 @@ PYTHONPATH=src python -m sdp.demo_smoke
 ## 요구사항 대응 증적
 
 - PRD/TRD: `docs/prd-trd.md`
-- 요구사항 대응 매트릭스: `docs/implementation-compliance.md`
+- 요구사항 대응 매트릭스(**전수, 생성 문서**): `docs/requirements-coverage.md` —
+  PRD의 요구사항 74건(기능 52 + NFR 22)을 파싱해 각 건의 상태를
+  `implemented` / `partial` / `not_implemented` / `external` 중 하나로 적고
+  증빙 포인터(route / 함수 / 테스트)를 붙인다. 손으로 쓰지 않고
+  `PYTHONPATH=src python -m sdp_core.requirements`로 재생성하며,
+  `tests/test_requirements_coverage.py`가 모든 ID의 매핑 존재, 증빙 포인터의
+  실제 해석 가능성, `implemented` 주장의 증빙 보유, 문서와 생성 결과의 일치를
+  강제한다.
+- 요구사항 대응 서술(일부 요구사항 상세): `docs/implementation-compliance.md` —
+  경계/설계 근거를 길게 서술하는 문서이며 전수 목록이 아니다. 전수 상태는 위의
+  생성 문서를 본다.

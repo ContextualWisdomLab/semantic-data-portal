@@ -1,6 +1,14 @@
-# PRD/TRD 요구사항 대응 매트릭스 (semantic-data-portal MVP)
+# PRD/TRD 요구사항 대응 서술 (semantic-data-portal MVP)
 
-본 문서는 `docs/prd-trd.md` 요구사항을 현재 구현 기준으로 추적하기 위한 증빙용 매핑이다.
+본 문서는 `docs/prd-trd.md` 요구사항 중 **일부**에 대해 구현 경계와 설계 근거를
+길게 서술하는 증빙 문서다. **전수 목록이 아니다.**
+
+전수 상태는 생성 문서 [`docs/requirements-coverage.md`](requirements-coverage.md)를
+본다. 이 문서는 PRD의 74건 중 13건만 언급하고 있었고 P0 34건 중 25건이 빠져 있었다
+(손으로 유지하는 매트릭스가 낡는 방향이 이쪽이다). 전수 매트릭스는 PRD를 파싱해
+생성하고 `tests/test_requirements_coverage.py`가 강제하므로 같은 방식으로 낡지
+않는다. 여기에 서술이 있는 요구사항은 생성 문서의 `증빙` 포인터가 가리키는 코드와
+테스트를 해설하는 것으로 읽으면 된다.
 
 ## 구현 상태 개요
 

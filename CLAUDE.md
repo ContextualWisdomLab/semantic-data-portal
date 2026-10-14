@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 프로젝트 개요
 
-온톨로지 기반 데이터 카탈로그/브라우징 플랫폼 MVP. FastAPI 단일 앱(`sdp.api:app`)이 카탈로그 검색, 온톨로지 용어 해석, 정책 기반 브라우징(민감 컬럼 마스킹), SQL draft 오케스트레이션, enterprise 증빙(evidence) 엔드포인트를 제공한다. PRD/TRD 원문은 `docs/prd-trd.md`, 요구사항 대응 매트릭스는 `docs/implementation-compliance.md`에 있다.
+온톨로지 기반 데이터 카탈로그/브라우징 플랫폼 MVP. FastAPI 단일 앱(`sdp.api:app`)이 카탈로그 검색, 온톨로지 용어 해석, 정책 기반 브라우징(민감 컬럼 마스킹), SQL draft 오케스트레이션, enterprise 증빙(evidence) 엔드포인트를 제공한다. PRD/TRD 원문은 `docs/prd-trd.md`, 요구사항 전수 대응 매트릭스는 `docs/requirements-coverage.md`(생성 문서 — `src/sdp_core/requirements.py`가 PRD를 파싱해 만든다), 일부 요구사항의 서술형 증빙은 `docs/implementation-compliance.md`에 있다.
 
 ## 자주 쓰는 명령어
 
@@ -92,4 +92,4 @@ supply-chain 하드닝 유지: base image는 digest-pinned(`python:3.12-slim@sha
 - **디자인 토큰**: `/enterprise/console` CSS는 임의 hex/px 리터럴 대신 `design_tokens.py`의 `var(--sdp-*)` 변수만 참조한다. 토큰 3계층(primitive/semantic/component)과 Figma 매핑 규칙은 `docs/design-tokens.md` 참조, `tests/test_design_tokens.py`가 무회귀를 강제한다.
 - **환경 변수**: 모두 `SDP_` prefix — evidence store(`SDP_DATABASE_URL`, `SDP_DATABASE_SSLMODE`, `SDP_SQLITE_PATH`), observability(`SDP_LOG_SINK_URL` — `file:///absolute/path` 또는 http(s); URL의 credential은 `Authorization` 헤더로 분리, `SDP_REQUEST_ID_HEADER`, `SDP_LOG_SINK_TIMEOUT_MS`; `SDP_ALERT_WEBHOOK_URL`은 **선언만 되고 구현되지 않음** — 설정 여부만 보고하고 라우팅하지 않는다), OIDC(`SDP_OIDC_ISSUER`, `SDP_OIDC_AUDIENCE`, `SDP_OIDC_JWKS_URL`, `SDP_OIDC_GROUP_ROLE_MAP`), connector secret(`SDP_CONNECTOR_SECRET_REF_PREFIX` 기준 `SDP_CONNECTOR_SECRET_*` env reference — 값은 presence만 검증하고 API 응답에 노출 금지).
 - **문서/문자열 언어**: README·docs와 사용자 노출 메시지(정책 사유 등)는 한국어 + 영문 기술 용어 혼용이다. 기존 스타일을 유지한다.
-- 기능을 추가하면 README의 API 목록/구현 대응 표와 `docs/implementation-compliance.md`의 매트릭스를 함께 갱신한다.
+- 기능을 추가하면 README의 API 목록/구현 대응 표를 함께 갱신한다. 요구사항 상태가 바뀌면 `src/sdp_core/requirements.py`의 `REQUIREMENT_COVERAGE`를 고치고 `PYTHONPATH=src python -m sdp_core.requirements`로 `docs/requirements-coverage.md`를 재생성한다 (생성 문서를 직접 편집하면 `tests/test_requirements_coverage.py`가 실패한다). `docs/implementation-compliance.md`는 서술형 증빙이므로 해당 요구사항의 경계가 바뀔 때 갱신한다.
