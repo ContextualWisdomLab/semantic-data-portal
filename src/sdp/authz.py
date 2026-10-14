@@ -386,3 +386,29 @@ def verify_oidc_jwks_token(
 
     context = resolve_oidc_actor_context(claims, role_map=role_map)
     return context, claims
+
+
+def seeded_subject_bindings() -> list[dict[str, Any]]:
+    """Report which roles each seeded demo subject actually holds.
+
+    The published RBAC matrix is per-*role* and internally correct: the
+    ``platform-admin`` row honestly grants every action across ``all_tenants``.
+    What the matrix alone cannot show is that the seed *bundles* that role into
+    subjects whose names imply something narrower - ``security`` holds
+    ``['security', 'platform-admin']`` - so a reader of the ``security`` row
+    (``platform_evidence_only``) is surprised when that subject previews and
+    deprecates another tenant's critical dataset. Both facts are true at once;
+    publishing the bundling is what makes the page non-misleading.
+
+    Whether ``security`` *should* hold ``platform-admin`` is a product decision
+    and is deliberately not made here.
+    """
+    return [
+        {
+            "subject": context.subject,
+            "tenant_id": context.tenant_id,
+            "roles": list(context.roles),
+            "crosses_tenant_boundary": "platform-admin" in context.roles,
+        }
+        for context in _SUBJECTS.values()
+    ]

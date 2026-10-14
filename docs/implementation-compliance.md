@@ -118,6 +118,32 @@
   - `tests/test_api.py::test_browse_query_denied_without_user`
   - `tests/test_api.py::test_draft_query`
 
+### RBAC 매트릭스와 seed 번들링
+
+`GET /enterprise/rbac-matrix`는 **역할 단위** 매트릭스이고 그 자체로 일관됩니다 —
+`platform-admin` 행은 `all_tenants`와 전체 action을 정직하게 적습니다. 매트릭스만으로
+보이지 않던 것은 **seed가 그 역할을 다른 subject에 묶어 넣는다**는 사실입니다.
+
+| subject | roles | tenant 교차 |
+| --- | --- | --- |
+| `admin` | `admin`, `data-analyst`, `platform-admin` | 예 |
+| `security` | `security`, `platform-admin` | 예 |
+| `data-admin` | `admin`, `data-analyst` | 아니오 |
+| `analyst` | `data-analyst` | 아니오 |
+| `external-analyst` | `data-analyst` (tenant `external`) | 아니오 |
+
+따라서 구매자가 `security → platform_evidence_only` 행을 읽고 나서 `security` subject가
+다른 tenant의 `critical` 데이터셋을 preview(200)하고 deprecate(200)하는 것을 측정하게
+됩니다. **두 사실은 동시에 참입니다** — 그 subject가 두 번째 역할을 들고 있기 때문입니다.
+`authz.seeded_subject_bindings()`를 매니페스트에 함께 실어 페이지가 오해를 만들지
+않게 했습니다.
+
+`security`가 `platform-admin`을 들고 있어야 하는지는 **제품 결정이므로 여기서 바꾸지
+않았습니다.** 역할을 빼앗는 쪽이든 매트릭스를 바꾸는 쪽이든 의도를 알아야 고를 수
+있습니다. 대신 scope 주장이 실제 grant보다 좁아지면 실패하는 contract test
+(`tests/test_api.py::test_rbac_matrix_scope_claims_match_the_seeded_grants`)를 두어,
+앞으로 seed가 바뀌면 거짓 주장이 배포되기 전에 깨지게 했습니다.
+
 ## 4) Policy & Audit
 
 - `POST /policy/decision`

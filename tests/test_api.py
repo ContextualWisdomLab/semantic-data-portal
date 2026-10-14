@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from cryptography.hazmat.primitives.asymmetric import rsa
 from jwt.algorithms import RSAAlgorithm
 
+import sdp.authz as app_authz
 import sdp.catalog as app_catalog
 import sdp.domain as app_domain
 import sdp.evidence as app_evidence
@@ -2107,3 +2108,60 @@ def test_ontology_patch_review_records_evidence():
     )
     recorded = app_catalog._AUDIT_LOG[before:]
     assert any(event.action == "ontology.patch_review" for event in recorded), recorded
+
+
+def test_rbac_matrix_publishes_the_seeded_subject_role_bundling():
+    """The matrix is per-*role* and internally correct: ``platform-admin`` is
+    honestly documented as ``all_tenants`` with every action. What it could not
+    show is that the demo seed *bundles* that role into two subjects whose names
+    imply a narrower purpose:
+
+        admin     roles=['admin', 'data-analyst', 'platform-admin']  crosses tenants
+        security  roles=['security', 'platform-admin']               crosses tenants
+
+    So a buyer reads ``security -> platform_evidence_only`` and then measures the
+    ``security`` subject previewing (200) and deprecating (200) another tenant's
+    ``critical`` dataset. Both are true at once — the subject holds a second role —
+    but nothing on the page said so. Publishing the bundling closes the gap
+    without deciding whether ``security`` *should* hold ``platform-admin``.
+    """
+    response = client.get("/enterprise/rbac-matrix")
+    assert response.status_code == 200
+    body = response.json()
+
+    bindings = {entry["subject"]: entry for entry in body["seeded_subject_bindings"]}
+    assert bindings["security"]["roles"] == ["security", "platform-admin"]
+    assert bindings["security"]["crosses_tenant_boundary"] is True
+    assert bindings["admin"]["crosses_tenant_boundary"] is True
+    assert bindings["analyst"]["crosses_tenant_boundary"] is False
+
+    # Every subject the manifest reports as crossing really does hold the role
+    # whose published row grants it.
+    crossing = {e["subject"] for e in body["seeded_subject_bindings"] if e["crosses_tenant_boundary"]}
+    for subject in crossing:
+        assert "platform-admin" in app_authz.resolve_actor_context(subject).roles
+
+
+def test_rbac_matrix_scope_claims_match_the_seeded_grants():
+    """A per-role scope claim must not be narrower than what a subject holding
+    that role actually gets. This is the mechanical guard: if a future seed gives
+    ``platform-admin`` to another subject, or a row's scope is tightened without
+    changing the grants, this fails rather than shipping a false claim.
+    """
+    body = client.get("/enterprise/rbac-matrix").json()
+    rows = {row["role"]: row for row in body["roles"]}
+    assert rows["platform-admin"]["tenant_scope"] == "all_tenants"
+
+    for entry in body["seeded_subject_bindings"]:
+        narrow = [
+            rows[role]["tenant_scope"]
+            for role in entry["roles"]
+            if role in rows and rows[role]["tenant_scope"] != "all_tenants"
+        ]
+        if entry["crosses_tenant_boundary"]:
+            # The subject crosses tenants, so at least one of its rows must say so.
+            assert any(
+                rows[role]["tenant_scope"] == "all_tenants"
+                for role in entry["roles"]
+                if role in rows
+            ), f"{entry['subject']} crosses tenants but no row claims all_tenants: {narrow}"

@@ -191,7 +191,14 @@ def enterprise_controls() -> dict[str, Any]:
 
 @app.get("/enterprise/rbac-matrix")
 def enterprise_rbac() -> dict[str, Any]:
-    return enterprise_rbac_matrix().model_dump()
+    # The per-role matrix plus the seeded subject->role bundling. Without the
+    # bundling a reader of the `security` row (platform_evidence_only) cannot tell
+    # that the `security` subject also holds `platform-admin` and therefore
+    # crosses every tenant.
+    return {
+        **enterprise_rbac_matrix().model_dump(),
+        "seeded_subject_bindings": authz.seeded_subject_bindings(),
+    }
 
 
 @app.get("/enterprise/observability")
