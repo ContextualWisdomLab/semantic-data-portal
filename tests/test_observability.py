@@ -9,6 +9,7 @@ fallbacks. No network or external sink is contacted.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import sys
 from urllib.parse import urlparse
@@ -76,7 +77,44 @@ def test_sink_status_http_and_other_scheme(monkeypatch: pytest.MonkeyPatch) -> N
     assert status["target"] == "sink.example"
     monkeypatch.setenv("SDP_LOG_SINK_URL", "tcp://opaque-target")
     other = obs._sink_status()
-    assert other["scheme"] == "tcp" and other["target"] == "tcp://opaque-target"
+    # The scheme is reported as written, but the target is reduced to host(:port)
+    # for every scheme: echoing the raw URL would publish userinfo and query
+    # credentials on an unauthenticated manifest.
+    assert other["scheme"] == "tcp" and other["target"] == "opaque-target"
+
+
+def test_sink_status_never_publishes_sink_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The manifest that carries this field is unauthenticated, and
+    ``urlparse().netloc`` keeps the userinfo component, so reporting netloc
+    publishes any credential an operator put in the sink URL.
+    """
+    monkeypatch.setenv(
+        "SDP_LOG_SINK_URL",
+        "https://sdp-ingest:s3cr3t-token@logs.example.net/loki/api/v1/push",
+    )
+    status = obs._sink_status()
+    assert status["target"] == "logs.example.net"
+    assert "s3cr3t-token" not in json.dumps(status)
+
+    monkeypatch.setenv("SDP_LOG_SINK_URL", "syslog://user:pw@logs.example.net/path?api-key=TOPSECRET")
+    other = obs._sink_status()
+    assert other["target"] == "logs.example.net"
+    assert "TOPSECRET" not in json.dumps(other)
+    assert "user:pw" not in json.dumps(other)
+
+
+def test_sink_status_keeps_port_and_survives_a_malformed_authority(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A port identifies the sink and is kept; an unparsable port must not raise."""
+    monkeypatch.setenv("SDP_LOG_SINK_URL", "https://logs.example.net:8443/push")
+    assert obs._sink_status()["target"] == "logs.example.net:8443"
+
+    monkeypatch.setenv("SDP_LOG_SINK_URL", "https://logs.example.net:notaport/push")
+    assert obs._sink_status()["target"] == "logs.example.net"
+
+    monkeypatch.setenv("SDP_LOG_SINK_URL", "https://")
+    assert obs._sink_status()["target"] == "redacted"
 
 
 # --- _export_to_sink -----------------------------------------------------

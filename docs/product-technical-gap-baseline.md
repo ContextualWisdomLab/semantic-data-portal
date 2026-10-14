@@ -2473,6 +2473,32 @@ CI parity 전체 **292 passed / 8 skipped**, Hypothesis fuzz mirror 10 passed, `
 Atheris 타깃의 불변식(`len(warnings) == len(set(warnings))`, 예외 없음)을 깨지 않는지 **4,019개 입력**
 (빈 문자열, 콤마만, 유니코드, 200개 콤마, 잘린 `FROM`/`AS`/`$`, 무작위 조합)으로 따로 확인했습니다 — 문제 0건.
 
+### 감사 큐 소진 (2) — 인증 없는 manifest가 log sink 자격증명을 그대로 싣고 있었습니다 (2026-10-14)
+
+`GET /enterprise/observability`는 인증 의존성이 없는 공개 엔드포인트입니다(`src/sdp/api.py:187`). 그런데
+`_sink_status()`가 `target`에 `urlparse().netloc`을 넣었고, **`netloc`은 userinfo를 포함합니다.** 직접 재현했습니다.
+
+| `SDP_LOG_SINK_URL` | 수리 전 `target` | 수리 후 |
+| --- | --- | --- |
+| `https://sdp-ingest:s3cr3t-token@logs-prod.grafana.net/loki/api/v1/push` | `sdp-ingest:s3cr3t-token@logs-prod.grafana.net` | `logs-prod.grafana.net` |
+| `syslog://user:pw@logs.example.net/path?api-key=TOPSECRET` | **URL 전체**(userinfo + query 포함) | `logs.example.net` |
+| `https://logs-prod.grafana.net/loki/api/v1/push` (대조) | `logs-prod.grafana.net` | 동일 |
+| `https://logs.example.net:8443/push` (대조) | `logs.example.net:8443` | 동일 |
+
+http(s)가 아닌 scheme의 `else` 분기가 더 나빴습니다 — `sink_url`을 그대로 반환하므로 query string에 담긴 토큰까지
+통째로 노출됩니다. 문서화된 Grafana Cloud Loki push 형식이 바로 userinfo 형태라서, 가설이 아니라 운영에서 나오는
+설정입니다. 그리고 이 저장소가 같은 control에 스스로 적는 release criterion이
+`src/sdp_core/enterprise.py:147` — "Health and metrics endpoints are exposed without source credentials." 입니다.
+즉 **자기 기준을 자기 응답이 위반**하고 있었습니다.
+
+수리: `_redacted_sink_target()`을 추가해 모든 scheme에서 host(:port)만 보고합니다. `parsed.hostname`/`parsed.port`는
+userinfo와 query를 포함하지 않고, 읽을 수 없는 authority는 raw URL이 아니라 `redacted` 표식이 됩니다(잘못된 port
+문자열에 `ValueError`가 나는 경우도 포함).
+
+검증: RED 선확인(단위 3건 + `/enterprise/observability` end-to-end 1건 실패 → 통과). 기존 테스트 1건이
+`target == "tcp://opaque-target"`로 **raw URL 반환을 고정**하고 있었으므로 함께 고쳤습니다(이제 `opaque-target`).
+전체 **295 passed / 8 skipped**, Hypothesis fuzz mirror 10 passed, `sdp.demo_smoke` ready=true.
+
 ## 운영 메모
 
 - Database objects: 두 단어 이상 `snake_case`, 3NF. Catalog plane 테이블은 #73의 `migrations/0002_ontology_catalog_plane.sql`.

@@ -84,6 +84,29 @@ def build_request_observation(
     }
 
 
+def _redacted_sink_target(parsed: Any) -> str:
+    """Describe a sink endpoint without the credentials its URL may carry.
+
+    ``urlparse().netloc`` keeps the userinfo component, so reporting it would
+    publish a sink credential such as ``https://user:token@host/push`` on the
+    unauthenticated observability manifest; a query string can carry one too.
+    Only the host and port identify the sink, so only those are reported, and an
+    authority that cannot be read becomes an explicit redaction marker rather
+    than the raw URL.
+    """
+    try:
+        host = parsed.hostname
+    except ValueError:  # pragma: no cover - defensive: malformed authority
+        return "redacted"
+    if not host:
+        return "redacted"
+    try:
+        port = parsed.port
+    except ValueError:
+        port = None
+    return f"{host}:{port}" if port else host
+
+
 def _sink_status() -> dict[str, Any]:
     sink_url = os.getenv("SDP_LOG_SINK_URL", "").strip()
     alert_webhook_url = os.getenv("SDP_ALERT_WEBHOOK_URL", "").strip()
@@ -99,10 +122,8 @@ def _sink_status() -> dict[str, Any]:
     scheme = parsed.scheme or "file"
     if scheme == "file":
         target = str(_file_sink_path(sink_url, parsed))
-    elif scheme in {"http", "https"}:
-        target = parsed.netloc
     else:
-        target = sink_url
+        target = _redacted_sink_target(parsed)
 
     return {
         "configured": True,

@@ -1824,3 +1824,20 @@ def test_oidc_verify_trusts_only_operator_configured_jwks(monkeypatch):
     assert body["actor_context"]["subject"] == "analyst@example.com"
     assert body["actor_context"]["tenant_id"] == "buyer-demo"
     assert token not in json.dumps(body)
+
+
+def test_observability_manifest_does_not_publish_sink_credentials(monkeypatch):
+    """`GET /enterprise/observability` is unauthenticated, so the sink endpoint
+    it reports must never carry the sink credential."""
+    monkeypatch.setenv(
+        "SDP_LOG_SINK_URL",
+        "https://sdp-ingest:s3cr3t-token@logs.example.net/loki/api/v1/push",
+    )
+
+    response = client.get("/enterprise/observability")
+
+    assert response.status_code == 200
+    rendered = json.dumps(response.json())
+    assert "s3cr3t-token" not in rendered
+    assert "sdp-ingest" not in rendered
+    assert response.json()["structured_logs"]["sink"]["target"] == "logs.example.net"
