@@ -1055,7 +1055,12 @@ def test_join_candidate_endpoint():
 
 
 def test_dataset_profile_endpoint():
-    response = client.get("/catalog/datasets/crm-customer-master/profile")
+    # This test used to call the route with no actor at all, which is what pinned
+    # the ungated behaviour: the route published dataset `profile` and per-column
+    # `quality_issues` - both governed fields - to an anonymous caller.
+    response = client.get(
+        "/catalog/datasets/crm-customer-master/profile", params={"user": "analyst"}
+    )
     assert response.status_code == 200
     body = response.json()
     assert body["dataset_id"] == "crm-customer-master"
@@ -1961,3 +1966,56 @@ def test_catalog_mutation_denial_is_recorded_as_evidence(verb: str):
     assert denials, f"{verb} denial left no policy decision"
     assert denials[-1].action.lower() == verb
     assert denials[-1].subject == "analyst"
+
+
+def test_create_route_refuses_to_plant_a_dataset_in_another_tenant():
+    """End-to-end form of the create-branch tenant hole: a non-platform-admin
+    could write into another tenant's catalog namespace."""
+    payload = {
+        "actor": "data-admin",
+        "id": "planted-in-acme",
+        "tenant_id": "acme-bank",
+        "title": "planted",
+        "description": "cross-tenant create probe",
+        "owner": "x",
+        "steward": "y",
+        "domain": "t",
+        "source_system": "postgresql://analytics/tmp",
+        "sensitivity": "low",
+        "update_frequency": "daily",
+        "quality_score": 0.8,
+        "freshness_score": 0.8,
+        "tags": [],
+        "terms": [],
+        "related_datasets": [],
+        "schema": [],
+        "distributions": [],
+        "mappings": [],
+        "profile": {},
+    }
+    response = client.post("/catalog/datasets", json=payload)
+    assert response.status_code == 403, response.text
+    assert "planted-in-acme" not in app_catalog._DATA
+
+    # The actor's own tenant still works.
+    own = dict(payload, id="own-tenant-ds", tenant_id="demo")
+    assert client.post("/catalog/datasets", json=own).status_code == 200
+
+
+def test_profile_route_refuses_an_out_of_tenant_caller():
+    """End-to-end: the profile route no longer serves governed profiling data to a
+    caller the governed schema path refuses."""
+    base = app_catalog._DATA["crm-customer-master"]
+    app_catalog._DATA["external-profile-ds"] = base.model_copy(
+        update={"id": "external-profile-ds", "tenant_id": "external"}
+    )
+    denied = client.get(
+        "/catalog/datasets/external-profile-ds/profile", params={"user": "analyst"}
+    )
+    assert denied.status_code == 403, denied.text
+
+    allowed = client.get(
+        "/catalog/datasets/external-profile-ds/profile", params={"user": "external-analyst"}
+    )
+    assert allowed.status_code == 200
+    assert allowed.json()["row_count"] is not None

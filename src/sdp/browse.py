@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from .catalog import get_dataset, ingest_event
+from .catalog import get_dataset, get_dataset_profile, ingest_event
 from .domain import ColumnMetadata, Dataset
 from .policy import evaluate
 
@@ -194,3 +194,42 @@ def schema(dataset_id: str, user: str, purpose: str = "analysis") -> Dict[str, A
         "masked_columns": decision.obligations.get("masking", []),
         "quality": {"quality_score": dataset.quality_score, "freshness_score": dataset.freshness_score},
     }
+
+
+def dataset_profile(dataset_id: str, user: str, purpose: str = "analysis") -> Dict[str, Any]:
+    """Return one dataset's profile behind the same gate as its schema.
+
+    The payload is the governed content itself - dataset ``profile`` (row counts,
+    quality issues) and per-column ``quality_issues`` plus null/distinct ratios -
+    which ``catalog.discovery_view`` and ``catalog.discovery_column_view``
+    deliberately withhold from the actor-less discovery surface. Stripping those
+    fields would leave the route with nothing to say, so the release is gated and
+    audited instead, exactly as ``schema()`` is.
+    """
+    dataset = get_dataset(dataset_id)
+    if not dataset:
+        raise KeyError("dataset not found")
+
+    decision = evaluate(subject=user, resource=dataset_id, action="schema", purpose=purpose)
+    if decision.effect != "allow":
+        ingest_event(
+            event_type="browse.profile",
+            actor=user,
+            dataset_id=dataset_id,
+            decision="denied",
+            reason=decision.reason,
+            decision_id=decision.decision_id,
+            details={"purpose": purpose, "policy_decision_id": decision.decision_id},
+        )
+        raise PermissionError(decision.reason)
+
+    ingest_event(
+        event_type="browse.profile",
+        actor=user,
+        dataset_id=dataset_id,
+        decision="allowed",
+        reason=decision.reason,
+        decision_id=decision.decision_id,
+        details={"purpose": purpose, "policy_decision_id": decision.decision_id},
+    )
+    return {**get_dataset_profile(dataset_id), "policy_decision_id": decision.decision_id}

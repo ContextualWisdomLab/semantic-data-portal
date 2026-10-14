@@ -484,11 +484,17 @@ def catalog_dataset_join_candidates(dataset_id: str, limit: int = Query(default=
 
 
 @app.get("/catalog/datasets/{dataset_id}/profile")
-def catalog_dataset_profile(dataset_id: str) -> dict[str, Any]:
+def catalog_dataset_profile(
+    dataset_id: str,
+    user: str = Query(default="anonymous"),
+    purpose: str = Query(default="analysis"),
+) -> dict[str, Any]:
     try:
-        return get_dataset_profile(dataset_id)
+        return browse.dataset_profile(dataset_id, user=user, purpose=purpose)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
 
 
 @app.get("/catalog/datasets/{dataset_id}/schema-diff")
@@ -540,7 +546,13 @@ def create_dataset(payload: dict[str, Any]) -> dict[str, Any]:
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"invalid payload: {exc}")
 
-    decision = evaluate(subject=actor_id, resource=request.id or "new", action="create", purpose="catalog")
+    decision = evaluate(
+        subject=actor_id,
+        resource=request.id or "new",
+        action="create",
+        purpose="catalog",
+        target_tenant_id=request.tenant_id,
+    )
     if decision.effect != "allow":
         raise HTTPException(status_code=403, detail=decision.reason)
 

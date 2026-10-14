@@ -153,3 +153,46 @@ def test_browse_audit_events_carry_the_owning_tenant():
     assert len(recorded) == 2
     for event in recorded:
         assert event.details["tenant_id"] == "external", event.action
+
+
+def test_dataset_profile_is_gated_like_the_schema_it_profiles():
+    """``/catalog/datasets/{id}/profile`` republished exactly what the discovery
+    repair withheld: dataset-level ``profile`` (a ``_GOVERNED_DATASET_FIELDS``
+    member) as ``row_count``/``quality_issues``, and per-column ``quality_issues``
+    (a ``_GOVERNED_COLUMN_FIELDS`` member) inside ``schema_profile`` — with no
+    actor. Measured: ``row_count: 1200000`` to an anonymous caller while
+    ``discovery_view`` withholds ``profile`` entirely.
+
+    Unlike the discovery routes, the governed content *is* this route's purpose, so
+    it belongs behind the gate rather than being stripped to nothing.
+    """
+    base = catalog._DATA["crm-customer-master"]
+    catalog._DATA["external-profile-ds"] = base.model_copy(
+        update={"id": "external-profile-ds", "tenant_id": "external"}
+    )
+
+    with pytest.raises(PermissionError):
+        browse.dataset_profile("external-profile-ds", user="analyst", purpose="analysis")
+
+    allowed = browse.dataset_profile("external-profile-ds", user="external-analyst", purpose="analysis")
+    assert allowed["row_count"] is not None
+    assert allowed["policy_decision_id"]
+    assert any(
+        event.action == "browse.profile" and event.details.get("policy_decision_id")
+        for event in catalog._AUDIT_LOG
+    )
+
+
+def test_dataset_profile_denial_is_audited():
+    """A refused profile read leaves evidence, like every other gated read."""
+    base = catalog._DATA["crm-customer-master"]
+    catalog._DATA["external-profile-ds"] = base.model_copy(
+        update={"id": "external-profile-ds", "tenant_id": "external"}
+    )
+    before = len(catalog._AUDIT_LOG)
+    with pytest.raises(PermissionError):
+        browse.dataset_profile("external-profile-ds", user="analyst", purpose="analysis")
+    recorded = catalog._AUDIT_LOG[before:]
+    assert len(recorded) == 1
+    assert recorded[0].result == "denied"
+    assert recorded[0].details["tenant_id"] == "external"

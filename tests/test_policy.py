@@ -142,3 +142,46 @@ def test_decision_on_a_tenantless_resource_uses_the_actor_tenant() -> None:
         subject="admin", resource="brand-new-dataset", action="create", purpose="analysis"
     )
     assert decision.obligations.get("tenant_id") == "demo"  # the admin's own tenant
+
+
+def test_create_denies_a_tenant_the_actor_cannot_access() -> None:
+    """``create`` names a dataset that does not exist yet, so the owning tenant
+    cannot be read from the catalog — it comes from the request. The create branch
+    returned before the tenant check, so an admin in one tenant could register a
+    dataset owned by another: measured with ``data-admin`` (tenant ``demo``, roles
+    ['admin','data-analyst'], NOT platform-admin) planting ``tenant_id=acme-bank``
+    and getting 200, while PATCH and PREVIEW on that same dataset returned 403.
+    """
+    decision = policy.evaluate(
+        subject="data-admin",
+        resource="planted-in-acme",
+        action="create",
+        purpose="catalog",
+        target_tenant_id="acme-bank",
+    )
+    assert decision.effect == "deny"
+    assert decision.reason == "tenant boundary denied"
+    # The evidence row belongs to the tenant whose namespace was targeted.
+    assert decision.obligations.get("tenant_id") == "acme-bank"
+
+
+def test_create_allows_the_actor_own_tenant_and_platform_admin_crossing() -> None:
+    """The fix must not break legitimate creates: an actor's own tenant, and the
+    explicit platform-admin cross-tenant path."""
+    own = policy.evaluate(
+        subject="data-admin", resource="new-ds", action="create", purpose="catalog",
+        target_tenant_id="demo",
+    )
+    assert own.effect == "allow"
+
+    crossing = policy.evaluate(
+        subject="admin", resource="new-ds", action="create", purpose="catalog",
+        target_tenant_id="acme-bank",
+    )
+    assert crossing.effect == "allow"  # admin holds platform-admin
+
+    # Omitting the target keeps the previous behaviour for callers that cannot name one.
+    legacy = policy.evaluate(
+        subject="data-admin", resource="new-ds", action="create", purpose="catalog"
+    )
+    assert legacy.effect == "allow"
