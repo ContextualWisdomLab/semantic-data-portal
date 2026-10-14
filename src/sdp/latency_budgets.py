@@ -37,12 +37,22 @@ A p95 over a handful of requests is the sample maximum wearing a percentile's
 name, so a surface under ``MIN_SAMPLE_FOR_PERCENTILE`` observations reports
 ``insufficient_sample`` and refutes nothing. Fail-closed here means a thin
 sample may never produce a verdict - in either direction.
+
+Each surface also publishes ``sample_window_seconds``: the observation buffer is
+one ring across *all* routes, so a busy surface evicts a quiet one's rows, and a
+p95 over twenty requests spread across days would otherwise sit next to a p95
+over twenty requests from the last minute looking like the same kind of number.
+The span is given in seconds rather than as timestamps, because a reader needs
+the width of the window and not the hour at which someone read a governed
+dataset - which is what the unauthenticated manifest withholds the per-request
+feed to avoid saying.
 """
 
 from __future__ import annotations
 
 import functools
 import math
+from datetime import datetime
 from typing import Any
 
 from .observability import list_request_observations, observation_buffer_capacity
@@ -197,10 +207,43 @@ def nearest_rank_percentile(values: list[float], percentile: float) -> float:
     return ordered[min(rank, len(ordered)) - 1]
 
 
-def _counted_latencies(budget: LatencyBudget, observations: list[dict[str, Any]]) -> list[float]:
-    """Successful-response latencies observed on the routes this budget governs."""
+def _observation_moment(observation: dict[str, Any]) -> datetime | None:
+    """The observation's own timestamp, or ``None`` when it is unusable.
+
+    ``build_request_observation`` always stamps one, but an observation can also
+    be recorded directly (tests do, and so could a future caller), so an absent
+    or unparseable stamp must not raise inside a published read.
+    """
+    stamp = observation.get("timestamp")
+    if not isinstance(stamp, str):
+        return None
+    try:
+        return datetime.fromisoformat(stamp)
+    except ValueError:
+        return None
+
+
+def _counted_sample(
+    budget: LatencyBudget, observations: list[dict[str, Any]]
+) -> tuple[list[float], float | None]:
+    """Latencies for this budget, and the span of wall-clock time they cover.
+
+    The span is what a reader needs and could not otherwise have. The buffer is
+    one ring across *all* routes, so a busy surface evicts a quiet one's
+    observations: a surface with exactly its minimum sample may be reporting a
+    p95 over twenty requests spread across days, which sits next to a busy
+    surface's p95 over twenty requests from the last minute and reads as the
+    same kind of number. It is not.
+
+    The span is published in seconds rather than as timestamps on purpose. A
+    reader needs to know the window is 40 seconds or six days; they do not need
+    to know *when* a governed read happened, and this report is served on the
+    unauthenticated manifest, which withholds the per-request feed precisely to
+    avoid saying that.
+    """
     governed = set(budget.routes)
     latencies: list[float] = []
+    moments: list[datetime] = []
     low, high = COUNTED_STATUS_RANGE
     for observation in observations:
         status = observation.get("status_code")
@@ -219,7 +262,22 @@ def _counted_latencies(budget: LatencyBudget, observations: list[dict[str, Any]]
         if not math.isfinite(float(latency)):
             continue
         latencies.append(float(latency))
-    return latencies
+        moment = _observation_moment(observation)
+        if moment is not None:
+            moments.append(moment)
+
+    span: float | None = None
+    if len(moments) >= 2:
+        # Only comparable moments: a mix of aware and naive stamps would raise
+        # on subtraction, and this runs inside a published read.
+        aware = [moment for moment in moments if moment.tzinfo is not None]
+        naive = [moment for moment in moments if moment.tzinfo is None]
+        comparable = aware if len(aware) >= len(naive) else naive
+        if len(comparable) >= 2:
+            span = round(
+                (max(comparable) - min(comparable)).total_seconds(), 3
+            )
+    return latencies, span
 
 
 def latency_budget_report() -> dict[str, Any]:
@@ -227,13 +285,17 @@ def latency_budget_report() -> dict[str, Any]:
     observations = list_request_observations(limit=observation_buffer_capacity())
     surfaces: list[dict[str, Any]] = []
     for budget in LATENCY_BUDGETS:
-        latencies = _counted_latencies(budget, observations)
+        latencies, span_seconds = _counted_sample(budget, observations)
         row: dict[str, Any] = {
             "requirement_id": budget.requirement_id,
             "surface": budget.surface,
             "routes": [f"{method} {template}" for method, template in budget.routes],
             "budget_ms": budget.budget_ms,
             "sample_size": len(latencies),
+            # How much wall-clock time this surface's sample covers. The ring
+            # buffer is shared across routes, so a quiet surface's p95 can be
+            # over a window orders of magnitude longer than a busy one's.
+            "sample_window_seconds": span_seconds,
         }
         if len(latencies) < MIN_SAMPLE_FOR_PERCENTILE:
             row.update(

@@ -22,6 +22,7 @@ already enforces.
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 from fastapi.testclient import TestClient
@@ -291,6 +292,116 @@ def test_route_template_for_classifies_with_the_apps_own_router() -> None:
     )
     assert route_template_for("DELETE", "/catalog/datasets/crm-event") is None
     assert route_template_for("GET", "/no/such/path") is None
+
+
+def test_each_surface_publishes_the_window_its_sample_covers(
+    driven_report: dict,
+) -> None:
+    """A p95 is not judgeable without the width of the window behind it.
+
+    The observation buffer is one ring across all routes, so a busy surface
+    evicts a quiet one's rows: twenty requests spread over days and twenty from
+    the last minute would otherwise publish the same-looking number.
+    """
+    for row in driven_report["surfaces"]:
+        assert "sample_window_seconds" in row, row
+        span = row["sample_window_seconds"]
+        assert isinstance(span, float), row
+        assert span >= 0.0, row
+    # The span grows with a genuinely wider window, so the field is live.
+    observability.reset_request_observability()
+    for stamp in (
+        "2026-10-01T00:00:00+00:00",
+        "2026-10-01T00:00:30+00:00",
+        "2026-10-08T00:00:00+00:00",
+    ):
+        observability.record_request_observation(
+            {
+                "timestamp": stamp,
+                "method": "POST",
+                "route": "/ontology/resolve",
+                "status_code": 200,
+                "latency_ms": 1.0,
+            },
+            export=False,
+        )
+    row = next(
+        item
+        for item in latency_budget_report()["surfaces"]
+        if item["requirement_id"] == "NFR-PERF-006"
+    )
+    # 2026-10-01T00:00:00 .. 2026-10-08T00:00:00 is exactly seven days.
+    assert row["sample_window_seconds"] == 7 * 24 * 60 * 60.0, row
+
+
+def test_the_window_is_a_span_not_a_set_of_timestamps(driven_report: dict) -> None:
+    """The reader needs the width, not the hour a governed read happened.
+
+    This report is served on the unauthenticated observability manifest, which
+    withholds the per-request feed for exactly that reason.
+    """
+    serialized = json.dumps(driven_report, ensure_ascii=False)
+    assert "timestamp" not in serialized
+    # No ISO-8601 date anywhere: a span carries no calendar date, a stamp does.
+    assert not re.search(r"\d{4}-\d{2}-\d{2}", serialized), serialized[:400]
+    for row in driven_report["surfaces"]:
+        assert "oldest_observation" not in row
+        assert "newest_observation" not in row
+
+
+def test_an_unusable_timestamp_leaves_the_span_unreported_not_raising() -> None:
+    """A stamp that is absent, non-string or unparseable must not 500 a read."""
+    observability.reset_request_observability()
+    for stamp in (None, 12345, "not-a-timestamp", "2026-13-45T99:99:99"):
+        observability.record_request_observation(
+            {
+                "timestamp": stamp,
+                "method": "POST",
+                "route": "/ontology/resolve",
+                "status_code": 200,
+                "latency_ms": 1.0,
+            },
+            export=False,
+        )
+    row = next(
+        item
+        for item in latency_budget_report()["surfaces"]
+        if item["requirement_id"] == "NFR-PERF-006"
+    )
+    assert row["sample_size"] == 4, row
+    # The latencies still count; only the span is unavailable.
+    assert row["sample_window_seconds"] is None, row
+
+
+def test_a_mix_of_aware_and_naive_stamps_does_not_raise() -> None:
+    """Subtracting an aware from a naive datetime raises; a read may not."""
+    observability.reset_request_observability()
+    for stamp in (
+        "2026-10-01T00:00:00+00:00",
+        "2026-10-01T00:00:10+00:00",
+        "2026-10-01T00:00:20",
+        "2026-10-01T00:00:40",
+        "2026-10-01T00:00:50",
+    ):
+        observability.record_request_observation(
+            {
+                "timestamp": stamp,
+                "method": "POST",
+                "route": "/ontology/resolve",
+                "status_code": 200,
+                "latency_ms": 1.0,
+            },
+            export=False,
+        )
+    row = next(
+        item
+        for item in latency_budget_report()["surfaces"]
+        if item["requirement_id"] == "NFR-PERF-006"
+    )
+    assert row["sample_size"] == 5, row
+    # Three naive stamps outnumber two aware ones, so the naive set is measured:
+    # 00:00:20 .. 00:00:50 is 30 seconds.
+    assert row["sample_window_seconds"] == 30.0, row
 
 
 def test_the_classification_cache_is_bounded_and_does_not_change_the_answer() -> None:
