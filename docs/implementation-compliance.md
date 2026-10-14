@@ -73,7 +73,20 @@
 
 ### CAT-007 JSON-LD Export
 - 대응: `GET /catalog/datasets/{dataset_id}/jsonld`
-- 증빙 테스트: `tests/test_api.py::test_catalog_search_and_detail` (ID 조회 후 JSON-LD 별도 API 호출은 필요 시 확장 가능)
+- 증빙 테스트: `tests/test_jsonld_export.py` (9건). 이전에는
+  `tests/test_api.py::test_catalog_search_and_detail`을 인용하고 "JSON-LD 별도 API
+  호출은 필요 시 확장 가능"이라고 적혀 있었는데, 그 테스트는 export의 **형태를 전혀
+  보지 않습니다** — 그래서 문서가 DCAT 준수를 주장하는 동안 export는 소비 불가능한
+  상태였습니다.
+- 실제 상태: `@id` 키워드(이전에는 보통 용어 `id`), 인라인 컨텍스트(이전에는 HTML
+  명세 페이지를 가리킴), **중첩 속성 매핑**. 마지막 항목이 가장 오래 남아 있었습니다 —
+  컨텍스트를 추가한 수정이 최상위만 고쳤고, `distribution`/`mappings` 안의 속성은
+  conforming 프로세서가 전부 버렸습니다. pyld 3.3.0 실측: `dcat:distribution`이
+  `[{}]`로 확장(access URL·format·식별자 없음), business mapping은 `concept`·
+  `source`·`approved_at` 유실. 시드 5개 전부, 중첩 용어 51건.
+- 계약 테스트는 이제 **재귀**입니다. 이전에는 `for term in body`로 한 단계만 보아
+  0건을 보고했고, 같은 규칙을 재귀 적용하면 51건이었습니다. 중첩 문서의 한 단계에만
+  적용한 규칙은 라우트 계열의 한 라우트에만 적용한 검사와 같은 결함 유형입니다.
 
 ### CAT-008 버전/스키마 버전 분리
 - 대응: `Dataset.version`, `Dataset.schema_version`, `schema-history`, `schema-versions`, `schema-diff`
@@ -239,7 +252,23 @@ seed의 `security` subject는 `platform-admin`도 들고 있어 여전히 previe
 ## 6) Enterprise / Buyer Evidence
 
 - `GET /enterprise/readiness`: 20억 원 valuation target, package/submodule decision, storage/connector capability, enterprise gates, Figma Code Connect disabled artifact.
-- `GET /enterprise/production-readiness`: demo release와 paid pilot readiness를 분리하고, Postgres evidence store, OIDC JWKS verification, connector credential vault, request observability export의 환경변수·acceptance criteria·blocker를 노출한다. Postgres evidence store, OIDC JWKS verification, request observability export, connector credential vault가 구현되어 남은 paid-pilot blocker는 0개다.
+- `GET /enterprise/production-readiness`: demo release와 paid pilot readiness를 분리하고, Postgres evidence store, OIDC JWKS verification, connector credential vault, request observability export의 환경변수·acceptance criteria·blocker를 노출한다.
+  - **정정**: 이 항목은 "남은 paid-pilot blocker는 0개다"라고 적고 있었습니다. 그것이
+    가능했던 이유는 `paid_pilot_ready`가 작성된 `status` 리터럴에서만 유도되어
+    **반증 불가능**했기 때문입니다 — 설정이 전혀 없고 자신이 지목한 proof 엔드포인트가
+    실패하는 상태에서도 `paid_pilot_ready: true`, `paid_pilot_blockers: []`였습니다.
+    이제 `status`(코드베이스에 대한 주장)와 `configured_integrations` /
+    `missing_environment`(배포에서 **측정**)를 분리하고 둘 다 요구합니다. 따라서
+    blocker 수는 배포에 따라 달라지며, 설정되지 않은 배포에서 0이 아닙니다.
+  - 게이트는 **존재하는 능력만** 측정합니다. `SDP_EVIDENCE_RETENTION_DAYS`는 `src/`
+    어디에도 소비자가 없는데 게이트를 충족시켰고(`'banana'`, `'0'`, `'-1'`로도 통과),
+    두 증빙 스토어 중 어느 쪽도 prune/purge 경로가 없습니다. 변수는
+    `declared_unimplemented_environment`로 옮기고 manifest가
+    `unimplemented_environment`로 **게시**합니다. 레지스트리 전체에 대해 소비자 없는
+    변수를 금지하는 기계적 검사:
+    `tests/test_production_readiness_measurement.py::test_every_required_variable_has_a_consumer`.
+  - `local_evidence_retention` control은 이름이 보존 정책을 주장하면서 실제로는
+    **내구성**(재시작 생존)만 제공했습니다. label과 설명을 사실에 맞췄습니다.
 - `POST /enterprise/auth/oidc-verify`: issuer/audience/expiry/JWKS 서명 검증 후 tenant scoped group mapping으로 `ActorContext`를 생성하고 raw token은 응답에 포함하지 않는다. 신뢰 기준(issuer, audience, JWKS, role map)은 operator 환경 설정에서만 읽으며, request body가 이 네 필드를 보내면 검증 전에 400으로 거절한다.
 - `POST /enterprise/auth/oidc-preview`, `POST /enterprise/auth/oidc-verify`: group별 `group_role_bindings`(group 이름, 부여한 tenant scope, 부여된 role)와 `audit_event_id`를 반환하고 `enterprise/auth/oidc` resource audit event를 남긴다. `sso_oidc_adapter` control은 이로써 `implemented`가 되고 `GET /enterprise/controls`의 `planned_controls`는 0, `status`는 `pilot_ready`가 된다.
 - `GET /enterprise/evidence-pack`: metadata validation, SHACL-compatible validation, steward queue, ontology mapping coverage, policy/audit counts, controls, KPI ids, proof endpoints.
@@ -259,6 +288,30 @@ seed의 `security` subject는 `platform-admin`도 들고 있어 여전히 previe
   - `tests/test_api.py::test_enterprise_console_renders_operator_surface`
   - `tests/test_api.py::test_enterprise_demo_smoke_summary_is_ready`
 
+## 6-1) 기계가 읽는 계약 (`GET /openapi.json`)
+
+이 제품의 차별점은 **거부**인데, 그 중 하나도 기계가 읽는 계약에 들어 있지
+않았습니다. 변경 전 실측:
+
+| 항목 | 이전 | 현재 |
+| --- | --- | --- |
+| 에러 상태를 하나라도 문서화한 operation | 0 / 60 | 42 / 60 |
+| 요청 본문에 타입이 있는 라우트 | 5 / 20 | 10 / 20 |
+| 200 응답에 `$ref` 스키마가 있는 operation | 0 / 60 | 0 / 60 (미반영) |
+
+- 거부 계약: `src/sdp/api_error_contract.py`의 표 하나. `tests/test_api_error_contract.py`가
+  **양방향**으로 대조합니다 — 코드가 낼 수 있는 거부가 모두 게시되었는지, 그리고
+  게시된 거부가 모두 실제로 발생 가능한지(낼 수 없는 거부를 문서화하는 것은 신중함이
+  아니라 거짓 주장입니다). 라우트가 낼 수 있는 상태는 `sdp.api`의 AST를 따라
+  유도하며, 리터럴로 보이지 않는 경우(`_DRAFT_QUERY_ERROR_STATUS.get(...)`)는
+  `DYNAMIC_REFUSALS`에 명시합니다.
+- 요청 본문 계약: `src/sdp/api_request_contract.py`. 네 라우트는 이미 pydantic
+  모델로 검증되고 있었고 문서만 그 사실을 말하지 않았습니다. 런타임은 그대로이며
+  (파라미터는 `dict`, 스키마 위반은 422가 아니라 이 저장소의 400 형태),
+  게시한 모델이 핸들러가 **실제로 생성하는** 모델인지 AST로 확인합니다.
+- 남은 18개 operation과 10개 본문은 각각 실제로 거부가 없는 열린 읽기, 그리고
+  모델 없이 느슨한 키를 읽는 라우트입니다 — 경계를 테스트가 측정으로 고정합니다.
+
 ## 7) 다음 단계 (현재 브랜치에서 미반영 권고)
 
 1. 조직 정책 기준으로 `search` 및 `list` 에 대한 사용 권한/발견성 정책을 명시적으로 강화
@@ -267,8 +320,9 @@ seed의 `security` subject는 `platform-admin`도 들고 있어 여전히 previe
 
 ## 8) 구현 완료 증적(현재 HEAD 기준)
 
-- 대상 브랜치: `codex/sdp-enterprise-foundation`
-- 기준: `origin/main` 병합 후 현재 브랜치 HEAD
+- 대상 브랜치: `claude/semantic-portal-pr-merge-e5a48k` (PR #102). 이 줄은
+  `codex/sdp-enterprise-foundation`을 가리키고 있었습니다 — 오래된 값입니다.
+- 기준: PR 베이스(`docs/product-technical-gap-baseline`) 대비 현재 브랜치 HEAD
 - 증적 파일:
   - `src/sdp/api.py`
   - `src/sdp/catalog.py`
@@ -280,5 +334,10 @@ seed의 `security` subject는 `platform-admin`도 들고 있어 여전히 previe
   - `docs/implementation-compliance.md`
   - `docs/retrigger-evidence.md`
 - PR 상태: `open`. `origin/main`의 repo-local central workflow 삭제 정책과 충돌을 해소했다.
-- 현재 잠재 블로커: GitHub Actions required workflow 재실행 및 review state 갱신 대기. 추적 파일:
+- 현재 블로커(둘 다 소유자만 해결 가능): **독립 승인 1건**과 **Actions billing
+  해제**. 필수 체크는 디스패치 전에 거부되며(2~4초, 주석
+  `The job was not started because your account is locked due to a billing issue.`),
+  저장소 자체 워크플로의 마지막 성공은 2026-10-02T09:03:05Z입니다. 그 이후의 성공은
+  GitHub 자체 할당량으로 도는 Dependabot 뿐이므로 계정 잠금 해제의 증거가 아닙니다.
+  자기 승인은 하지 않습니다. 추적 파일:
   - [docs/retrigger-evidence.md](docs/retrigger-evidence.md)
