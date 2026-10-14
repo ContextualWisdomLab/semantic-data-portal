@@ -43,6 +43,43 @@ def _decision(*, tenant_id: str, **kwargs: Any) -> PolicyDecision:
     return record_policy_decision(PolicyDecision(obligations=obligations, **kwargs))
 
 
+def evaluate_dataset_scope_refusal(subject: str, resource: str) -> PolicyDecision:
+    """Record the deny a catalog-family scope refusal deserves, filed away from the prober.
+
+    ``evaluate`` is wrong for this one job, and using it reopened the very
+    oracle the refusal is part of closing. Measured with ``evaluate(subject,
+    dataset_id, "search", "catalog")`` behind the 404, as the probing analyst:
+
+        foreign id -> deny, filed to the owning tenant   -> prober sees 0 rows
+        absent  id -> allow "카탈로그 발견 정책 통과",
+                      filed to the prober's own tenant   -> prober sees 1 row
+
+    So ``GET /policy/decisions`` answered the question the 404 refused to: a row
+    appears exactly when the id is free. Both refusals are therefore recorded
+    here instead, each filed outside the prober's scope - the owning tenant when
+    there is one, the reserved ``unresolved`` scope when there is not - so the
+    ledger reads the same from the prober's side either way while the owning
+    tenant's auditor still sees attempts on its own assets.
+
+    The effect is ``deny`` in both cases because the read was in fact refused;
+    an ``allow`` row behind a 404 describes something that did not happen.
+    """
+    owner = get_dataset(resource)
+    owner_tenant_id = owner.tenant_id if owner else None
+    return _decision(
+        subject=subject,
+        resource=resource,
+        action="search",
+        decision_id=str(uuid4()),
+        tenant_id=owner_tenant_id or UNRESOLVED_TENANT_ID,
+        effect="deny",
+        reason="tenant boundary denied" if owner_tenant_id else "dataset not found",
+        obligations={
+            "refusal_cause": "tenant_scope" if owner_tenant_id else "absent_dataset",
+        },
+    )
+
+
 def _is_admin(subject: str) -> bool:
     return has_role(subject, "admin", "platform-admin")
 

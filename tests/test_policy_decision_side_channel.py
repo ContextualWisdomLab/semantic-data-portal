@@ -40,11 +40,29 @@ client = TestClient(app, raise_server_exceptions=False)
 
 @pytest.fixture(autouse=True)
 def _planted_foreign_dataset():
+    """Plant the foreign dataset, and put everything this file touches back.
+
+    The planted dataset and the ledger rows these probes write used to outlive
+    the file (one test here deliberately fills the decision ledger to its cap),
+    so every later test in the session saw them. Leaking shared state was one of
+    the findings this self-review raised against this very file.
+    """
+    data = {key: value.model_copy(deep=True) for key, value in catalog._DATA.items()}
+    audit = list(catalog._AUDIT_LOG)
+    decisions = list(evidence._POLICY_DECISION_LOG)
+    recorded_audit = list(evidence._AUDIT_EVENT_LOG)
     base = catalog._DATA["crm-customer-master"]
     catalog._DATA["policy-foreign-ds"] = base.model_copy(
         update={"id": "policy-foreign-ds", "tenant_id": "zeta-bank"}
     )
-    yield
+    try:
+        yield
+    finally:
+        catalog._DATA.clear()
+        catalog._DATA.update(data)
+        catalog._AUDIT_LOG[:] = audit
+        evidence._POLICY_DECISION_LOG[:] = decisions
+        evidence._AUDIT_EVENT_LOG[:] = recorded_audit
 
 
 def _ask(**body) -> object:

@@ -64,11 +64,12 @@ from .observability import (
     request_id_from_headers,
     request_id_header,
 )
-from .authz import can_access_tenant
+from .authz import can_access_tenant, resolve_actor_context
 from .policy import (
     accessible_tenant_ids,
     can_see_graph_node,
     evaluate,
+    evaluate_dataset_scope_refusal,
     filter_graph_search_results,
     filter_graph_traversal,
 )
@@ -509,6 +510,59 @@ def list_datasets_endpoint(user: str = Query(default="anonymous")) -> list[dict[
     return [catalog.discovery_view(dataset) for dataset in list_datasets(tenant_ids)]
 
 
+def _record_unscoped_dataset_refusal(dataset_id: str, user: str) -> None:
+    """Leave the evidence a catalog-family scope refusal owes the ledger.
+
+    Closing the existence oracle made the *response* for a foreign dataset
+    identical to the one for an absent dataset, which is the point. It must not
+    make the two identical in the **ledger** as well, and it did. Measured on a
+    ``/catalog/datasets/{id}/...`` read of a dataset in another tenant:
+
+        decisions +1   effect=allow  resource='catalog'  (discovery passed)
+        audits     +0
+
+    So the refusal left no deny decision naming the dataset and no audit event
+    at all, while ``/browse`` - refusing the same caller for the same cause -
+    wrote both halves with ``reason='tenant boundary denied'``. An auditor
+    reading the ledger could not see that anyone had reached for the dataset.
+    This gap was recorded honestly as open in an earlier commit in this series
+    rather than claimed closed; this is the close.
+
+    Which of the two surfaces carries which fact is the whole design here, and
+    getting it wrong reopens the oracle through the ledger instead of the
+    response. The first attempt at this repair put ``refusal_cause`` and the
+    owning tenant id into the audit row and filed a foreign-dataset refusal
+    under the *owning* tenant. The prober can read its own tenant's audit
+    events, so that made the row itself the oracle: present and saying
+    ``absent_dataset`` when the id is free, missing when the id belongs to
+    somebody else.
+
+    So:
+
+    * the **policy decision** holds the truth. It is evaluated against the
+      dataset id, so a foreign dataset yields the engine's own ``tenant
+      boundary denied``, and ``_effective_tenant_id`` files it under the
+      dataset's owning tenant - where that tenant's auditor sees attempts on its
+      assets and the prober cannot reach it.
+    * the **audit event** is uniform and filed to the actor's own tenant:
+      identical reason and details whether the id is foreign or free, so reading
+      it back discloses nothing the caller did not already know.
+    """
+    decision = evaluate_dataset_scope_refusal(user, dataset_id)
+    catalog.ingest_event(
+        event_type="catalog.dataset_read",
+        actor=user,
+        dataset_id=dataset_id,
+        decision="denied",
+        reason="dataset not found",
+        decision_id=decision.decision_id,
+        details={
+            "policy_decision_id": decision.decision_id,
+            "tenant_id": resolve_actor_context(user).tenant_id or None,
+        },
+    )
+
+
 def _scoped_dataset_and_tenants(dataset_id: str, user: str) -> tuple[Any, list[str] | None]:
     """Resolve a dataset and the reader's tenant scope, or 404.
 
@@ -518,6 +572,7 @@ def _scoped_dataset_and_tenants(dataset_id: str, user: str) -> tuple[Any, list[s
     tenant_ids = _authorize_catalog_discovery(user)
     dataset = catalog.dataset_in_scope(dataset_id, tenant_ids)
     if not dataset:
+        _record_unscoped_dataset_refusal(dataset_id, user)
         raise HTTPException(status_code=404, detail="dataset not found")
     return dataset, tenant_ids
 
@@ -541,14 +596,14 @@ def _require_scoped_dataset(dataset_id: str, user: str) -> Any:
 def dataset_detail(
     dataset_id: str, user: str = Query(default="anonymous")
 ) -> dict[str, Any]:
-    tenant_ids = _authorize_catalog_discovery(user)
     # 404, not 403: the defect being fixed here is existence disclosure, so a
     # dataset outside the reader's tenant scope must be indistinguishable from
-    # one that does not exist. /browse keeps 403 - there the caller already names
-    # the id and the denial is itself the audited evidence.
-    dataset = catalog.dataset_in_scope(dataset_id, tenant_ids)
-    if not dataset:
-        raise HTTPException(status_code=404, detail="dataset not found")
+    # one that does not exist.
+    #
+    # This route re-implemented the gate inline instead of calling the shared
+    # helper, which is why it did not pick up the refusal-evidence repair with
+    # its siblings. It now goes through the same helper they do.
+    dataset = _require_scoped_dataset(dataset_id, user)
     return catalog.discovery_view(dataset)
 
 
@@ -1053,21 +1108,35 @@ def ontology_patch_create(payload: dict[str, str]) -> dict[str, Any]:
             result="denied",
         )
         raise HTTPException(status_code=403, detail=decision.reason)
-    _audit_governed_write(
-        event_type="ontology.patch_propose",
-        actor=actor_id,
-        resource="ontology/patches",
-        decision=decision,
-        result="allowed",
-    )
+    # The audit row is written **after** the proposal, carrying what actually
+    # happened. It used to be written before, saying ``allowed``, while
+    # ``propose_patch`` can still refuse (field bounds, a full queue) and answer
+    # 400 - so the ledger claimed an accepted proposal that does not exist.
+    # Authorization alone is audited above, on denial; an authorized attempt
+    # leaves exactly one row, and that row states its outcome.
     try:
-        return ontology.propose_patch(
+        proposed = ontology.propose_patch(
             concept=concept,
             suggestion=suggestion,
             requestor=actor_id,
         )
     except ValueError as exc:
+        _audit_governed_write(
+            event_type="ontology.patch_propose",
+            actor=actor_id,
+            resource="ontology/patches",
+            decision=decision,
+            result="rejected",
+        )
         raise HTTPException(status_code=400, detail=str(exc))
+    _audit_governed_write(
+        event_type="ontology.patch_propose",
+        actor=actor_id,
+        resource="ontology/patches",
+        decision=decision,
+        result="proposed",
+    )
+    return proposed
 
 
 @app.post("/ontology/patches/{patch_id}/review")
@@ -1076,7 +1145,16 @@ def ontology_patch_review(patch_id: str, payload: dict[str, str]) -> dict[str, A
     # authorization as POST /ontology/concepts rather than none at all.
     actor_id = _actor(payload)
     # Authorization first: an unauthorized caller must not learn the payload rules.
-    _authorize_graph_write(actor_id, f"ontology/patches/{patch_id}", event_type="ontology.patch_review")
+    # ``audit_allow=False`` because this route writes its own outcome row below,
+    # carrying the review's real result; both rows produced a double-counted
+    # review (decisions +2, audits +2 for one approval). The decision returned
+    # here is reused rather than a second one being evaluated.
+    decision = _authorize_graph_write(
+        actor_id,
+        f"ontology/patches/{patch_id}",
+        event_type="ontology.patch_review",
+        audit_allow=False,
+    )
     if "reviewer" in payload:
         # The reviewer is the authorized actor. A caller-chosen name would produce
         # a record naming a steward who never saw the patch, so the field is
@@ -1085,12 +1163,6 @@ def ontology_patch_review(patch_id: str, payload: dict[str, str]) -> dict[str, A
             status_code=400,
             detail="reviewer is derived from the authorized actor and must not be sent in the request body",
         )
-    decision = evaluate(
-        subject=actor_id,
-        resource=f"ontology/patches/{patch_id}",
-        action="create",
-        purpose="ontology",
-    )
     try:
         reviewed = ontology.review_patch(
             patch_id=patch_id,
@@ -1112,6 +1184,7 @@ def ontology_patch_review(patch_id: str, payload: dict[str, str]) -> dict[str, A
         details={
             "concept": reviewed.get("concept"),
             "policy_decision_id": decision.decision_id,
+            "tenant_id": decision.obligations.get("tenant_id"),
         },
     )
     return {**reviewed, "policy_decision_id": decision.decision_id}
@@ -1142,6 +1215,13 @@ def _audit_governed_write(
     unattributable in the ledger an auditor reads, while the structurally
     identical catalog mutations wrote both halves. The repository's stated
     invariant is policy evaluation *and* evidence recording.
+
+    ``details['tenant_id']`` is copied from the decision. The evidence stores
+    read an audit row's tenant from that key and fall back to the literal
+    ``'unresolved'``; these rows carried no tenant at all (measured:
+    ``tenant=None`` on every ``ontology.patch_review`` row), so a tenant-scoped
+    auditor could not see its own governance writes while the decision half of
+    the very same event was correctly scoped. The two halves now agree.
     """
     catalog.ingest_event(
         event_type=event_type,
@@ -1150,17 +1230,35 @@ def _audit_governed_write(
         decision=result,
         decision_id=decision.decision_id,
         reason=decision.reason,
-        details={"policy_decision_id": decision.decision_id, "resource": resource},
+        details={
+            "policy_decision_id": decision.decision_id,
+            "resource": resource,
+            "tenant_id": decision.obligations.get("tenant_id"),
+        },
     )
 
 
-def _authorize_graph_write(actor: str, resource: str, *, event_type: str = "graph.write") -> Any:
+def _authorize_graph_write(
+    actor: str, resource: str, *, event_type: str = "graph.write", audit_allow: bool = True
+) -> Any:
     """Graph/ontology writes require an authorized (admin) subject.
 
     Uses the same policy engine as the catalog mutation endpoints: the ``create``
     action is allowed only for an admin subject, so unauthenticated/anonymous
-    writers are refused with 403. Both outcomes are audited here rather than in
-    each route, so a new governed write cannot forget the evidence half.
+    writers are refused with 403. A denial is always audited here, so a new
+    governed write cannot forget the evidence half of a refusal.
+
+    The allow row says ``"authorized"``, not ``"allowed"``. It is written before
+    the mutation runs and therefore cannot attest that the write happened: a
+    request can be authorized here and then refused by validation (400) or by a
+    full vocabulary (409), and a row reading ``allowed`` claims a completed
+    governed write that never occurred.
+
+    ``audit_allow=False`` is for a route that writes its own outcome row. With
+    both, one review produced ``decisions +2  audits +2`` - two rows with the
+    same ``action`` and *different* ``decision_id`` values, one saying
+    ``allowed`` and one saying ``approved``, with nothing linking them, so an
+    auditor counting reviews counted each one twice.
     """
 
     decision = evaluate(subject=actor, resource=resource, action="create", purpose="graph")
@@ -1173,13 +1271,14 @@ def _authorize_graph_write(actor: str, resource: str, *, event_type: str = "grap
             result="denied",
         )
         raise HTTPException(status_code=403, detail=decision.reason)
-    _audit_governed_write(
-        event_type=event_type,
-        actor=actor,
-        resource=resource,
-        decision=decision,
-        result="allowed",
-    )
+    if audit_allow:
+        _audit_governed_write(
+            event_type=event_type,
+            actor=actor,
+            resource=resource,
+            decision=decision,
+            result="authorized",
+        )
     return decision
 
 
@@ -1218,21 +1317,41 @@ def _authorize_graph_node_read(actor: str, node_id: str) -> None:
 @app.post("/ontology/concepts")
 def ingest_concept(payload: OntologyConceptRequest) -> dict[str, Any]:
     _authorize_graph_write(payload.actor, payload.concept, event_type="ontology.concept_upsert")
+    aliases = list(payload.aliases or [])
+    multilingual = list(getattr(payload, "multilingual", None) or [])
+    # Validate before the first of the two writes. This route wrote the graph
+    # node first and registered the vocabulary second, so an invalid concept
+    # left the graph node behind and answered 500 with the ``ValueError``
+    # escaping unmapped (measured with ``{"concept": "   "}``). Validation is
+    # also where an alias that would hijack another concept is refused.
+    try:
+        ontology.validate_concept_registration(
+            payload.concept, aliases=aliases, multilingual=multilingual
+        )
+    except ValueError as invalid:
+        raise HTTPException(status_code=400, detail=str(invalid)) from invalid
+
     record = get_store().upsert_concept(payload.model_dump(exclude={"actor"}))
     # The store write populates the graph node and its embedding; it did not
     # reach the ontology read surfaces, which read the module vocabulary. An
     # upsert returned 200 while /ontology/search answered count=0 for the same
     # term. Both are written now, and the response says whether the concept was
     # newly published or already present.
-    registration = ontology.register_concept(
-        payload.concept,
-        definition=payload.definition or "",
-        aliases=list(payload.aliases or []),
-        multilingual=list(getattr(payload, "multilingual", None) or []),
-        broader=getattr(payload, "broader", None),
-        narrower=list(getattr(payload, "narrower", None) or []),
-        related=list(getattr(payload, "related", None) or []),
-    )
+    try:
+        registration = ontology.register_concept(
+            payload.concept,
+            definition=payload.definition or "",
+            aliases=aliases,
+            multilingual=multilingual,
+            broader=getattr(payload, "broader", None),
+            narrower=list(getattr(payload, "narrower", None) or []),
+            related=list(getattr(payload, "related", None) or []),
+        )
+    except ValueError as refused:
+        # Reachable without an invalid payload: the vocabulary cap can be full of
+        # seeded concepts, which are never evicted.
+        raise HTTPException(status_code=409, detail=str(refused)) from refused
+
     return {
         "status": "upserted",
         "concept": record,

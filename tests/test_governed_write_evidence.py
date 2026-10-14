@@ -39,47 +39,69 @@ from sdp.api import app
 
 client = TestClient(app, raise_server_exceptions=False)
 
-# (label, path, an authorized body, an unauthorized body)
+# (label, path, an authorized body, an unauthorized body, the allow-path result)
+#
+# The allow-path result is not one word for every route, deliberately. A row
+# written *before* the mutation can only attest authorization, so the generic
+# gate writes ``"authorized"``; a route that audits *after* its mutation records
+# the real outcome instead (``"proposed"``). Either is honest; "allowed" written
+# before the write was not, because the write could still be refused.
 GOVERNED_WRITES = (
     (
         "ontology.concept_upsert",
         "/ontology/concepts",
         {"actor": "admin", "concept": "증거검증개념", "definition": "d"},
         {"actor": "nobody", "concept": "증거검증개념", "definition": "d"},
+        "authorized",
     ),
     (
         "ontology.patch_propose",
         "/ontology/patches",
         {"actor": "analyst", "concept": "고객", "suggestion": "evidence check"},
         {"actor": "nobody", "concept": "고객", "suggestion": "evidence check"},
+        "proposed",
     ),
     (
         "graph.edge_upsert",
         "/graph/edges",
         {"actor": "admin", "source_id": "ev-a", "target_id": "ev-b", "edge_type": "rel"},
         {"actor": "nobody", "source_id": "ev-a", "target_id": "ev-b", "edge_type": "rel"},
+        "authorized",
     ),
 )
 
 
 @pytest.mark.parametrize(
-    "event_type,path,authorized,denied", GOVERNED_WRITES, ids=[row[0] for row in GOVERNED_WRITES]
+    "event_type,path,authorized,denied,allow_result",
+    GOVERNED_WRITES,
+    ids=[row[0] for row in GOVERNED_WRITES],
 )
 def test_a_governed_write_records_a_decision_and_an_audit_event(
-    event_type: str, path: str, authorized: dict, denied: dict
+    event_type: str, path: str, authorized: dict, denied: dict, allow_result: str
 ) -> None:
-    """Both halves, on both outcomes."""
+    """Both halves, on both outcomes.
+
+    The allow row reads ``"authorized"``, not ``"allowed"``. It is written by
+    ``_authorize_graph_write`` *before* the mutation runs, so it cannot attest
+    that the write happened - a request can be authorized and then refused by
+    validation (400) or by a full vocabulary (409). ``"allowed"`` claimed a
+    completed governed write that may never have occurred.
+    """
     for label, body, expected_result in (
-        ("allowed", authorized, "allowed"),
+        ("allowed", authorized, allow_result),
         ("denied", denied, "denied"),
     ):
-        before_decisions = len(evidence._POLICY_DECISION_LOG)
+        before_decisions = evidence.recorded_policy_decision_count()
         before_audit = len(catalog._AUDIT_LOG)
         client.post(path, json=body)
-        decisions = evidence._POLICY_DECISION_LOG[before_decisions:]
         audited = catalog._AUDIT_LOG[before_audit:]
 
-        assert decisions, f"{path} ({label}) recorded no policy decision"
+        # The monotonic counter, not the window length: the window is capped, so
+        # once a long-lived process passes the cap its length stops rising and a
+        # length comparison reads as "nothing was recorded".
+        assert evidence.recorded_policy_decision_count() > before_decisions, (
+            f"{path} ({label}) recorded no policy decision"
+        )
         assert audited, f"{path} ({label}) recorded a decision but no audit event"
         assert any(event.action == event_type for event in audited), (
             f"{path} ({label}) audited under {[e.action for e in audited]}, not {event_type}"
@@ -87,6 +109,52 @@ def test_a_governed_write_records_a_decision_and_an_audit_event(
         matching = next(event for event in audited if event.action == event_type)
         assert matching.result == expected_result
         assert matching.decision_id, "the audit row must point at a real decision"
+        # The evidence stores read an audit row's tenant from this key and fall
+        # back to the literal 'unresolved'. These rows carried no tenant at all,
+        # so a tenant-scoped auditor could not see its own governance writes
+        # while the decision half of the same event was correctly scoped.
+        assert matching.details.get("tenant_id"), (
+            f"{path} ({label}) audit row has no tenant_id: {matching.details}"
+        )
+
+
+def test_one_governed_review_leaves_exactly_one_pair_of_evidence_rows() -> None:
+    """A review must not be double-counted.
+
+    ``POST /ontology/patches/{id}/review`` authorized through
+    ``_authorize_graph_write`` (which evaluates policy and audits) and then
+    evaluated policy a *second* time and wrote a *second* audit row under the
+    same ``action``. Measured on one approval::
+
+        decisions +2  audits +2
+        action='ontology.patch_review' result='allowed'  decision_id=4d236ca3
+        action='ontology.patch_review' result='approved' decision_id=2d91320e
+
+    Two rows, same action, different decision ids, disagreeing results, nothing
+    linking them - so an auditor counting reviews counted each one twice, and
+    neither row could be taken as the review's outcome.
+    """
+    proposed = client.post(
+        "/ontology/patches",
+        json={"actor": "analyst", "concept": "이중증거개념", "suggestion": "정의"},
+    )
+    assert proposed.status_code == 200, proposed.text
+    patch_id = proposed.json()["id"]
+
+    before_decisions = evidence.recorded_policy_decision_count()
+    before_audit = len(catalog._AUDIT_LOG)
+    reviewed = client.post(
+        f"/ontology/patches/{patch_id}/review", json={"actor": "admin", "decision": "approve"}
+    )
+    assert reviewed.status_code == 200, reviewed.text
+
+    audited = catalog._AUDIT_LOG[before_audit:]
+    assert evidence.recorded_policy_decision_count() - before_decisions == 1
+    assert len(audited) == 1, [(e.action, e.result) for e in audited]
+    assert audited[0].action == "ontology.patch_review"
+    # The surviving row carries the review's real outcome, not "authorized".
+    assert audited[0].result == "approved"
+    assert audited[0].details["tenant_id"]
 
 
 def test_the_browse_query_route_is_not_an_existence_oracle() -> None:

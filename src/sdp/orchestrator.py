@@ -403,6 +403,39 @@ def draft_sql(req: QueryDraftRequest) -> dict:
     }
 
 
+MOCK_ROW_COUNT_CAP = 2000
+MOCK_ROW_COUNT_WITHOUT_PROFILE = 1000
+
+
+def _row_count_estimate(dataset: Any, *, dry_run: bool) -> tuple[int, str]:
+    """Return the mock row count **and the name of where it came from**.
+
+    One label, ``catalog_profile_estimate``, was used for three different
+    provenances, so the compliance ledger asserted a provenance the figure did
+    not have. Measured before this change:
+
+        crm-customer-master  profile.row_count = 1200000
+          -> row_count 2000,  row_count_source "catalog_profile_estimate"
+        a dataset with profile = {}
+          -> row_count 1000,  row_count_source "catalog_profile_estimate"
+
+    The first is the cap, not the estimate - off by a factor of 600 from the
+    figure whose provenance it claims. The second is a hardcoded literal; there
+    is no estimate at all. The comment three lines above the defect already said
+    an unlabelled estimate in the ledger is a fabricated measurement; a
+    mislabelled one is worse, because it answers the question wrongly instead of
+    leaving it open.
+    """
+    if dry_run:
+        return 0, "dry_run_zero"
+    profiled = dataset.profile.get("row_count")
+    if profiled is None:
+        return MOCK_ROW_COUNT_WITHOUT_PROFILE, "fixed_default_no_catalog_profile"
+    if profiled > MOCK_ROW_COUNT_CAP:
+        return MOCK_ROW_COUNT_CAP, "mock_row_cap_below_catalog_profile_estimate"
+    return profiled, "catalog_profile_estimate"
+
+
 def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
     request_id = _safe_request_id()
 
@@ -559,10 +592,7 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
             warnings=validation_warnings,
         )
 
-    if req.dry_run:
-        row_count = 0
-    else:
-        row_count = min(2000, dataset.profile.get("row_count", 1000))
+    row_count, row_count_source = _row_count_estimate(dataset, dry_run=req.dry_run)
 
     now = datetime.now(timezone.utc).isoformat()
     query_id = f"qry-{now.replace(':', '')}"
@@ -582,6 +612,10 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
         "measurement_status": "mock_execution_no_real_data",
         "elapsed_ms_source": "fixed_mock_constant",
         "bytes_scanned_source": "fixed_mock_constant",
+        # The response under-labelled relative to the ledger: it named the
+        # provenance of the two constants and said nothing about the row count,
+        # which is the only figure a reader is likely to act on.
+        "row_count_source": row_count_source,
     }
     audit(
         dataset_id=dataset.id,
@@ -599,9 +633,7 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
             # ledger is the surface a buyer's compliance team reads; an unlabelled
             # estimate there is a fabricated measurement.
             "measurement_status": "mock_execution_no_real_data",
-            "row_count_source": (
-                "dry_run_zero" if req.dry_run else "catalog_profile_estimate"
-            ),
+            "row_count_source": row_count_source,
             "bytes_scanned_source": "fixed_mock_constant",
         },
     )

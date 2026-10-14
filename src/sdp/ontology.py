@@ -71,15 +71,105 @@ _ONTOLOGY_PATCHES: list[OntologyPatch] = []
 MAX_ONTOLOGY_PATCHES = 500
 MAX_ONTOLOGY_PATCH_FIELD = 2000
 _ALIAS_TO_CANONICAL: Dict[str, str] = {}
+
+
+def _index_concept_terms(canonical: str, record: Dict[str, Any]) -> None:
+    """Point this concept's own name and its aliases at it in the lookup index.
+
+    A concept's **canonical name always maps to itself**, and an alias claims a
+    normalized term only if no other concept already holds it. Without those two
+    rules the index is last-writer-wins, and one registration could take over a
+    term another concept owns - including a canonical concept name. See
+    ``_assert_no_alias_conflict`` for the caller-facing refusal; this function is
+    what makes the seed loop and the runtime path share one set of rules, so the
+    invariant cannot be broken by editing the seed alone.
+    """
+    _ALIAS_TO_CANONICAL[_normalize_term(canonical)] = canonical
+    for alias in list(record.get("aliases", [])) + list(record.get("multilingual", [])):
+        normalized = _normalize_term(alias)
+        if not normalized:
+            continue
+        owner = _ALIAS_TO_CANONICAL.get(normalized)
+        if owner is not None and owner != canonical:
+            continue
+        _ALIAS_TO_CANONICAL[normalized] = canonical
+
+
 for base_concept in _CONCEPT_DEFINITIONS:
     _ALIAS_TO_CANONICAL[_normalize_term(base_concept)] = base_concept
-    for alias in _CONCEPT_DEFINITIONS[base_concept]["aliases"]:
-        _ALIAS_TO_CANONICAL[_normalize_term(alias)] = base_concept
-    for alias in _CONCEPT_DEFINITIONS[base_concept]["multilingual"]:
-        _ALIAS_TO_CANONICAL[_normalize_term(alias)] = base_concept
+# Canonical names are claimed first, for every concept, so no concept's alias can
+# take a name another concept already answers to.
+for base_concept in _CONCEPT_DEFINITIONS:
+    _index_concept_terms(base_concept, _CONCEPT_DEFINITIONS[base_concept])
+del base_concept
+
+# The vocabulary that ships with the product, captured before any registration
+# can add to it. Eviction at the cap must never reach these: see
+# ``register_concept``.
+SEEDED_CONCEPTS = frozenset(_CONCEPT_DEFINITIONS)
 
 
 MAX_REGISTERED_CONCEPTS = 500
+
+
+def _assert_no_alias_conflict(canonical: str, terms: List[str]) -> None:
+    """Refuse a registration whose alias would take a term another concept owns.
+
+    Measured before this check, with one authorized upsert
+    (``POST /ontology/concepts`` -> 200) naming a seeded concept as its alias::
+
+        {"actor": "admin", "concept": "침입개념", "aliases": ["고객"]}
+
+        canonicalize("고객")  before -> "고객"
+        canonicalize("고객")  after  -> "침입개념"
+
+    Every read surface resolves through that index, so the seeded concept was
+    **hijacked**: resolve/search/concept lookups for "고객" answered with the
+    intruder. The alias index was last-writer-wins and nothing checked ownership.
+
+    Refusing is the fail-closed choice: the caller is told which term collides
+    and can register without it, and no existing concept's identity moves as a
+    side effect of someone else's write.
+    """
+    conflicts: list[str] = []
+    for term in terms:
+        normalized = _normalize_term(term)
+        if not normalized:
+            continue
+        if normalized == _normalize_term(canonical):
+            continue
+        owner = _ALIAS_TO_CANONICAL.get(normalized)
+        if owner is not None and owner != canonical:
+            conflicts.append(f"{term!r} already belongs to {owner!r}")
+    if conflicts:
+        raise ValueError("alias conflict: " + "; ".join(sorted(conflicts)))
+
+
+def validate_concept_registration(
+    concept: str,
+    *,
+    aliases: List[str] | None = None,
+    multilingual: List[str] | None = None,
+) -> str:
+    """Validate a concept registration and return its canonical (stripped) name.
+
+    Separated from ``register_concept`` so a caller that writes to more than one
+    store can validate **before** the first write. ``POST /ontology/concepts``
+    wrote the graph node first and called ``register_concept`` second, so an
+    invalid concept left the graph node behind *and* answered 500 - the
+    ``ValueError`` escaped the route unmapped. Measured: ``{"concept": "   "}``
+    raised ``ValueError: concept must not be empty`` out of the endpoint.
+    """
+    canonical = concept.strip()
+    if not canonical:
+        raise ValueError("concept must not be empty")
+    if len(canonical) > MAX_ONTOLOGY_PATCH_FIELD:
+        raise ValueError(f"concept must be at most {MAX_ONTOLOGY_PATCH_FIELD} characters")
+    if canonical not in _CONCEPT_DEFINITIONS:
+        _assert_no_alias_conflict(
+            canonical, list(aliases or []) + list(multilingual or [])
+        )
+    return canonical
 
 
 def register_concept(
@@ -118,11 +208,9 @@ def register_concept(
     implementation; that is deliberately not done here rather than shipped
     untested.
     """
-    canonical = concept.strip()
-    if not canonical:
-        raise ValueError("concept must not be empty")
-    if len(canonical) > MAX_ONTOLOGY_PATCH_FIELD:
-        raise ValueError(f"concept must be at most {MAX_ONTOLOGY_PATCH_FIELD} characters")
+    canonical = validate_concept_registration(
+        concept, aliases=aliases, multilingual=multilingual
+    )
 
     existing = _CONCEPT_DEFINITIONS.get(canonical)
     if existing is not None:
@@ -132,8 +220,7 @@ def register_concept(
         return {"concept": canonical, "already_published": True, **existing}
 
     if len(_CONCEPT_DEFINITIONS) >= MAX_REGISTERED_CONCEPTS:
-        oldest = next(iter(_CONCEPT_DEFINITIONS))
-        del _CONCEPT_DEFINITIONS[oldest]
+        _evict_one_registered_concept()
 
     record: Dict[str, Any] = {
         "aliases": list(aliases or []),
@@ -144,10 +231,37 @@ def register_concept(
         "multilingual": list(multilingual or []),
     }
     _CONCEPT_DEFINITIONS[canonical] = record
-    _ALIAS_TO_CANONICAL[_normalize_term(canonical)] = canonical
-    for alias in record["aliases"] + record["multilingual"]:
-        _ALIAS_TO_CANONICAL[_normalize_term(alias)] = canonical
+    _index_concept_terms(canonical, record)
     return {"concept": canonical, "already_published": False, **record}
+
+
+def _evict_one_registered_concept() -> None:
+    """Make room at the cap by dropping the oldest **caller-added** concept.
+
+    The eviction was ``next(iter(_CONCEPT_DEFINITIONS))``, and the dict is
+    insertion-ordered with the shipped vocabulary inserted first - so the
+    oldest entry was always a seeded concept. Measured by filling to the cap of
+    500 with ``filler-N`` registrations: 3 of the 5 seeded concepts ("고객",
+    "활성 고객", "이탈") were destroyed and 2 survived. Anyone able to register
+    concepts could therefore delete the product's own vocabulary.
+
+    When nothing caller-added is left to evict the cap is reported as full
+    rather than satisfied by deleting shipped data.
+    """
+    for candidate in _CONCEPT_DEFINITIONS:
+        if candidate in SEEDED_CONCEPTS:
+            continue
+        stale_aliases = [
+            term for term, owner in _ALIAS_TO_CANONICAL.items() if owner == candidate
+        ]
+        for term in stale_aliases:
+            del _ALIAS_TO_CANONICAL[term]
+        del _CONCEPT_DEFINITIONS[candidate]
+        return
+    raise ValueError(
+        f"concept vocabulary is full ({MAX_REGISTERED_CONCEPTS}) and holds only "
+        "seeded concepts, which are never evicted"
+    )
 
 
 @dataclass(frozen=True)
@@ -353,21 +467,31 @@ def review_patch(
             continue
         if patch.status != "proposed":
             raise ValueError("patch is not in proposed state")
+        # The documented workflow is 제안 -> 승인 -> 노출. It stopped at 승인:
+        # approving a patch changed nothing in /ontology/search,
+        # /ontology/resolve, /ontology/concept or GET /ontology/concepts, and
+        # no documented path loaded an approved term into the read surface at
+        # all. Approval publishes the concept through the same registrar
+        # POST /ontology/concepts uses, and the response says what happened
+        # rather than leaving the caller to check.
+        #
+        # Publication runs **before** the status is written. ``register_concept``
+        # can refuse (the vocabulary cap can be full of seeded concepts, which
+        # are never evicted); doing it after the mutation left the patch marked
+        # "approved" with nothing published and the caller holding an error -
+        # 승인 recorded, 노출 missing, which is the exact break this path exists
+        # to close.
+        registration = None
+        if normalized == "approve":
+            registration = register_concept(patch.concept, definition=patch.suggestion)
+
         patch.reviewed_by = reviewer
         patch.reviewed_at = datetime.now(timezone.utc)
         patch.review_comment = comment
         patch.status = "approved" if normalized == "approve" else "rejected"
         _ONTOLOGY_PATCHES[idx] = patch
         published = patch.model_dump()
-        if patch.status == "approved":
-            # The documented workflow is 제안 -> 승인 -> 노출. It stopped at 승인:
-            # approving a patch changed nothing in /ontology/search,
-            # /ontology/resolve, /ontology/concept or GET /ontology/concepts, and
-            # no documented path loaded an approved term into the read surface at
-            # all. Approval now publishes the concept through the same registrar
-            # POST /ontology/concepts uses, and the response says what happened
-            # rather than leaving the caller to check.
-            registration = register_concept(patch.concept, definition=patch.suggestion)
+        if registration is not None:
             published["published_concept"] = registration["concept"]
             published["concept_already_published"] = registration["already_published"]
         return published

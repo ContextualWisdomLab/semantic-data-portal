@@ -28,12 +28,24 @@ from fastapi.testclient import TestClient
 from pydantic import BaseModel, ValidationError
 
 import sdp_core
+from sdp import catalog
 from sdp.api import app
 from sdp.orchestrator import execute_query
 from sdp_core import QueryExecutionRequest
 
 
 client = TestClient(app, raise_server_exceptions=False)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_catalog():
+    """The provenance test plants datasets; they must not outlive it."""
+    data = {key: value.model_copy(deep=True) for key, value in catalog._DATA.items()}
+    try:
+        yield
+    finally:
+        catalog._DATA.clear()
+        catalog._DATA.update(data)
 
 
 def _request_models() -> list[type[BaseModel]]:
@@ -151,11 +163,80 @@ def test_the_audit_ledger_labels_every_unmeasured_execution_figure() -> None:
     details = queries[0]["details"]
 
     assert details["measurement_status"] == "mock_execution_no_real_data"
-    assert details["row_count_source"] == "catalog_profile_estimate"
+    # Not ``catalog_profile_estimate``: this dataset's profile says 1,200,000
+    # rows and the mock reports 2,000, so the figure is the cap, not the
+    # estimate whose provenance the old label claimed - off by a factor of 600.
+    assert details["row_count_source"] == "mock_row_cap_below_catalog_profile_estimate"
     assert details["bytes_scanned_source"] == "fixed_mock_constant"
+    # The response must carry the same provenance as the ledger. It named the
+    # provenance of the two constants and said nothing about the row count,
+    # which is the only figure a reader is likely to act on.
+    assert body["execution"]["row_count_source"] == details["row_count_source"]
     # The figures are still recorded - labelled, not removed.
     assert details["row_count"] == body["row_count"]
     assert details["bytes_scanned"] == body["execution"]["bytesScanned"]
+
+
+def test_each_mock_row_count_provenance_has_its_own_label() -> None:
+    """Three provenances shared one label, so the ledger asserted the wrong one.
+
+    Measured before the repair, with ``row_count_source`` reading
+    ``catalog_profile_estimate`` in both cases::
+
+        crm-customer-master  profile.row_count = 1200000  -> row_count 2000
+        a dataset with profile = {}                       -> row_count 1000
+
+    The first is the mock's cap; the second is a hardcoded literal with no
+    estimate behind it at all.
+    """
+    base = catalog._DATA["crm-customer-master"]
+    catalog._DATA["profile-free-ds"] = base.model_copy(
+        update={"id": "profile-free-ds", "profile": {}}
+    )
+    catalog._DATA["small-profile-ds"] = base.model_copy(
+        update={"id": "small-profile-ds", "profile": {"row_count": 7}}
+    )
+
+    def run(dataset_id: str, **extra):
+        response = client.post(
+            "/browse/query",
+            json={
+                "user": "analyst",
+                "dataset_ids": [dataset_id],
+                "language": "SQL",
+                "query": "select customer_id from customer",
+                "purpose": "analysis",
+                **extra,
+            },
+        )
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    capped = run("crm-customer-master")
+    assert capped["row_count"] == 2000
+    assert capped["execution"]["row_count_source"] == (
+        "mock_row_cap_below_catalog_profile_estimate"
+    )
+
+    unprofiled = run("profile-free-ds")
+    assert unprofiled["row_count"] == 1000
+    assert unprofiled["execution"]["row_count_source"] == "fixed_default_no_catalog_profile"
+
+    # Only a figure that really is the catalog's own estimate may claim to be one.
+    profiled = run("small-profile-ds")
+    assert profiled["row_count"] == 7
+    assert profiled["execution"]["row_count_source"] == "catalog_profile_estimate"
+
+    dry = run("crm-customer-master", dry_run=True)
+    assert dry["execution"]["row_count_source"] == "dry_run_zero"
+
+    labels = {
+        capped["execution"]["row_count_source"],
+        unprofiled["execution"]["row_count_source"],
+        profiled["execution"]["row_count_source"],
+        dry["execution"]["row_count_source"],
+    }
+    assert len(labels) == 4, f"provenances must not share a label: {labels}"
 
 
 def test_a_dry_run_labels_its_row_count_differently() -> None:
