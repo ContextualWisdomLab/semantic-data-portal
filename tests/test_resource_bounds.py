@@ -71,9 +71,9 @@ def test_catalog_search_query_is_length_bounded() -> None:
     app, so the measured 5.10s case is reachable in-process rather than over HTTP.
     The server-side bound is still asserted here, just above the cap.
     """
-    oversized = client.get("/catalog/search", params={"q": "고객 " * 800})
+    oversized = client.get("/catalog/search", params={"q": "고객 " * 800, "user": "analyst"})
     assert oversized.status_code == 422, oversized.text
-    assert client.get("/catalog/search", params={"q": "고객"}).status_code == 200
+    assert client.get("/catalog/search", params={"q": "고객", "user": "analyst"}).status_code == 200
 
 
 def test_catalog_search_compiles_each_token_once() -> None:

@@ -394,11 +394,27 @@ def healthz(response: Response) -> dict[str, Any]:
     return payload
 
 
+def _authorize_catalog_discovery(user: str) -> list[str] | None:
+    """Authorize a catalog discovery read and resolve its tenant scope.
+
+    Discovery used to take no actor at all, so an unauthenticated caller received
+    every tenant's dataset inventory - ids, titles, owners, status - and the owner
+    facet aggregated across tenants, while the governed path refused the same
+    dataset. ``src/sdp_core/kpis.py`` publishes the guardrail that contradicts:
+    "No unauthorized dataset existence disclosure."
+    """
+    decision = evaluate(subject=user, resource="catalog", action="search", purpose="discovery")
+    if decision.effect != "allow":
+        raise HTTPException(status_code=403, detail=decision.reason)
+    return accessible_tenant_ids(user)
+
+
 @app.get("/catalog/search")
 def catalog_search(
     # Each token is matched against every dataset, so an unbounded query is
     # unbounded work: 1005 datasets took 0.03s at 10 tokens and 5.10s at 2000.
     q: str = Query(..., min_length=1, max_length=2000),
+    user: str = Query(default="anonymous"),
     tags: list[str] | None = Query(default=None),
     domain: list[str] | None = Query(default=None),
     owner: list[str] | None = Query(default=None),
@@ -410,8 +426,10 @@ def catalog_search(
     limit: int = Query(default=20, ge=1, le=100),
     include_inactive: bool = Query(default=False),
 ) -> dict[str, Any]:
+    tenant_ids = _authorize_catalog_discovery(user)
     results = catalog.search_catalog(
         q,
+        tenant_ids=tenant_ids,
         tags=tags,
         domain=domain,
         owner=owner,
@@ -455,24 +473,34 @@ def catalog_search(
 
 @app.get("/catalog/facets")
 def catalog_facets(
-    q: str | None = Query(default=None),
+    q: str | None = Query(default=None, max_length=2000),
     field: str = Query(default="domain"),
+    user: str = Query(default="anonymous"),
 ) -> dict[str, Any]:
+    tenant_ids = _authorize_catalog_discovery(user)
     try:
-        counts = list_facet_counts(field, query=q)
+        counts = list_facet_counts(field, query=q, tenant_ids=tenant_ids)
     except ValueError:
         raise HTTPException(status_code=400, detail="unsupported facet field")
     return {"field": field, "counts": counts}
 
 
 @app.get("/catalog/datasets")
-def list_datasets_endpoint() -> list[dict[str, Any]]:
-    return [catalog.discovery_view(dataset) for dataset in list_datasets()]
+def list_datasets_endpoint(user: str = Query(default="anonymous")) -> list[dict[str, Any]]:
+    tenant_ids = _authorize_catalog_discovery(user)
+    return [catalog.discovery_view(dataset) for dataset in list_datasets(tenant_ids)]
 
 
 @app.get("/catalog/datasets/{dataset_id}")
-def dataset_detail(dataset_id: str) -> dict[str, Any]:
-    dataset = get_dataset(dataset_id)
+def dataset_detail(
+    dataset_id: str, user: str = Query(default="anonymous")
+) -> dict[str, Any]:
+    tenant_ids = _authorize_catalog_discovery(user)
+    # 404, not 403: the defect being fixed here is existence disclosure, so a
+    # dataset outside the reader's tenant scope must be indistinguishable from
+    # one that does not exist. /browse keeps 403 - there the caller already names
+    # the id and the denial is itself the audited evidence.
+    dataset = catalog.dataset_in_scope(dataset_id, tenant_ids)
     if not dataset:
         raise HTTPException(status_code=404, detail="dataset not found")
     return catalog.discovery_view(dataset)
@@ -521,10 +549,15 @@ def catalog_dataset_schema_versions(dataset_id: str) -> dict[str, Any]:
 
 
 @app.get("/catalog/datasets/{dataset_id}/join-candidates")
-def catalog_dataset_join_candidates(dataset_id: str, limit: int = Query(default=10, ge=1, le=100)) -> dict[str, Any]:
+def catalog_dataset_join_candidates(
+    dataset_id: str,
+    limit: int = Query(default=10, ge=1, le=100),
+    user: str = Query(default="anonymous"),
+) -> dict[str, Any]:
+    tenant_ids = _authorize_catalog_discovery(user)
     return {
         "dataset_id": dataset_id,
-        "join_candidates": get_join_candidates(dataset_id, limit=limit),
+        "join_candidates": get_join_candidates(dataset_id, limit=limit, tenant_ids=tenant_ids),
     }
 
 

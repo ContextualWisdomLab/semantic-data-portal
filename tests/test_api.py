@@ -111,7 +111,7 @@ def test_enterprise_demo_plan_uses_core_buyer_demo_fixture():
     body = response.json()
     fixture_ids = {dataset.id for dataset in sdp_core.buyer_demo_datasets()}
     response_ids = {dataset["id"] for dataset in body["demo_datasets"]}
-    catalog_ids = {dataset["id"] for dataset in client.get("/catalog/datasets").json()}
+    catalog_ids = {dataset["id"] for dataset in client.get("/catalog/datasets", params={"user": "analyst"}).json()}
 
     assert body["domain_fixture_id"] == "customer_intelligence"
     assert fixture_ids == response_ids
@@ -990,13 +990,13 @@ def test_enterprise_connector_probe_fails_closed():
 
 
 def test_catalog_search_and_detail():
-    response = client.get("/catalog/search", params={"q": "활성 고객"})
+    response = client.get("/catalog/search", params={"q": "활성 고객", "user": "analyst"})
     assert response.status_code == 200
     body = response.json()
     assert body["count"] >= 1
     assert "id" in body["items"][0]
 
-    detail = client.get("/catalog/datasets/crm-customer-master")
+    detail = client.get("/catalog/datasets/crm-customer-master", params={"user": "analyst"})
     assert detail.status_code == 200
     detail_body = detail.json()
     assert detail_body["id"] == "crm-customer-master"
@@ -1004,13 +1004,13 @@ def test_catalog_search_and_detail():
 
 
 def test_catalog_search_filter_by_quality():
-    response = client.get("/catalog/search", params={"q": "고객", "min_quality": 0.9})
+    response = client.get("/catalog/search", params={"q": "고객", "min_quality": 0.9, "user": "analyst"})
     assert response.status_code == 200
     assert all(item["quality"] >= 0.9 for item in response.json()["items"])
 
 
 def test_catalog_dataset_detail_exposes_recommendation_score():
-    response = client.get("/catalog/datasets/crm-customer-master")
+    response = client.get("/catalog/datasets/crm-customer-master", params={"user": "analyst"})
     assert response.status_code == 200
     body = response.json()
     assert "metadata_recommendation_score" in body
@@ -1018,7 +1018,7 @@ def test_catalog_dataset_detail_exposes_recommendation_score():
 
 
 def test_catalog_facets_and_audit_events():
-    response = client.get("/catalog/facets", params={"field": "sensitivity"})
+    response = client.get("/catalog/facets", params={"field": "sensitivity", "user": "analyst"})
     assert response.status_code == 200
     assert response.json()["field"] == "sensitivity"
 
@@ -1065,7 +1065,7 @@ def test_ontology_search():
 
 
 def test_join_candidate_endpoint():
-    response = client.get("/catalog/datasets/crm-customer-master/join-candidates")
+    response = client.get("/catalog/datasets/crm-customer-master/join-candidates", params={"user": "analyst"})
     assert response.status_code == 200
     body = response.json()
     assert body["dataset_id"] == "crm-customer-master"
@@ -1883,7 +1883,7 @@ def test_catalog_discovery_routes_do_not_publish_governed_dataset_internals():
     )
     assert denied.status_code == 403
 
-    detail = client.get("/catalog/datasets/crm-customer-master")
+    detail = client.get("/catalog/datasets/crm-customer-master", params={"user": "analyst"})
     assert detail.status_code == 200
     body = detail.json()
     for governed in ("schema", "source_system", "profile", "tenant_id"):
@@ -1892,7 +1892,7 @@ def test_catalog_discovery_routes_do_not_publish_governed_dataset_internals():
     # Discovery still describes the shape, without the per-column PII flags.
     assert body["schema_field_count"] == 3
 
-    listed = client.get("/catalog/datasets")
+    listed = client.get("/catalog/datasets", params={"user": "analyst"})
     assert listed.status_code == 200
     for row in listed.json():
         for governed in ("schema", "source_system", "profile", "tenant_id"):
@@ -1902,7 +1902,7 @@ def test_catalog_discovery_routes_do_not_publish_governed_dataset_internals():
 def test_catalog_discovery_payload_field_set_is_pinned():
     """A new ``Dataset`` field must be an explicit publish-or-withhold decision,
     not an automatic addition to an unauthenticated payload."""
-    body = client.get("/catalog/datasets/crm-customer-master").json()
+    body = client.get("/catalog/datasets/crm-customer-master", params={"user": "analyst"}).json()
     assert set(body) == {
         "id",
         "title",

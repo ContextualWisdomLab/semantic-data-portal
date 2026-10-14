@@ -212,13 +212,45 @@ def get_dataset_profile(dataset_id: str) -> dict[str, Any]:
     }
 
 
-def get_join_candidates(dataset_id: str, *, limit: int = 10) -> list[dict[str, Any]]:
+def datasets_in_scope(tenant_ids: list[str] | None) -> List[Dataset]:
+    """Return the datasets a reader may see, scoped to a set of tenants.
+
+    ``None`` means every tenant and is reserved for the explicit platform-admin
+    crossing; an empty list yields nothing. The discovery surface previously
+    iterated the whole catalog with no tenant predicate, so an unauthenticated
+    caller received every tenant's inventory - ids, titles, owners and status -
+    while the governed path refused the same dataset. ``src/sdp_core/kpis.py``
+    publishes the guardrail that contradicts: "No unauthorized dataset existence
+    disclosure."
+    """
+    if tenant_ids is None:
+        return list(_DATA.values())
+    allowed = set(tenant_ids)
+    return [dataset for dataset in _DATA.values() if dataset.tenant_id in allowed]
+
+
+def dataset_in_scope(dataset_id: str, tenant_ids: list[str] | None) -> Optional[Dataset]:
+    """Return one dataset only when the reader's tenant scope covers it."""
+    dataset = _DATA.get(dataset_id)
+    if dataset is None:
+        return None
+    if tenant_ids is None or dataset.tenant_id in set(tenant_ids):
+        return dataset
+    return None
+
+
+
+def get_join_candidates(
+    dataset_id: str, *, limit: int = 10, tenant_ids: list[str] | None = None
+) -> list[dict[str, Any]]:
     dataset = get_dataset_or_404(dataset_id)
     candidates = []
 
     dataset_columns = {column.name for column in dataset.schema}
     dataset_terms = {term for term in dataset.terms}
-    for other in _DATA.values():
+    # Scoped: an id the caller legitimately owns was a pivot that named its
+    # neighbours in other tenants, together with their overlapping column names.
+    for other in datasets_in_scope(tenant_ids):
         if other.id == dataset.id:
             continue
         if other.status not in {"published", "registered"}:
@@ -333,6 +365,7 @@ def search_catalog(
     min_freshness: Optional[float] = None,
     include_inactive: bool = False,
     limit: int = 20,
+    tenant_ids: list[str] | None = None,
 ) -> list[SearchResult]:
     tokens = [t.strip() for t in query.split() if t.strip()]
     token_patterns = _compiled_query_tokens(tokens)
@@ -347,7 +380,7 @@ def search_catalog(
     status_filter = _to_set(status)
     license_filter = _to_set(license)
 
-    for dataset in _DATA.values():
+    for dataset in datasets_in_scope(tenant_ids):
         if tags_filter and not tags_filter.intersection(set(dataset.tags)):
             continue
         if domain_filter and dataset.domain not in domain_filter:
@@ -375,7 +408,9 @@ def search_catalog(
     return by_token[:limit]
 
 
-def list_facet_counts(field: str, query: Optional[str] = None) -> Dict[str, int]:
+def list_facet_counts(
+    field: str, query: Optional[str] = None, *, tenant_ids: list[str] | None = None
+) -> Dict[str, int]:
     if field not in {"domain", "owner", "sensitivity", "update_frequency", "license", "status"}:
         raise ValueError("unsupported facet field")
 
@@ -386,7 +421,8 @@ def list_facet_counts(field: str, query: Optional[str] = None) -> Dict[str, int]
     token_patterns = _compiled_query_tokens(tokens)
 
     counts: Dict[str, int] = {}
-    for dataset in _DATA.values():
+    # An aggregate is a disclosure: the owner facet named another tenant's owner.
+    for dataset in datasets_in_scope(tenant_ids):
         if tokens:
             row = SearchResult(dataset=dataset, score=_term_score(dataset, token_patterns, query))
             if row.score <= 0:
@@ -412,8 +448,8 @@ def get_dataset_or_404(dataset_id: str) -> Dataset:
     return dataset
 
 
-def list_datasets() -> list[Dataset]:
-    return list(_DATA.values())
+def list_datasets(tenant_ids: list[str] | None = None) -> list[Dataset]:
+    return datasets_in_scope(tenant_ids)
 
 
 def get_dataset_schema_history(dataset_id: str) -> dict[str, Any]:
