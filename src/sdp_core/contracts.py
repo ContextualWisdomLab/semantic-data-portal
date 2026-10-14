@@ -186,7 +186,12 @@ class QueryExecutionRequest(BaseModel):
     language: str = Field(default="SQL", min_length=1)
     user: str = Field(default="anonymous")
     purpose: str = Field(default="analysis")
-    dataset_ids: list[str] = Field(default_factory=list, min_length=1)
+    # Required, not defaulted. `default_factory=list` with `min_length=1`
+    # contradicted itself: pydantic does not validate a default, so omitting the
+    # field produced `[]`, passed validation, and then `req.dataset_ids[0]` raised
+    # IndexError - a 500 on a body any client can send. Supplying `[]` explicitly
+    # was correctly refused with 400, which is the tell.
+    dataset_ids: list[str] = Field(min_length=1)
     query: str = Field(min_length=1)
     dry_run: bool = False
 

@@ -412,6 +412,11 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
             details=audit_details,
         )
 
+    if not req.dataset_ids:
+        # The contract requires one, but a programmatically built request can
+        # still arrive empty; answer, never index into nothing.
+        return response(dataset_id="", status="REJECTED", warnings=["dataset_ids_required"])
+
     dataset_id = req.dataset_ids[0]
     if req.language.strip().upper() != "SQL":
         audit(dataset_id=dataset_id, result="rejected", reason="unsupported_language")
@@ -497,7 +502,17 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
         if "group by" in lowered
         else [{"result": row_count}]
     )
-    execution = {"elapsedMs": 100, "source": "mock-trino", "bytesScanned": 1024}
+    # No query is executed here, so every figure below is labelled with where it
+    # came from. `elapsedMs` and `bytesScanned` are fixed constants and
+    # `row_count` is the catalog's own profile estimate, not a measurement.
+    execution = {
+        "elapsedMs": 100,
+        "source": "mock-trino",
+        "bytesScanned": 1024,
+        "measurement_status": "mock_execution_no_real_data",
+        "elapsed_ms_source": "fixed_mock_constant",
+        "bytes_scanned_source": "fixed_mock_constant",
+    }
     audit(
         dataset_id=dataset.id,
         result="allowed",
@@ -508,6 +523,16 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
             "query_id": query_id,
             "row_count": row_count,
             "bytes_scanned": execution["bytesScanned"],
+            # The HTTP response carried `mock_execution_no_real_data` while the
+            # audit row carried nothing, so the compliance ledger recorded
+            # "2000 rows, 1024 bytes scanned" as if it had been measured. The
+            # ledger is the surface a buyer's compliance team reads; an unlabelled
+            # estimate there is a fabricated measurement.
+            "measurement_status": "mock_execution_no_real_data",
+            "row_count_source": (
+                "dry_run_zero" if req.dry_run else "catalog_profile_estimate"
+            ),
+            "bytes_scanned_source": "fixed_mock_constant",
         },
     )
     return response(
