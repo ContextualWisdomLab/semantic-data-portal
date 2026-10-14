@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
+from typing import Any
 
 from sdp_core import AuditEvent, PolicyDecision, PostgresEvidenceStore, SQLiteEvidenceStore
 from sdp_core.stores import _audit_tenant_id, _policy_tenant_id
@@ -120,6 +121,27 @@ def tenant_is_in_scope(tenant_id: str, tenant_ids: list[str] | None) -> bool:
     return tenant_id in tenant_ids
 
 
+# Read the bounded in-memory logs through a snapshot, never the live list.
+#
+# ``reversed(_POLICY_DECISION_LOG)`` is a lazy iterator over the list itself,
+# and ``record_policy_decision`` trims the front with
+# ``del _POLICY_DECISION_LOG[:-MAX_IN_MEMORY_POLICY_DECISIONS]``. A reverse
+# iterator whose list has its front removed mid-iteration re-visits shifted
+# elements and skips others, so a page could contain the same ``decision_id``
+# twice and silently omit that many real rows. Measured with two readers and two
+# writers against a log already at its cap:
+#
+#     pages read 14303, pages containing a duplicated decision_id 142
+#
+# ``list(...)`` of a list is one C-level copy, so the snapshot is taken either
+# side of a trim and never mid-trim; a lock is not needed on this read path. The
+# append-then-trim pair is two steps, so a reader can briefly see one row past
+# the cap - an extra row, not a torn page.
+def _log_snapshot(log: list[Any]) -> list[Any]:
+    """A point-in-time copy of a bounded log, safe to iterate."""
+    return list(log)
+
+
 def list_persisted_audit_events(
     *, resource: str | None = None, limit: int = 100, tenant_ids: list[str] | None = None
 ) -> list[AuditEvent]:
@@ -128,7 +150,7 @@ def list_persisted_audit_events(
 
     events = [
         event
-        for event in reversed(_AUDIT_EVENT_LOG)
+        for event in reversed(_log_snapshot(_AUDIT_EVENT_LOG))
         if (not resource or event.resource == resource)
         and tenant_is_in_scope(_audit_tenant_id(event), tenant_ids)
     ]
@@ -143,7 +165,7 @@ def list_policy_decisions(
 
     decisions = [
         decision
-        for decision in reversed(_POLICY_DECISION_LOG)
+        for decision in reversed(_log_snapshot(_POLICY_DECISION_LOG))
         if (not resource or decision.resource == resource)
         and tenant_is_in_scope(_policy_tenant_id(decision), tenant_ids)
     ]

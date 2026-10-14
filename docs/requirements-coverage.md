@@ -388,7 +388,8 @@ PYTHONPATH=src python -m sdp_core.requirements
 
 - **요구사항**: 모든 policy decision은 decisionId와 함께 감사 가능해야 한다.
 - **수락 기준**: audit log에서 decision 재현 가능
-- **증빙**: `route:GET /policy/decisions`, `test:tests/test_governed_write_evidence.py::test_a_governed_write_records_a_decision_and_an_audit_event`
+- **증빙**: `route:GET /policy/decisions`, `test:tests/test_governed_write_evidence.py::test_a_governed_write_records_a_decision_and_an_audit_event`, `test:tests/test_evidence_log_snapshot_reads.py::test_a_decision_page_never_repeats_a_row_while_the_log_trims`
+- **비고**: Every policy decision is recorded with its subject, resource, action, effect, reason and obligations, and the feed is readable and tenant-scoped. A page used to be able to repeat a row and omit that many real ones while the bounded in-memory log trimmed behind the reader; pages are now built from a snapshot. A page remains a point-in-time view - a decision recorded after the snapshot is legitimately absent - and the in-memory fallback log is a bounded window, not an archive; a configured store is the durable path.
 
 #### POL-006 · P2 · `not_implemented`
 

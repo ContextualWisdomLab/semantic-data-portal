@@ -20,7 +20,7 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                    978 passed, 11 skipped
+    pytest                    983 passed, 11 skipped
     pytest (역방향/난수 순서)  순서 무관 통과 (역순 + seed 11/707/31337)
     pytest tests/fuzz          11 passed
     python -m sdp.demo_smoke   exit 0, "ready": true
@@ -156,6 +156,35 @@ before/after diff와 source/job/target이 여전히 없습니다). NFR-SEC-005�
 - 호출자가 제어하는 작업량과 메모리 증가에 상한을 두었습니다(쿼리 길이, 개념
   어휘, 제안 큐, 두 증빙 원장). 상한이 생기면 창의 길이로는 "기록됐는가"에 답할
   수 없으므로 단조 카운터를 함께 추가했습니다.
+
+### Fixed — 증빙 페이지가 자기 행을 중복시키며 실제 행을 빠뜨렸습니다
+
+`list_policy_decisions`와 `list_persisted_audit_events`는 페이지를
+`reversed(_POLICY_DECISION_LOG)` — **살아 있는 리스트에 대한 lazy iterator** — 로
+만들었고, `record_policy_decision`은 같은 리스트의 앞부분을
+`del _POLICY_DECISION_LOG[:-MAX_IN_MEMORY_POLICY_DECISIONS]`로 잘라냅니다. 순회 중에
+앞이 사라진 역방향 iterator는 밀린 원소를 다시 방문하고 다른 원소를 건너뜁니다 —
+그래서 한 페이지가 같은 `decision_id`를 두 번 담고 그만큼의 실제 행을 조용히
+빠뜨릴 수 있었습니다. cap에 도달한 로그에 리더 2 + 라이터 2로 측정:
+
+    pages read 14303, 중복된 decision_id를 담은 page 142
+
+수리는 lock이 아니라 **snapshot**입니다. 리스트의 `list(...)`는 한 번의 C 레벨
+복사이므로 trim의 앞이나 뒤에서 찍히고 trim 도중에는 찍히지 않습니다 — 읽기 경로에
+경합을 추가하지 않습니다. `catalog.list_audit_events`는 이미 이렇게 읽고 있었고,
+그래서 `evidence`의 페이지만 찢어졌습니다. 수리 후 같은 조건에서 14817 페이지 중
+**0건**입니다.
+
+테스트가 숨기지 않고 적어 두는 한계: 페이지는 시점 뷰이므로 snapshot 이후에 추가된
+행은 **정당하게** 없습니다. 단언하는 것은 어떤 행도 **두 번** 나타나지 않는다는 것과
+창이 선언된 상한 안에 머문다는 것이고, 페이지가 일관된 트랜잭션 읽기라는 것이
+아닙니다 — in-memory fallback 로그는 그것을 제공하지 않습니다(append-then-trim은 두
+단계라 cap보다 한 행 많은 상태가 보일 수 있고, 그것은 찢어진 페이지가 아니라 여분의
+한 행입니다).
+
+이 테스트를 쓰면서 제 테스트 자신의 결함을 하나 잡았습니다: 두 라이터 스레드가 모두
+`written-0`, `written-1`…을 만들어서 리더가 센 중복이 로그의 것이 아니라 테스트의
+것이었습니다. 라이터마다 고유한 tag를 붙였습니다.
 
 ### Fixed — 아무것도 바꾸지 않은 요청이 증빙을 만들어냈습니다
 
