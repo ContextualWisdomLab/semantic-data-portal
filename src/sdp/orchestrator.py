@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 from datetime import datetime, timezone
+from .authz import can_access_tenant
 from .catalog import get_dataset, ingest_event
 from .domain import QueryDraftRequest
 from .policy import evaluate
@@ -218,12 +219,49 @@ def _temporal_column(dataset: Any) -> str | None:
     return None
 
 
+def _audit_draft(
+    req: QueryDraftRequest, *, decision_id: str, result: str, reason: str
+) -> None:
+    """Record one audit event for a query-draft attempt.
+
+    ``draft_sql`` recorded a policy decision and **no audit event** - not on
+    denial and not on success. The repository's stated invariant is that the
+    browse/query paths evaluate policy *and* record evidence, and an auditor
+    reading the audit feed saw no trace that a governed SQL draft had been
+    requested at all. Measured before this change: `decisions +1  audits +0`.
+    """
+    ingest_event(
+        event_type="llm.draft_query",
+        actor=req.user,
+        dataset_id=req.dataset_id,
+        decision=result,
+        decision_id=decision_id,
+        reason=reason,
+        details={"purpose": req.purpose, "policy_decision_id": decision_id},
+    )
+
+
 def draft_sql(req: QueryDraftRequest) -> dict:
     if req.date_window_days < 1 or req.date_window_days > 365:
         return {"error": "invalid_date_window", "reason": "date_window_days must be between 1 and 365"}
 
     dataset = get_dataset(req.dataset_id)
-    if not dataset:
+    # Scope before anything else is said about the dataset. This route reported
+    # `dataset_not_found` for a dataset that does not exist and `policy_denied`
+    # for one in another tenant, so an outside caller could tell which ids exist
+    # by reading the error code - the same oracle the browse and catalog families
+    # were repaired to close.
+    if dataset is None or not can_access_tenant(req.user, dataset.tenant_id):
+        if dataset is not None:
+            # Record the real reason before answering with the indistinguishable
+            # one, so the refusal is still evidence.
+            denial = evaluate(
+                subject=req.user,
+                resource=req.dataset_id,
+                action="query",
+                purpose=req.purpose,
+            )
+            _audit_draft(req, decision_id=denial.decision_id, result="denied", reason=denial.reason)
         return {"error": "dataset_not_found"}
     if dataset.status != "published":
         return {"error": "policy_denied", "reason": "dataset is not published"}
@@ -232,6 +270,7 @@ def draft_sql(req: QueryDraftRequest) -> dict:
 
     decision = evaluate(subject=req.user, resource=req.dataset_id, action="query", purpose=req.purpose)
     if decision.effect != "allow":
+        _audit_draft(req, decision_id=decision.decision_id, result="denied", reason=decision.reason)
         return {"error": "policy_denied", "reason": decision.reason}
 
     question = req.question.strip().lower()
@@ -345,6 +384,7 @@ def draft_sql(req: QueryDraftRequest) -> dict:
             f"기간 필터는 {window_column} 기준 최근 {req.date_window_days}일"
         )
 
+    _audit_draft(req, decision_id=decision.decision_id, result="allowed", reason="ok")
     return {
         "dataset_id": req.dataset_id,
         "query": sql,

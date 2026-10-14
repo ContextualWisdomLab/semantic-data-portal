@@ -1192,13 +1192,33 @@ def llm_search(payload: dict[str, str]) -> dict[str, Any]:
     }
 
 
+# Draft-query failure codes mapped to the status an integrator can act on. The
+# route answered **200 for every failure**, including authorization denial and an
+# unknown dataset, with the cause buried in an `error` key - so a client checking
+# `response.ok` read a denial as success.
+_DRAFT_QUERY_ERROR_STATUS = {
+    "dataset_not_found": 404,
+    "policy_denied": 403,
+}
+
+
 @app.post("/llm/draft-query")
 def draft_query(payload: dict[str, Any]) -> dict[str, Any]:
     try:
         request = QueryDraftRequest(**payload)
-        return orchestrator.draft_sql(request)
-    except Exception as exc:  # pragma: no cover
+    except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+    drafted = orchestrator.draft_sql(request)
+    error = drafted.get("error")
+    if error:
+        # 400 is the default: every remaining code (invalid_date_window,
+        # missing_schema, invalid_columns, invalid_group_by, invalid_row_limit,
+        # invalid_timeout) is a malformed request.
+        raise HTTPException(
+            status_code=_DRAFT_QUERY_ERROR_STATUS.get(error, 400), detail=drafted
+        )
+    return drafted
 
 
 @app.post("/browse/query")

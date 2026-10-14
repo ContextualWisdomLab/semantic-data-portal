@@ -158,7 +158,11 @@ def test_draft_query_accepts_a_question_naming_such_a_column_and_names_the_keywo
     assert "error" not in allowed.json(), allowed.text
 
     refused = draft("고객 테이블을 drop 해줘")
-    body = refused.json()
+    # 403, not 200: this route used to answer 200 for every failure, and my own
+    # assertion here pinned that shape. The body moved under `detail` with the
+    # status.
+    assert refused.status_code == 403, refused.text
+    body = refused.json()["detail"]
     assert body["error"] == "policy_denied"
     # The refusal says which word was refused, so a spurious one is diagnosable.
     assert body["reason"].endswith(": drop"), body["reason"]
