@@ -65,6 +65,44 @@ def test_validate_sql_query_flags_unsafe_input(sql: str, expected: str) -> None:
     assert expected in orch.validate_sql_query(sql, source_system=_SRC)
 
 
+@pytest.mark.parametrize(
+    "sql,expected",
+    [
+        # A comma-separated FROM list is a join: every element must be allow-listed,
+        # not just the identifier that happens to follow the FROM keyword.
+        ("SELECT customer_id FROM customer, secret_table", "unauthorized_table_reference"),
+        ("SELECT customer_id FROM customer AS c, warehouse.secret AS s", "unauthorized_table_reference"),
+        ("SELECT customer_id FROM customer c, secret_table s WHERE c.id = s.id", "unauthorized_table_reference"),
+        # `SELECT ... INTO <name>` is CREATE TABLE AS in PostgreSQL - a write that
+        # begins with the SELECT the guard is looking for.
+        ("SELECT * INTO exfil_table FROM customer", "forbidden_keyword_detected"),
+        ("SELECT customer_id INTO exfil FROM customer", "forbidden_keyword_detected"),
+        # Dollar-quoted strings are string literals that contain neither quote
+        # character, so they smuggle arguments past the literal guard.
+        ("SELECT pg_read_file($$/etc/passwd$$) FROM customer", "literal_values_not_allowed"),
+        ("SELECT lo_import($tag$/etc/passwd$tag$) FROM customer", "literal_values_not_allowed"),
+    ],
+)
+def test_validate_sql_query_closes_guard_bypasses(sql: str, expected: str) -> None:
+    """Each of these passed the guard with zero warnings before this contract."""
+    assert expected in orch.validate_sql_query(sql, source_system=_SRC)
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT customer_id FROM customer",
+        "SELECT c.customer_id FROM customer AS c",
+        "SELECT c.customer_id FROM customer c",
+        "SELECT customer_id FROM analytics.customer",
+        "SELECT customer_id FROM customer JOIN customer ON 1=1",
+    ],
+)
+def test_validate_sql_query_keeps_accepting_allowlisted_shapes(sql: str) -> None:
+    """Closing the bypasses must not reject the shapes the drafter emits."""
+    assert orch.validate_sql_query(sql, source_system=_SRC) == []
+
+
 # --- draft_sql guard branches --------------------------------------------
 
 

@@ -2439,6 +2439,40 @@ SQL validator 세 건(`FROM a, b` 콤마 조인으로 allowlist 우회, `SELECT 
 `$$...$$` dollar-quote가 literal 가드를 우회)이 서로 같은 함수에 모여 있어 한 묶음으로 처리하기 적합하고,
 observability의 netloc userinfo 노출은 한 줄 수리입니다.
 
+### 감사 큐 소진 (1) — SQL validator 우회 세 건을 닫았습니다 (2026-10-14)
+
+감사 큐의 SQL-safety 세 건은 모두 `validate_sql_query` 한 함수에 모여 있어 한 묶음으로 처리했습니다. 에이전트
+보고를 믿지 않고 **직접 실행해 재현**했습니다 — 세 입력 모두 경고 0개(= 통과)였고, 대조군(`CROSS JOIN` 형태)은
+올바르게 거절되고 있었습니다.
+
+| 입력 | 수리 전 | 수리 후 |
+| --- | --- | --- |
+| `SELECT customer_id FROM customer, secret_table` | `[]` | `['unauthorized_table_reference']` |
+| `SELECT * INTO exfil_table FROM customer` | `[]` | `['forbidden_keyword_detected']` |
+| `SELECT pg_read_file($$/etc/passwd$$) FROM customer` | `[]` | `['literal_values_not_allowed']` |
+| `SELECT lo_import($x$/etc/passwd$x$) FROM customer` | `[]` | `['literal_values_not_allowed']` |
+
+원인은 각각 하나씩입니다.
+
+- **콤마 FROM 목록**: 기존 정규식은 `from`/`join` **직후 식별자 하나만** 캡처했습니다. 콤마 뒤의 테이블은
+  allowlist 검사에 아예 보이지 않았습니다. 같은 조인을 `CROSS JOIN`으로 쓰면 거절되는데 콤마로 쓰면 통과하는,
+  문법 형태에만 의존하는 구멍이었습니다.
+- **`SELECT ... INTO`**: PostgreSQL에서 `SELECT ... INTO <name>`은 `CREATE TABLE AS`입니다. `into`와 `create`가
+  금지 키워드 집합에 없었으므로, 가드가 찾는 `select `로 시작하는 문장 안에 쓰기가 숨을 수 있었습니다.
+- **Dollar-quote**: literal 검사가 `'`와 `"`만 봤습니다. `$$...$$` / `$tag$...$tag$`는 두 문자를 포함하지 않는
+  문자열 리터럴이므로 임의 인자를 통과시켰습니다(그래서 인자가 필요한 함수 호출이 "안전" 레인에 들어왔습니다).
+
+수리는 세 지점입니다 — 테이블 목록을 **콤마와 alias를 포함해 전부** 파싱하는 `_referenced_source_tables()`
+(목록을 읽을 수 없으면 비어 있는 것으로 취급하지 않고 `unauthorized_table_reference`로 **거절**합니다),
+금지 키워드에 `into`·`create`·`copy`·`grant`·`revoke`·`execute`·`prepare`·`vacuum`·`lock`·`call` 추가,
+literal 검사에 dollar-quote 정규식 추가.
+
+검증: RED를 먼저 확인(새 우회 테스트 7건 전부 실패 → 수리 후 통과), **대조군 5건**(`FROM customer`,
+`AS` alias, alias 생략, `analytics.customer` 수식, 같은 테이블 self-join)은 수리 후에도 경고 0개로 유지,
+CI parity 전체 **292 passed / 8 skipped**, Hypothesis fuzz mirror 10 passed, `sdp.demo_smoke` ready=true.
+Atheris 타깃의 불변식(`len(warnings) == len(set(warnings))`, 예외 없음)을 깨지 않는지 **4,019개 입력**
+(빈 문자열, 콤마만, 유니코드, 200개 콤마, 잘린 `FROM`/`AS`/`$`, 무작위 조합)으로 따로 확인했습니다 — 문제 0건.
+
 ## 운영 메모
 
 - Database objects: 두 단어 이상 `snake_case`, 3NF. Catalog plane 테이블은 #73의 `migrations/0002_ontology_catalog_plane.sql`.

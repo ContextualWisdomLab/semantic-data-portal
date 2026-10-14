@@ -9,7 +9,69 @@ from .domain import QueryExecutionRequest
 from .domain import QueryExecutionResponse
 
 
-_FORBIDDEN_KEYWORDS = {"drop", "delete", "truncate", "alter", "insert", "update", "merge", "exec", "union"}
+# Statement-initiating or write-capable keywords. `into`, `create` and `copy`
+# matter even though the guard already demands a leading `select `: PostgreSQL
+# reads `SELECT ... INTO <name>` as CREATE TABLE AS, so a write can hide inside
+# a statement that opens like the read the guard is looking for.
+_FORBIDDEN_KEYWORDS = {
+    "alter",
+    "call",
+    "copy",
+    "create",
+    "delete",
+    "drop",
+    "exec",
+    "execute",
+    "grant",
+    "insert",
+    "into",
+    "lock",
+    "merge",
+    "prepare",
+    "revoke",
+    "truncate",
+    "union",
+    "update",
+    "vacuum",
+}
+
+# A dollar-quoted string ($$text$$ or $tag$text$tag$) is a PostgreSQL string
+# literal that contains neither quote character, so it smuggles an argument past
+# a guard that only looks for ' and ".
+_DOLLAR_QUOTE = re.compile(r"\$[A-Za-z_]*\$")
+
+# Keywords that end a table list. Anything else following a table identifier is
+# an alias (with or without AS) and is not itself a table.
+_TABLE_CLAUSE_TERMINATORS = frozenset(
+    {
+        "cross",
+        "except",
+        "fetch",
+        "from",
+        "full",
+        "group",
+        "having",
+        "inner",
+        "intersect",
+        "into",
+        "join",
+        "lateral",
+        "left",
+        "limit",
+        "natural",
+        "offset",
+        "on",
+        "order",
+        "right",
+        "select",
+        "union",
+        "using",
+        "where",
+        "window",
+    }
+)
+
+_TABLE_LIST_TOKEN = re.compile(r",|[A-Za-z_][\w.]*")
 
 
 def _safe_identifier(value: str) -> str:
@@ -24,6 +86,43 @@ def _source_table_name(source_system: str) -> str:
     return _safe_identifier(source_system.rstrip("/").rsplit("/", 1)[-1])
 
 
+def _referenced_source_tables(sql: str) -> list[str] | None:
+    """List every table identifier that a FROM or JOIN clause references.
+
+    One FROM clause may name several tables in a comma-separated list, each
+    optionally aliased, so reading only the identifier that follows the keyword
+    leaves every table after the first comma invisible to the allow-list check.
+    Returns ``None`` when a clause cannot be read as a table list, so the caller
+    refuses the query instead of guessing what it touches.
+    """
+    tokens = _TABLE_LIST_TOKEN.findall(sql)
+    tables: list[str] = []
+    index = 0
+    while index < len(tokens):
+        keyword = tokens[index].lower()
+        index += 1
+        if keyword not in {"from", "join"}:
+            continue
+        expect_table = True
+        while index < len(tokens):
+            token = tokens[index]
+            if token == ",":
+                index += 1
+                if expect_table:
+                    return None
+                expect_table = True
+                continue
+            if token.lower() in _TABLE_CLAUSE_TERMINATORS:
+                break
+            index += 1
+            if expect_table:
+                tables.append(token)
+                expect_table = False
+        if expect_table:
+            return None
+    return tables
+
+
 def validate_sql_query(sql: str, *, source_system: str) -> list[str]:
     stripped = sql.strip()
     lowered = stripped.lower()
@@ -35,7 +134,7 @@ def validate_sql_query(sql: str, *, source_system: str) -> list[str]:
         warnings.append("single_statement_required")
     if "--" in stripped or "/*" in stripped or "*/" in stripped:
         warnings.append("sql_comments_not_allowed")
-    if "'" in stripped or '"' in stripped:
+    if "'" in stripped or '"' in stripped or _DOLLAR_QUOTE.search(stripped):
         warnings.append("literal_values_not_allowed")
     if re.search(r"\b(and|or)\b", lowered):
         warnings.append("boolean_operator_not_allowed")
@@ -45,10 +144,12 @@ def validate_sql_query(sql: str, *, source_system: str) -> list[str]:
             warnings.append("forbidden_keyword_detected")
             break
 
-    referenced = [
-        next(value for value in match if value)
-        for match in re.findall(r"\bfrom\s+([A-Za-z_][\w.]*)|\bjoin\s+([A-Za-z_][\w.]*)", stripped, re.IGNORECASE)
-    ]
+    referenced = _referenced_source_tables(stripped)
+    if referenced is None:
+        # An unreadable table list is refused rather than treated as empty: the
+        # query does touch tables, we just cannot prove which ones are allowed.
+        warnings.append("unauthorized_table_reference")
+        return warnings
     if not referenced:
         warnings.append("missing_source_table")
         return warnings
