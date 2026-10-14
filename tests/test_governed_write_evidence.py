@@ -223,6 +223,11 @@ def test_an_actor_scoped_proof_link_still_refuses_without_an_actor() -> None:
     for endpoint in pack["actor_scoped_proof_endpoints"]:
         without_actor = endpoint.replace("&user=<actor>", "").replace("?user=<actor>", "")
         status = client.get(without_actor).status_code
-        assert status == 403, (
+        # The status differs by route and that is deliberate: the connector probe
+        # names a dataset in a query parameter, so an actor-less caller gets the
+        # same 404 a foreign or absent dataset gets, while the two ledger reads
+        # have no dataset to scope and answer 403. What this test guards is that
+        # every one of them still refuses.
+        assert status in (403, 404), (
             f"{without_actor} should still refuse an actor-less read, got {status}"
         )

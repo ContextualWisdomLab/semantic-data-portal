@@ -173,6 +173,13 @@ def enterprise_demo_plan(
     domain: str = Query(default="customer intelligence", min_length=1),
     connector: list[str] | None = Query(default=None),
 ) -> dict[str, Any]:
+    # A domain with no fixture is NOT an error: the activation plan is a generic
+    # template - workflow, activation days, data requirements and handoff
+    # artifacts - and the fixture only supplies domain-specific datasets and
+    # analyst questions when the lab has built one. An earlier attempt to refuse
+    # an unfixtured domain here was wrong and broke
+    # test_enterprise_demo_plan_supports_buyer_activation_path, which sends
+    # "insurance claims" deliberately and expects a full plan back.
     try:
         return buyer_demo_activation_plan(priority_domain=domain, connector_ids=connector).model_dump()
     except ValueError as exc:
@@ -335,7 +342,13 @@ def enterprise_connector_probe(
     # The probe describes one named dataset - its source system, schema-field
     # count and sensitivity - so it is gated and audited like the other governed
     # per-dataset reads rather than served as an actor-less manifest.
-    if not catalog.get_dataset(dataset_id):
+    # The dataset arrives in a QUERY parameter here. The earlier sweep enumerated
+    # routes naming a dataset in the path, then in the request body, and never
+    # checked this third mechanism - so this route answered 403 "tenant boundary
+    # denied" for a foreign dataset and 404 "dataset not found" for an absent
+    # one. Resolving it in the caller's scope makes both answers the same, before
+    # the policy evaluation below can produce a distinguishing reason.
+    if catalog.dataset_in_scope(dataset_id, accessible_tenant_ids(user)) is None:
         raise HTTPException(status_code=404, detail="dataset not found")
     decision = evaluate(subject=user, resource=dataset_id, action="schema", purpose=purpose)
     if decision.effect != "allow":
@@ -464,7 +477,7 @@ def catalog_search(
             "version": row.dataset.version,
             "schema_version": row.dataset.schema_version,
             "metadata_recommendation_score": row.dataset.metadata_recommendation_score,
-            "completeness_badge": "good" if row.dataset.metadata_recommendation_score >= 0.8 else "partial"
+            "completeness_badge": catalog.completeness_badge(row.dataset)
         }
         for row in results
     ]
@@ -732,7 +745,11 @@ def dataset_audit_events(
     # distinguish "exists but denied" from "does not exist" and reopen the
     # existence oracle the detail route was fixed to close.
     dataset = catalog.get_dataset(dataset_id)
-    if dataset and not can_access_tenant(user, dataset.tenant_id):
+    # A dataset that does not exist returned `200 []`, while every sibling route
+    # under this prefix returns 404 - so an integrator could not tell an empty
+    # ledger from a typo in the id. Out-of-scope and absent answer alike, which
+    # is what keeps the existence oracle closed.
+    if dataset is None or not can_access_tenant(user, dataset.tenant_id):
         raise HTTPException(status_code=404, detail="dataset not found")
     return [
         event.model_dump()
@@ -746,7 +763,7 @@ def create_dataset(payload: dict[str, Any]) -> dict[str, Any]:
     try:
         request = DatasetCreateRequest(**payload)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"invalid payload: {exc}")
+        raise HTTPException(status_code=400, detail=_invalid_request_detail(exc))
 
     decision = evaluate(
         subject=actor_id,
@@ -772,6 +789,13 @@ def publish_catalog_dataset(dataset_id: str, payload: dict[str, Any] | None = No
     actor_id = _actor(payload)
     decision = evaluate(subject=actor_id, resource=dataset_id, action="publish", purpose="catalog")
     if decision.effect != "allow":
+        # Foreign and absent both answered 403 here, but with different reasons -
+        # "tenant boundary denied" versus "존재하지 않는 데이터셋입니다." - so the
+        # reason string carried the oracle even though the status matched. A
+        # caller that cannot reach the dataset's tenant gets one answer; an
+        # in-scope refusal (role, sensitivity, purpose) keeps its reason.
+        if catalog.dataset_in_scope(dataset_id, accessible_tenant_ids(actor_id)) is None:
+            raise HTTPException(status_code=404, detail="dataset not found")
         raise HTTPException(status_code=403, detail=decision.reason)
 
     try:
@@ -789,6 +813,13 @@ def patch_catalog_dataset(dataset_id: str, payload: dict[str, Any]) -> dict[str,
     actor_id = _actor(payload)
     decision = evaluate(subject=actor_id, resource=dataset_id, action="patch", purpose="catalog")
     if decision.effect != "allow":
+        # Foreign and absent both answered 403 here, but with different reasons -
+        # "tenant boundary denied" versus "존재하지 않는 데이터셋입니다." - so the
+        # reason string carried the oracle even though the status matched. A
+        # caller that cannot reach the dataset's tenant gets one answer; an
+        # in-scope refusal (role, sensitivity, purpose) keeps its reason.
+        if catalog.dataset_in_scope(dataset_id, accessible_tenant_ids(actor_id)) is None:
+            raise HTTPException(status_code=404, detail="dataset not found")
         raise HTTPException(status_code=403, detail=decision.reason)
 
     try:
@@ -797,7 +828,7 @@ def patch_catalog_dataset(dataset_id: str, payload: dict[str, Any]) -> dict[str,
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=_invalid_request_detail(exc))
     seed_dataset(dataset)
     return {"status": "updated", "dataset": dataset.model_dump()}
 
@@ -807,6 +838,13 @@ def deprecate_catalog_dataset(dataset_id: str, payload: dict[str, str] | None = 
     actor_id = _actor(payload)
     decision = evaluate(subject=actor_id, resource=dataset_id, action="deprecate", purpose="catalog")
     if decision.effect != "allow":
+        # Foreign and absent both answered 403 here, but with different reasons -
+        # "tenant boundary denied" versus "존재하지 않는 데이터셋입니다." - so the
+        # reason string carried the oracle even though the status matched. A
+        # caller that cannot reach the dataset's tenant gets one answer; an
+        # in-scope refusal (role, sensitivity, purpose) keeps its reason.
+        if catalog.dataset_in_scope(dataset_id, accessible_tenant_ids(actor_id)) is None:
+            raise HTTPException(status_code=404, detail="dataset not found")
         raise HTTPException(status_code=403, detail=decision.reason)
 
     payload = payload or {}
@@ -851,11 +889,65 @@ def list_events(
     ]
 
 
+# Resources this application evaluates policy against that are not datasets.
+# `POST /policy/decision` takes the resource from the caller, so anything outside
+# this set and not an in-scope dataset is treated as a probe rather than a
+# question, and gets one refusal regardless of whether the id happens to exist.
+NON_DATASET_POLICY_RESOURCES = frozenset({"catalog", "evidence", "graph"})
+
+
 @app.post("/policy/decision")
 def policy_decision(payload: dict[str, str]) -> dict[str, Any]:
+    """Evaluate one policy question for an authorized caller.
+
+    This route was open, and it answered more than the routes this series spent
+    four commits closing. Measured with **no authentication at all**:
+
+        {"resource": "zeta-secret",      ...} -> reason "tenant boundary denied"
+                                                 obligations.tenant_id "zeta-bank"
+        {"resource": "no-such-dataset",  ...} -> reason "존재하지 않는 데이터셋입니다."
+                                                 obligations.tenant_id "unresolved"
+
+    So an unauthenticated caller could enumerate dataset ids, learn which exist
+    from the differing reason, **and read the owning tenant out of the
+    obligations**. Closing the catalog, browse, llm and graph families left this
+    as an open side channel exposing the same facts plus tenant ownership,
+    because the sweep enumerated routes that *resolve* a dataset and this one
+    merely answers questions *about* one.
+
+    It also wrote to the ledger. ``evaluate()`` records every decision, so 50
+    unauthenticated calls produced 50 rows in the evidence log an auditor reads -
+    while the sibling ``GET /policy/decisions`` already refused an actor-less
+    *read* with 403. You could not read the ledger without an actor but could
+    write to it without one.
+
+    Both halves close the same way: the same gate as the sibling read, plus the
+    tenant scope every other dataset-resolving route now applies. ``subject``
+    stays caller-supplied because a governance "what would policy say for this
+    subject" is this route's purpose; it defaults to the caller.
+    """
+    caller = payload.get("user") or payload.get("subject") or "anonymous"
+    # Same gate as GET /policy/decisions.
+    _, tenant_ids = _authorize_evidence_read(caller)
+
+    resource = payload.get("resource", "")
+    # One answer for "not yours" and "not a dataset". Scoping only the datasets
+    # that exist left the oracle intact for an authorized caller: a foreign
+    # dataset answered 404 while a nonexistent id answered 200 with the engine's
+    # "존재하지 않는 데이터셋입니다.", so the pair still revealed which ids are
+    # real. The app's own non-dataset resources are named, so anything else that
+    # is not an in-scope dataset gets the single refusal.
+    if (
+        resource
+        and resource not in NON_DATASET_POLICY_RESOURCES
+        and not resource.startswith("ontology/")
+        and catalog.dataset_in_scope(resource, tenant_ids) is None
+    ):
+        raise HTTPException(status_code=404, detail="dataset not found")
+
     decision = evaluate(
-        subject=payload.get("subject", "anonymous"),
-        resource=payload.get("resource", ""),
+        subject=payload.get("subject", caller),
+        resource=resource,
         action=payload.get("action", "preview"),
         purpose=payload.get("purpose", "analysis"),
     )
@@ -891,8 +983,19 @@ def resolve_terms(payload: dict[str, str]) -> dict[str, Any]:
 
 
 @app.get("/ontology/concept/{concept}")
-def concept_detail(concept: str) -> dict[str, Any]:
-    return ontology.concept_assets(concept)
+def concept_detail(
+    concept: str, user: str = Query(default="anonymous")
+) -> dict[str, Any]:
+    """Describe one concept, with its dataset mapping scoped to the caller.
+
+    ``concept_assets`` was given a tenant scope and wired into ``/llm/search``.
+    This is its other caller and it was left unscoped, so the same payload the
+    other route withholds was served here to **no actor at all**: measured,
+    ``dataset_ids`` listed every tenant's datasets with
+    ``withheld_dataset_count: 0``, while ``/llm/search`` withheld two for the
+    same caller. Scoping the helper fixed one of its two callers.
+    """
+    return ontology.concept_assets(concept, accessible_tenant_ids(user))
 
 
 @app.get("/ontology/concepts")
@@ -912,6 +1015,19 @@ def ontology_search(q: str = Query(..., min_length=1)) -> dict[str, Any]:
 
 @app.get("/ontology/patches")
 def ontology_patches(status: str | None = Query(default=None)) -> dict[str, Any]:
+    # An unknown or wrongly-cased filter matched nothing and returned
+    # `count: 0`, so `?status=PROPOSED` and `?status=not-a-status` both reported
+    # an empty steward queue - indistinguishable from a genuinely empty one. A
+    # reviewer reading that concludes there is nothing to review.
+    if status is not None and status not in ontology.PATCH_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "unknown_status_filter",
+                "requested": status,
+                "known_statuses": sorted(ontology.PATCH_STATUSES),
+            },
+        )
     patches = ontology.list_patches(status=status)
     return {"count": len(patches), "patches": patches}
 
@@ -1154,8 +1270,17 @@ def ingest_graph_edge(payload: GraphEdgeRequest) -> dict[str, Any]:
 
 
 @app.get("/graph/nodes/{node_id}")
-def get_graph_node(node_id: str, actor: str = Query(default="anonymous")) -> dict[str, Any]:
-    _authorize_graph_node_read(actor, node_id)
+def get_graph_node(
+    node_id: str,
+    actor: str = Query(default="anonymous"),
+    user: str | None = Query(default=None),
+) -> dict[str, Any]:
+    # This was the only route in the catalog/browse/ontology/graph surface
+    # spelling the caller `actor` as a *query* parameter; 21 others spell it
+    # `user`. An integrator using the common spelling got the anonymous default
+    # and an unactionable refusal. Both are accepted, `user` wins when supplied,
+    # and `actor` stays valid so existing callers keep working.
+    _authorize_graph_node_read(user or actor, node_id)
     node = get_store().get_node(node_id)
     if node is None:
         raise HTTPException(status_code=404, detail="node not found")
@@ -1175,8 +1300,12 @@ def graph_query(payload: GraphTraversalRequest) -> dict[str, Any]:
             direction=payload.direction,
             max_depth=payload.max_depth,
         )
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+    except KeyError:
+        # str(exc) echoed the requested id - 'node not found: <id>' - while a
+        # node withheld for tenant scope answered the bare 'node not found'. Both
+        # were 404 and the bodies still distinguished them, so the collapse was
+        # cosmetic. One message for both.
+        raise HTTPException(status_code=404, detail="node not found")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return filter_graph_traversal(payload.actor, traversal)
@@ -1211,6 +1340,35 @@ def browse_schema(dataset_id: str, user: str = Query(default="anonymous"), purpo
         raise HTTPException(status_code=404, detail="dataset not found")
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
+
+
+def _invalid_request_detail(exc: Exception) -> dict[str, Any]:
+    """Project a request-model failure into a field-named client error.
+
+    Four routes constructed a pydantic model inside ``try`` and put ``str(exc)``
+    into the 400 body, which embeds internals a client has no business seeing and
+    cannot act on. Measured:
+
+        POST /browse/query     {"dataset_ids": []}  -> 400 body contained
+          "1 validation error for QueryExecutionRequest", "type=too_short",
+          "https://errors.pydantic.dev/2.13/v/too_short"
+        POST /catalog/datasets {"actor":"admin","id":"x"} -> "DatasetCreateRequest"
+        POST /llm/draft-query  {"user":"admin"}           -> "QueryDraftRequest"
+
+    So the body leaked the internal model class name, the validator code and the
+    pydantic version, while still not stating plainly which field was wrong. The
+    field path and the human-readable reason are kept; the rest is dropped.
+    """
+    errors = getattr(exc, "errors", None)
+    if not callable(errors):
+        # Not a validation failure (e.g. a non-object body). Say so without
+        # echoing the exception text.
+        return {"error": "invalid_request", "reason": "request body is not valid"}
+    fields = []
+    for error in errors():
+        location = ".".join(str(part) for part in error.get("loc", ()) if part != "body")
+        fields.append({"field": location or "<body>", "reason": error.get("msg", "invalid")})
+    return {"error": "invalid_request", "fields": fields}
 
 
 def _payload_str(payload: dict[str, Any], field: str, default: str) -> str:
@@ -1335,7 +1493,7 @@ def draft_query(payload: dict[str, Any]) -> dict[str, Any]:
     try:
         request = QueryDraftRequest(**payload)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=_invalid_request_detail(exc))
 
     drafted = orchestrator.draft_sql(request)
     error = drafted.get("error")
@@ -1354,7 +1512,7 @@ def browse_query(payload: dict[str, Any]) -> dict[str, Any]:
     try:
         request = QueryExecutionRequest(**payload)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=_invalid_request_detail(exc))
 
     result = orchestrator.execute_query(request)
     if result.status == "REJECTED":

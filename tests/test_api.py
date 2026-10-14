@@ -1033,7 +1033,14 @@ def test_enterprise_connector_probe_fails_closed():
         "/enterprise/connectors/admin_shell/probe",
         params={"dataset_id": "crm-event"},
     )
-    assert unauthorized.status_code == 403
+    # 404 rather than 403: the dataset arrives in a query parameter here, so the
+    # route now resolves it in the caller's tenant scope first and an actor-less
+    # caller has no scope. The property this test is about is unchanged - the
+    # caller is refused *before* learning whether "admin_shell" is a supported
+    # connector, and 404 is still not the 400 that an authorized caller gets for
+    # an unsupported connector id.
+    assert unauthorized.status_code == 404
+    assert "admin_shell" not in unauthorized.text
 
     # A missing dataset stays 404 for everyone, matching the browse convention
     # (test_preview_policy_denies_missing_dataset).
@@ -2071,7 +2078,22 @@ def test_catalog_mutation_guard_denies_non_admin_actors(verb: str, actor: str | 
     else:
         response = client.post("/catalog/datasets/guard-probe/deprecate", json={**payload, "reason": "probe"})
 
-    assert response.status_code == 403, response.text
+    # The refusal status now depends on WHY the actor is refused, and that split
+    # is the point rather than an inconvenience:
+    #   - an actor inside the dataset's tenant but lacking the admin role gets
+    #     403 and the real reason, because it may legitimately know the dataset
+    #     exists and needs a diagnosable error;
+    #   - an actor with no resolvable tenant ("guest", "anonymous", no actor key)
+    #     gets 404, indistinguishable from a dataset that is not there, because
+    #     403-for-foreign plus 404-for-missing is an existence oracle over an
+    #     enumerable id space.
+    if actor in ("analyst",):
+        assert response.status_code == 403, response.text
+        assert "admin" in response.json()["detail"]
+    else:
+        assert response.status_code == 404, response.text
+        assert "tenant" not in response.text
+        assert "admin" not in response.text, "a scope refusal must not explain itself"
     # A guard that denies *after* mutating would be worse than no guard.
     unchanged = app_catalog._DATA["guard-probe"]
     assert unchanged.status == "draft"

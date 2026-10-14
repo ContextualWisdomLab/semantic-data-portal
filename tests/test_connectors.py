@@ -147,16 +147,29 @@ def test_connector_probe_route_is_gated_like_the_dataset_it_describes():
         update={"tenant_id": "acme-bank"}
     )
 
+    # 404, not 403: this route names its dataset in a QUERY parameter, which the
+    # earlier oracle sweep did not enumerate, so it answered 403 for a foreign
+    # dataset and 404 for an absent one - telling an outsider which ids exist.
+    # Both now answer alike. The gate is unchanged; only the status is uniform.
     anonymous = client.get(
         "/enterprise/connectors/sql_connector/probe", params={"dataset_id": "acme-payroll"}
     )
-    assert anonymous.status_code == 403, anonymous.text
+    assert anonymous.status_code == 404, anonymous.text
+    assert "tenant" not in anonymous.text
 
     cross_tenant = client.get(
         "/enterprise/connectors/sql_connector/probe",
         params={"dataset_id": "acme-payroll", "user": "analyst"},
     )
-    assert cross_tenant.status_code == 403
+    assert cross_tenant.status_code == 404
+    missing = client.get(
+        "/enterprise/connectors/sql_connector/probe",
+        params={"dataset_id": "no-such-dataset", "user": "analyst"},
+    )
+    assert (cross_tenant.status_code, cross_tenant.text) == (
+        missing.status_code,
+        missing.text,
+    ), "foreign and absent must be indistinguishable"
 
     allowed = client.get(
         "/enterprise/connectors/sql_connector/probe",

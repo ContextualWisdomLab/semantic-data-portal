@@ -97,7 +97,10 @@ def test_the_probe_route_the_console_calls_is_still_actor_gated() -> None:
         "/enterprise/connectors/sql_connector/probe",
         params={"dataset_id": "crm-customer-master"},
     )
-    assert refused.status_code == 403, refused.text
+    # 404 since the route began resolving its query-parameter dataset in the
+    # caller's tenant scope. The property this test guards is that the route is
+    # still refused without an actor - which it is - not the particular 4xx.
+    assert refused.status_code == 404, refused.text
 
     allowed = client.get(
         "/enterprise/connectors/sql_connector/probe",

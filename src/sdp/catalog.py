@@ -17,6 +17,7 @@ from .domain import (
     DatasetPatchRequest,
 )
 from .evidence import (
+    MAX_IN_MEMORY_AUDIT_EVENTS,
     append_audit_event,
     audit_tenant_id,
     has_configured_evidence_store,
@@ -125,6 +126,35 @@ def audited_patch_values(values: Dict[str, Any]) -> Dict[str, Any]:
     return projected
 
 
+GOOD_COMPLETENESS_BADGE_SCORE = 0.8
+
+
+def completeness_badge(dataset: Dataset) -> str:
+    """Grade a dataset's metadata completeness, never above its validation result.
+
+    ``src/sdp_core/kpis.py`` publishes this guardrail on the
+    ``metadata_completeness`` KPI, verbatim: **"Completeness must not hide failed
+    validation."** The badge broke it. Measured on a dataset with no owner, no
+    steward, no distributions and no mappings:
+
+        GET /catalog/datasets/<id>/validate -> is_valid: false, critical: true
+        GET /catalog/datasets/<id>          -> completeness_badge: "good"
+
+    because the badge read only ``metadata_recommendation_score >= 0.8`` and
+    never consulted validation. A dataset that fails validation critically is now
+    ``invalid``; one that fails non-critically is at best ``partial``.
+
+    The threshold also lived in two places - here and in the search-result
+    projection - so it is defined once and both read it.
+    """
+    report = validate_metadata(dataset)
+    if not report.get("is_valid", True):
+        return "invalid" if report.get("critical") else "partial"
+    if dataset.metadata_recommendation_score >= GOOD_COMPLETENESS_BADGE_SCORE:
+        return "good"
+    return "partial"
+
+
 def discovery_view(dataset: Dataset) -> Dict[str, Any]:
     """Project a dataset onto the fields the ungated catalog surface may publish.
 
@@ -140,7 +170,7 @@ def discovery_view(dataset: Dataset) -> Dict[str, Any]:
     published["schema_field_count"] = len(dataset.schema)
     published["metadata_completeness"] = dataset.metadata_completeness
     published["metadata_recommendation_score"] = dataset.metadata_recommendation_score
-    published["completeness_badge"] = "good" if dataset.metadata_recommendation_score >= 0.8 else "partial"
+    published["completeness_badge"] = completeness_badge(dataset)
     return published
 
 
@@ -148,7 +178,11 @@ def discovery_view(dataset: Dataset) -> Dict[str, Any]:
 # an audited route could grow process memory without limit. Denials stay audited -
 # dropping them would hide exactly the attempts an auditor looks for - but the
 # in-memory window is bounded, matching the observability ring buffer's design.
-MAX_IN_MEMORY_AUDIT_EVENTS = 2000
+#
+# The cap is imported from ``evidence`` rather than declared here. Capping this
+# list alone did not bound memory: ``_record_audit_event`` writes each event to
+# both lists, and ``evidence._AUDIT_EVENT_LOG`` had no cap, so 2600 refused
+# requests left this list at 2000 and that one at 2600.
 
 
 def _record_audit_event(event: AuditEvent) -> AuditEvent:

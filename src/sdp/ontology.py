@@ -324,6 +324,12 @@ def propose_patch(concept: str, suggestion: str, *, requestor: str = "anonymous"
     return patch.model_dump()
 
 
+# The statuses a patch can hold. `GET /ontology/patches?status=` matched this
+# set by string equality with no validation, so an unknown or wrongly-cased
+# value simply matched nothing and reported an empty queue.
+PATCH_STATUSES = frozenset({"proposed", "approved", "rejected"})
+
+
 def list_patches(status: str | None = None) -> list[dict[str, Any]]:
     patches = [patch.model_dump() for patch in _ONTOLOGY_PATCHES]
     if status:
