@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+from collections.abc import Mapping
+
 from pydantic import BaseModel, Field
 
 
@@ -22,6 +25,11 @@ class ProductionReadinessManifest(BaseModel):
     integrations: list[ProductionIntegration]
     demo_blockers: list[str]
     paid_pilot_blockers: list[str]
+    # Measured, not authored: which integrations have their declared environment
+    # present in this deployment, and which do not.
+    configured_integrations: list[str] = []
+    unconfigured_integrations: list[str] = []
+    missing_environment: dict[str, list[str]] = {}
 
 
 def production_integration_registry() -> list[ProductionIntegration]:
@@ -143,9 +151,54 @@ def production_integration_registry() -> list[ProductionIntegration]:
     ]
 
 
-def enterprise_production_readiness_manifest() -> ProductionReadinessManifest:
+def _missing_required_environment(
+    integration: ProductionIntegration, environment: Mapping[str, str]
+) -> list[str]:
+    """Name the declared environment variables this deployment does not set."""
+    return [
+        name
+        for name in integration.required_environment
+        if not (environment.get(name) or "").strip()
+    ]
+
+
+def enterprise_production_readiness_manifest(
+    environment: Mapping[str, str] | None = None,
+) -> ProductionReadinessManifest:
+    """Report production readiness, separating what is built from what is configured.
+
+    ``paid_pilot_ready`` was derived solely from each integration's authored
+    ``status`` literal, every one of which is ``"implemented"``. Nothing a buyer
+    or operator could do made it false: with zero configuration and its own named
+    proof endpoints failing, the manifest still published
+    ``paid_pilot_ready: true`` with ``paid_pilot_blockers: []``. A flag that
+    cannot be falsified is not evidence.
+
+    The two claims it conflated are genuinely different and both are kept:
+
+    * ``status`` is a statement about the **codebase** - this integration is
+      built - and stays as authored, because it is true.
+    * ``configured_integrations`` / ``missing_environment`` are measured from the
+      **deployment**, by checking the variables each integration already declares
+      in ``required_environment``.
+
+    A paid pilot needs a configured deployment, not only shipped code, so
+    ``paid_pilot_ready`` now requires both. ``demo_release_ready`` is unchanged:
+    the demo path runs on in-memory defaults by design, which is why
+    ``sdp.demo_smoke`` does not gate on this flag.
+    """
+    resolved_environment = os.environ if environment is None else environment
     integrations = production_integration_registry()
-    paid_pilot_blockers = [item.id for item in integrations if item.status != "implemented"]
+
+    unbuilt = [item.id for item in integrations if item.status != "implemented"]
+    missing_environment = {
+        item.id: missing
+        for item in integrations
+        if (missing := _missing_required_environment(item, resolved_environment))
+    }
+    unconfigured = sorted(missing_environment)
+    paid_pilot_blockers = sorted({*unbuilt, *unconfigured})
+
     return ProductionReadinessManifest(
         product="Semantic Data Portal",
         valuation_target_krw=2_000_000_000,
@@ -155,4 +208,9 @@ def enterprise_production_readiness_manifest() -> ProductionReadinessManifest:
         integrations=integrations,
         demo_blockers=[],
         paid_pilot_blockers=paid_pilot_blockers,
+        configured_integrations=[
+            item.id for item in integrations if item.id not in missing_environment
+        ],
+        unconfigured_integrations=unconfigured,
+        missing_environment=missing_environment,
     )

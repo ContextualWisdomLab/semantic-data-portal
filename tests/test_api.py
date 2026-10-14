@@ -343,7 +343,14 @@ def test_enterprise_production_readiness_tracks_paid_pilot_integrations():
     assert body["valuation_target_krw"] == 2_000_000_000
     assert body["current_stage"] == "pilot_candidate"
     assert body["demo_release_ready"] is True
-    assert body["paid_pilot_ready"] is True
+    # paid_pilot_ready is measured, not authored: it was derived from each
+    # integration's hardcoded status literal (all "implemented"), so no real
+    # change could make it false. With no SDP_* configuration in this test
+    # environment the honest answer is False, and the manifest names which
+    # variables are missing per integration. See
+    # tests/test_production_readiness_measurement.py.
+    assert body["paid_pilot_ready"] is False
+    assert body["paid_pilot_blockers"], "an unconfigured deployment must name its blockers"
 
     integrations = {item["id"]: item for item in body["integrations"]}
     assert integrations["postgres_evidence_store"]["status"] == "implemented"
@@ -362,10 +369,23 @@ def test_enterprise_production_readiness_tracks_paid_pilot_integrations():
     assert integrations["request_observability_export"]["status"] == "implemented"
     assert "/enterprise/observability" in integrations["request_observability_export"]["current_evidence"]
 
-    assert body["paid_pilot_blockers"] == []
-    assert "oidc_jwks_verification" not in body["paid_pilot_blockers"]
-    assert "connector_credential_vault" not in body["paid_pilot_blockers"]
-    assert "request_observability_export" not in body["paid_pilot_blockers"]
+    assert sorted(body["paid_pilot_blockers"]) == sorted(body["unconfigured_integrations"]), (
+        "with every integration built, the only blockers are unconfigured ones"
+    )
+    # It blocks on configuration, not on being unbuilt: its status is
+    # "implemented" and only its SDP_OIDC_* variables are unset here.
+    assert integrations["oidc_jwks_verification"]["status"] == "implemented"
+    assert "oidc_jwks_verification" in body["unconfigured_integrations"]
+    assert body["missing_environment"]["oidc_jwks_verification"]
+    assert integrations["connector_credential_vault"]["status"] == "implemented"
+    assert "connector_credential_vault" in body["unconfigured_integrations"]
+    assert integrations["request_observability_export"]["status"] == "implemented"
+    assert "request_observability_export" in body["unconfigured_integrations"]
+    # Every integration is built; all four block only on configuration.
+    assert sorted(body["unconfigured_integrations"]) == sorted(body["paid_pilot_blockers"])
+    assert all(
+        item["status"] == "implemented" for item in body["integrations"]
+    ), "no integration should be unbuilt here; blockers must be configuration only"
     assert body["demo_blockers"] == []
 
 
@@ -540,14 +560,25 @@ def test_enterprise_evidence_pack_summarizes_buyer_diligence():
     assert body["policy_decision_count"] >= 1
     assert body["audit_event_count"] >= 1
     assert body["production_demo_release_ready"] is True
-    assert body["production_paid_pilot_ready"] is True
-    assert body["production_paid_pilot_blockers"] == 0
+    # paid_pilot_ready is measured, not authored: it was derived from each
+    # integration's hardcoded status literal (all "implemented"), so no real
+    # change could make it false. With no SDP_* configuration in this test
+    # environment the honest answer is False, and the manifest names which
+    # variables are missing per integration. See
+    # tests/test_production_readiness_measurement.py.
+    assert body["production_paid_pilot_ready"] is False
+    assert body["production_paid_pilot_blockers"] > 0, (
+        "an unconfigured deployment must report its blockers"
+    )
     assert body["saleability_gates"]["metadata_validation_pass_rate"] == "pass"
     assert body["saleability_gates"]["shacl_validation_pass_rate"] == "pass"
     assert body["saleability_gates"]["steward_review_queue"] == "pass"
     assert body["saleability_gates"]["ontology_mapping_coverage"] == "pass"
     assert body["saleability_gates"]["production_demo_release"] == "pass"
-    assert body["saleability_gates"]["production_paid_pilot"] == "pass"
+    # "needs_integration", not "pass": the gate now reflects the measured
+    # configuration state, and this suite runs with no SDP_* variables set.
+    # That the evidence pack propagates it is the point of this assertion.
+    assert body["saleability_gates"]["production_paid_pilot"] == "needs_integration"
     assert "/enterprise/production-readiness" in body["proof_endpoints"]
     assert "/enterprise/shacl-validation" in body["proof_endpoints"]
     assert "/enterprise/steward-review" in body["proof_endpoints"]
@@ -821,8 +852,9 @@ def test_enterprise_demo_smoke_summary_is_ready():
     assert summary["rest_connector_adapter_status"] == "implemented"
     assert summary["production_current_stage"] == "pilot_candidate"
     assert summary["production_demo_release_ready"] is True
-    assert summary["production_paid_pilot_ready"] is True
-    assert summary["production_paid_pilot_blockers"] == 0
+    # Measured from the environment; this suite runs with no SDP_* set.
+    assert summary["production_paid_pilot_ready"] is False
+    assert summary["production_paid_pilot_blockers"] > 0
     assert summary["ready"] is True
 
 
