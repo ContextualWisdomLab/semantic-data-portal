@@ -200,15 +200,29 @@ def resolve_terms(text: str) -> list[Resolution]:
     return resolved
 
 
-def concept_assets(concept: str) -> Dict[str, Any]:
+def concept_assets(concept: str, tenant_ids: list[str] | None = None) -> Dict[str, Any]:
+    """Describe one concept and the datasets it maps to, scoped to the caller.
+
+    The concept vocabulary is shared, but ``dataset_ids`` is dataset identity.
+    ``_INDEX`` is built from ``list_datasets()`` with no tenant predicate, so this
+    returned every tenant's dataset ids - and ``POST /llm/search`` served it to a
+    caller whose own policy decision said ``deny``. ``withheld_dataset_count``
+    declares the truncation so a short list does not read as the whole mapping.
+    """
     canonical = _canonicalize_concept(concept)
     datasets = _INDEX.get(canonical, [])
+    if tenant_ids is not None:
+        visible_ids = {dataset.id for dataset in list_datasets(tenant_ids)}
+        scoped = [dataset_id for dataset_id in datasets if dataset_id in visible_ids]
+    else:
+        scoped = list(datasets)
     metadata = _CONCEPT_DEFINITIONS.get(canonical, {})
     return {
         "concept": canonical,
         "graph": concept_graph(canonical),
-        "dataset_ids": datasets,
-        "count": len(datasets),
+        "dataset_ids": scoped,
+        "count": len(scoped),
+        "withheld_dataset_count": len(datasets) - len(scoped),
         "aliases": [canonical] + list(metadata.get("aliases", [])),
     }
 

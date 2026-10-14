@@ -1144,6 +1144,20 @@ def llm_search(payload: dict[str, str]) -> dict[str, Any]:
         }
     top = resolved[0]
     decision = evaluate(subject=user, resource="catalog", action="discover", purpose=purpose)
+    if decision.effect != "allow":
+        # The route evaluated policy, got `deny`, and served the payload anyway
+        # with the denial embedded as decoration: a denied anonymous caller
+        # received `recommendations.dataset_ids` for every tenant, because the
+        # ontology index is built with no tenant predicate. A decision that does
+        # not decide anything is not policy-before-data-access.
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "policy_scope": "catalog_discovery",
+                "policy_decision_id": decision.decision_id,
+                "reason": decision.reason,
+            },
+        )
     return {
         "question": query,
         "mapped_term": top.term,
@@ -1151,7 +1165,7 @@ def llm_search(payload: dict[str, str]) -> dict[str, Any]:
         "purpose": purpose,
         "policy_scope": "catalog_discovery",
         "policy": decision.model_dump(),
-        "recommendations": ontology.concept_assets(top.term),
+        "recommendations": ontology.concept_assets(top.term, accessible_tenant_ids(user)),
     }
 
 
