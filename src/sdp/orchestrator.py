@@ -155,7 +155,14 @@ def validate_sql_query(sql: str, *, source_system: str) -> list[str]:
         return warnings
 
     expected = _source_table_name(source_system).lower()
-    referenced_tables = {_safe_identifier(table.rsplit(".", 1)[-1]).lower() for table in referenced}
+    # Compare the WHOLE reference. Taking only the last dot-separated component
+    # made any qualification whose leaf matched pass the allow-list:
+    # pg_catalog.customer, otherdb.otherschema.customer and
+    # information_schema.customer all reduce to "customer". The drafter emits the
+    # bare name (_source_table_name), so a qualified reference is one the
+    # allow-list cannot prove. _safe_identifier maps the dot to "_", so a
+    # qualified name can never collide with the bare one.
+    referenced_tables = {_safe_identifier(table).lower() for table in referenced}
     if referenced_tables != {expected}:
         warnings.append("unauthorized_table_reference")
 

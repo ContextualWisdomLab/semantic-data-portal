@@ -810,7 +810,7 @@ def test_enterprise_demo_smoke_summary_is_ready():
 def test_enterprise_connector_probe_exposes_demo_evidence():
     response = client.get(
         "/enterprise/connectors/sql_connector/probe",
-        params={"dataset_id": "crm-customer-master"},
+        params={"dataset_id": "crm-customer-master", "user": "admin"},
     )
     assert response.status_code == 200
 
@@ -831,7 +831,7 @@ def test_enterprise_connector_probe_exposes_demo_evidence():
 def test_enterprise_rdf_connector_probe_exposes_semantic_store_evidence():
     response = client.get(
         "/enterprise/connectors/rdf_connector/probe",
-        params={"dataset_id": "semantic-glossary"},
+        params={"dataset_id": "semantic-glossary", "user": "admin"},
     )
     assert response.status_code == 200
 
@@ -851,7 +851,7 @@ def test_enterprise_rdf_connector_probe_exposes_semantic_store_evidence():
 def test_enterprise_file_lake_connector_probe_exposes_manifest_evidence():
     response = client.get(
         "/enterprise/connectors/file_lake_connector/probe",
-        params={"dataset_id": "crm-event"},
+        params={"dataset_id": "crm-event", "user": "admin"},
     )
     assert response.status_code == 200
 
@@ -871,7 +871,7 @@ def test_enterprise_file_lake_connector_probe_exposes_manifest_evidence():
 def test_enterprise_rest_connector_probe_exposes_api_contract_gap():
     response = client.get(
         "/enterprise/connectors/rest_connector/probe",
-        params={"dataset_id": "marketing-campaign"},
+        params={"dataset_id": "marketing-campaign", "user": "admin"},
     )
     assert response.status_code == 200
 
@@ -895,7 +895,7 @@ def test_enterprise_rest_connector_probe_uses_vault_reference_without_secret_lea
 
     response = client.get(
         "/enterprise/connectors/rest_connector/probe",
-        params={"dataset_id": "marketing-campaign"},
+        params={"dataset_id": "marketing-campaign", "user": "admin"},
     )
     assert response.status_code == 200
 
@@ -959,13 +959,23 @@ def test_rest_connector_adapter_implements_source_connector_contract():
 def test_enterprise_connector_probe_fails_closed():
     unsupported = client.get(
         "/enterprise/connectors/admin_shell/probe",
-        params={"dataset_id": "crm-event"},
+        params={"dataset_id": "crm-event", "user": "admin"},
     )
     assert unsupported.status_code == 400
 
+    # An unauthorized caller is refused before it learns whether the connector id
+    # is supported: authorization runs ahead of connector resolution.
+    unauthorized = client.get(
+        "/enterprise/connectors/admin_shell/probe",
+        params={"dataset_id": "crm-event"},
+    )
+    assert unauthorized.status_code == 403
+
+    # A missing dataset stays 404 for everyone, matching the browse convention
+    # (test_preview_policy_denies_missing_dataset).
     missing_dataset = client.get(
         "/enterprise/connectors/sql_connector/probe",
-        params={"dataset_id": "unknown"},
+        params={"dataset_id": "unknown", "user": "admin"},
     )
     assert missing_dataset.status_code == 404
 

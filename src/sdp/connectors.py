@@ -1,11 +1,41 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from sdp_core import SourceConnector, buyer_demo_context_for_dataset, connector_registry_manifest
 
 from .catalog import get_dataset
 from .credentials import connector_secret_status
+
+
+def redacted_source_system(source_system: str) -> str:
+    """Describe a dataset's source system without the credentials its DSN may carry.
+
+    ``source_system`` is a governed field that ``catalog.discovery_view``
+    withholds, and a DSN routinely carries a password in its userinfo component
+    (``postgresql://user:secret@host/db``). The connector evidence needs the
+    locator, never the secret, so userinfo and query are dropped on every path -
+    including the authorized one, since no caller needs the credential.
+    """
+    try:
+        parts = urlsplit(source_system)
+    except ValueError:
+        return "redacted"
+    if not parts.scheme:
+        return source_system
+    try:
+        host = parts.hostname
+    except ValueError:
+        return f"{parts.scheme}://redacted"
+    if host is None:
+        return urlunsplit((parts.scheme, "", parts.path, "", ""))
+    try:
+        port = parts.port
+    except ValueError:
+        port = None
+    authority = f"{host}:{port}" if port else host
+    return urlunsplit((parts.scheme, authority, parts.path, "", ""))
 
 
 _IMPLEMENTED_PROOF = {
@@ -314,7 +344,7 @@ def connector_probe(connector_id: str, dataset_id: str) -> dict[str, Any]:
         "connector_id": connector.id,
         "dataset_id": dataset.id,
         "source_type": connector.source_type,
-        "source_system": dataset.source_system,
+        "source_system": redacted_source_system(dataset.source_system),
         "status": "ready_for_demo" if ready_for_demo else "contract_only",
         "contract_methods": ["inspect_schema", "preview"],
         "adapter_status": adapter_status,

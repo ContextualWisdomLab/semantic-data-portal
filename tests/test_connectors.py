@@ -16,7 +16,14 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+import json  # noqa: E402
+
+from fastapi.testclient import TestClient  # noqa: E402
+
 from sdp import catalog, connectors, evidence  # noqa: E402
+from sdp.api import app  # noqa: E402
+
+client = TestClient(app)
 
 # connector id -> a source_system scheme it accepts
 _ACCEPTS = {
@@ -106,3 +113,51 @@ def test_preview_wrong_scheme_raises_valueerror(connector_id: str) -> None:
     conn = connectors.get_source_connector(connector_id)
     with pytest.raises(ValueError):
         conn.preview("wrong-scheme-preview", limit=10, offset=0)
+
+
+def test_connector_probe_never_publishes_source_credentials():
+    """``connector_probe`` returned ``dataset.source_system`` verbatim on a route
+    with no actor, so a credentialed DSN reached an unauthenticated caller:
+
+        source_system: postgresql://svc_user:S3cr3t-Pa55@payroll.acme.internal:5432/payroll
+
+    ``source_system`` is a ``_GOVERNED_DATASET_FIELDS`` member that
+    ``catalog.discovery_view`` withholds; the probe re-published it.
+    """
+    _seed(
+        "acme-payroll",
+        source_system="postgresql://svc_user:S3cr3t-Pa55@payroll.acme.internal:5432/payroll",
+    )
+    probe = connectors.connector_probe("sql_connector", "acme-payroll")
+    body = json.dumps(probe)
+    assert "S3cr3t-Pa55" not in body
+    assert "svc_user" not in body
+    # The non-secret locator survives, so the evidence stays useful.
+    assert probe["source_system"] == "postgresql://payroll.acme.internal:5432/payroll"
+
+
+def test_connector_probe_route_is_gated_like_the_dataset_it_describes():
+    """The route releases one dataset's source system, schema-field count and
+    sensitivity, so it is gated and audited like the other governed reads."""
+    _seed("acme-payroll", source_system="postgresql://u:p@payroll.acme.internal/payroll")
+    catalog._DATA["acme-payroll"] = catalog._DATA["acme-payroll"].model_copy(
+        update={"tenant_id": "acme-bank"}
+    )
+
+    anonymous = client.get(
+        "/enterprise/connectors/sql_connector/probe", params={"dataset_id": "acme-payroll"}
+    )
+    assert anonymous.status_code == 403, anonymous.text
+
+    cross_tenant = client.get(
+        "/enterprise/connectors/sql_connector/probe",
+        params={"dataset_id": "acme-payroll", "user": "analyst"},
+    )
+    assert cross_tenant.status_code == 403
+
+    allowed = client.get(
+        "/enterprise/connectors/sql_connector/probe",
+        params={"dataset_id": "acme-payroll", "user": "admin"},
+    )
+    assert allowed.status_code == 200
+    assert "p@payroll" not in allowed.text

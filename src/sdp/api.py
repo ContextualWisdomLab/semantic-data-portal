@@ -315,13 +315,42 @@ def enterprise_oidc_verify(payload: dict[str, Any]) -> dict[str, Any]:
 def enterprise_connector_probe(
     connector_id: str,
     dataset_id: str = Query(..., min_length=1),
+    user: str = Query(default="anonymous"),
+    purpose: str = Query(default="analysis"),
 ) -> dict[str, Any]:
+    # The probe describes one named dataset - its source system, schema-field
+    # count and sensitivity - so it is gated and audited like the other governed
+    # per-dataset reads rather than served as an actor-less manifest.
+    if not catalog.get_dataset(dataset_id):
+        raise HTTPException(status_code=404, detail="dataset not found")
+    decision = evaluate(subject=user, resource=dataset_id, action="schema", purpose=purpose)
+    if decision.effect != "allow":
+        catalog.ingest_event(
+            event_type="enterprise.connector_probe",
+            actor=user,
+            dataset_id=dataset_id,
+            decision="denied",
+            reason=decision.reason,
+            decision_id=decision.decision_id,
+            details={"connector_id": connector_id, "policy_decision_id": decision.decision_id},
+        )
+        raise HTTPException(status_code=403, detail=decision.reason)
     try:
-        return connectors.connector_probe(connector_id, dataset_id)
+        probe = connectors.connector_probe(connector_id, dataset_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except KeyError:
         raise HTTPException(status_code=404, detail="dataset not found")
+    catalog.ingest_event(
+        event_type="enterprise.connector_probe",
+        actor=user,
+        dataset_id=dataset_id,
+        decision="allowed",
+        reason=decision.reason,
+        decision_id=decision.decision_id,
+        details={"connector_id": connector_id, "policy_decision_id": decision.decision_id},
+    )
+    return {**probe, "policy_decision_id": decision.decision_id}
 
 
 @app.get("/healthz")

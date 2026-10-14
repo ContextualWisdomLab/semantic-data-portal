@@ -94,12 +94,17 @@ def test_validate_sql_query_closes_guard_bypasses(sql: str, expected: str) -> No
         "SELECT customer_id FROM customer",
         "SELECT c.customer_id FROM customer AS c",
         "SELECT c.customer_id FROM customer c",
-        "SELECT customer_id FROM analytics.customer",
         "SELECT customer_id FROM customer JOIN customer ON 1=1",
     ],
 )
 def test_validate_sql_query_keeps_accepting_allowlisted_shapes(sql: str) -> None:
-    """Closing the bypasses must not reject the shapes the drafter emits."""
+    """Closing the bypasses must not reject the shapes the drafter emits.
+
+    ``SELECT customer_id FROM analytics.customer`` used to be in this list as an
+    accepted control. That acceptance *was* the qualified-table hole: the check
+    compared only the leaf, so any qualifier passed. The drafter never emits a
+    qualified name, so the bare form is the whole contract.
+    """
     assert orch.validate_sql_query(sql, source_system=_SRC) == []
 
 
@@ -169,3 +174,21 @@ def test_execute_query_dry_run_succeeds_with_zero_rows() -> None:
     )
     assert resp.status == "SUCCEEDED"
     assert resp.row_count == 0
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        # The allow-list compared only the last dot-separated component, so any
+        # qualification whose leaf matches passed with zero warnings.
+        "SELECT count(*) FROM pg_catalog.customer",
+        "SELECT count(*) FROM otherdb.otherschema.customer",
+        "SELECT count(*) FROM information_schema.customer",
+        "SELECT count(*) FROM customer JOIN finance.customer x ON 1=1",
+    ],
+)
+def test_validate_sql_query_rejects_a_qualified_table_whose_leaf_matches(sql: str) -> None:
+    """``FROM pg_catalog.customer`` is not ``FROM customer``. The drafter only ever
+    emits the bare table name (``_source_table_name``), so a qualified reference is
+    one the allow-list cannot prove and must be refused."""
+    assert "unauthorized_table_reference" in orch.validate_sql_query(sql, source_system=_SRC)
