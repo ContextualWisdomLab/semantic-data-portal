@@ -209,7 +209,17 @@ def _violation(rule: QualityRule, observed: Any) -> dict[str, Any] | None:
                 "field is absent" if observed is None else "field is not a number"
             ),
         }
-    assert rule.threshold is not None  # every comparison but non_empty has one
+    if rule.threshold is None:
+        # Every comparison but ``non_empty`` declares a threshold, so this is an
+        # internal invariant - but it is checked rather than asserted: ``assert``
+        # is stripped under ``-O``, and a ``None`` threshold would then reach
+        # ``numeric < None`` and raise TypeError inside a published read. A
+        # misdeclared rule reports itself instead.
+        return {
+            **base,
+            "evaluated": False,
+            "unevaluated_reason": "rule declares no threshold to compare against",
+        }
     violated = (
         numeric < rule.threshold
         if rule.comparison == "below"

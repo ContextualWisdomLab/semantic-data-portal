@@ -20,7 +20,7 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                    937 passed, 11 skipped
+    pytest                    939 passed, 11 skipped
     pytest (역방향/난수 순서)  순서 무관 통과 (역순 + seed 11/707/31337)
     pytest tests/fuzz          11 passed
     python -m sdp.demo_smoke   exit 0, "ready": true
@@ -360,6 +360,10 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
   있습니다) 0.001 넘으면 발화하는 것도 함께 확인합니다 — 그래야 앞의 단언이 죽은 규칙
   때문에 통과하는 것이 아님이 증명됩니다. 이에 따라 LIN-004는 `not_implemented` →
   `implemented`입니다.
+  한 가지를 자체 점검에서 고쳤습니다: 임계값 비교 전의 내부 불변식이 `assert`였는데
+  `-O`에서는 제거되므로 threshold가 `None`인 규칙이 `numeric < None`에 도달해 공개된
+  읽기 안에서 TypeError를 냈을 수 있습니다. 이제 잘못 선언된 규칙은 예외 대신
+  `unevaluated`로 자기 상태를 보고합니다.
 - **PRD가 선언한 여섯 개 지연 예산을 측정하게 했습니다 — 단방향으로.**
   `docs/prd-trd.md`는 표면별 p95 예산을 선언합니다(NFR-PERF-001~006: catalog 검색 2초,
   dataset 상세 1.5초, schema browsing 3초, preview 10초, LLM 답변 15초, ontology term
@@ -390,7 +394,15 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
   1005개에 대해 2000-토큰 질의 **5.10초**를 측정하고 있고, 이는 NFR-PERF-001의 2초 예산을
   넘습니다(그래서 질의 길이가 최적화가 아니라 상한으로 막혀 있습니다).
   이에 따라 NFR-PERF-001~006은 `not_implemented` → `partial`로, CAT-001의 비고는 지연
-  측면이 측정되었음을 반영해 갱신했습니다. `implemented`가 아닌 이유는 위의 단방향성
+  측면이 측정되었음을 반영해 갱신했습니다.
+  라우트 분류에는 bounded cache를 붙였습니다. 한 번의 리포트가 버퍼 용량만큼의 경로를
+  전체 라우트에 대조하고 `prometheus_metrics_text`가 observability manifest를 통해 거기
+  도달하므로, scrape마다 그 작업이 반복되고 있었습니다. 서로 다른 경로 500개로 채운
+  버퍼에서 측정: `/metrics` **37.0 → 5.8 ms**, `/enterprise/latency-budgets`
+  **73.6 → 6.2 ms**. `{dataset_id}` 경로는 호출자가 주는 값이므로 캐시는 **상한이 있어야**
+  합니다(무한 맵은 외부에서 프로세스 메모리를 키우는 경로입니다) — 테스트가 상한을
+  단언합니다. 라우트 테이블은 import 시점에 고정되고 이후 등록되는 라우트가 없으므로
+  캐시된 분류가 낡을 수 없습니다. `implemented`가 아닌 이유는 위의 단방향성
   그대로입니다 — 요구사항은 배포에 대한 진술이고 이 측정은 그것을 확인할 수 없습니다.
 - **요구사항 대응 매트릭스를 전수로 만들고 기계가 강제하게 했습니다.**
   `CLAUDE.md`가 요구사항 대응 매트릭스로 지목하는 `docs/implementation-compliance.md`를

@@ -293,6 +293,38 @@ def test_route_template_for_classifies_with_the_apps_own_router() -> None:
     assert route_template_for("GET", "/no/such/path") is None
 
 
+def test_the_classification_cache_is_bounded_and_does_not_change_the_answer() -> None:
+    """A ``{dataset_id}`` path is caller-supplied, so its cache must be bounded.
+
+    One report classifies up to the buffer capacity of paths against every
+    route, and ``prometheus_metrics_text`` reaches that through the
+    observability manifest, so the work repeats on every scrape. Measured with
+    a full buffer of 500 distinct paths, before and after the cache::
+
+        GET /metrics                     37.0 ms -> 5.8 ms
+        GET /enterprise/latency-budgets  73.6 ms -> 6.2 ms
+
+    An unbounded map keyed on a caller-supplied path would be a way to grow
+    process memory from outside, which is why the size is asserted here.
+    """
+    info = route_template_for.cache_info()
+    assert info.maxsize is not None and info.maxsize > 0, (
+        "the classification cache must be bounded"
+    )
+    # Correct through the cache, on both a hit and a miss, and for a template
+    # and a non-route alike.
+    for _ in range(2):
+        assert (
+            route_template_for("GET", "/browse/crm-event/schema")
+            == "/browse/{dataset_id}/schema"
+        )
+        assert route_template_for("GET", "/no/such/path") is None
+    # Many distinct caller-supplied ids may not grow it past its bound.
+    for index in range(info.maxsize + 50):
+        route_template_for("GET", f"/catalog/datasets/probe-{index}")
+    assert route_template_for.cache_info().currsize <= info.maxsize
+
+
 def test_nearest_rank_percentile_returns_an_observation_that_happened() -> None:
     """Hand-computed: nearest-rank p95 is the ceil(0.95*n)-th smallest value."""
     assert nearest_rank_percentile([5.0], 0.95) == 5.0

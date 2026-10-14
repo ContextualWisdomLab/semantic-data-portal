@@ -210,6 +210,38 @@ def test_an_input_that_cannot_be_compared_is_unevaluated_not_passing() -> None:
     assert qw._violation(issue_rule, []) is None
 
 
+def test_a_rule_with_no_threshold_reports_itself_instead_of_raising() -> None:
+    """``assert`` is stripped under ``-O``; a misdeclared rule must not 500.
+
+    Every comparison but ``non_empty`` declares a threshold, so this is an
+    internal invariant - but it was an ``assert``, and with assertions stripped
+    a ``None`` threshold would have reached ``numeric < None`` and raised
+    TypeError inside a published read.
+    """
+    misdeclared = qw.QualityRule(
+        rule_id="misdeclared_rule",
+        scope=qw.DATASET_SCOPE,
+        field="quality_score",
+        comparison="below",
+        threshold=None,
+        severity="warning",
+        message="should never be reached",
+    )
+    row = qw._violation(misdeclared, 0.5)
+    assert row is not None
+    assert row["evaluated"] is False
+    assert row["unevaluated_reason"] == (
+        "rule declares no threshold to compare against"
+    )
+    assert "observed_value" not in row
+    # And no shipped rule is in that state.
+    for rule in qw.QUALITY_RULES:
+        if rule.comparison == "non_empty":
+            assert rule.threshold is None, rule.rule_id
+        else:
+            assert rule.threshold is not None, rule.rule_id
+
+
 def test_an_unevaluated_rule_is_counted_rather_than_hidden() -> None:
     """``unevaluated_rule_count`` must reflect the rows it describes."""
     rule = _rules_by_id()["quality_score_below_threshold"]

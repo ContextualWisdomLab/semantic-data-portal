@@ -41,6 +41,7 @@ sample may never produce a verdict - in either direction.
 
 from __future__ import annotations
 
+import functools
 import math
 from typing import Any
 
@@ -147,6 +148,21 @@ def budgeted_route_templates() -> set[tuple[str, str]]:
     return {pair for budget in LATENCY_BUDGETS for pair in budget.routes}
 
 
+# One report classifies up to ``observation_buffer_capacity()`` paths, each
+# against every route, and ``prometheus_metrics_text`` reaches this through the
+# observability manifest - so a scrape paid for 500 x ~60 pattern matches.
+# Measured with a full buffer of distinct paths before this cache:
+#
+#     GET /metrics                     37.0 ms/request
+#     GET /enterprise/observability    42.7 ms/request
+#     GET /enterprise/latency-budgets  73.6 ms/request
+#
+# Real traffic repeats a small set of paths, so memoising collapses almost all
+# of it. The cache is bounded, like every other retained collection here: a
+# ``{dataset_id}`` path is caller-supplied, so an unbounded map keyed on it is a
+# way to grow process memory from outside. The route table is fixed at import -
+# nothing registers a route later - so a cached classification cannot go stale.
+@functools.lru_cache(maxsize=4096)
 def route_template_for(method: str, path: str) -> str | None:
     """The route template this concrete path routes to, or ``None``.
 
