@@ -3,8 +3,9 @@
 The product's distinguishing behaviour is its *refusals*: a governed read is
 refused 403 for a role, sensitivity or purpose, 404 when the dataset is outside
 the caller's tenant scope or absent, 400 for a malformed request, 409 when a
-bounded resource is full or when a request pins an ontology version other than
-the one being served. None of it reached the machine-readable contract.
+bounded resource is full, when a request pins an ontology version other than the
+one being served, or when a write would change an existing graph node's kind.
+None of it reached the machine-readable contract.
 Measured against ``GET /openapi.json`` before this module existed:
 
     routes with a typed request body               5 of 20
@@ -75,11 +76,13 @@ REFUSAL_DESCRIPTIONS: dict[int, str] = {
         "호출자가 읽을 수 없는 증빙 원장에만 남는다."
     ),
     409: (
-        "충돌. 두 가지 경우다 — (1) 상한이 있는 리소스가 가득 찼고 비울 수 있는 "
+        "충돌. 세 가지 경우다 — (1) 상한이 있는 리소스가 가득 찼고 비울 수 있는 "
         "항목이 없다 (시드 개념 어휘는 eviction 대상이 아니다), (2) 요청이 고정한 "
-        "온톨로지 content digest가 현재 어휘의 digest와 다르다. 후자에서 형식이 "
-        "잘못된 digest는 409가 아니라 400이다 — 오타를 \"서버가 다른 어휘를 "
-        "들고 있다\"로 보고하면 클라이언트가 잘못된 조치를 하게 된다."
+        "온톨로지 content digest가 현재 어휘의 digest와 다르다, (3) 이미 다른 "
+        "kind로 존재하는 node id에 쓰려 했다 — node의 kind는 바뀌지 않는다 "
+        "(kind마다 담는 거버닝 속성이 다르고, 덮어쓰면 그 속성이 파괴된다). "
+        "(2)에서 형식이 잘못된 digest는 409가 아니라 400이다 — 오타를 \"서버가 "
+        "다른 어휘를 들고 있다\"로 보고하면 클라이언트가 잘못된 조치를 하게 된다."
     ),
 }
 
@@ -123,7 +126,7 @@ ROUTE_REFUSALS: dict[tuple[str, str], tuple[int, ...]] = {
     ("GET", "/enterprise/connectors/{connector_id}/probe"): (400, 403, 404),
     ("GET", "/enterprise/demo-plan"): (400,),
     ("POST", "/graph/edges"): (400, 403),
-    ("POST", "/graph/nodes"): (403,),
+    ("POST", "/graph/nodes"): (403, 409),
     ("GET", "/graph/nodes/{node_id}"): (403, 404),
     ("POST", "/graph/query"): (400, 403, 404),
     ("POST", "/llm/draft-query"): (400, 403, 404),
@@ -132,7 +135,7 @@ ROUTE_REFUSALS: dict[tuple[str, str], tuple[int, ...]] = {
     ("POST", "/ontology/concepts"): (400, 403, 409),
     ("GET", "/ontology/patches"): (400,),
     ("POST", "/ontology/patches"): (400, 403),
-    ("POST", "/ontology/patches/{patch_id}/review"): (400, 403, 404),
+    ("POST", "/ontology/patches/{patch_id}/review"): (400, 403, 404, 409),
     ("POST", "/ontology/resolve"): (400, 409),
     ("GET", "/ontology/search"): (400, 409),
     ("POST", "/policy/decision"): (403, 404),

@@ -40,6 +40,7 @@ from fastapi.testclient import TestClient
 
 from sdp import ontology, semantic_validation as sv
 from sdp.api import app
+from sdp.domain import OntologyPatch
 
 
 client = TestClient(app, raise_server_exceptions=False)
@@ -118,29 +119,80 @@ def test_a_concept_with_no_definition_is_refused_at_both_publication_paths() -> 
     assert "정의없는개념" not in ontology.list_concepts()
 
 
-def test_an_approval_of_an_unconforming_patch_publishes_nothing_and_stays_proposed() -> None:
-    """The ordering the publication path already got right, now with a real gate.
+@pytest.mark.parametrize(
+    "suggestion", ["", "   ", "\u200b", "\ufeff", "\x00"],
+    ids=["empty", "spaces", "U+200B", "U+FEFF", "NUL"],
+)
+def test_the_queue_cannot_hold_a_proposal_that_can_never_be_approved(
+    suggestion: str,
+) -> None:
+    """Intake and the publication gate must use one predicate for one field.
+
+    ``POST /ontology/patches`` tested ``suggestion.strip()`` while the gate
+    tested visibility, and ``suggestion`` *is* the definition. Measured, a
+    suggestion of U+200B, U+FEFF, U+00AD or NUL was accepted into the shared
+    steward queue with 200 and could then **never** be approved: every approval
+    answered 400 and the patch stayed ``proposed`` forever, so a reviewer's only
+    remedy was to reject a proposal the product itself had accepted. Any
+    authorized analyst could fill a bounded shared queue with them.
+    """
+    with pytest.raises(ValueError, match="must contain"):
+        ontology.propose_patch("승인불가개념", suggestion, requestor="analyst")
+    assert not [
+        item for item in ontology.list_patches() if item["concept"] == "승인불가개념"
+    ]
+
+    response = client.post(
+        "/ontology/patches",
+        json={"actor": "analyst", "concept": "승인불가개념", "suggestion": suggestion},
+    )
+    assert response.status_code == 400, response.text
+
+
+def test_the_approval_gate_is_still_a_backstop_behind_intake() -> None:
+    """Defence in depth: intake refusing is not the same as approval checking.
+
+    Intake now refuses an unconforming suggestion, so a stored patch that fails
+    the shape cannot be produced through the API any more. The approval-path
+    gate still has to hold, because it is what guarantees the publication
+    itself - so the patch is placed in the queue directly here, which is the
+    only way left to exercise the backstop.
 
     ``register_concept`` runs **before** the status write, so a refusal leaves
     the patch proposed rather than marked approved with nothing published - 승인
     recorded, 노출 missing, the exact break that path exists to close.
     """
-    patch = ontology.propose_patch("빈정의개념", "   ", requestor="analyst")
-    assert patch["suggestion"] == ""
+    smuggled = OntologyPatch(
+        id="backstop-patch",
+        concept="밀수된개념",
+        suggestion="",
+        requestor="analyst",
+        confidence=0.5,
+    )
+    ontology._ONTOLOGY_PATCHES.append(smuggled)
+
     with pytest.raises(ValueError, match="definition"):
-        ontology.review_patch(patch["id"], "approve", reviewer="admin")
-    stored = next(item for item in ontology.list_patches() if item["id"] == patch["id"])
+        ontology.review_patch("backstop-patch", "approve", reviewer="admin")
+
+    stored = next(
+        item for item in ontology.list_patches() if item["id"] == "backstop-patch"
+    )
     assert stored["status"] == "proposed"
     assert stored["reviewed_by"] is None
-    assert "빈정의개념" not in ontology.list_concepts()
+    assert "밀수된개념" not in ontology.list_concepts()
 
 
-def test_the_gate_cannot_be_bypassed_by_a_future_caller() -> None:
-    """It lives in the shared pre-write validator, not in each route.
+def test_the_shared_validator_itself_refuses() -> None:
+    """The gate is in ``validate_concept_registration``, not in each route.
 
-    ``register_concept`` has exactly two externally-triggered callers today; a
-    gate installed per route would be one edit away from a third caller that
-    skips it.
+    Renamed from ``test_the_gate_cannot_be_bypassed_by_a_future_caller``,
+    because that is not what this asserts. An adversarial review added a third
+    caller that writes the vocabulary directly - sixteen lines - and measured
+    the whole suite green, this test included. "Cannot be bypassed" is a
+    property of the shape of the code, and it is now checked as one in
+    ``tests/test_concept_write_chokepoint.py``, which fails on exactly that
+    mutation. This test checks the narrower thing its name now claims: calling
+    the validator refuses.
     """
     with pytest.raises(ValueError, match="ConceptShape"):
         ontology.validate_concept_registration("우회시도개념", definition="")
@@ -365,6 +417,194 @@ def test_the_record_the_gate_checks_is_the_record_that_is_stored() -> None:
     assert stored == rebuilt
 
 
+# ------------------------- what the gate must NOT refuse, and must bound ----
+
+
+def test_updating_an_existing_concepts_graph_edges_needs_no_definition() -> None:
+    """The regression this gate introduced, and the reason it was wrong.
+
+    An already-published concept's record is not replaced - the registrar
+    returns the stored record and discards the submission, so an approval cannot
+    silently rewrite a shipped definition. The submitted ``definition`` is
+    therefore not what will exist, and requiring it refused a request that
+    changes nothing in the vocabulary. Measured as a regression: this call went
+    200 -> 400, and this route is the only way to update the graph-store concept
+    record, its broader/narrower/related edges and its embedding. The caller's
+    only way through was to re-send a definition the vocabulary throws away -
+    which the graph store then stored, so one 200 body carried a graph
+    definition the vocabulary never accepted.
+    """
+    # A concept of this test's own, not a seeded one: the graph store singleton
+    # is deliberately outside conftest's restore (see its docstring), so
+    # mutating a seeded concept's graph record leaks into later tests - which is
+    # exactly how the divergence below was found, by a retained test failing in
+    # reversed file order.
+    first = client.post(
+        "/ontology/concepts",
+        json={
+            "actor": "admin",
+            "concept": "재게시대상개념",
+            "definition": "처음 게시한 정의",
+            "aliases": ["first-alias"],
+        },
+    )
+    assert first.status_code == 200, first.text
+    stored_before = ontology.concept_vocabulary_snapshot()["재게시대상개념"]["definition"]
+
+    response = client.post(
+        "/ontology/concepts",
+        json={
+            "actor": "admin",
+            "concept": "재게시대상개념",
+            "related": ["신규연관개념"],
+            "aliases": ["buyer-side"],
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["concept_already_published"] is True
+    assert body["concept_validation"]["evaluated_record"] == "published_vocabulary"
+    assert (
+        ontology.concept_vocabulary_snapshot()["재게시대상개념"]["definition"]
+        == stored_before
+    )
+
+
+def test_the_graph_mirror_keeps_the_vocabularys_definition() -> None:
+    """The two stores must not disagree about a concept's definition.
+
+    The registrar keeps the stored definition and discards a re-submission, but
+    the route handed the raw submission to the graph store - so a re-upsert that
+    simply omitted ``definition`` left the graph store holding ``''`` while the
+    vocabulary held the real text, and ``GET /ontology/term/{term}/graph``,
+    which reads the store, served the empty one. Measured on the seeded concept
+    고객; a retained test (``test_the_shared_vocabulary_itself_stays_open``)
+    caught it in reversed file order.
+    """
+    published = client.post(
+        "/ontology/concepts",
+        json={
+            "actor": "admin",
+            "concept": "거울개념",
+            "definition": "거울이 지켜야 하는 정의",
+            "aliases": ["mirror-first"],
+        },
+    )
+    assert published.status_code == 200, published.text
+
+    reupsert = client.post(
+        "/ontology/concepts",
+        json={"actor": "admin", "concept": "거울개념", "aliases": ["mirror-second"]},
+    )
+    assert reupsert.status_code == 200, reupsert.text
+
+    graph = client.get("/ontology/term/거울개념/graph").json()
+    assert graph["definition"] == "거울이 지켜야 하는 정의"
+    assert (
+        ontology.concept_vocabulary_snapshot()["거울개념"]["definition"]
+        == graph["definition"]
+    )
+    # The caller's own fields still reach the mirror; only the definition is
+    # taken from the vocabulary.
+    assert "mirror-second" in graph["aliases"]
+
+
+def test_the_authoritative_definition_resolves_through_the_alias_index() -> None:
+    """A caller naming an alias must not look like a new concept."""
+    assert ontology.published_concept_definition("customer") == (
+        ontology.concept_vocabulary_snapshot()["고객"]["definition"]
+    )
+    assert ontology.published_concept_definition("존재하지않는개념") is None
+
+
+def test_the_report_names_the_record_its_verdict_is_about() -> None:
+    """``evaluated_record`` is to the subject what ``evaluated_shapes`` is to the
+    constraints.
+
+    On a re-publication the submitted payload is discarded, so a report that did
+    not say which record it read let a 200 response carry ``conforms: true``
+    about content the caller never sent.
+    """
+    fresh = client.post(
+        "/ontology/concepts",
+        json={"actor": "admin", "concept": "주체표기개념", "definition": "정의", "aliases": ["subject"]},
+    )
+    assert fresh.status_code == 200, fresh.text
+    assert fresh.json()["concept_validation"]["evaluated_record"] == "published_vocabulary"
+
+    report = ontology.concept_shape_report(
+        "임의개념", ontology.concept_record(definition="정의")
+    )
+    assert report["evaluated_record"] == "submitted"
+
+
+@pytest.mark.parametrize(
+    "length,expected", [(2000, 200), (2001, 400), (200_000, 400)],
+    ids=["at-the-bound", "one-over", "far-over"],
+)
+def test_the_required_definition_is_bounded(length: int, expected: int) -> None:
+    """A field made mandatory on the one path that did not bound it.
+
+    Measured: a 2,000,000-character definition was accepted and stored in full,
+    in a 500-slot process-lifetime vocabulary. The concept *name* is bounded at
+    the same constant three lines from the gate, and the patch path refuses a
+    2001-character suggestion at intake, so the two publication paths disagreed
+    about the same field.
+    """
+    response = client.post(
+        "/ontology/concepts",
+        json={
+            "actor": "admin",
+            "concept": f"길이개념-{length}",
+            "definition": "가" * length,
+            "aliases": [f"len-{length}"],
+        },
+    )
+    assert response.status_code == expected, response.text
+    if expected == 400:
+        assert "longer than" in response.json()["detail"]
+
+
+def test_the_published_bound_is_the_enforced_bound() -> None:
+    """One constant, so the shape and the two paths cannot disagree."""
+    assert sv._shape("ConceptShape")["max_property_length"] == sv.MAX_PUBLISHED_FIELD_LENGTH
+    assert ontology.MAX_ONTOLOGY_PATCH_FIELD == sv.MAX_PUBLISHED_FIELD_LENGTH
+
+
+def test_the_vocabulary_snapshot_is_a_real_copy() -> None:
+    """``dict(record)`` handed out the live lists under a read-only docstring.
+
+    Measured through this accessor alone, with no private access: appending to
+    the returned ``narrower`` list installed an unresolvable hierarchy target
+    into the published vocabulary, and an alias appended the same way takes a
+    term ``_assert_no_alias_conflict`` refuses. A "copy" that aliases its source
+    is worse than no copy, because callers trust the docstring.
+    """
+    snapshot = ontology.concept_vocabulary_snapshot()
+    snapshot["매출"]["narrower"].append("밀수된하위")
+    snapshot["고객"]["aliases"].append("매출")
+    snapshot["이탈"]["definition"] = "덮어쓴 정의"
+    live = ontology.concept_vocabulary_snapshot()
+    assert "밀수된하위" not in live["매출"]["narrower"]
+    assert "매출" not in live["고객"]["aliases"]
+    assert live["이탈"]["definition"] != "덮어쓴 정의"
+    assert (
+        ontology.ontology_version_identity()["digest_matches_recorded_revision"] is True
+    )
+
+
+@pytest.mark.parametrize("value", [5, None, ["x"], {"a": 1}], ids=lambda v: type(v).__name__)
+def test_a_non_string_definition_is_refused_with_value_error(value: object) -> None:
+    """``definition.strip()`` raised AttributeError, which the routes do not map.
+
+    A function documented to signal refusal with ValueError handed an in-process
+    caller an unmapped exception type. Refused rather than coerced: ``str(5)``
+    would publish "5" as a definition, which is a fabrication, not a repair.
+    """
+    with pytest.raises(ValueError, match="must be a string"):
+        ontology.validate_concept_registration("타입검사개념", definition=value)
+
+
 # ----------------------------------------------- the platform-wide surface --
 
 
@@ -379,6 +619,12 @@ def test_the_enterprise_surface_publishes_vocabulary_conformance() -> None:
     ]
     concept = body["concept_conformance"]
     assert concept["evaluated_shapes"] == ["ConceptShape"]
+    # The scope the number covers, declared: a kind="concept" node written
+    # straight to the graph store is not in the vocabulary and is not counted -
+    # measured, such a node with definition "" is served by /graph/nodes while
+    # this pass rate stays 1.0.
+    assert concept["conformance_scope"] == sv.CONCEPT_CONFORMANCE_SCOPE
+    assert "POST /graph/nodes" in concept["conformance_scope"]
     assert concept["concept_count"] == len(ontology.list_concepts())
     assert concept["concept_pass_rate"] == 1.0
     assert concept["concept_warning_count"] == 10

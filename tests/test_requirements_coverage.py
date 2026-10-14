@@ -124,15 +124,34 @@ def _resolution_failure(pointer: str, resolvers: dict[str, object]) -> str:
             return "no such route is served"
         return ""
     if kind == "func":
-        module_name, _, attribute = target.rpartition(".")
-        if not module_name:
-            return "func pointer needs a dotted module path"
-        try:
-            module = importlib.import_module(module_name)
-        except ImportError as exc:  # pragma: no cover - a real import break fails elsewhere first
-            return f"module does not import: {exc}"
-        if not hasattr(module, attribute):
-            return "module has no such attribute"
+        # Walks the dotted path from the longest importable prefix, so a method
+        # on a class is as citable as a module-level function. Resolving only
+        # ``module.attribute`` rejected
+        # ``sdp.graph_store.GraphStore.assert_node_kind_is_stable`` with "is not
+        # a package" - a pointer the resolver could not express rather than one
+        # that did not exist, which is the wrong kind of failure for a test
+        # whose job is to catch dangling evidence.
+        parts = target.split(".")
+        module = None
+        remainder: list[str] = []
+        for split in range(len(parts) - 1, 0, -1):
+            try:
+                module = importlib.import_module(".".join(parts[:split]))
+            except ImportError:
+                continue
+            remainder = parts[split:]
+            break
+        if module is None:
+            return f"no importable module prefix in {target!r}"
+        if not remainder:
+            return "func pointer needs an attribute after the module path"
+        current: object = module
+        walked = ".".join(parts[: len(parts) - len(remainder)])
+        for attribute in remainder:
+            if not hasattr(current, attribute):
+                return f"{walked} has no attribute {attribute!r}"
+            current = getattr(current, attribute)
+            walked = f"{walked}.{attribute}"
         return ""
     if kind == "test":
         if target not in resolvers["tests"]:

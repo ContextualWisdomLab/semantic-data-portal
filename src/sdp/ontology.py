@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List
@@ -9,6 +10,7 @@ from . import ontology_version
 from .catalog import list_datasets, mapping_candidates
 from .domain import OntologyPatch
 from .semantic_validation import (
+    MAX_PUBLISHED_FIELD_LENGTH,
     PRESENCE_BASIS,
     has_visible_character,
     validate_concept_semantics,
@@ -173,6 +175,15 @@ def concept_record(
     assembled a second way is a validator that can pass while the stored record
     fails.
     """
+    # ``definition.strip()`` raised AttributeError for a non-string, and both
+    # routes map only ValueError - so an in-process caller got an unmapped
+    # exception type from a function documented to signal refusal with
+    # ValueError. Refused rather than coerced: ``str(5)`` would publish "5" as a
+    # definition, which is a fabrication, not a repair.
+    if not isinstance(definition, str):
+        raise ValueError(
+            f"definition must be a string, not {type(definition).__name__}"
+        )
     return {
         "aliases": list(aliases or []),
         "broader": broader,
@@ -183,7 +194,42 @@ def concept_record(
     }
 
 
-def concept_shape_report(concept: str, record: Dict[str, Any]) -> dict[str, Any]:
+class ConceptKindConflict(ValueError):
+    """A concept name an existing node of another kind already holds.
+
+    A ``ValueError`` subclass on purpose: every existing handler that catches
+    ``ValueError`` still catches this, so no caller silently stops refusing.
+    Routes that want the precise status catch it first and answer 409, because
+    the request is well-formed and the conflict is with state - and both
+    publication paths then answer the same status for the same conflict, rather
+    than 409 on the upsert route and 400 on the approval route.
+    """
+
+
+def _assert_concept_kind_is_available(canonical: str) -> None:
+    """Refuse a concept name that another kind of graph node already holds.
+
+    Asks the store rather than guessing from the shape of the name: a
+    name-collision rule would refuse legitimate vocabulary (``semantic-glossary``
+    is both a dataset id and a plausible term) and would still miss the case
+    where no node exists yet. The question is only ever "is this id already
+    something else", which is what the store can answer.
+
+    The store is imported lazily: ``graph_store`` reaches configuration and a
+    possible database engine, and this module is imported during application
+    start-up well before a request needs either.
+    """
+    from .graph_store import get_store
+
+    try:
+        get_store().assert_node_kind_is_stable(canonical, "concept")
+    except ValueError as conflict:
+        raise ConceptKindConflict(str(conflict)) from conflict
+
+
+def concept_shape_report(
+    concept: str, record: Dict[str, Any], *, evaluated_record: str = "submitted"
+) -> dict[str, Any]:
     """Evaluate ConceptShape against one record (ONT-005's SHACL gate item).
 
     ``canonical_concept_or_none`` is injected as the resolver, so a hierarchy
@@ -193,7 +239,10 @@ def concept_shape_report(concept: str, record: Dict[str, Any]) -> dict[str, Any]
     vocabulary it validates.
     """
     return validate_concept_semantics(
-        concept, record, resolve_concept=canonical_concept_or_none
+        concept,
+        record,
+        resolve_concept=canonical_concept_or_none,
+        evaluated_record=evaluated_record,
     )
 
 
@@ -233,6 +282,35 @@ def validate_concept_registration(
         _assert_no_alias_conflict(
             canonical, list(aliases or []) + list(multilingual or [])
         )
+    else:
+        # An already-published concept's record is **not** replaced: the
+        # registrar returns the stored record and discards the whole submission
+        # (an approval must not silently rewrite a shipped definition). So the
+        # submitted ``definition`` is not what will exist, and requiring it here
+        # refused a request that changes nothing in the vocabulary.
+        #
+        # Measured as a regression this change introduced:
+        # ``POST /ontology/concepts {"concept": "고객", "related":
+        # ["신규연관개념"], "aliases": ["buyer-side"]}`` went 200 -> 400, and
+        # that route is the only way to update the graph-store concept record,
+        # its broader/narrower/related edges and its embedding. The caller's only
+        # way through was to re-send a definition the vocabulary throws away -
+        # which the graph store then stored, so one 200 body carried a graph
+        # definition the vocabulary never accepted.
+        #
+        # The stored record was validated when it was published, so it is not
+        # re-gated here; ``concept_shape_report`` on the early-return path
+        # reports it with ``evaluated_record: "published_vocabulary"`` so the
+        # caller can see which record the verdict is about.
+        return canonical
+    # A concept may not take an id another kind of node already holds. The check
+    # lived only in ``GraphStore.upsert_node``, so it covered the routes that
+    # write a graph node and **not** the patch-approval path, which never
+    # touches the store: measured, approving a patch named
+    # ``crm-customer-master`` answered 200 and put a dataset id into the
+    # vocabulary and the open SKOS export. Here it covers both publication
+    # paths, which is the same reason the ConceptShape gate lives here.
+    _assert_concept_kind_is_available(canonical)
     # ONT-005's acceptance criterion is "reasoner + SHACL + reviewer 승인 후
     # 병합" and reviewer approval was the whole gate. The shape is evaluated
     # here - the designated pre-write validator, whose ValueError the routes
@@ -370,7 +448,9 @@ def _register_concept_locked(
         return {
             "concept": canonical,
             "already_published": True,
-            "concept_validation": concept_shape_report(canonical, existing),
+            "concept_validation": concept_shape_report(
+                canonical, existing, evaluated_record="published_vocabulary"
+            ),
             **existing,
         }
 
@@ -408,7 +488,9 @@ def _register_concept_locked(
         # Evaluated against the record as **stored**, after the write, so the
         # published report describes published content rather than a submission
         # that could still have been refused.
-        "concept_validation": concept_shape_report(canonical, record),
+        "concept_validation": concept_shape_report(
+            canonical, record, evaluated_record="published_vocabulary"
+        ),
         **record,
     }
 
@@ -502,7 +584,35 @@ def concept_vocabulary_snapshot() -> Dict[str, Any]:
     which ``ontology_version_identity`` would then report as
     ``digest_matches_recorded_revision: false``.
     """
-    return {concept: dict(record) for concept, record in _CONCEPT_DEFINITIONS.items()}
+    # ``dict(record)`` is a *shallow* copy, so the aliases/narrower/related/
+    # multilingual lists it handed out were the live stored lists. Measured
+    # through this accessor alone, with no private access:
+    # ``snapshot()["매출"]["narrower"].append("밀수된하위")`` installed an
+    # unresolvable hierarchy target into the published vocabulary, and an alias
+    # appended the same way takes a term ``_assert_no_alias_conflict`` refuses.
+    # A "copy" that aliases its source is worse than no copy, because callers
+    # trust the docstring.
+    return deepcopy(_CONCEPT_DEFINITIONS)
+
+
+def published_concept_definition(concept: str) -> str | None:
+    """The definition this concept is published with, or ``None`` if it is new.
+
+    The vocabulary is authoritative for a concept's definition - the registrar
+    keeps the stored one and discards a re-submission - so a caller mirroring
+    the concept into another store needs the published value, not the submitted
+    one. Without it the two stores diverged: measured, a re-upsert that omitted
+    ``definition`` left ``GET /ontology/term/{term}/graph`` (which reads the
+    graph store) serving 고객 with ``definition: ''`` while the vocabulary still
+    held the real definition.
+
+    Resolves through the alias index, so a caller naming an alias gets the
+    canonical concept's definition rather than ``None``.
+    """
+    canonical = canonical_concept_or_none(concept)
+    if canonical is None:
+        return None
+    return str(_CONCEPT_DEFINITIONS[canonical].get("definition", ""))
 
 
 def ontology_version_identity() -> dict[str, Any]:
@@ -680,6 +790,18 @@ def propose_patch(concept: str, suggestion: str, *, requestor: str = "anonymous"
         raise ValueError(
             f"concept and suggestion must each be at most {MAX_ONTOLOGY_PATCH_FIELD} characters"
         )
+    # The same predicate the publication gate applies, because ``suggestion``
+    # *is* the definition (``_review_patch_locked`` passes it as one). The route
+    # tested ``suggestion.strip()`` while the gate tested visibility, so a
+    # suggestion of U+200B, U+FEFF, U+00AD or NUL was accepted into the shared
+    # steward queue with 200 and could then **never** be approved: measured,
+    # every approval answered 400 and the patch stayed ``proposed`` forever,
+    # leaving a reviewer to reject a proposal the product itself accepted. One
+    # predicate for one field, applied here so the library seam is covered and
+    # not only the route.
+    for field, value in (("concept", concept), ("suggestion", suggestion)):
+        if not has_visible_character(value):
+            raise ValueError(f"{field} must contain {PRESENCE_BASIS}")
     patch = OntologyPatch(
         id=str(uuid4()),
         concept=concept.strip() or "unknown",

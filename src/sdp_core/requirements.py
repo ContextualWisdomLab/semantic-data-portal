@@ -334,22 +334,54 @@ REQUIREMENT_COVERAGE: dict[str, RequirementCoverage] = {
         status="partial",
         evidence=[
             "func:sdp.graph_store.GraphNode",
+            "func:sdp.graph_store.GraphStore.assert_node_kind_is_stable",
             "test:tests/test_graph_engine.py::test_semantic_search_kind_filter_only_returns_datasets",
+            "test:tests/test_graph_node_kind_stability.py::test_a_concept_named_after_an_existing_dataset_is_refused",
+            "test:tests/test_graph_node_kind_stability.py::test_a_column_node_cannot_be_reclassified_either",
         ],
         note=(
             "Concept, dataset and column are distinct node kinds "
             "(graph_store.py:304-343) and a dataset relates to a concept through "
             "a `mapping` edge rather than subclassing, so the separation is "
             "modelled. Nothing verifies it: semantic_validation.py publishes only "
-            "property-presence/cardinality shapes (:41-60) and reports "
-            "shacl_engine_executed = false (:74), and no shape, axiom or reasoner "
-            "expresses a class hierarchy anywhere in the repo. `kind` is a "
-            "free-form string (graph_models.py:12) and no endpoint kind check "
-            "guards edges, so an authorized writer can violate the separation "
-            "directly - measured: POST /graph/edges {broader, crm-customer-master "
-            "-> 고객} and POST /ontology/concepts {concept: crm-customer-master, "
-            "broader: 고객} both return 200. The SHACL/OWL check the acceptance "
-            "criterion names is absent."
+            "property-presence/cardinality shapes and reports "
+            "shacl_engine_executed = false, and no shape, axiom or reasoner "
+            "expresses a class hierarchy anywhere in the repo — the SHACL/OWL "
+            "check the acceptance criterion names is absent. "
+            "One half of the separation is now enforced, and it was the half "
+            "that was destroying data. A node's **kind is immutable**: "
+            "`GraphStore.assert_node_kind_is_stable` refuses a write that would "
+            "reclassify an existing id, and `ontology.validate_concept_registration` "
+            "asks it before either store is written - so all three publication "
+            "paths answer 409 where they answered 200: "
+            "`POST /ontology/concepts`, `POST /graph/nodes {kind: concept}` and "
+            "`POST /ontology/patches/{id}/review` on an approval. The approval "
+            "path is why the check cannot live in the store alone: it writes "
+            "only the vocabulary, so a store-side guard missed it entirely and "
+            "approving a patch named `crm-customer-master` answered 200 and put "
+            "a dataset id into the vocabulary and the open SKOS export "
+            "(measured). `ConceptKindConflict` is a `ValueError` subclass, so "
+            "every existing handler still catches it while the routes that want "
+            "the precise status answer 409 rather than 400. This note previously recorded that 200 as a modelling "
+            "violation; measured, it was worse — `upsert_node` built a fresh node "
+            "and stored it over the old one, so the seeded dataset node became "
+            "kind=concept with label crm-customer-master and its governed "
+            "properties (owner, steward, sensitivity: medium, status: published, "
+            "domain, tags, terms) were **destroyed** by one authorized ontology "
+            "write. The tenant half of that boundary had already been closed "
+            "(`_authorize_graph_write` resolves the target tenant); this was the "
+            "kind half. The rule is deliberately not a kind allow-list — `kind` "
+            "stays free-form, so a new kind is still introducible and the "
+            "injection-regression tests that pass a hostile string as a kind "
+            "still hold — what is refused is reclassifying an id that already "
+            "exists as something else. "
+            "Still open: the edge half. No kind check guards POST /graph/edges, "
+            "so an authorized writer can still attach a `broader` edge from a "
+            "dataset node to a concept, which is the class-separation violation "
+            "the acceptance criterion is about and for which every fact needed "
+            "to refuse it is already present and unused. `kind` remains a "
+            "free-form string (graph_models.py), and the cited test exercises "
+            "the kind filter, not the separation."
         ),
     ),
     "ONT-003": RequirementCoverage(
@@ -447,7 +479,7 @@ REQUIREMENT_COVERAGE: dict[str, RequirementCoverage] = {
             "func:sdp.semantic_validation.validate_concept_semantics",
             "test:tests/test_ontology_publication_loop.py::test_approving_a_patch_publishes_the_term_to_every_read_surface",
             "test:tests/test_concept_shape_gate.py::test_a_concept_with_no_definition_is_refused_at_both_publication_paths",
-            "test:tests/test_concept_shape_gate.py::test_an_approval_of_an_unconforming_patch_publishes_nothing_and_stays_proposed",
+            "test:tests/test_concept_shape_gate.py::test_the_approval_gate_is_still_a_backstop_behind_intake",
             "test:tests/test_semantic_validation.py::test_every_published_required_property_is_evaluated",
         ],
         note=(

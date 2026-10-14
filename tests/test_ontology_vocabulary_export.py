@@ -196,17 +196,20 @@ def test_the_export_never_derives_dataset_identity() -> None:
     versioned here rather than leaving a reader to assume it is covered.
 
     The guarantee is about what the export *derives*, and it is narrower than
-    "no dataset id can ever appear in this document". Nothing stops an
-    authorized writer naming a concept after a dataset - measured,
-    ``POST /ontology/concepts {"concept": "crm-customer-master", "broader":
-    "고객"}`` answers 200, because ``kind`` is free-form and no class check
-    guards concept registration. That is ONT-002's recorded gap, not something
-    this export introduces or can close; the second half of this test pins the
-    distinction so the first half is not read as a stronger promise than it is.
-    The route's own docstring states the same limit, because that is what a
-    reader sees as the OpenAPI description - it said a flat "no dataset ids"
-    until an adversarial review pointed out that the guarantee is about
-    derivation.
+    "no dataset id can ever appear in this document". This test used to assert
+    that naming a concept after a dataset **succeeded** (200), which pinned a
+    defect rather than a contract: measured, that upsert replaced the seeded
+    dataset node outright - kind dataset -> concept, label 고객 마스터 ->
+    crm-customer-master, and the governed properties owner, steward,
+    sensitivity: medium and status: published destroyed - because upsert_node
+    built a fresh node and stored it over the old one. The graph store now
+    refuses a write that would change an existing node's kind, so that case is
+    409 and the dataset survives.
+
+    What is still open is narrower and is ONT-002's: a concept name that does
+    **not** collide with an existing node id is accepted, so the vocabulary can
+    hold a dataset-id-shaped name - it just cannot destroy a dataset that
+    exists. Both halves are pinned below so neither is read as the other.
     """
     from sdp.catalog import list_datasets
 
@@ -217,17 +220,40 @@ def test_the_export_never_derives_dataset_identity() -> None:
         assert dataset_id not in blob, dataset_id
     assert _scheme(document)["datasetMappingIsVersioned"] is False
 
-    # A writer-chosen concept name reaches the document as a label, and still
-    # brings no mapping, no distribution and no dataset structure with it.
+    # Naming a concept after an existing dataset is refused, and the dataset's
+    # governed graph metadata is still there afterwards.
+    before = client.get(
+        f"/graph/nodes/{dataset_ids[0]}", params={"user": "admin"}
+    ).json()
+    before_node = before.get("node", before)
     hijack = client.post(
         "/ontology/concepts",
         json={"actor": "admin", "concept": dataset_ids[0], "definition": "d"},
     )
-    assert hijack.status_code == 200, hijack.text
-    after = _export()
-    node = next(
-        item for item in _concepts(after) if item["prefLabel"] == dataset_ids[0]
+    assert hijack.status_code == 409, hijack.text
+    assert "kind" in hijack.json()["detail"]
+    assert dataset_ids[0] not in ontology.list_concepts()
+    after_node_response = client.get(
+        f"/graph/nodes/{dataset_ids[0]}", params={"user": "admin"}
+    ).json()
+    after_node = after_node_response.get("node", after_node_response)
+    assert after_node["kind"] == before_node["kind"] == "dataset"
+    assert after_node["label"] == before_node["label"]
+    assert after_node["properties"] == before_node["properties"]
+    assert dataset_ids[0] not in repr(_export())
+
+    # The residual, which this change does not close: a dataset-id-shaped name
+    # that collides with nothing is still accepted, and reaches the document as
+    # a label and an @id - carrying no mapping, distribution or dataset
+    # structure with it.
+    shaped = "future-dataset-id"
+    assert shaped not in dataset_ids
+    accepted = client.post(
+        "/ontology/concepts",
+        json={"actor": "admin", "concept": shaped, "definition": "미래 데이터셋 모양 이름"},
     )
+    assert accepted.status_code == 200, accepted.text
+    node = next(item for item in _concepts(_export()) if item["prefLabel"] == shaped)
     assert set(node) <= {
         "@id",
         "@type",
@@ -240,7 +266,6 @@ def test_the_export_never_derives_dataset_identity() -> None:
         "narrower",
         "related",
     }, node
-    assert _scheme(after)["datasetMappingIsVersioned"] is False
 
 
 def test_a_published_concept_appears_in_the_next_export() -> None:

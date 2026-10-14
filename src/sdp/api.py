@@ -1499,12 +1499,15 @@ def ontology_vocabulary_jsonld() -> dict[str, Any]:
     ``sdp:datasetMappingIsVersioned false``.
 
     That guarantee is about derivation and is narrower than "no dataset id can
-    appear in this document". Nothing refuses a concept *named* after a dataset
-    (``kind`` is free-form and no class check guards concept registration -
-    ONT-002's recorded gap), and such a name reaches the document as a label and
-    an ``@id`` like any other. What it does not bring with it is any mapping,
-    distribution or dataset structure, which is what
-    ``test_the_export_never_derives_dataset_identity`` pins.
+    appear in this document". A concept named after a dataset that **exists** is
+    refused 409 by the graph store, which will not change a node's kind - that
+    is what used to destroy the dataset's label and governed properties. A
+    dataset-id-shaped name that collides with nothing is still accepted, because
+    ``kind`` is free-form and no class check guards concept registration
+    (ONT-002's recorded gap), and it reaches the document as a label and an
+    ``@id`` like any other - carrying no mapping, distribution or dataset
+    structure with it. Both halves are pinned by
+    ``test_the_export_never_derives_dataset_identity``.
     """
     return ontology.vocabulary_jsonld()
 
@@ -1633,13 +1636,54 @@ def ontology_patch_review(patch_id: str, payload: dict[str, str]) -> dict[str, A
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+    except ontology.ConceptKindConflict as conflict:
+        # The same conflict the upsert route answers 409 for; it reached here as
+        # a plain 400 until the publication paths were made to agree.
+        catalog.ingest_event(
+            event_type="ontology.patch_review",
+            actor=actor_id,
+            dataset_id=f"ontology/patches/{patch_id}",
+            decision="refused",
+            reason=str(conflict),
+            decision_id=decision.decision_id,
+            details={
+                "policy_decision_id": decision.decision_id,
+                "tenant_id": decision.obligations.get("tenant_id"),
+            },
+        )
+        raise HTTPException(status_code=409, detail=str(conflict)) from conflict
     except ValueError as exc:
+        # The refusal is audited with its real outcome. Without this the ledger
+        # held one policy decision reading ``allow`` and **zero** audit rows for
+        # a refused approval - measured - so an auditor saw an admin permitted
+        # to publish and no record that the publication was refused.
+        catalog.ingest_event(
+            event_type="ontology.patch_review",
+            actor=actor_id,
+            dataset_id=f"ontology/patches/{patch_id}",
+            decision="refused",
+            reason=str(exc),
+            decision_id=decision.decision_id,
+            details={
+                "policy_decision_id": decision.decision_id,
+                "tenant_id": decision.obligations.get("tenant_id"),
+            },
+        )
         raise HTTPException(status_code=400, detail=str(exc))
     catalog.ingest_event(
         event_type="ontology.patch_review",
         actor=actor_id,
         dataset_id=f"ontology/patches/{patch_id}",
-        decision=reviewed.get("status", "reviewed"),
+        # An approval of a patch whose concept is already published writes the
+        # status but publishes nothing - the registrar returns the stored record
+        # so an approval cannot rewrite a shipped definition. Recorded as
+        # ``approved`` alone that reads as a publication, so the outcome says
+        # which it was.
+        decision=(
+            "approved_without_publication"
+            if reviewed.get("concept_already_published") is True
+            else reviewed.get("status", "reviewed")
+        ),
         reason=payload.get("comment", ""),
         decision_id=decision.decision_id,
         details={
@@ -1818,9 +1862,45 @@ def _authorize_graph_node_read(actor: str, node_id: str) -> None:
         raise HTTPException(status_code=404, detail="node not found")
 
 
+def _audit_refused_concept_upsert(
+    actor: str, concept: str, decision: Any, reason: str
+) -> None:
+    """Record that an authorized concept publication was refused.
+
+    The generic gate writes ``authorized`` before the mutation, so a refusal
+    left the ledger holding one row that reads as a permitted publication and
+    nothing saying it did not happen - measured on both refusal paths. An
+    auditor looking for refused attempts on a governed write is exactly who
+    found nothing, which is the same defect the catalog mutation routes were
+    fixed for.
+    """
+    catalog.ingest_event(
+        event_type="ontology.concept_upsert",
+        actor=actor,
+        dataset_id=concept,
+        decision="refused",
+        reason=reason,
+        decision_id=decision.decision_id,
+        details={
+            "policy_decision_id": decision.decision_id,
+            "tenant_id": decision.obligations.get("tenant_id"),
+        },
+    )
+
+
 @app.post("/ontology/concepts")
 def ingest_concept(payload: OntologyConceptRequest) -> dict[str, Any]:
-    _authorize_graph_write(payload.actor, payload.concept, event_type="ontology.concept_upsert")
+    # ``audit_allow=False`` because this route writes its own outcome row below.
+    # The generic gate's row says ``authorized`` and is written before the
+    # mutation, so on a refusal the ledger held one row reading "authorized" and
+    # nothing saying the publication did not happen - measured. Same shape as
+    # ``POST /ontology/patches``.
+    decision = _authorize_graph_write(
+        payload.actor,
+        payload.concept,
+        event_type="ontology.concept_upsert",
+        audit_allow=False,
+    )
     aliases = list(payload.aliases or [])
     multilingual = list(getattr(payload, "multilingual", None) or [])
     # Validate before the first of the two writes. This route wrote the graph
@@ -1842,15 +1922,23 @@ def ingest_concept(payload: OntologyConceptRequest) -> dict[str, Any]:
             narrower=list(getattr(payload, "narrower", None) or []),
             related=list(getattr(payload, "related", None) or []),
         )
+    except ontology.ConceptKindConflict as conflict:
+        # 409, not 400: the request is well-formed and the conflict is with
+        # state. Caught before the ValueError arm because it is a subclass.
+        _audit_refused_concept_upsert(payload.actor, payload.concept, decision, str(conflict))
+        raise HTTPException(status_code=409, detail=str(conflict)) from conflict
     except ValueError as invalid:
+        _audit_refused_concept_upsert(payload.actor, payload.concept, decision, str(invalid))
         raise HTTPException(status_code=400, detail=str(invalid)) from invalid
 
-    record = get_store().upsert_concept(payload.model_dump(exclude={"actor"}))
-    # The store write populates the graph node and its embedding; it did not
-    # reach the ontology read surfaces, which read the module vocabulary. An
-    # upsert returned 200 while /ontology/search answered count=0 for the same
-    # term. Both are written now, and the response says whether the concept was
-    # newly published or already present.
+    # The vocabulary is written **first** and the graph store mirrors it. The
+    # order used to be the other way round, and the store write is
+    # unconditional, so a refusal from ``register_concept`` (a full vocabulary,
+    # or the alias conflict it re-checks inside the lock) answered 409 with the
+    # graph node already written - the two stores left disagreeing by the very
+    # refusal that was supposed to prevent a write. Validation, including the
+    # kind check that used to live in the store, now happens above, before
+    # either write.
     try:
         registration = ontology.register_concept(
             payload.concept,
@@ -1870,8 +1958,36 @@ def ingest_concept(payload: OntologyConceptRequest) -> dict[str, Any]:
     except ValueError as refused:
         # Reachable without an invalid payload: the vocabulary cap can be full of
         # seeded concepts, which are never evicted.
+        _audit_refused_concept_upsert(payload.actor, payload.concept, decision, str(refused))
         raise HTTPException(status_code=409, detail=str(refused)) from refused
 
+    # The graph store mirrors the record the vocabulary published. The
+    # definition comes from the vocabulary, not the submission: the registrar
+    # keeps the stored one and discards a re-submission, so handing the store
+    # the raw payload left the two disagreeing - measured, a re-upsert that
+    # omitted ``definition`` left ``GET /ontology/term/{term}/graph``, which
+    # reads the store, serving 고객 with ``definition: ''``.
+    store_payload = payload.model_dump(exclude={"actor"})
+    store_payload["definition"] = registration.get("definition", "")
+    record = get_store().upsert_concept(store_payload)
+
+    catalog.ingest_event(
+        event_type="ontology.concept_upsert",
+        actor=payload.actor,
+        dataset_id=payload.concept,
+        decision=(
+            "upserted"
+            if not registration["already_published"]
+            else "upserted_without_publication"
+        ),
+        reason="",
+        decision_id=decision.decision_id,
+        details={
+            "policy_decision_id": decision.decision_id,
+            "tenant_id": decision.obligations.get("tenant_id"),
+            "concept_already_published": registration["already_published"],
+        },
+    )
     return {
         "status": "upserted",
         "concept": record,
@@ -1883,14 +1999,25 @@ def ingest_concept(payload: OntologyConceptRequest) -> dict[str, Any]:
 
 @app.post("/graph/nodes")
 def ingest_graph_node(payload: GraphNodeRequest) -> dict[str, Any]:
+    """Upsert one graph node. A node's kind cannot be changed.
+
+    The tenant half of this boundary was closed earlier - ``_authorize_graph_write``
+    resolves the target tenant, so a foreign admin cannot write a node it cannot
+    read. The kind half was open: an upsert replaced the stored node outright, so
+    a write under an id another kind already held destroyed its label and every
+    governed property. See ``GraphStore.assert_node_kind_is_stable``.
+    """
     _authorize_graph_write(payload.actor, payload.node_id, event_type="graph.node_upsert")
-    node = get_store().upsert_node(
-        payload.node_id,
-        payload.kind,
-        label=payload.label,
-        properties=payload.properties,
-        text=payload.text,
-    )
+    try:
+        node = get_store().upsert_node(
+            payload.node_id,
+            payload.kind,
+            label=payload.label,
+            properties=payload.properties,
+            text=payload.text,
+        )
+    except ValueError as conflict:
+        raise HTTPException(status_code=409, detail=str(conflict)) from conflict
     return {"status": "upserted", "node": node.as_dict()}
 
 

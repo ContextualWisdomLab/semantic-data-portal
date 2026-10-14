@@ -2,8 +2,8 @@
 
 이 문서는 `claude/semantic-portal-pr-merge-e5a48k` 브랜치(PR
 [#102](https://github.com/ContextualWisdomLab/semantic-data-portal/pull/102))가
-베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **204개** 커밋 중 122개는
-gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 82개입니다. 측정 명령:
+베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **206개** 커밋 중 122개는
+gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 84개입니다. 측정 명령:
 
     git rev-list --count origin/docs/product-technical-gap-baseline..HEAD
     git log --format=%H origin/docs/product-technical-gap-baseline..HEAD \
@@ -11,8 +11,8 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 82
 
 앞서 적혀 있던 164/112, 186/113, 199/122/77, 203/122/81은 각각 그 시점의 값이고 이후
 커밋을 반영하지 않은 숫자였습니다 — 자기 문서의 수치도 측정해서 맞춰 둡니다. 199는 이
-줄을 쓴 뒤 3개 커밋이 더 쌓여 낡아 203으로, 203은 다음 커밋에서 낡아 204로 다시
-측정해 고쳤습니다. 이 줄이 또 낡으면 그것도 같은 결함입니다.
+줄을 쓴 뒤 3개 커밋이 더 쌓여 낡아 203으로, 203은 다음 커밋에서 낡아 204로, 204는 또
+두 커밋 뒤에 206으로 다시 측정해 고쳤습니다. 이 줄이 또 낡으면 그것도 같은 결함입니다.
 
 형식은 [Keep a Changelog](https://keepachangelog.com/)를 따릅니다.
 
@@ -26,16 +26,190 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 82
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                       1112 passed, 11 skipped
-    pytest (파일 순서 정/역/난수)  각 1101 passed, 11 skipped — 순서 무관
+    pytest                       1150 passed, 11 skipped
+    pytest (파일 순서 정/역/난수)  각 1139 passed, 11 skipped — 순서 무관
                                  (정순 · 역순 · seed 11/707/31337)
     pytest tests/fuzz            11 passed
     python -m sdp.demo_smoke     exit 0, "ready": true
 
-`tests/fuzz`는 파일 순서 측정 대상(`tests/test_*.py`)에 포함되지 않으므로 1112 - 1101
+`tests/fuzz`는 파일 순서 측정 대상(`tests/test_*.py`)에 포함되지 않으므로 1150 - 1139
 = 11건의 차이가 납니다. 트리를 **동결**한 상태에서만 측정합니다 — 이 세션에서 백그라운드
 측정 중에 트리를 고친 탓에 seed 11이 4건 실패로 나온 일이 있고, 그것은 결함이 아니라
 동시 편집이었습니다.
+
+### Fixed — ConceptShape 게이트가 스스로 만든 결함 6건 (적대적 검증에서 발견)
+
+바로 위 게이트를 다섯 개의 독립 렌즈로 반박 검증시켰고, 여섯 건이 재현되었습니다.
+일곱 번째는 그 수리를 검증하는 과정에서 순서 무관 측정이 직접 잡았습니다.
+전부 제 변경이 만든 것이거나 그에 인접한 것이므로 제가 고쳤습니다. 모든 재현은 제가
+직접 다시 측정했습니다.
+
+1. **잘못된 거부(회귀, high).** shape을 **제출된** 필드에 대해 평가했는데, 이미 게시된
+   개념에서는 그 제출이 버려집니다(승인이 배포된 정의를 조용히 덮어쓰지 않도록). 그래서
+   기존 개념의 graph edge·embedding을 갱신하는 유일한 경로가
+   `POST /ontology/concepts {"concept": "고객", "related": [...], "aliases": [...]}`
+   에서 **200 → 400**으로 회귀했습니다. 유일한 통과 방법은 어휘가 버릴 definition을
+   다시 보내는 것이었고, graph store는 그것을 **저장**하므로 하나의 200 응답이 어휘가
+   받아들인 적 없는 graph definition을 담았습니다. 이제 필수 속성 검사는 **새 개념에만**
+   적용됩니다(`_assert_no_alias_conflict`와 같은 조건). 저장된 레코드는 게시 시점에
+   검증되었으므로 다시 게이트하지 않습니다.
+2. **평가 대상 미표기(medium).** 재게시 경로의 보고가 어떤 레코드에 대한 판정인지
+   말하지 않아, 200 응답이 호출자가 보내지 않은 내용에 대해 `conforms: true`를 담을 수
+   있었습니다. `evaluated_record`(`submitted` / `published_vocabulary`)를 둡니다 —
+   `evaluated_shapes`가 제약에 대해 하는 일을 주체에 대해 합니다.
+3. **상한 없는 필수 필드(medium).** `definition`을 필수로 만들면서 상한을 두지 않았고,
+   측정 결과 **2,000,000자** definition이 200으로 저장되었습니다 — 500칸 프로세스
+   수명 어휘에서. 개념 **이름**은 게이트 세 줄 위에서 2000자로 묶여 있고 patch 경로도
+   같은 필드를 2000자로 묶습니다(2001자는 intake에서 400). shape이
+   `max_property_length`를 게시하고 두 경로가 **같은 상수**를 씁니다.
+4. **intake와 게이트의 술어 불일치(medium).** `POST /ontology/patches`는
+   `suggestion.strip()`을, 게이트는 가시 문자 술어를 썼고 `suggestion`이 바로
+   definition입니다. 그래서 U+200B·U+FEFF·U+00AD·NUL 제안이 공유 steward 큐에 200으로
+   들어가 **영원히 승인될 수 없었습니다** — 모든 승인이 400이고 patch는 `proposed`에
+   고정되어, 심사자에게 남은 선택은 제품 스스로 받아들인 제안을 거부하는 것뿐이었습니다.
+   권한 있는 분석가가 상한 있는 공유 큐를 그런 제안으로 채울 수 있었습니다. 이제
+   `propose_patch`(라이브러리 seam)가 같은 술어를 적용하고, 승인 시점 게이트는
+   backstop으로 남습니다.
+5. **읽기 전용 사본이 사본이 아니었습니다(medium).** `concept_vocabulary_snapshot`은
+   `dict(record)` — **얕은** 복사라서 돌려주는 aliases/narrower/related 리스트가 살아
+   있는 저장 리스트였습니다. 이 접근자만 써서(비공개 접근 없이)
+   `snapshot()["매출"]["narrower"].append(...)`로 해소 불가능한 계층 target을 게시된
+   어휘에 심을 수 있었고, alias로는 `_assert_no_alias_conflict`가 거부하는 용어를
+   가져갈 수 있었습니다. 원본을 참조하는 "사본"은 사본이 없는 것보다 나쁩니다 —
+   호출자가 docstring을 믿기 때문입니다. `deepcopy`로 고쳤습니다.
+6. **거부 타입(low).** `definition.strip()`이 비문자열에 `AttributeError`를 냈고 두
+   라우트는 `ValueError`만 매핑합니다 — 거부를 ValueError로 알린다고 문서화된 함수가
+   매핑되지 않는 예외 타입을 넘겼습니다. 강제 변환이 아니라 **거부**합니다: `str(5)`는
+   "5"를 정의로 게시하는 조작입니다.
+
+7. **두 스토어가 같은 개념의 정의를 두고 갈라졌습니다(high).** 1번을 고치고 나서 순서
+   무관 측정에서 드러난 것입니다 — 역순 파일 순서에서 **유지되고 있던** 테스트
+   `test_the_shared_vocabulary_itself_stays_open`이 실패했습니다. 라우트가 graph store에
+   **원본 제출**을 그대로 넘겼으므로, `definition`을 생략한 재-upsert가 어휘에는
+   아무 영향이 없으면서 graph store에는 `''`를 썼습니다. 그리고
+   `GET /ontology/term/{term}/graph`는 store를 읽으므로, 측정 결과 고객의 정의가
+   **빈 문자열로 서빙**되었습니다(어휘는 실제 정의를 그대로 들고 있는 동안). 어휘가
+   개념 정의의 권위이므로, 이제 mirror에 `ontology.published_concept_definition`이
+   돌려주는 **게시된 정의**를 넘깁니다 — 호출자의 다른 필드는 그대로 반영됩니다.
+   같은 라운드에서 제 새 테스트가 시드 개념의 graph 레코드를 건드려 상태를 흘리고
+   있었던 것도 고쳤습니다(graph store 싱글턴은 conftest 복원 대상이 아니라고 그
+   docstring이 선언합니다) — 자기 개념을 만들어 쓰도록 바꿨습니다.
+
+함께 선언한 경계 하나: `concept_conformance`는 **게시된 어휘**만 셉니다.
+`POST /graph/nodes {"kind": "concept", "properties": {"definition": ""}}`로 쓴 노드는
+어휘에 없으므로 세지 않습니다 — 측정 결과 그런 노드가 `GET /graph/nodes`로 서빙되는
+동안 pass rate는 1.0입니다. `conformance_scope`로 적어 둡니다.
+
+이 라운드에서 고치지 않고 남긴 것: shape이 자유 텍스트 주석 속성을 유일한 violation으로
+삼고, 요구사항이 실제로 말하는 `sh:class` 제약(ONT-002)은 warning입니다. 시드가 그
+제약을 10회 위반하기 때문인데, **새로 제출된** edge에만 violation으로 적용하면 시드를
+막지 않고 강화할 수 있습니다 — 별도 변경입니다.
+
+### Security — 개념 하나를 등록하면 데이터셋의 거버닝 메타데이터가 파괴되었습니다
+
+`upsert_node`는 새 `GraphNode`를 만들어 저장된 노드 **위에 덮어썼습니다**. 그래서 다른
+kind가 이미 쓰고 있는 id로 쓰면 그 노드를 통째로 교체했습니다. 시드에서, 권한 있는
+요청 하나로 측정:
+
+    GET  /graph/nodes/crm-customer-master   kind=dataset
+        label='고객 마스터'
+        properties={domain, owner, steward, tags, terms,
+                    sensitivity: 'medium', status: 'published'}
+
+    POST /ontology/concepts {"actor": "admin",
+                             "concept": "crm-customer-master",
+                             "definition": "...", "broader": "고객"}
+        -> 200
+
+    GET  /graph/nodes/crm-customer-master   kind=concept
+        label='crm-customer-master'
+        properties={definition, aliases, multilingual}
+
+온톨로지 쓰기 하나가 데이터셋의 분류(`sensitivity`·`owner`·`steward`·`status`)를
+조용히 지웠습니다 — 테넌트 경계와 masking obligation이 근거로 삼고
+`/search/semantic`·`/graph/query`가 서빙하는 바로 그 메타데이터입니다. 이 경계의 **테넌트
+쪽**은 이미 닫혀 있었지만(`_authorize_graph_write`가 대상 테넌트를 해소합니다) **kind
+쪽**은 권한 있는 누구에게나 열려 있었습니다.
+
+`GraphStore.assert_node_kind_is_stable`로 **node의 kind를 불변**으로 만듭니다. 기존 id를
+다른 kind로 다시 쓰는 요청은 409이고, in-memory 스토어는 락 안에서(검사와 쓰기가 한
+단계), Postgres 스토어는 **같은 트랜잭션 안에서 `FOR UPDATE`로** 읽습니다 —
+`get_node`로 읽으면 자기 커넥션을 열어 검사와 upsert 사이에 창이 생깁니다.
+
+이것은 **kind 허용목록이 아닙니다.** `kind`는 계속 free-form이므로 새 kind를 들일 수
+있고, 적대적 문자열을 kind로 넘기는 injection 회귀 테스트도 그대로 돕니다. 거부하는
+것은 **이미 존재하는 id의 재분류**뿐입니다 — 파괴만 거부하고 정당한 것은 아무것도
+거부하지 않습니다(같은 kind upsert는 카탈로그 미러·시드·개념 재등록이 모두 쓰는
+경로입니다).
+
+이 결함을 고정하고 있던 테스트가 하나 있었습니다.
+`test_the_export_never_derives_dataset_identity`가 hijack upsert의 **200을 단언**하고
+있었는데, 그 200이 결함입니다. 이제 409과 데이터셋 노드의 생존을 단언하고, 남은 경계는
+따로 고정합니다: 존재하는 노드와 **충돌하지 않는** 데이터셋 id 모양 이름은 여전히
+허용되며(ONT-002), 그것이 export에 라벨과 `@id`로 들어가되 mapping·distribution·
+dataset 구조는 함께 들어오지 않습니다.
+
+**적대적 검증 2차에서 세 건 더.** 같은 변경을 다섯 렌즈로 다시 반박시켜 나온 것들이고,
+전부 제가 직접 재현했습니다.
+
+1. **게이트가 세 경로 중 하나를 놓쳤습니다(high).** kind 검사가
+   `GraphStore.upsert_node` 안에만 있었으므로 **graph node를 쓰는 경로만** 덮었습니다.
+   `review_patch` → `register_concept`는 어휘만 건드리므로, 측정 결과
+   `crm-customer-master` 이름의 patch 승인이 **200**으로 통과해 데이터셋 id가 어휘와
+   공개 SKOS export에 들어갔습니다. 검사를 ConceptShape 게이트와 같은 공유 pre-write
+   검증기로 옮겨 세 경로 모두를 덮습니다. 그리고 한 충돌에 한 상태 코드가 되도록
+   `ConceptKindConflict`(ValueError 하위 클래스 — 기존 핸들러가 그대로 잡습니다)를 두고
+   두 라우트 모두 409로 답합니다(승인 라우트는 모든 ValueError를 400으로 매핑하므로
+   같은 충돌이 400으로 나가고 있었습니다).
+2. **거부가 원장에 ALLOW만 남겼습니다(medium).** 측정 결과 거부된 승인은 정책 결정
+   1건(`effect: allow`)과 감사 행 **0건**을, 거부된 upsert는 변경 **이전에** 기록되는
+   `authorized` 행 하나를 남겼습니다. 거부된 거버닝 쓰기를 찾는 감사자가 보는 것은
+   "게시가 허용되었다"는 기록 하나이고, 게시가 일어나지 않았다는 기록은 어디에도
+   없었습니다 — 카탈로그 mutation 라우트들이 이미 같은 이유로 수리된 결함입니다. 두
+   경로 모두 실제 결과를 기록합니다.
+3. **아무것도 게시하지 않은 승인이 `approved`로 기록되었습니다(medium).** 이미 게시된
+   개념에 대한 승인은 상태만 쓰고 아무것도 게시하지 않습니다(등록기가 저장된 레코드를
+   돌려주므로 승인이 배포된 정의를 덮어쓸 수 없습니다). 측정 결과 200 + `status:
+   approved`였고, 그것만 보면 게시된 것으로 읽힙니다. 감사 결과를
+   `approved_without_publication`으로 적습니다.
+
+함께 고친 순서 문제: store 쓰기가 `register_concept` **이전**이고 무조건적이었으므로,
+`register_concept`의 거부(어휘 상한, 락 안에서 다시 확인하는 alias 충돌)가 409를 내면서
+graph node는 이미 써진 상태가 되었습니다 — 쓰기를 막으려던 거부가 두 스토어를
+갈라놓았습니다. 이제 **어휘를 먼저 쓰고 store가 그것을 mirror**하며, kind 검사를 포함한
+모든 검증이 두 쓰기보다 앞에 있습니다.
+
+4. **"우회할 수 없다"를 테스트 **이름**이 주장하고 있었습니다(medium).**
+   `test_the_gate_cannot_be_bypassed_by_a_future_caller`는 검증기를 직접 불러
+   거부되는지만 단언했고, 그것은 같은 파일의 다른 테스트가 이미 덮는 내용입니다 —
+   호출자나 쓰기 지점에 대해서는 아무것도 말하지 않았습니다. 리뷰어가 어휘를 직접 쓰는
+   함수 16줄을 `ontology.py`에 덧붙여 **전체 스위트가 그대로 green**인 것을
+   측정했고(정의 없는 개념이 모든 읽기 표면에 게시되는 동안), 그 중에는 이 테스트도
+   있었습니다. "우회할 수 없다"는 **코드 모양의 속성**이므로
+   `tests/test_concept_write_chokepoint.py`가 AST로 검사합니다 —
+   `tests/test_module_state_coverage.py`와 같은 열거 방식입니다: 어휘를 쓰는 모든
+   statement가 선언된 쓰기 지점 안에 있는지, 게시 함수의 **첫 실행 문장**이 공유
+   검증기인지, `register_concept`의 호출자 집합이 선언된 둘과 정확히 같은지. 리뷰어의
+   그 16줄로 역검증했고, 새 테스트는 실패하고 옛 테스트는 통과합니다 — 그것이 간극의
+   증명입니다. 옛 테스트는 실제로 검사하는 것으로 이름을 바꿨습니다.
+
+고치지 않고 남긴 것 하나: `shacl_compatible`은 이름은 "SHACL로 표현 가능"으로 읽히지만
+계산은 "게시된 shape 전부가 이 검증기로 평가되는가"(평가 커버리지)입니다. 게시된 키를
+바꾸는 것은 계약 변경이고 테스트가 그 값을 단언하므로 이번에 묶어 넣지 않았습니다 —
+별도 변경으로 적어 둡니다.
+
+ONT-002는 여전히 `partial`입니다. 아직 열려 있는 쪽은 **edge**입니다:
+`POST /graph/edges`에 kind 검사가 없으므로 데이터셋 노드에서 개념으로 `broader` edge를
+붙일 수 있고, 그것이 수락 기준이 말하는 class separation 위반입니다 — 거부에 필요한
+사실은 모두 이미 존재하고 쓰이지 않고 있습니다.
+
+부수 수리: `tests/test_requirements_coverage.py`의 `func:` 포인터 해소기가
+`module.attribute`만 처리해서 `func:sdp.graph_store.GraphStore.assert_node_kind_is_stable`을
+"is not a package"로 거부했습니다 — 존재하지 않는 포인터가 아니라 **표현할 수 없는**
+포인터였고, dangling 증빙을 잡는 것이 일인 테스트에는 잘못된 실패 방식입니다. 이제
+가장 긴 import 가능한 prefix에서 점 경로를 따라가므로 클래스의 메서드도 함수와 똑같이
+인용할 수 있습니다. 존재하지 않는 메서드·클래스·모듈은 여전히 각각의 정확한 사유로
+거부됩니다(역검증).
 
 ### Security — 정의 없는 개념이 공유 용어집에 게시될 수 있었습니다 (ONT-005)
 

@@ -52,7 +52,12 @@ GOVERNED_WRITES = (
         "/ontology/concepts",
         {"actor": "admin", "concept": "증거검증개념", "definition": "d"},
         {"actor": "nobody", "concept": "증거검증개념", "definition": "d"},
-        "authorized",
+        # Was "authorized": this route used the generic pre-mutation row, so on
+        # a refusal the ledger held one row reading as a permitted publication
+        # and nothing saying it did not happen. It now audits after its own
+        # mutation with the real outcome, which is the second case this table's
+        # comment above describes.
+        "upserted",
     ),
     (
         "ontology.patch_propose",

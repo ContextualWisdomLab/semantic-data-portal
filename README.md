@@ -326,7 +326,7 @@ SDP_DATABASE_DSN='postgresql+psycopg://sdp_graph_app:<url-encoded-password>@loca
 | `400` | 요청 본문/파라미터 계약 위반, 금지 SQL 키워드, 허용되지 않은 식별자 — 정책 평가 **전** 거부 |
 | `403` | 정책 거부 (역할·민감도·목적). 호출자가 해당 데이터셋의 **테넌트에 접근할 수 있을 때만** 403 |
 | `404` | 존재하지 않음 **또는** 호출자의 테넌트 범위 밖 — 두 경우의 상태 코드와 본문이 동일합니다 |
-| `409` | 상한이 있는 자원이 가득 찼고 비울 수 있는 항목이 없음 (시드 개념 어휘는 eviction 대상 아님) |
+| `409` | 충돌. 세 가지다 — (1) 상한이 있는 자원이 가득 찼고 비울 수 있는 항목이 없음 (시드 개념 어휘는 eviction 대상 아님), (2) 요청이 고정한 온톨로지 content digest가 현재 어휘와 다름(형식 오류는 400), (3) 이미 다른 kind로 존재하는 node id에 쓰려 함 — node의 kind는 불변 |
 
 `404`가 두 경우를 합치는 것은 의도적입니다. 데이터셋 id는 열거 가능하므로
 "접근 거부"와 "없음"을 구별할 수 있는 응답 자체가 존재 oracle이 됩니다. 실제
@@ -374,9 +374,12 @@ SDP_DATABASE_DSN='postgresql+psycopg://sdp_graph_app:<url-encoded-password>@loca
 - `GET /healthz` — readiness (그래프 백엔드 DB/AGE/pgvector 준비 검증, 미준비 시 503)
 
 ### Graph ingestion (지식 그래프 수집)
-- `POST /graph/nodes` — 노드 업스트림 푸시
+- `POST /graph/nodes` — 노드 업스트림 푸시. kind는 **불변**이다: 이미 존재하는 id를
+  다른 kind로 다시 쓰면 409. kind 허용목록이 아니라 재분류 금지이므로 새 id에는
+  자유로운 kind를 그대로 쓸 수 있다.
 - `POST /graph/edges` — 엣지 업스트림 푸시
-- `POST /ontology/concepts` — 온톨로지 개념 업스트림 푸시
+- `POST /ontology/concepts` — 온톨로지 개념 업스트림 푸시. 이미 **다른 kind**로 존재하는
+  node id에는 쓸 수 없다(409) — node의 kind는 바뀌지 않는다.
 - `GET  /graph/nodes/{node_id}`
 - `GET  /graph/stats`
 

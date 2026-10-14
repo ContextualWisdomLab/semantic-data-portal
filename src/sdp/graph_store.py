@@ -163,6 +163,53 @@ class GraphStore(ABC):
 
         raise NotImplementedError
 
+    def assert_node_kind_is_stable(self, node_id: str, kind: str) -> None:
+        """Refuse a write that would change an existing node's ``kind``.
+
+        A node's kind is its identity in this graph: ``/search/semantic`` filters
+        on it, ``/graph/query`` traverses by it, and the governed properties a
+        node carries differ entirely by kind. ``upsert_node`` built a fresh
+        ``GraphNode`` and replaced the stored one, so a write under an id another
+        kind already held **destroyed** it. Measured on the seed, with one
+        authorized request::
+
+            GET  /graph/nodes/crm-customer-master   kind=dataset
+                label='고객 마스터'
+                properties={domain, owner, steward, tags, terms,
+                            sensitivity: 'medium', status: 'published'}
+
+            POST /ontology/concepts {"actor": "admin",
+                                     "concept": "crm-customer-master",
+                                     "definition": "...", "broader": "고객"}
+                -> 200
+
+            GET  /graph/nodes/crm-customer-master   kind=concept
+                label='crm-customer-master'
+                properties={definition, aliases, multilingual}
+
+        So an ontology write silently erased a dataset's classification -
+        ``sensitivity``, ``owner``, ``steward``, ``status`` - which is the
+        metadata the tenant boundary and the masking obligations reason about.
+        The tenant half of this boundary was closed earlier
+        (``_authorize_graph_write`` resolves the target tenant); this is the kind
+        half, and it was open.
+
+        This is deliberately **not** a kind allow-list. ``kind`` stays free-form,
+        so a caller may still introduce a new kind and the injection-regression
+        tests that use a hostile string as a kind keep working; what is refused
+        is *reclassifying* an id that already exists as something else. The
+        narrower rule refuses exactly the destruction and nothing legitimate: a
+        same-kind upsert is how the catalog mirror, the seed and concept
+        re-registration all work.
+        """
+        existing = self.get_node(node_id)
+        if existing is not None and existing.kind != kind:
+            raise ValueError(
+                f"node {node_id!r} already exists with kind {existing.kind!r}; "
+                f"a node's kind cannot be changed to {kind!r} because the "
+                "governed properties it carries differ by kind"
+            )
+
     @abstractmethod
     def concept_graph(self, term: str) -> Dict[str, Any]:
         """Return the concept-centered graph for ``term``."""
@@ -287,6 +334,10 @@ class InMemoryGraphStore(GraphStore):
         text: Optional[str] = None,
     ) -> GraphNode:
         with self._lock:
+            # Inside the lock, so the check and the write are one step: checked
+            # outside it, a concurrent writer could create the node between the
+            # two and the reclassification would land anyway.
+            self.assert_node_kind_is_stable(node_id, kind)
             node = GraphNode(
                 node_id=node_id,
                 kind=kind,
@@ -627,6 +678,27 @@ class PostgresGraphStore(GraphStore):
         vector = embed_text(embed_source, self.dimension)
         with self._engine.begin() as conn:
             self._prepare(conn)
+            # The same invariant as the in-memory store, read **inside** this
+            # transaction and with the row locked, so the check cannot be
+            # overtaken by a concurrent writer between the read and the upsert.
+            # Reading it through ``get_node`` would open its own connection and
+            # leave exactly that window.
+            # ``fetchone`` rather than ``scalar_one_or_none``: it is the accessor
+            # ``get_node`` and ``_cypher`` already use in this class, so the one
+            # shape of result handling holds throughout.
+            stored_row = conn.execute(
+                sql(
+                    "SELECT node_kind FROM graph_nodes WHERE node_id = :id FOR UPDATE"
+                ),
+                {"id": node_id},
+            ).fetchone()
+            stored_kind = stored_row[0] if stored_row else None
+            if stored_kind is not None and stored_kind != kind:
+                raise ValueError(
+                    f"node {node_id!r} already exists with kind {stored_kind!r}; "
+                    f"a node's kind cannot be changed to {kind!r} because the "
+                    "governed properties it carries differ by kind"
+                )
             self._cypher(
                 conn,
                 "MERGE (n:GraphNode {node_id: $node_id}) "

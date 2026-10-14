@@ -45,6 +45,11 @@ from .catalog import get_dataset, list_datasets, validate_metadata
 # not a present value, whatever ``str.strip()`` thinks.
 _INVISIBLE_CATEGORIES = frozenset({"Zs", "Zl", "Zp", "Cc", "Cf"})
 
+# The one bound both publication paths use. Imported from the ontology module's
+# constant would be a cycle, so the value lives here and ``ontology`` reads it -
+# a single source either way, and this is the module that publishes it.
+MAX_PUBLISHED_FIELD_LENGTH = 2000
+
 PRESENCE_BASIS = (
     "at least one character outside the Unicode separator (Zs/Zl/Zp) and "
     "control/format (Cc/Cf) categories - str.strip() alone accepts a value "
@@ -124,6 +129,15 @@ _SHACL_COMPATIBLE_SHAPES = [
         "required_properties": ["definition"],
         "recommended_properties": ["aliases"],
         "resolvable_hierarchy_targets": ["broader", "narrower", "related"],
+        # ``definition`` was mandatory-to-supply and unbounded: measured, a
+        # 2,000,000-character definition was accepted and stored in full, in a
+        # 500-slot process-lifetime vocabulary. The concept *name* is bounded at
+        # MAX_ONTOLOGY_PATCH_FIELD three lines from the gate, and the patch path
+        # bounds the same field (a 2001-character suggestion is refused at
+        # intake), so this change had made a field required on the one path that
+        # did not bound it. The bound is published here and enforced from here,
+        # by the single constant both paths use.
+        "max_property_length": MAX_PUBLISHED_FIELD_LENGTH,
         # The published rule for "present", because ``str.strip()`` is not it.
         # ``strip`` removes only characters ``str.isspace()`` accepts, and the
         # Unicode format category is not whitespace - measured, a definition of
@@ -271,6 +285,13 @@ def validate_dataset_semantics(dataset_id: str) -> dict[str, Any]:
     }
 
 
+CONCEPT_CONFORMANCE_SCOPE = (
+    "published_vocabulary - concepts in ontology._CONCEPT_DEFINITIONS; a "
+    "kind=\"concept\" graph node written directly through POST /graph/nodes is "
+    "not in the vocabulary and is not counted"
+)
+
+
 def _concept_hierarchy_targets(record: Mapping[str, Any], relation: str) -> list[str]:
     """One relation's declared targets, as a list in either shape.
 
@@ -287,6 +308,7 @@ def validate_concept_semantics(
     record: Mapping[str, Any],
     *,
     resolve_concept: Callable[[str], str | None],
+    evaluated_record: str = "submitted",
 ) -> dict[str, Any]:
     """Evaluate ConceptShape against one concept record.
 
@@ -310,6 +332,18 @@ def validate_concept_semantics(
                     "path": prop,
                     "severity": "violation",
                     "message": f"required property is missing: {prop}",
+                }
+            )
+        elif len(str(record.get(prop))) > shape["max_property_length"]:
+            violations.append(
+                {
+                    "shape": "ConceptShape",
+                    "path": prop,
+                    "severity": "violation",
+                    "message": (
+                        f"property is longer than "
+                        f"{shape['max_property_length']} characters: {prop}"
+                    ),
                 }
             )
 
@@ -345,6 +379,14 @@ def validate_concept_semantics(
         "validation_engine": VALIDATION_ENGINE,
         "shacl_engine_executed": SHACL_ENGINE_EXECUTED,
         "evaluated_shapes": list(_CONCEPT_REPORT_SHAPE_IDS),
+        # Which record this verdict is about. On a re-publication the submitted
+        # payload is discarded and the stored record is what remains, so a
+        # report that did not say which one it read let a 200 response carry
+        # ``conforms: true`` about content the caller never sent and
+        # ``definition`` about content that was never stored. The same
+        # discipline as ``evaluated_shapes``, for the subject rather than the
+        # constraints.
+        "evaluated_record": evaluated_record,
         "conforms": not any(item["severity"] == "violation" for item in violations),
         "violations": violations,
     }
@@ -380,6 +422,13 @@ def concept_vocabulary_conformance(
         "concept_pass_rate": round(conforming / total, 3) if total else 0.0,
         "concept_warning_count": warnings,
         "evaluated_shapes": list(_CONCEPT_REPORT_SHAPE_IDS),
+        # The published vocabulary only. A ``kind="concept"`` node written
+        # straight to the graph store through ``POST /graph/nodes`` is not in the
+        # vocabulary, so it is not counted here - measured, such a node with
+        # ``definition: ""`` is served by ``GET /graph/nodes/{id}`` while this
+        # pass rate stays 1.0. Declared rather than letting the number read as
+        # covering every concept-shaped thing in the system.
+        "conformance_scope": CONCEPT_CONFORMANCE_SCOPE,
         "non_conforming_concepts": [
             report["concept"] for report in reports if not report["conforms"]
         ],
