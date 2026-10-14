@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 from abc import ABC, abstractmethod
 from collections import deque
 from dataclasses import dataclass, field
@@ -77,7 +78,10 @@ _logger = logging.getLogger(__name__)
 # rejected outright otherwise, so an arbitrary string (e.g. one carrying cypher
 # or SQL breakout characters) can never reach the statement text. Both backends
 # enforce this identically for behaviour parity.
-_AGE_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# \Z, not $: with $ the pattern also matches before a single trailing newline, so
+# "broader\n" passed this guard and then failed the _AGE_LABEL_CHARS lookup with a
+# KeyError instead of the documented ValueError - a 500 on POST /graph/edges.
+_AGE_IDENTIFIER_RE = re.compile(r"\A[A-Za-z_][A-Za-z0-9_]*\Z")
 
 # Fixed identifier alphabet used to rebuild validated labels character by
 # character. Every returned label is provably composed of these constant
@@ -98,7 +102,12 @@ def _relationship_label(edge_type: str) -> str:
 
     if not _AGE_IDENTIFIER_RE.match(edge_type):
         raise ValueError(f"invalid relationship type: {edge_type!r}")
-    return "".join(_AGE_LABEL_CHARS[ch] for ch in edge_type.upper())
+    try:
+        return "".join(_AGE_LABEL_CHARS[ch] for ch in edge_type.upper())
+    except KeyError as exc:  # pragma: no cover - defence in depth behind the regex
+        # The regex and the alphabet must agree; if they ever diverge again, fail
+        # with the documented type rather than a 500.
+        raise ValueError(f"invalid relationship type: {edge_type!r}") from exc
 
 
 # --- Backend contract ---------------------------------------------------------
@@ -154,6 +163,53 @@ class GraphStore(ABC):
 
         raise NotImplementedError
 
+    def assert_node_kind_is_stable(self, node_id: str, kind: str) -> None:
+        """Refuse a write that would change an existing node's ``kind``.
+
+        A node's kind is its identity in this graph: ``/search/semantic`` filters
+        on it, ``/graph/query`` traverses by it, and the governed properties a
+        node carries differ entirely by kind. ``upsert_node`` built a fresh
+        ``GraphNode`` and replaced the stored one, so a write under an id another
+        kind already held **destroyed** it. Measured on the seed, with one
+        authorized request::
+
+            GET  /graph/nodes/crm-customer-master   kind=dataset
+                label='고객 마스터'
+                properties={domain, owner, steward, tags, terms,
+                            sensitivity: 'medium', status: 'published'}
+
+            POST /ontology/concepts {"actor": "admin",
+                                     "concept": "crm-customer-master",
+                                     "definition": "...", "broader": "고객"}
+                -> 200
+
+            GET  /graph/nodes/crm-customer-master   kind=concept
+                label='crm-customer-master'
+                properties={definition, aliases, multilingual}
+
+        So an ontology write silently erased a dataset's classification -
+        ``sensitivity``, ``owner``, ``steward``, ``status`` - which is the
+        metadata the tenant boundary and the masking obligations reason about.
+        The tenant half of this boundary was closed earlier
+        (``_authorize_graph_write`` resolves the target tenant); this is the kind
+        half, and it was open.
+
+        This is deliberately **not** a kind allow-list. ``kind`` stays free-form,
+        so a caller may still introduce a new kind and the injection-regression
+        tests that use a hostile string as a kind keep working; what is refused
+        is *reclassifying* an id that already exists as something else. The
+        narrower rule refuses exactly the destruction and nothing legitimate: a
+        same-kind upsert is how the catalog mirror, the seed and concept
+        re-registration all work.
+        """
+        existing = self.get_node(node_id)
+        if existing is not None and existing.kind != kind:
+            raise ValueError(
+                f"node {node_id!r} already exists with kind {existing.kind!r}; "
+                f"a node's kind cannot be changed to {kind!r} because the "
+                "governed properties it carries differ by kind"
+            )
+
     @abstractmethod
     def concept_graph(self, term: str) -> Dict[str, Any]:
         """Return the concept-centered graph for ``term``."""
@@ -187,14 +243,79 @@ class GraphStore(ABC):
 
         raise NotImplementedError
 
+    # removal ------------------------------------------------------------------
+    #
+    # The store had no removal primitive at all, in either backend, so every
+    # mirror write was an append. A dataset whose column, term, mapping or
+    # lineage edge was removed kept it in the graph forever. Measured on the
+    # in-memory backend after ``PATCH /catalog/datasets/crm-customer-master``
+    # dropped the declared-PII column ``customer_email``:
+    #
+    #     catalog schema            -> customer_id, signup_at
+    #     GET /graph/nodes/...:customer_email -> 200, properties.pii = true
+    #     POST /search/semantic "customer_email" (actor analyst)
+    #                               -> top hit, score 0.673
+    #
+    # ``/browse`` masked that column while it was declared, so removing it made
+    # it *more* exposed than keeping it. Reconciling needs both a read of what
+    # the graph currently holds and a way to remove it.
+
+    @abstractmethod
+    def edges_for(
+        self, node_id: str, edge_type: str, *, direction: str = "out"
+    ) -> List[GraphEdge]:
+        """Return this node's edges of one type, outgoing or incoming.
+
+        ``direction`` is ``"out"`` or ``"in"``. Lineage inputs arrive as
+        incoming edges (upstream -> dataset), so reconciling a dataset's
+        declared lineage needs both.
+        """
+
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_edge(self, edge_type: str, source_id: str, target_id: str) -> bool:
+        """Remove one directed edge; ``True`` when something was removed."""
+
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_node(self, node_id: str) -> bool:
+        """Remove a node, its embedding and every edge touching it.
+
+        Returns ``True`` when the node existed. Used for the column nodes a
+        dataset no longer declares; concept and dataset nodes are never removed
+        this way, because they are not owned by the dataset being reconciled.
+        """
+
+        raise NotImplementedError
+
 
 # --- In-memory backend --------------------------------------------------------
 
 
 class InMemoryGraphStore(GraphStore):
+    # Every collection below is shared process state, and FastAPI runs this
+    # package's ``def`` handlers in a worker threadpool, so a reader genuinely
+    # interleaves with a writer. ``semantic_search`` iterated ``_embeddings``
+    # live, which is a hard error rather than a stale read:
+    #
+    #     POST /search/semantic, while datasets are being onboarded
+    #       -> 500 RuntimeError: dictionary changed size during iteration
+    #     measured at 17 of 42 searches (40%) with two readers and two writers
+    #
+    # A lock, rather than a snapshot at the one iteration that was reported:
+    # ``_edges`` is rebuilt wholesale by ``delete_edge``/``delete_node`` while
+    # ``edges_for``/``traverse`` iterate it, and ``delete_node`` mutates three
+    # collections in sequence - so a reader could see a node whose embedding
+    # was already gone. Fixing only the reported line would have left the rest.
+    #
+    # Reentrant because ``concept_graph`` and ``traverse`` call sibling methods
+    # that also take it.
     def __init__(self, config: Optional[AppConfig] = None) -> None:
         self._config = config or get_app_config()
         self.dimension = self._config.embedding_dimension
+        self._lock = threading.RLock()
         self._nodes: Dict[str, GraphNode] = {}
         self._edges: List[GraphEdge] = []
         self._embeddings: Dict[str, List[float]] = {}
@@ -212,16 +333,21 @@ class InMemoryGraphStore(GraphStore):
         properties: Optional[Dict[str, Any]] = None,
         text: Optional[str] = None,
     ) -> GraphNode:
-        node = GraphNode(
-            node_id=node_id,
-            kind=kind,
-            label=label or node_id,
-            properties=dict(properties or {}),
-        )
-        self._nodes[node_id] = node
-        embed_source = text or label or node_id
-        self._embeddings[node_id] = embed_text(embed_source, self.dimension)
-        return node
+        with self._lock:
+            # Inside the lock, so the check and the write are one step: checked
+            # outside it, a concurrent writer could create the node between the
+            # two and the reclassification would land anyway.
+            self.assert_node_kind_is_stable(node_id, kind)
+            node = GraphNode(
+                node_id=node_id,
+                kind=kind,
+                label=label or node_id,
+                properties=dict(properties or {}),
+            )
+            self._nodes[node_id] = node
+            embed_source = text or label or node_id
+            self._embeddings[node_id] = embed_text(embed_source, self.dimension)
+            return node
 
     def upsert_edge(
         self,
@@ -231,94 +357,99 @@ class InMemoryGraphStore(GraphStore):
         *,
         properties: Optional[Dict[str, Any]] = None,
     ) -> GraphEdge:
-        # Reject non-identifier relationship types for parity with the AGE
-        # backend (where the type occupies a cypher identifier position).
-        _relationship_label(edge_type)
-        for existing in self._edges:
-            if (
-                existing.edge_type == edge_type
-                and existing.source_id == source_id
-                and existing.target_id == target_id
-            ):
-                existing.properties.update(properties or {})
-                return existing
-        edge = GraphEdge(edge_type, source_id, target_id, dict(properties or {}))
-        self._edges.append(edge)
-        return edge
+        with self._lock:
+            # Reject non-identifier relationship types for parity with the AGE
+            # backend (where the type occupies a cypher identifier position).
+            _relationship_label(edge_type)
+            for existing in self._edges:
+                if (
+                    existing.edge_type == edge_type
+                    and existing.source_id == source_id
+                    and existing.target_id == target_id
+                ):
+                    existing.properties.update(properties or {})
+                    return existing
+            edge = GraphEdge(edge_type, source_id, target_id, dict(properties or {}))
+            self._edges.append(edge)
+            return edge
 
     def upsert_concept(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        concept = payload["concept"].strip()
-        record = {
-            "concept": concept,
-            "definition": payload.get("definition", ""),
-            "aliases": list(payload.get("aliases", [])),
-            "broader": payload.get("broader"),
-            "narrower": list(payload.get("narrower", [])),
-            "related": list(payload.get("related", [])),
-            "multilingual": list(payload.get("multilingual", [])),
-        }
-        self._concepts[concept] = record
+        with self._lock:
+            concept = payload["concept"].strip()
+            record = {
+                "concept": concept,
+                "definition": payload.get("definition", ""),
+                "aliases": list(payload.get("aliases", [])),
+                "broader": payload.get("broader"),
+                "narrower": list(payload.get("narrower", [])),
+                "related": list(payload.get("related", [])),
+                "multilingual": list(payload.get("multilingual", [])),
+            }
+            self._concepts[concept] = record
 
-        # alias index for canonicalisation
-        self._alias_to_concept[_normalize(concept)] = concept
-        for alias in record["aliases"] + record["multilingual"]:
-            self._alias_to_concept[_normalize(alias)] = concept
+            # alias index for canonicalisation
+            self._alias_to_concept[_normalize(concept)] = concept
+            for alias in record["aliases"] + record["multilingual"]:
+                self._alias_to_concept[_normalize(alias)] = concept
 
-        # mirror as a graph node with an embedding over concept + definition + aliases
-        embed_source = " ".join(
-            [concept, record["definition"]] + record["aliases"] + record["multilingual"]
-        )
-        self.upsert_node(
-            concept,
-            "concept",
-            label=concept,
-            properties={
-                "definition": record["definition"],
-                "aliases": record["aliases"],
-                "multilingual": record["multilingual"],
-            },
-            text=embed_source,
-        )
-        # edges to related/broader/narrower concepts
-        if record["broader"]:
-            self.upsert_edge("broader", concept, record["broader"])
-        for narrow in record["narrower"]:
-            self.upsert_edge("narrower", concept, narrow)
-        for related in record["related"]:
-            self.upsert_edge("related", concept, related)
-        return record
+            # mirror as a graph node with an embedding over concept + definition + aliases
+            embed_source = " ".join(
+                [concept, record["definition"]] + record["aliases"] + record["multilingual"]
+            )
+            self.upsert_node(
+                concept,
+                "concept",
+                label=concept,
+                properties={
+                    "definition": record["definition"],
+                    "aliases": record["aliases"],
+                    "multilingual": record["multilingual"],
+                },
+                text=embed_source,
+            )
+            # edges to related/broader/narrower concepts
+            if record["broader"]:
+                self.upsert_edge("broader", concept, record["broader"])
+            for narrow in record["narrower"]:
+                self.upsert_edge("narrower", concept, narrow)
+            for related in record["related"]:
+                self.upsert_edge("related", concept, related)
+            return record
 
-    # reads -------------------------------------------------------------------
+        # reads -------------------------------------------------------------------
 
     def get_node(self, node_id: str) -> Optional[GraphNode]:
-        return self._nodes.get(node_id)
+        with self._lock:
+            return self._nodes.get(node_id)
 
     def _canonical_concept(self, term: str) -> str:
-        return self._alias_to_concept.get(_normalize(term), term)
+        with self._lock:
+            return self._alias_to_concept.get(_normalize(term), term)
 
     def concept_graph(self, term: str) -> Dict[str, Any]:
-        canonical = self._canonical_concept(term)
-        record = self._concepts.get(canonical)
-        if not record:
-            return {"canonical": term, "not_found": True, "aliases": []}
-        dataset_ids = sorted(
-            {
-                edge.source_id
-                for edge in self._edges
-                if edge.edge_type == "mapping" and edge.target_id == canonical
+        with self._lock:
+            canonical = self._canonical_concept(term)
+            record = self._concepts.get(canonical)
+            if not record:
+                return {"canonical": term, "not_found": True, "aliases": []}
+            dataset_ids = sorted(
+                {
+                    edge.source_id
+                    for edge in self._edges
+                    if edge.edge_type == "mapping" and edge.target_id == canonical
+                }
+            )
+            return {
+                "canonical": canonical,
+                "concept": canonical,
+                "definition": record["definition"],
+                "aliases": [canonical] + record["aliases"],
+                "broader": record["broader"],
+                "narrower": record["narrower"],
+                "related": record["related"],
+                "multilingual": record["multilingual"],
+                "dataset_ids": dataset_ids,
             }
-        )
-        return {
-            "canonical": canonical,
-            "concept": canonical,
-            "definition": record["definition"],
-            "aliases": [canonical] + record["aliases"],
-            "broader": record["broader"],
-            "narrower": record["narrower"],
-            "related": record["related"],
-            "multilingual": record["multilingual"],
-            "dataset_ids": dataset_ids,
-        }
 
     def traverse(
         self,
@@ -328,69 +459,71 @@ class InMemoryGraphStore(GraphStore):
         direction: str = "both",
         max_depth: int = 2,
     ) -> Dict[str, Any]:
-        if start_id not in self._nodes:
-            raise KeyError(f"node not found: {start_id}")
-        if edge_types:
-            for etype in edge_types:
-                _relationship_label(etype)  # reject bad labels (AGE parity)
-        allowed = set(edge_types) if edge_types else None
-        visited_nodes: Dict[str, GraphNode] = {start_id: self._nodes[start_id]}
-        visited_edges: List[GraphEdge] = []
-        seen_edge_keys: set[Tuple[str, str, str]] = set()
-        frontier: deque[Tuple[str, int]] = deque([(start_id, 0)])
+        with self._lock:
+            if start_id not in self._nodes:
+                raise KeyError(f"node not found: {start_id}")
+            if edge_types:
+                for etype in edge_types:
+                    _relationship_label(etype)  # reject bad labels (AGE parity)
+            allowed = set(edge_types) if edge_types else None
+            visited_nodes: Dict[str, GraphNode] = {start_id: self._nodes[start_id]}
+            visited_edges: List[GraphEdge] = []
+            seen_edge_keys: set[Tuple[str, str, str]] = set()
+            frontier: deque[Tuple[str, int]] = deque([(start_id, 0)])
 
-        while frontier:
-            current, depth = frontier.popleft()
-            if depth >= max_depth:
-                continue
-            for edge in self._edges:
-                if allowed and edge.edge_type not in allowed:
+            while frontier:
+                current, depth = frontier.popleft()
+                if depth >= max_depth:
                     continue
-                neighbor: Optional[str] = None
-                if direction in {"out", "both"} and edge.source_id == current:
-                    neighbor = edge.target_id
-                elif direction in {"in", "both"} and edge.target_id == current:
-                    neighbor = edge.source_id
-                if neighbor is None:
-                    continue
-                key = (edge.edge_type, edge.source_id, edge.target_id)
-                if key not in seen_edge_keys:
-                    seen_edge_keys.add(key)
-                    visited_edges.append(edge)
-                if neighbor not in visited_nodes:
-                    node = self._nodes.get(neighbor)
-                    if node is None:
-                        node = GraphNode(neighbor, "unknown", neighbor)
-                    visited_nodes[neighbor] = node
-                    frontier.append((neighbor, depth + 1))
+                for edge in self._edges:
+                    if allowed and edge.edge_type not in allowed:
+                        continue
+                    neighbor: Optional[str] = None
+                    if direction in {"out", "both"} and edge.source_id == current:
+                        neighbor = edge.target_id
+                    elif direction in {"in", "both"} and edge.target_id == current:
+                        neighbor = edge.source_id
+                    if neighbor is None:
+                        continue
+                    key = (edge.edge_type, edge.source_id, edge.target_id)
+                    if key not in seen_edge_keys:
+                        seen_edge_keys.add(key)
+                        visited_edges.append(edge)
+                    if neighbor not in visited_nodes:
+                        node = self._nodes.get(neighbor)
+                        if node is None:
+                            node = GraphNode(neighbor, "unknown", neighbor)
+                        visited_nodes[neighbor] = node
+                        frontier.append((neighbor, depth + 1))
 
-        return {
-            "start_id": start_id,
-            "backend": "in_memory",
-            "nodes": [node.as_dict() for node in visited_nodes.values()],
-            "edges": [edge.as_dict() for edge in visited_edges],
-        }
+            return {
+                "start_id": start_id,
+                "backend": "in_memory",
+                "nodes": [node.as_dict() for node in visited_nodes.values()],
+                "edges": [edge.as_dict() for edge in visited_edges],
+            }
 
     def semantic_search(
         self, query: str, *, kind: Optional[str] = None, limit: int = 5
     ) -> List[Dict[str, Any]]:
-        query_vec = embed_text(query, self.dimension)
-        scored: List[Dict[str, Any]] = []
-        for node_id, vector in self._embeddings.items():
-            node = self._nodes[node_id]
-            if kind and node.kind != kind:
-                continue
-            score = cosine_similarity(query_vec, vector)
-            scored.append(
-                {
-                    "node_id": node_id,
-                    "kind": node.kind,
-                    "label": node.label,
-                    "score": round(score, 6),
-                }
-            )
-        scored.sort(key=lambda row: row["score"], reverse=True)
-        return scored[:limit]
+        with self._lock:
+            query_vec = embed_text(query, self.dimension)
+            scored: List[Dict[str, Any]] = []
+            for node_id, vector in self._embeddings.items():
+                node = self._nodes[node_id]
+                if kind and node.kind != kind:
+                    continue
+                score = cosine_similarity(query_vec, vector)
+                scored.append(
+                    {
+                        "node_id": node_id,
+                        "kind": node.kind,
+                        "label": node.label,
+                        "score": round(score, 6),
+                    }
+                )
+            scored.sort(key=lambda row: row["score"], reverse=True)
+            return scored[:limit]
 
     def readiness(self) -> Dict[str, Any]:
         return {
@@ -403,12 +536,61 @@ class InMemoryGraphStore(GraphStore):
         }
 
     def stats(self) -> Dict[str, int]:
-        return {
-            "nodes": len(self._nodes),
-            "edges": len(self._edges),
-            "concepts": len(self._concepts),
-            "embeddings": len(self._embeddings),
-        }
+        with self._lock:
+            return {
+                "nodes": len(self._nodes),
+                "edges": len(self._edges),
+                "concepts": len(self._concepts),
+                "embeddings": len(self._embeddings),
+            }
+
+        # removal ------------------------------------------------------------------
+
+    def edges_for(
+        self, node_id: str, edge_type: str, *, direction: str = "out"
+    ) -> List[GraphEdge]:
+        """Return this node's edges of one type, outgoing or incoming."""
+        with self._lock:
+            if direction not in {"out", "in"}:
+                raise ValueError("direction must be 'out' or 'in'")
+            if direction == "out":
+                return [
+                    edge
+                    for edge in self._edges
+                    if edge.edge_type == edge_type and edge.source_id == node_id
+                ]
+            return [
+                edge
+                for edge in self._edges
+                if edge.edge_type == edge_type and edge.target_id == node_id
+            ]
+
+    def delete_edge(self, edge_type: str, source_id: str, target_id: str) -> bool:
+        """Remove one directed edge; ``True`` when something was removed."""
+        with self._lock:
+            before = len(self._edges)
+            self._edges = [
+                edge
+                for edge in self._edges
+                if not (
+                    edge.edge_type == edge_type
+                    and edge.source_id == source_id
+                    and edge.target_id == target_id
+                )
+            ]
+            return len(self._edges) != before
+
+    def delete_node(self, node_id: str) -> bool:
+        """Remove a node, its embedding and every edge touching it."""
+        with self._lock:
+            existed = self._nodes.pop(node_id, None) is not None
+            self._embeddings.pop(node_id, None)
+            self._edges = [
+                edge
+                for edge in self._edges
+                if edge.source_id != node_id and edge.target_id != node_id
+            ]
+            return existed
 
 
 # --- Postgres + Apache AGE + pgvector backend --------------------------------
@@ -496,6 +678,27 @@ class PostgresGraphStore(GraphStore):
         vector = embed_text(embed_source, self.dimension)
         with self._engine.begin() as conn:
             self._prepare(conn)
+            # The same invariant as the in-memory store, read **inside** this
+            # transaction and with the row locked, so the check cannot be
+            # overtaken by a concurrent writer between the read and the upsert.
+            # Reading it through ``get_node`` would open its own connection and
+            # leave exactly that window.
+            # ``fetchone`` rather than ``scalar_one_or_none``: it is the accessor
+            # ``get_node`` and ``_cypher`` already use in this class, so the one
+            # shape of result handling holds throughout.
+            stored_row = conn.execute(
+                sql(
+                    "SELECT node_kind FROM graph_nodes WHERE node_id = :id FOR UPDATE"
+                ),
+                {"id": node_id},
+            ).fetchone()
+            stored_kind = stored_row[0] if stored_row else None
+            if stored_kind is not None and stored_kind != kind:
+                raise ValueError(
+                    f"node {node_id!r} already exists with kind {stored_kind!r}; "
+                    f"a node's kind cannot be changed to {kind!r} because the "
+                    "governed properties it carries differ by kind"
+                )
             self._cypher(
                 conn,
                 "MERGE (n:GraphNode {node_id: $node_id}) "
@@ -819,6 +1022,94 @@ class PostgresGraphStore(GraphStore):
             "concepts": int(concepts),
             "embeddings": int(embeddings),
         }
+
+    # removal ------------------------------------------------------------------
+    #
+    # Verification boundary, stated rather than implied: these three methods are
+    # written to the same pattern as the upserts above - the AGE graph and the
+    # two relational mirrors (``graph_edges``/``graph_nodes`` plus
+    # ``embedding_vectors``) are changed in one transaction - but **they have not
+    # been run against a live Postgres+AGE+pgvector instance**, because this
+    # environment has none. The in-memory backend's equivalents are covered by
+    # ``tests/test_graph_mirroring.py``; the assertions that need a real
+    # database live in ``tests/test_integration_age.py``, which skips unless
+    # ``SDP_DATABASE_DSN`` is reachable. Implementing only the in-memory half
+    # would have left the Postgres deployment with the stale-data defect, which
+    # is worse than an unverified-but-reviewed implementation.
+
+    def edges_for(
+        self, node_id: str, edge_type: str, *, direction: str = "out"
+    ) -> List[GraphEdge]:
+        """Return this node's edges of one type, outgoing or incoming."""
+        from sqlalchemy import text as sql
+
+        if direction not in {"out", "in"}:
+            raise ValueError("direction must be 'out' or 'in'")
+        column = "source_id" if direction == "out" else "target_id"
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                sql(
+                    "SELECT edge_type, source_id, target_id, edge_properties "
+                    f"FROM graph_edges WHERE edge_type = :etype AND {column} = :node"
+                ),
+                {"etype": edge_type, "node": node_id},
+            ).fetchall()
+        return [
+            GraphEdge(row[0], row[1], row[2], dict(row[3] or {})) for row in rows
+        ]
+
+    def delete_edge(self, edge_type: str, source_id: str, target_id: str) -> bool:
+        """Remove one directed edge; ``True`` when something was removed."""
+        from sqlalchemy import text as sql
+
+        rel = _relationship_label(edge_type)
+        with self._engine.begin() as conn:
+            self._prepare(conn)
+            self._cypher(
+                conn,
+                "MATCH (a:GraphNode {node_id: $source_id})"
+                f"-[r:{rel}]->"
+                "(b:GraphNode {node_id: $target_id}) DELETE r RETURN 1 AS v",
+                "v agtype",
+                params={"source_id": source_id, "target_id": target_id},
+            )
+            removed = conn.execute(
+                sql(
+                    "DELETE FROM graph_edges WHERE edge_type = :etype "
+                    "AND source_id = :src AND target_id = :tgt"
+                ),
+                {"etype": edge_type, "src": source_id, "tgt": target_id},
+            ).rowcount
+        return bool(removed)
+
+    def delete_node(self, node_id: str) -> bool:
+        """Remove a node, its embedding and every edge touching it."""
+        from sqlalchemy import text as sql
+
+        with self._engine.begin() as conn:
+            self._prepare(conn)
+            self._cypher(
+                conn,
+                "MATCH (n:GraphNode {node_id: $node_id}) DETACH DELETE n RETURN 1 AS v",
+                "v agtype",
+                params={"node_id": node_id},
+            )
+            conn.execute(
+                sql(
+                    "DELETE FROM graph_edges "
+                    "WHERE source_id = :node OR target_id = :node"
+                ),
+                {"node": node_id},
+            )
+            conn.execute(
+                sql("DELETE FROM embedding_vectors WHERE node_id = :node"),
+                {"node": node_id},
+            )
+            removed = conn.execute(
+                sql("DELETE FROM graph_nodes WHERE node_id = :node"),
+                {"node": node_id},
+            ).rowcount
+        return bool(removed)
 
 
 # --- Backend selection --------------------------------------------------------

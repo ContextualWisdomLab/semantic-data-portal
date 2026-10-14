@@ -8,6 +8,8 @@ drives the code under test.
 
 from __future__ import annotations
 
+import re
+
 from typing import Any
 
 from sdp import catalog, evidence, observability, ontology, orchestrator
@@ -131,7 +133,12 @@ def check_execute_query(req: QueryExecutionRequest) -> None:
     assert isinstance(resp, QueryExecutionResponse)
     assert resp.status in {"SUCCEEDED", "REJECTED", "DENIED"}
     lowered = req.query.lower()
-    if any(tok in lowered for tok in FORBIDDEN_KEYWORDS):
+    # Word boundaries, independently re-implemented here rather than calling the
+    # production matcher, so this stays a real check and not a tautology. The
+    # previous substring predicate pinned the defect it was meant to guard: it
+    # demanded that `select created_at from customer` be REJECTED, because
+    # "create" is a substring of "created_at".
+    if any(re.search(rf"\b{re.escape(tok)}\b", lowered) for tok in FORBIDDEN_KEYWORDS):
         assert resp.status == "REJECTED", "forbidden keyword was not rejected"
     if resp.status == "SUCCEEDED":
         assert resp.row_count >= 0

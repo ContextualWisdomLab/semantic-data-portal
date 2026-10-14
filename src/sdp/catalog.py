@@ -1,12 +1,23 @@
 from __future__ import annotations
 
 import re
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
 from sdp_core import buyer_demo_datasets
+from sdp_core.contracts import REQUIRED_METADATA_FIELDS
+
+from .profile_provenance import (
+    declared_unavailable_metrics,
+    profile_metric_provenance,
+)
+from .quality_warnings import quality_warning_summary
 
 from .domain import (
     AuditEvent,
@@ -15,7 +26,14 @@ from .domain import (
     DatasetCreateRequest,
     DatasetPatchRequest,
 )
-from .evidence import append_audit_event, has_configured_evidence_store, list_persisted_audit_events
+from .evidence import (
+    MAX_IN_MEMORY_AUDIT_EVENTS,
+    append_audit_event,
+    audit_tenant_id,
+    has_configured_evidence_store,
+    list_persisted_audit_events,
+    tenant_is_in_scope,
+)
 
 
 def _seed_datasets() -> List[Dataset]:
@@ -29,10 +47,284 @@ _AUDIT_LOG: list[AuditEvent] = []
 _SCHEMA_HISTORY: dict[str, list[dict[str, Any]]] = {}
 
 
+# The catalog discovery surface is served without an actor, so it must publish
+# strictly less than the governed paths do. ``/browse/{id}/schema`` evaluates the
+# tenant/role/sensitivity policy and audits the release of a dataset's column
+# schema; a discovery payload that carried the same schema - with its ``pii``
+# flags - plus the source-system connection string would make that denial
+# decorative. These fields therefore stay behind the governed path.
+_GOVERNED_DATASET_FIELDS = ("schema", "source_system", "profile", "tenant_id")
+
+
+# Connection-string keys that are locators rather than secrets. An ALLOW-list,
+# not a deny-list of password-ish names: a deny-list leaks the moment a driver
+# uses a key nobody listed, and that is exactly how the URL-only version of this
+# function leaked. Anything not named here is dropped.
+_SAFE_CONNECTION_KEYS = frozenset(
+    {
+        "account",
+        "data source",
+        "database",
+        "dbname",
+        "driver",
+        "host",
+        "hostaddr",
+        "port",
+        "server",
+        "service_name",
+        "sslmode",
+        "warehouse",
+    }
+)
+
+# Schemes that wrap another URL (``jdbc:postgresql://user:pw@host/db``). The
+# wrapper makes ``urlsplit`` read the whole inner URL as a *path*, so the
+# authority - and the userinfo in it - is never parsed.
+_WRAPPER_SCHEMES = frozenset({"jdbc", "odbc"})
+
+
+def _redacted_keyword_value_dsn(source_system: str) -> str:
+    """Keep only the allow-listed locator keys of a keyword/value connection string."""
+    tokens: list[str] = []
+    for chunk in re.split(r"[;\s]+", source_system):
+        if "=" not in chunk:
+            continue
+        key, _, value = chunk.partition("=")
+        if key.strip().lower() in _SAFE_CONNECTION_KEYS:
+            tokens.append(f"{key.strip()}={value}")
+    return " ".join(tokens) if tokens else "redacted"
+
+
+def redacted_source_system(source_system: str) -> str:
+    """Describe a dataset's source system without the credentials its DSN may carry.
+
+    ``source_system`` is a governed field that ``catalog.discovery_view``
+    withholds, and a DSN routinely carries a password - in a URL's userinfo
+    (``postgresql://user:secret@host/db``), as a keyword/value pair
+    (``host=h user=u password=secret``), inside an ODBC string
+    (``Driver={PostgreSQL};Uid=u;Pwd=secret;``), or behind a wrapper scheme
+    (``jdbc:postgresql://u:secret@h/db``). The connector evidence needs the
+    locator, never the secret, so this drops the credential on every path -
+    including the authorized one, since no caller needs it.
+
+    The first version of this function assumed ``source_system`` is always a URL
+    with an authority, and returned the input unchanged when ``urlsplit`` found
+    no host. Measured across ten real connection-string forms, **six leaked the
+    secret verbatim**::
+
+        postgresql://u:PW123@h:5432/db                 -> postgresql://h:5432/db      ok
+        host=h port=5432 user=u password=PW123 dbname=db  -> unchanged                LEAK
+        jdbc:postgresql://u:PW123@h:5432/db            -> unchanged                   LEAK
+        Driver={PostgreSQL};Server=h;Uid=u;Pwd=PW123;  -> unchanged                   LEAK
+        postgresql://h:5432/db password=PW123          -> unchanged                   LEAK
+        Server=h;Database=db;User Id=u;Password=PW123; -> unchanged                   LEAK
+        PW123                                          -> unchanged                   LEAK
+
+    ``audited_patch_values`` is the one redaction on a patched ``source_system``,
+    so the cleartext password was written three times into the audit event
+    (``changes``, ``before``, ``after``) and returned by
+    ``GET /catalog/datasets/{id}/audit?user=analyst`` - to the very roles for
+    which every read route withholds ``source_system`` entirely. The existing
+    test passed because it only ever patched the one form that worked.
+
+    It now fails closed: a string without a parseable authority keeps only
+    allow-listed locator keys, and a string with no recognizable structure
+    becomes ``"redacted"`` rather than being echoed.
+    """
+    try:
+        parts = urlsplit(source_system)
+    except ValueError:
+        return "redacted"
+
+    # A wrapper scheme hides the real URL in the path; unwrap and re-parse once.
+    if parts.scheme in _WRAPPER_SCHEMES and "//" in parts.path:
+        inner = redacted_source_system(source_system.split(":", 1)[1])
+        return f"{parts.scheme}:{inner}"
+
+    if not parts.scheme:
+        return _redacted_keyword_value_dsn(source_system)
+    try:
+        host = parts.hostname
+    except ValueError:
+        return f"{parts.scheme}://redacted"
+    if host is None:
+        # No authority: the remainder is not a locator we can trust to be
+        # secret-free, so only the allow-listed keys of it survive.
+        remainder = _redacted_keyword_value_dsn(parts.path)
+        return f"{parts.scheme}:{remainder}" if remainder != "redacted" else f"{parts.scheme}:redacted"
+    try:
+        port = parts.port
+    except ValueError:
+        port = None
+    authority = f"{host}:{port}" if port else host
+    # The path can carry a trailing secret of its own
+    # (``postgresql://h/db password=PW``), so it is filtered the same way.
+    path = parts.path
+    if "=" in path:
+        safe = _redacted_keyword_value_dsn(path)
+        path = f"/{safe}" if safe != "redacted" else "/redacted"
+    return urlunsplit((parts.scheme, authority, path, "", ""))
+
+
+# The same boundary at column granularity. The schema-history and schema-diff
+# routes publish stored column signatures, so without this they re-published the
+# per-column PII classification that discovery_view withholds.
+_GOVERNED_COLUMN_FIELDS = ("pii", "quality_issues", "classification")
+
+
+def discovery_column_view(column: Dict[str, Any]) -> Dict[str, Any]:
+    """Copy one stored column signature without its governed fields."""
+    return {key: value for key, value in column.items() if key not in _GOVERNED_COLUMN_FIELDS}
+
+
+def _changed_governed_column_fields(before: Dict[str, Any], after: Dict[str, Any]) -> list[str]:
+    """Name the withheld column fields whose values differ between two snapshots.
+
+    A PII reclassification is real schema drift, so the diff still reports which
+    governed field changed; only the classification itself stays withheld.
+    """
+    return [
+        field
+        for field in _GOVERNED_COLUMN_FIELDS
+        if before.get(field) != after.get(field)
+    ]
+
+
+def mutation_response_view(dataset: Dataset) -> Dict[str, Any]:
+    """Project a mutated dataset for the response that confirms the mutation.
+
+    The four catalog mutations returned ``dataset.model_dump()`` verbatim, which
+    carries ``source_system`` with its credential - userinfo *and* query - while
+    every read surface withholds that field entirely
+    (``_GOVERNED_DATASET_FIELDS``) and ``redacted_source_system``'s own docstring
+    says the credential is dropped "on every path - including the authorized
+    one, since no caller needs the credential". Measured on a dataset registered
+    with ``postgresql://dsnuser:SUPERSEKRET123@analytics.dw:5432/crm?sslcert=TOKENINQUERY``:
+
+        POST   /catalog/datasets/{id}/publish    -> 200, secret in response: True
+        POST   /catalog/datasets/{id}/deprecate  -> 200, secret in response: True
+        PATCH  /catalog/datasets/{id}            -> 200, secret in response: True
+
+        GET    /catalog/datasets/{id}            -> secret in response: False
+        GET    /catalog/datasets/{id}/jsonld     -> secret in response: False
+        GET    /browse/{id}/schema               -> secret in response: False
+
+    ``deprecate`` carries no ``source_system`` in its request at all and still
+    handed it back, so the DSN the governance boundary says nobody may read was
+    retrievable on demand by any admin-role principal - and copied into whatever
+    logs, proxies and browser consoles handle the mutation response.
+
+    Unlike ``discovery_view`` this keeps the governed fields: the response
+    confirms what the mutation did, and an admin who just wrote the schema may
+    see it back. Only the credential is removed.
+    """
+    projected = dataset.model_dump()
+    source_system = projected.get("source_system")
+    if isinstance(source_system, str):
+        projected["source_system"] = redacted_source_system(source_system)
+    return projected
+
+
+def audited_patch_values(values: Dict[str, Any]) -> Dict[str, Any]:
+    """Project patched field values for an audit record.
+
+    The audit feed is a read surface like any other, so it must not republish
+    what ``discovery_view``/``discovery_column_view`` withhold: a patched
+    ``source_system`` would put the DSN - credentials included - into the record,
+    and a patched ``schema`` would put the per-column ``pii`` classification
+    there. The change stays auditable: the field name is kept, the source keeps
+    its non-secret locator, columns keep their names and types, and a profile
+    keeps the list of keys that moved.
+    """
+    projected: Dict[str, Any] = {}
+    for key, value in values.items():
+        if key == "source_system" and isinstance(value, str):
+            projected[key] = redacted_source_system(value)
+        elif key == "schema" and isinstance(value, list):
+            projected[key] = [
+                discovery_column_view(column if isinstance(column, dict) else column.model_dump())
+                for column in value
+            ]
+        elif key == "profile" and isinstance(value, dict):
+            projected[key] = {"withheld_keys": sorted(value)}
+        else:
+            projected[key] = value
+    return projected
+
+
+GOOD_COMPLETENESS_BADGE_SCORE = 0.8
+
+
+def completeness_badge(dataset: Dataset) -> str:
+    """Grade a dataset's metadata completeness, never above its validation result.
+
+    ``src/sdp_core/kpis.py`` publishes this guardrail on the
+    ``metadata_completeness`` KPI, verbatim: **"Completeness must not hide failed
+    validation."** The badge broke it. Measured on a dataset with no owner, no
+    steward, no distributions and no mappings:
+
+        GET /catalog/datasets/<id>/validate -> is_valid: false, critical: true
+        GET /catalog/datasets/<id>          -> completeness_badge: "good"
+
+    because the badge read only ``metadata_recommendation_score >= 0.8`` and
+    never consulted validation. A dataset that fails validation critically is now
+    ``invalid``; one that fails non-critically is at best ``partial``.
+
+    The threshold also lived in two places - here and in the search-result
+    projection - so it is defined once and both read it.
+    """
+    report = validate_metadata(dataset)
+    if not report.get("is_valid", True):
+        return "invalid" if report.get("critical") else "partial"
+    if dataset.metadata_recommendation_score >= GOOD_COMPLETENESS_BADGE_SCORE:
+        return "good"
+    return "partial"
+
+
+def discovery_view(dataset: Dataset) -> Dict[str, Any]:
+    """Project a dataset onto the fields the ungated catalog surface may publish.
+
+    The per-column schema (and its ``pii`` flags), the source-system connection
+    string, the row-count profile, and the owning tenant id are withheld; the
+    column count is published in their place so discovery still describes the
+    dataset's shape. ``tests/test_api.py`` pins the resulting key set so that a
+    new ``Dataset`` field is an explicit publish-or-withhold decision.
+    """
+    published = dataset.model_dump()
+    for field in _GOVERNED_DATASET_FIELDS:
+        published.pop(field, None)
+    published["schema_field_count"] = len(dataset.schema)
+    published["metadata_completeness"] = dataset.metadata_completeness
+    published["metadata_recommendation_score"] = dataset.metadata_recommendation_score
+    published["completeness_badge"] = completeness_badge(dataset)
+    # LIN-004's warnings, dataset-scope only. ``include_column_scope=False`` is
+    # the same boundary the lines above enforce: a column-scope warning names a
+    # column and reads per-column statistics this projection withholds, so the
+    # count travels instead of the content and a short list cannot read as a
+    # clean dataset. The governed schema route publishes the full set.
+    published["quality_warnings"] = quality_warning_summary(
+        dataset, include_column_scope=False
+    )
+    return published
+
+
+# The in-memory fallback logs were unbounded lists, so any caller that can reach
+# an audited route could grow process memory without limit. Denials stay audited -
+# dropping them would hide exactly the attempts an auditor looks for - but the
+# in-memory window is bounded, matching the observability ring buffer's design.
+#
+# The cap is imported from ``evidence`` rather than declared here. Capping this
+# list alone did not bound memory: ``_record_audit_event`` writes each event to
+# both lists, and ``evidence._AUDIT_EVENT_LOG`` had no cap, so 2600 refused
+# requests left this list at 2000 and that one at 2600.
+
+
 def _record_audit_event(event: AuditEvent) -> AuditEvent:
     append_audit_event(event)
     if not has_configured_evidence_store():
         _AUDIT_LOG.append(event)
+        if len(_AUDIT_LOG) > MAX_IN_MEMORY_AUDIT_EVENTS:
+            del _AUDIT_LOG[:-MAX_IN_MEMORY_AUDIT_EVENTS]
     return event
 
 
@@ -85,16 +377,53 @@ def get_dataset_profile(dataset_id: str) -> dict[str, Any]:
         "profile_updated_at": dataset.profile.get("updated_at"),
         "quality_issues": dataset.profile.get("quality_issues", []),
         "schema_profile": schema_profile,
+        # LIN-003's acceptance criterion: the metric timestamp and the
+        # computation scope. Without them these figures read as measurements
+        # this service took, and it took none - there is no profiler here.
+        "metric_provenance": profile_metric_provenance(dataset.profile),
+        "declared_unavailable_metrics": declared_unavailable_metrics(),
     }
 
 
-def get_join_candidates(dataset_id: str, *, limit: int = 10) -> list[dict[str, Any]]:
+def datasets_in_scope(tenant_ids: list[str] | None) -> List[Dataset]:
+    """Return the datasets a reader may see, scoped to a set of tenants.
+
+    ``None`` means every tenant and is reserved for the explicit platform-admin
+    crossing; an empty list yields nothing. The discovery surface previously
+    iterated the whole catalog with no tenant predicate, so an unauthenticated
+    caller received every tenant's inventory - ids, titles, owners and status -
+    while the governed path refused the same dataset. ``src/sdp_core/kpis.py``
+    publishes the guardrail that contradicts: "No unauthorized dataset existence
+    disclosure."
+    """
+    if tenant_ids is None:
+        return list(_DATA.values())
+    allowed = set(tenant_ids)
+    return [dataset for dataset in _DATA.values() if dataset.tenant_id in allowed]
+
+
+def dataset_in_scope(dataset_id: str, tenant_ids: list[str] | None) -> Optional[Dataset]:
+    """Return one dataset only when the reader's tenant scope covers it."""
+    dataset = _DATA.get(dataset_id)
+    if dataset is None:
+        return None
+    if tenant_ids is None or dataset.tenant_id in set(tenant_ids):
+        return dataset
+    return None
+
+
+
+def get_join_candidates(
+    dataset_id: str, *, limit: int = 10, tenant_ids: list[str] | None = None
+) -> list[dict[str, Any]]:
     dataset = get_dataset_or_404(dataset_id)
     candidates = []
 
     dataset_columns = {column.name for column in dataset.schema}
     dataset_terms = {term for term in dataset.terms}
-    for other in _DATA.values():
+    # Scoped: an id the caller legitimately owns was a pivot that named its
+    # neighbours in other tenants, together with their overlapping column names.
+    for other in datasets_in_scope(tenant_ids):
         if other.id == dataset.id:
             continue
         if other.status not in {"published", "registered"}:
@@ -134,18 +463,11 @@ class SearchResult:
     score: float
 
 
-_REQUIRED_METADATA_FIELDS = [
-    "owner",
-    "steward",
-    "title",
-    "description",
-    "domain",
-    "sensitivity",
-    "update_frequency",
-    "source_system",
-    "schema",
-    "distributions",
-]
+# Imported, not duplicated: ``Dataset.metadata_completeness`` scores the same
+# list. They were two lists of different lengths (7 vs 10), so a dataset the
+# validator calls critically invalid still published
+# ``metadata_completeness: 1.0``.
+_REQUIRED_METADATA_FIELDS = list(REQUIRED_METADATA_FIELDS)
 
 
 def _bump_version(version: str) -> str:
@@ -160,12 +482,19 @@ def _to_set(values: list[str] | None) -> set[str]:
     return set(values or [])
 
 
-def _term_score(dataset: Dataset, tokens: list[str], query: str) -> float:
+def _compiled_query_tokens(tokens: list[str]) -> list[re.Pattern[str]]:
+    """Compile each search token once, for reuse across every dataset.
+
+    ``_term_score`` compiled inside its own loop and ``search_catalog`` calls it
+    once per dataset, making the cost datasets x tokens: at 1005 datasets a
+    10-token query took 0.03s, 500 tokens 1.39s and 2000 tokens 5.10s.
+    """
+    return [re.compile(re.escape(token), re.IGNORECASE) for token in tokens if token]
+
+
+def _term_score(dataset: Dataset, token_patterns: list[re.Pattern[str]], query: str) -> float:
     score = 0.0
-    for token in tokens:
-        if token == "":
-            continue
-        token_re = re.compile(re.escape(token), re.IGNORECASE)
+    for token_re in token_patterns:
         if token_re.search(dataset.title):
             score += 1.0
         if token_re.search(dataset.description):
@@ -202,8 +531,10 @@ def search_catalog(
     min_freshness: Optional[float] = None,
     include_inactive: bool = False,
     limit: int = 20,
+    tenant_ids: list[str] | None = None,
 ) -> list[SearchResult]:
     tokens = [t.strip() for t in query.split() if t.strip()]
+    token_patterns = _compiled_query_tokens(tokens)
     if not tokens:
         return []
 
@@ -215,7 +546,7 @@ def search_catalog(
     status_filter = _to_set(status)
     license_filter = _to_set(license)
 
-    for dataset in _DATA.values():
+    for dataset in datasets_in_scope(tenant_ids):
         if tags_filter and not tags_filter.intersection(set(dataset.tags)):
             continue
         if domain_filter and dataset.domain not in domain_filter:
@@ -235,7 +566,7 @@ def search_catalog(
         if not include_inactive and dataset.metadata_completeness < 0.8:
             continue
 
-        score = _term_score(dataset, tokens, query)
+        score = _term_score(dataset, token_patterns, query)
         if score > 0:
             by_token.append(SearchResult(dataset=dataset, score=score))
 
@@ -243,7 +574,9 @@ def search_catalog(
     return by_token[:limit]
 
 
-def list_facet_counts(field: str, query: Optional[str] = None) -> Dict[str, int]:
+def list_facet_counts(
+    field: str, query: Optional[str] = None, *, tenant_ids: list[str] | None = None
+) -> Dict[str, int]:
     if field not in {"domain", "owner", "sensitivity", "update_frequency", "license", "status"}:
         raise ValueError("unsupported facet field")
 
@@ -251,11 +584,13 @@ def list_facet_counts(field: str, query: Optional[str] = None) -> Dict[str, int]
         tokens = [t.strip() for t in query.split() if t.strip()]
     else:
         tokens = []
+    token_patterns = _compiled_query_tokens(tokens)
 
     counts: Dict[str, int] = {}
-    for dataset in _DATA.values():
+    # An aggregate is a disclosure: the owner facet named another tenant's owner.
+    for dataset in datasets_in_scope(tenant_ids):
         if tokens:
-            row = SearchResult(dataset=dataset, score=_term_score(dataset, tokens, query))
+            row = SearchResult(dataset=dataset, score=_term_score(dataset, token_patterns, query))
             if row.score <= 0:
                 continue
 
@@ -279,8 +614,8 @@ def get_dataset_or_404(dataset_id: str) -> Dataset:
     return dataset
 
 
-def list_datasets() -> list[Dataset]:
-    return list(_DATA.values())
+def list_datasets(tenant_ids: list[str] | None = None) -> list[Dataset]:
+    return datasets_in_scope(tenant_ids)
 
 
 def get_dataset_schema_history(dataset_id: str) -> dict[str, Any]:
@@ -288,16 +623,41 @@ def get_dataset_schema_history(dataset_id: str) -> dict[str, Any]:
     history = _SCHEMA_HISTORY.get(dataset_id, [])
     if not history:
         raise KeyError("no schema history found")
+    # Project a copy: drift detection reads the stored snapshot, which keeps the
+    # governed column fields.
+    published = [
+        {
+            **entry,
+            "schema": [discovery_column_view(column) for column in entry.get("schema", [])],
+        }
+        for entry in history
+    ]
     return {
         "dataset_id": dataset_id,
-        "history": history,
+        "history": published,
     }
 
 
 def list_dataset_schema_versions(dataset_id: str) -> list[str]:
+    """The distinct schema versions this dataset has had, oldest first.
+
+    One entry per *snapshot* before this, which duplicated a version that had
+    not changed: a snapshot is recorded on every mutation (it captures lineage,
+    mappings, tags, status and scores as well as the columns, which is what
+    drift detection reads), so three non-schema patches published
+    ``["1.0.0", "1.0.0", "1.0.0", "1.0.0"]``. Every entry here is now
+    addressable by ``get_dataset_schema_diff``, which resolves a version
+    through a dict keyed on it and so could only ever reach one snapshot per
+    version anyway - the listing advertised four and the diff served one.
+    """
     get_dataset_or_404(dataset_id)
     history = _SCHEMA_HISTORY.get(dataset_id, [])
-    return [entry["schema_version"] for entry in history]
+    versions: list[str] = []
+    for entry in history:
+        version = entry["schema_version"]
+        if version not in versions:
+            versions.append(version)
+    return versions
 
 
 def get_dataset_schema_diff(dataset_id: str, from_version: str, to_version: str) -> dict[str, Any]:
@@ -323,8 +683,11 @@ def get_dataset_schema_diff(dataset_id: str, from_version: str, to_version: str)
     changed = [
         {
             "name": name,
-            "before": before_names[name],
-            "after": after_names[name],
+            "before": discovery_column_view(before_names[name]),
+            "after": discovery_column_view(after_names[name]),
+            "changed_withheld_fields": _changed_governed_column_fields(
+                before_names[name], after_names[name]
+            ),
         }
         for name in before_names.keys() & after_names.keys()
         if before_names[name] != after_names[name]
@@ -339,6 +702,36 @@ def get_dataset_schema_diff(dataset_id: str, from_version: str, to_version: str)
     }
 
 
+# CAT-005's acceptance criterion names four things a catalog-write audit row
+# must carry: the before/after diff, the actor, the timestamp and the **reason**.
+# The first three were recorded; the reason was not. ``_build_dataset_payload``
+# hardcodes ``reason="ok"`` - which is the row's *outcome*, not the caller's
+# reason for the change - and only ``deprecate`` accepted one at all. Measured
+# before this:
+#
+#     PATCH /catalog/datasets/{id} {"reason": "buyer audit reason"}
+#       -> 200, details keys: after, before, changes, tenant_id  (no reason)
+#
+# A caller's reason was accepted with 200 and dropped, because the request
+# models declare no such field and pydantic ignores an extra one.
+#
+# The reason is read from the raw request payload rather than added to
+# ``DatasetCreateRequest``/``DatasetPatchRequest`` deliberately: it is metadata
+# *about* the change, not dataset state, and those models' fields are a strict
+# subset of ``Dataset``'s - an invariant ``tests/test_catalog_field_forwarding``
+# asserts and a ``reason`` field would break.
+#
+# The key is published even when no reason was given, as ``None``. Omitting it
+# would leave a reader unable to tell "the caller gave no reason" from "this
+# surface does not record one", which is the distinction the row exists to make.
+CHANGE_REASON_DETAIL_KEY = "change_reason"
+
+
+def change_reason_details(change_reason: str | None) -> dict[str, Any]:
+    """The audit-detail fragment carrying a caller-supplied change reason."""
+    return {CHANGE_REASON_DETAIL_KEY: change_reason}
+
+
 def _build_dataset_payload(
     dataset: Dataset,
     *,
@@ -347,6 +740,10 @@ def _build_dataset_payload(
     decision_id: str | None = None,
     details: dict[str, object] | None = None,
 ) -> AuditEvent:
+    # The evidence store scopes an audit row by details["tenant_id"], so the
+    # owning tenant has to travel with the event; the Dataset is right here.
+    event_details: dict[str, object] = {"tenant_id": dataset.tenant_id}
+    event_details.update(details or {})
     return AuditEvent(
         id=str(uuid4()),
         actor=actor,
@@ -355,7 +752,7 @@ def _build_dataset_payload(
         decision_id=decision_id,
         result="success",
         reason="ok",
-        details=details or {},
+        details=event_details,
         created_at=datetime.now(timezone.utc),
     )
 
@@ -371,41 +768,115 @@ def validate_metadata(dataset: Dataset) -> Dict[str, object]:
     }
 
 
+# Every catalog mutation is a read-modify-write over this module's dicts:
+# ``get_dataset_or_404`` then ``model_dump`` then ``_bump_version`` then
+# ``_DATA[id] = updated``. FastAPI runs these ``def`` handlers in a worker
+# threadpool, so two requests genuinely interleave, and nothing serialised them.
+# Measured by forcing the interleaving (pause one writer between its read and
+# its write) through ``patch_dataset``:
+#
+#     PATCH description=FIRST   -> 200
+#     PATCH steward=SECOND      -> 200
+#     stored: description=FIRST, steward=<unchanged>, version=1.0.1
+#     audit: success {"description": "FIRST"}
+#     audit: success {"steward": "SECOND"}
+#
+# The lost write is bad; the audit row is worse. This product's governance
+# invariant is that a decision and an audit event accompany every governed
+# write, and here the ledger certified a change that is not in the store - the
+# event is built from the writer's own ``updates`` and never re-read from
+# ``_DATA``. Unsynchronised, 50 concurrent patches advanced the version by 25.
+#
+# Generated ids had the same shape of defect at the check-then-store boundary:
+# eight concurrent id-less creates each answered 200 and the catalog grew by
+# five, because ``len(_DATA) + 1`` and ``if dataset_id in _DATA`` and the store
+# write were three separate steps.
+#
+# Reentrant, because ``api`` holds this lock across a mutation *and* its graph
+# mirror (two unsynchronised steps let the catalog and the graph disagree
+# permanently) and the mutation it calls acquires the lock again.
+_MUTATION_LOCK = threading.RLock()
+
+
+@contextmanager
+def catalog_mutation_lock() -> Iterator[None]:
+    """Hold the catalog mutation lock across a caller-composed critical section.
+
+    ``api`` uses this to make "mutate the catalog, then mirror it into the
+    graph" one atomic step. Two concurrent schema patches otherwise applied in
+    one order to the catalog and the opposite order to the graph, leaving the
+    graph holding a ``pii: true`` column the catalog does not declare - which
+    ``/search/semantic`` then served and ``/browse/{id}/schema`` could not mask,
+    because for the catalog that column does not exist.
+    """
+    with _MUTATION_LOCK:
+        yield
+
+
+def _next_generated_dataset_id() -> str:
+    """The first free ``dataset-NNN`` id. Call with the mutation lock held.
+
+    ``len(_DATA) + 1`` collided for two independent reasons: concurrently,
+    several callers computed the same number before any of them stored; and
+    sequentially, the count says nothing about which ids are taken once a
+    caller has registered a ``dataset-NNN`` id of its own. Scanning for the
+    first free id answers the question actually being asked.
+    """
+    index = 1
+    while f"dataset-{index:03d}" in _DATA:
+        index += 1
+    return f"dataset-{index:03d}"
+
+
 def register_dataset(
     payload: DatasetCreateRequest,
     *,
     actor: str = "system",
     decision_id: str | None = None,
+    change_reason: str | None = None,
 ) -> Dataset:
-    if not payload.id:
-        dataset_id = f"dataset-{len(_DATA) + 1:03d}"
-    else:
-        dataset_id = payload.id
+    with _MUTATION_LOCK:
+        return _register_dataset_locked(
+            payload,
+            actor=actor,
+            decision_id=decision_id,
+            change_reason=change_reason,
+        )
+
+
+def _register_dataset_locked(
+    payload: DatasetCreateRequest,
+    *,
+    actor: str = "system",
+    decision_id: str | None = None,
+    change_reason: str | None = None,
+) -> Dataset:
+    """Register one dataset. Call with the mutation lock held."""
+    dataset_id = payload.id or _next_generated_dataset_id()
 
     if dataset_id in _DATA:
         raise ValueError("dataset already exists")
 
     now = datetime.now(timezone.utc)
+    # Built from the request's own fields rather than a hand-written list of
+    # them. The hand-written version silently dropped ``license``: ``Dataset``
+    # has carried the field all along, ``DatasetCreateRequest`` did not expose
+    # it, and when it was exposed this constructor still ignored it - so a
+    # ``POST`` naming a licence answered 200 and stored the default. A catalog
+    # whose licence cannot be set is missing the field a diligence reader checks
+    # first, and ``metadata_completeness``'s own definition counts it.
+    #
+    # ``DatasetCreateRequest``'s fields are a strict subset of ``Dataset``'s
+    # (asserted by ``tests/test_catalog_field_forwarding.py``), so the spread is
+    # exact rather than lenient, and a field added to the request in future
+    # reaches the stored dataset without a second edit here.
     dataset = Dataset(
+        **{
+            key: value
+            for key, value in payload.model_dump().items()
+            if key != "id"
+        },
         id=dataset_id,
-        tenant_id=payload.tenant_id,
-        title=payload.title,
-        description=payload.description,
-        owner=payload.owner,
-        steward=payload.steward,
-        domain=payload.domain,
-        source_system=payload.source_system,
-        sensitivity=payload.sensitivity,
-        update_frequency=payload.update_frequency,
-        quality_score=payload.quality_score,
-        freshness_score=payload.freshness_score,
-        tags=list(payload.tags),
-        terms=list(payload.terms),
-        related_datasets=list(payload.related_datasets),
-        schema=list(payload.schema),
-        distributions=list(payload.distributions),
-        mappings=list(payload.mappings),
-        profile=dict(payload.profile),
         status="registered",
         created_at=now,
         updated_at=now,
@@ -413,7 +884,15 @@ def register_dataset(
     dataset.recompute_scores()
     _DATA[dataset.id] = dataset
     _record_schema_snapshot(dataset)
-    _record_audit_event(_build_dataset_payload(dataset, actor=actor, action="dataset.register", decision_id=decision_id))
+    _record_audit_event(
+        _build_dataset_payload(
+            dataset,
+            actor=actor,
+            action="dataset.register",
+            decision_id=decision_id,
+            details=change_reason_details(change_reason),
+        )
+    )
     return dataset
 
 
@@ -423,17 +902,64 @@ def patch_dataset(
     *,
     actor: str = "system",
     decision_id: str | None = None,
+    change_reason: str | None = None,
 ) -> Dataset:
+    with _MUTATION_LOCK:
+        return _patch_dataset_locked(
+            dataset_id,
+            patch,
+            actor=actor,
+            decision_id=decision_id,
+            change_reason=change_reason,
+        )
+
+
+def _patch_dataset_locked(
+    dataset_id: str,
+    patch: DatasetPatchRequest,
+    *,
+    actor: str = "system",
+    decision_id: str | None = None,
+    change_reason: str | None = None,
+) -> Dataset:
+    """Apply one patch. Call with the mutation lock held."""
     dataset = get_dataset_or_404(dataset_id)
     before = dataset.model_dump()
     data = dataset.model_dump()
     updates = patch.model_dump(exclude_unset=True)
 
+    effective: dict[str, Any] = {}
     for key, value in updates.items():
         if key in {"tags", "terms", "related_datasets", "lineage_inputs", "lineage_outputs", "mappings", "profile"} and value is None:
             continue
         if value is not None:
             data[key] = value
+            effective[key] = value
+
+    # A patch that changes nothing changes nothing. ``{"actor": "admin"}`` names
+    # no patchable field, and a body whose every value is ``None`` is skipped by
+    # the rules above, yet both used to bump ``version``, move ``updated_at``
+    # and append a schema snapshot - so the dataset claimed a modification time
+    # for a request that modified nothing, and the version sequence stopped
+    # counting changes. ``publish_dataset`` already models the answer: record the
+    # no-op in the ledger and return the dataset untouched.
+    if not effective:
+        _record_audit_event(
+            _build_dataset_payload(
+                dataset,
+                actor=actor,
+                decision_id=decision_id,
+                action="dataset.patch",
+                details={
+                    "changes": {},
+                    "before": {},
+                    "after": {},
+                    "noop": True,
+                    **change_reason_details(change_reason),
+                },
+            )
+        )
+        return dataset
 
     data["updated_at"] = datetime.now(timezone.utc)
     if "schema" in updates:
@@ -450,7 +976,12 @@ def patch_dataset(
             actor=actor,
             decision_id=decision_id,
             action="dataset.patch",
-            details={"changes": updates, "before": {k: before[k] for k in updates}, "after": {k: data[k] for k in updates},},
+            details={
+                "changes": audited_patch_values(effective),
+                "before": audited_patch_values({k: before[k] for k in effective}),
+                "after": audited_patch_values({k: data[k] for k in effective}),
+                **change_reason_details(change_reason),
+            },
         )
     )
     return updated
@@ -461,7 +992,25 @@ def publish_dataset(
     *,
     actor: str = "system",
     decision_id: str | None = None,
+    change_reason: str | None = None,
 ) -> Dataset:
+    with _MUTATION_LOCK:
+        return _publish_dataset_locked(
+            dataset_id,
+            actor=actor,
+            decision_id=decision_id,
+            change_reason=change_reason,
+        )
+
+
+def _publish_dataset_locked(
+    dataset_id: str,
+    *,
+    actor: str = "system",
+    decision_id: str | None = None,
+    change_reason: str | None = None,
+) -> Dataset:
+    """Publish one dataset. Call with the mutation lock held."""
     dataset = get_dataset_or_404(dataset_id)
     validation = validate_metadata(dataset)
     if not validation["is_valid"]:
@@ -474,7 +1023,11 @@ def publish_dataset(
                 actor=actor,
                 decision_id=decision_id,
                 action="dataset.publish",
-                details={"status": dataset.status, "noop": True},
+                details={
+                    "status": dataset.status,
+                    "noop": True,
+                    **change_reason_details(change_reason),
+                },
             )
         )
         return dataset
@@ -493,7 +1046,10 @@ def publish_dataset(
             actor=actor,
             decision_id=decision_id,
             action="dataset.publish",
-            details={"previous_status": dataset.status},
+            details={
+                "previous_status": dataset.status,
+                **change_reason_details(change_reason),
+            },
         )
     )
     return published
@@ -503,10 +1059,47 @@ def deprecate_dataset(
     dataset_id: str,
     *,
     actor: str = "system",
-    reason: str = "deprecated",
+    reason: str | None = None,
     decision_id: str | None = None,
 ) -> Dataset:
+    with _MUTATION_LOCK:
+        return _deprecate_dataset_locked(
+            dataset_id, actor=actor, reason=reason, decision_id=decision_id
+        )
+
+
+def _deprecate_dataset_locked(
+    dataset_id: str,
+    *,
+    actor: str = "system",
+    reason: str | None = None,
+    decision_id: str | None = None,
+) -> Dataset:
+    """Deprecate one dataset. Call with the mutation lock held."""
     dataset = get_dataset_or_404(dataset_id)
+
+    # ``publish_dataset`` guards its already-published case; this did not, so a
+    # replayed deprecate wrote a fresh "dataset.deprecate / success" row to the
+    # governance ledger, bumped the version and appended a snapshot every time.
+    # Measured over three identical calls: version 1.0.1 -> 1.0.2 -> 1.0.3, three
+    # audit rows, three snapshots - a ledger reader could not tell a retried
+    # request from three deliberate deprecations.
+    if dataset.status == "deprecated":
+        _record_audit_event(
+            _build_dataset_payload(
+                dataset,
+                actor=actor,
+                decision_id=decision_id,
+                action="dataset.deprecate",
+                details={
+                    "status": dataset.status,
+                    "noop": True,
+                    **change_reason_details(reason),
+                },
+            )
+        )
+        return dataset
+
     dataset_data = dataset.model_dump()
     dataset_data["status"] = "deprecated"
     dataset_data["version"] = _bump_version(dataset.version)
@@ -521,30 +1114,83 @@ def deprecate_dataset(
             actor=actor,
             action="dataset.deprecate",
             decision_id=decision_id,
-            details={"reason": reason},
+            details=change_reason_details(reason),
         )
     )
     return deprecated
 
 
-def list_audit_events(*, limit: int = 100, resource: str | None = None) -> list[AuditEvent]:
+def list_audit_events(
+    *,
+    limit: int = 100,
+    resource: str | None = None,
+    tenant_ids: list[str] | None = None,
+) -> list[AuditEvent]:
+    """List audit events, optionally scoped to a set of tenants.
+
+    ``tenant_ids=None`` means every tenant and is reserved for the explicit
+    platform-admin crossing; an empty list yields no rows. The in-memory fallback
+    log is filtered the same way the stores filter in SQL, so a reader sees the
+    same scope whichever backend is configured.
+    """
     events = list(_AUDIT_LOG)
     if resource:
         events = [event for event in events if event.resource == resource]
+    events = [event for event in events if tenant_is_in_scope(audit_tenant_id(event), tenant_ids)]
 
-    if has_configured_evidence_store():
-        persisted = list_persisted_audit_events(resource=resource, limit=limit)
-        by_id = {event.id: event for event in events}
-        for event in persisted:
-            by_id[event.id] = event
-        events = list(by_id.values())
+    # Always merge: with no store configured the evidence module keeps its own
+    # fallback log, which is where the OIDC mapping events live. Deduping by id
+    # absorbs the overlap with _AUDIT_LOG.
+    persisted = list_persisted_audit_events(resource=resource, limit=limit, tenant_ids=tenant_ids)
+    by_id = {event.id: event for event in events}
+    for event in persisted:
+        by_id[event.id] = event
+    events = list(by_id.values())
 
     events = sorted(events, key=lambda row: row.created_at, reverse=True)
     return events[:limit]
 
 
-def get_dataset_audit_events(dataset_id: str, *, limit: int = 100) -> list[AuditEvent]:
-    return list_audit_events(limit=limit, resource=dataset_id)
+# A published count must not be the size of the page it was read from.
+#
+# ``sdp_request_observations_total`` had this defect and was fixed; the audit and
+# policy gauges were read the same way and were left behind. Measured with 700
+# governed mutations in the ledger::
+#
+#     catalog._AUDIT_LOG                              700
+#     /metrics sdp_audit_events_observed_total         500
+#     /enterprise/evidence-pack audit_event_count      500
+#     /enterprise/observability audit_events_observed  500
+#
+# Three published surfaces reported 500 for 700 events, because each read
+# ``list_*(limit=500)`` and took ``len()`` of the page. A counter that cannot
+# exceed its page is not a counter, and these are the numbers a buyer's
+# procurement reader uses to judge whether the governance trail is real.
+#
+# The ceiling exists because the store-backed path needs a bound, and a count
+# that hits it is published as a **lower bound** rather than as the count - the
+# same rule the rest of this product follows for a truncated list.
+EVIDENCE_COUNT_CEILING = 100_000
+
+
+def count_audit_events(
+    *, resource: str | None = None, tenant_ids: list[str] | None = None
+) -> tuple[int, bool]:
+    """How many audit events exist in scope, and whether that is a lower bound.
+
+    Scoped exactly as :func:`list_audit_events` scopes its page, so the count
+    and the page agree about what they are counting.
+    """
+    events = list_audit_events(
+        limit=EVIDENCE_COUNT_CEILING, resource=resource, tenant_ids=tenant_ids
+    )
+    return len(events), len(events) >= EVIDENCE_COUNT_CEILING
+
+
+def get_dataset_audit_events(
+    dataset_id: str, *, limit: int = 100, tenant_ids: list[str] | None = None
+) -> list[AuditEvent]:
+    return list_audit_events(limit=limit, resource=dataset_id, tenant_ids=tenant_ids)
 
 
 def mapping_candidates(dataset: Dataset, concept: str) -> list[str]:
@@ -567,6 +1213,14 @@ def ingest_event(
     reason: str = "",
     details: dict[str, object] | None = None,
 ) -> AuditEvent:
+    # Stamp the owning tenant so the evidence store can scope the row. A denial
+    # for a dataset that does not exist has no owning tenant; it is left for the
+    # store to mark unresolved rather than attributed to a real tenant.
+    event_details: dict[str, object] = {}
+    dataset = _DATA.get(dataset_id)
+    if dataset and dataset.tenant_id:
+        event_details["tenant_id"] = dataset.tenant_id
+    event_details.update(details or {})
     event = AuditEvent(
         id=str(uuid4()),
         actor=actor,
@@ -575,7 +1229,7 @@ def ingest_event(
         result=decision,
         decision_id=decision_id,
         reason=reason,
-        details=details or {},
+        details=event_details,
         created_at=datetime.now(timezone.utc),
     )
     return _record_audit_event(event)

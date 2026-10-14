@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import math
 import re
+from typing import Any
 from datetime import datetime, timezone
+from .authz import can_access_tenant
 from .catalog import get_dataset, ingest_event
 from .domain import QueryDraftRequest
 from .policy import evaluate
@@ -9,11 +12,168 @@ from .domain import QueryExecutionRequest
 from .domain import QueryExecutionResponse
 
 
-_FORBIDDEN_KEYWORDS = {"drop", "delete", "truncate", "alter", "insert", "update", "merge", "exec", "union"}
+# Statement-initiating or write-capable keywords. `into`, `create` and `copy`
+# matter even though the guard already demands a leading `select `: PostgreSQL
+# reads `SELECT ... INTO <name>` as CREATE TABLE AS, so a write can hide inside
+# a statement that opens like the read the guard is looking for.
+_FORBIDDEN_KEYWORDS = {
+    "alter",
+    "call",
+    "copy",
+    "create",
+    "delete",
+    "drop",
+    "exec",
+    "execute",
+    "grant",
+    "insert",
+    "into",
+    "lock",
+    "merge",
+    "prepare",
+    "revoke",
+    "truncate",
+    "union",
+    "update",
+    "vacuum",
+}
+
+# A dollar-quoted string ($$text$$ or $tag$text$tag$) is a PostgreSQL string
+# literal that contains neither quote character, so it smuggles an argument past
+# a guard that only looks for ' and ".
+_DOLLAR_QUOTE = re.compile(r"\$[A-Za-z_]*\$")
+
+# Keywords that end a table list. Anything else following a table identifier is
+# an alias (with or without AS) and is not itself a table.
+_TABLE_CLAUSE_TERMINATORS = frozenset(
+    {
+        "cross",
+        "except",
+        "fetch",
+        "from",
+        "full",
+        "group",
+        "having",
+        "inner",
+        "intersect",
+        "into",
+        "join",
+        "lateral",
+        "left",
+        "limit",
+        "natural",
+        "offset",
+        "on",
+        "order",
+        "right",
+        "select",
+        "union",
+        "using",
+        "where",
+        "window",
+    }
+)
+
+# PostgreSQL's identifier continuation set is ``[A-Za-z\200-\377_0-9$]`` - it
+# includes ``$`` and every byte at or above 0x80. The old token
+# ``[A-Za-z_][\w.]*`` stopped at both, so it split one identifier into two and
+# then discarded the second as an alias. Measured against an allow-list of
+# ``customer``::
+#
+#     SELECT count(*) FROM customer$pii_raw LIMIT 1
+#       warnings []            parsed ['customer']       <- certified clean
+#     SELECT count(*) FROM customer×pii_raw LIMIT 1
+#       warnings []            parsed ['customer']       <- certified clean
+#     SELECT count(*) FROM secret$customer
+#       warnings ['unauthorized_table_reference']        <- the prefix decides
+#
+# The engine resolves the single table ``customer$pii_raw``, so the allow-list
+# proved a claim about a table name that is not the one the query names - the
+# same unsoundness class as the comma-FROM bypass this repo rated critical and
+# closed. Widening the token makes the reference parse whole and be compared,
+# which is the fail-closed direction: a name the allow-list cannot prove is
+# refused.
+#
+# Note on evidence: the PostgreSQL half is **measured**, not inferred. An
+# independent verification of this finding stood up a throwaway UTF-8 cluster
+# and ran it::
+#
+#     CREATE TABLE customer(a int);
+#     CREATE TABLE customer$pii_raw(secret text);
+#     INSERT INTO customer$pii_raw VALUES ('ssn-123-45-6789');
+#     SELECT count(*), max(secret) FROM customer$pii_raw  -> 1 | ssn-123-45-6789
+#     SELECT count(*) FROM customer                       -> 0
+#
+# with ``pg_tables`` listing ``customer``, ``customer$pii_raw`` and
+# ``customer×pii_raw`` as three distinct tables, and the non-ASCII form
+# behaving identically. So the unquoted reference this validator certified as
+# ``customer`` really does resolve to a different table holding different rows.
+# Nothing executes in *this* repository - ``execute_query`` is a mock engine -
+# which is why the gate's own verdict is what the tests above measure.
+_TABLE_LIST_TOKEN = re.compile(r",|[A-Za-z_\u0080-\uffff][\w.$\u0080-\uffff]*")
+
+# A read-only certification cannot be given to a function it does not know.
+# The literal guard already stops an argument-bearing call
+# (``pg_read_file($$/etc/passwd$$)`` -> ``literal_values_not_allowed``), which
+# left zero-argument and integer-argument calls in the safe lane. Measured, all
+# with an allow-listed table and zero warnings before this gate::
+#
+#     SELECT pg_terminate_backend(12345) FROM customer   -> []
+#     SELECT lo_unlink(1) FROM customer                  -> []
+#     SELECT pg_sleep(100000) FROM customer              -> []
+#     SELECT pg_reload_conf() FROM customer              -> []
+#
+# docs/prd-trd.md states BRW-005 ("read-only SELECT only ... block DDL/DML and
+# unsafe functions") as P0 and NFR-SEC-007 repeats it, so this is a declared
+# requirement rather than an extra. A deny-list is unbounded and therefore
+# unsound; an allow-list is the only shape that can certify. This set is what
+# the drafter itself emits (``count``) plus the standard read-only aggregates -
+# measured from ``draft_sql`` output across every seeded dataset and column.
+# Widening it is a deliberate act, not a side effect.
+#
+# Nothing executes here, so the side effects of the examples above are
+# PostgreSQL's documented function semantics, not observed behaviour. The defect
+# is the false certification either way.
+_ALLOWED_FUNCTIONS = frozenset({"count", "sum", "avg", "min", "max"})
+
+# ``name(`` with optional whitespace. A bare ``(`` is not a call, so a
+# parenthesised expression or a subquery is untouched.
+_FUNCTION_CALL = re.compile(r"([A-Za-z_][A-Za-z_0-9]*)\s*\(")
 
 
 def _safe_identifier(value: str) -> str:
     return "".join(ch if ch.isalnum() or ch == "_" else "_" for ch in value)
+
+
+def _is_emittable_identifier(value: str) -> bool:
+    """Whether this name can be emitted unquoted and mean the same thing.
+
+    ``_safe_identifier`` replaces every non-alphanumeric character with ``_``,
+    which is right for deriving a *table* name from a source locator and wrong
+    for a *declared column*: the draft then names a column the dataset does not
+    declare, while the same response reports the original under
+    ``requested_columns`` and asserts it used only catalog-validated columns.
+    Measured with a declared column ``order amount``::
+
+        query             SELECT order_amount, count(*) ... FROM customer
+        requested_columns ['order amount']
+        assumptions       ['카탈로그에서 검증된 테이블/컬럼만 사용', ...]
+
+    The statement passed ``validate_sql_query`` and ``/browse/query`` answered
+    200, so nothing in the product flagged it; the buyer finds out when the
+    warehouse answers ``column "order_amount" does not exist``. The mapping is
+    also not injective - ``order amount`` and ``order_amount`` collapse to the
+    same emitted identifier - so a draft could silently aggregate a different
+    column than the one asked for.
+
+    Emitting a quoted identifier is not available: ``validate_sql_query``
+    refuses any statement containing a double quote
+    (``literal_values_not_allowed``), so a quoted name could never execute
+    through this product's own gate. Refusing with a reason is therefore the
+    honest answer, and it is also the one that surfaces the limitation at the
+    moment the caller can act on it.
+    """
+    return bool(value) and value == _safe_identifier(value)
 
 
 def _safe_request_id() -> str:
@@ -22,6 +182,71 @@ def _safe_request_id() -> str:
 
 def _source_table_name(source_system: str) -> str:
     return _safe_identifier(source_system.rstrip("/").rsplit("/", 1)[-1])
+
+
+def _referenced_source_tables(sql: str) -> list[str] | None:
+    """List every table identifier that a FROM or JOIN clause references.
+
+    One FROM clause may name several tables in a comma-separated list, each
+    optionally aliased, so reading only the identifier that follows the keyword
+    leaves every table after the first comma invisible to the allow-list check.
+    Returns ``None`` when a clause cannot be read as a table list, so the caller
+    refuses the query instead of guessing what it touches.
+    """
+    tokens = _TABLE_LIST_TOKEN.findall(sql)
+    tables: list[str] = []
+    index = 0
+    while index < len(tokens):
+        keyword = tokens[index].lower()
+        index += 1
+        if keyword not in {"from", "join"}:
+            continue
+        expect_table = True
+        while index < len(tokens):
+            token = tokens[index]
+            if token == ",":
+                index += 1
+                if expect_table:
+                    return None
+                expect_table = True
+                continue
+            if token.lower() in _TABLE_CLAUSE_TERMINATORS:
+                break
+            index += 1
+            if expect_table:
+                tables.append(token)
+                expect_table = False
+        if expect_table:
+            return None
+    return tables
+
+
+def _matched_forbidden_keyword(text: str) -> str | None:
+    """Return the first forbidden keyword appearing in ``text`` as a whole word.
+
+    Every gate that consults ``_FORBIDDEN_KEYWORDS`` goes through here, because
+    they did not agree before: ``validate_sql_query`` matched on word boundaries
+    while ``draft_sql`` and ``execute_query`` matched on bare substrings. The
+    canonical validator therefore returned no warning for
+    ``select created_at from customer`` while ``/browse/query`` rejected the
+    identical SQL as hostile.
+
+    Substring matching refuses ordinary identifiers: ``create`` is inside
+    ``created_at``, ``update`` inside ``updated_at``, ``delete`` inside
+    ``deleted_flag``, and the same holds for ``merged_at``, ``locked_at``,
+    ``granted_scope``, ``execution_count``, ``dropoff_rate`` and ``intopic`` -
+    nine shapes an ordinary warehouse column carries. Word boundaries still
+    catch the real cases (``drop table``, ``select ... into exfil``), which is
+    what the keyword list exists for.
+
+    The list is iterated in sorted order so the keyword reported back to the
+    caller is deterministic rather than set-iteration dependent.
+    """
+    lowered = text.lower()
+    for token in sorted(_FORBIDDEN_KEYWORDS):
+        if re.search(rf"\b{re.escape(token)}\b", lowered):
+            return token
+    return None
 
 
 def validate_sql_query(sql: str, *, source_system: str) -> list[str]:
@@ -35,30 +260,93 @@ def validate_sql_query(sql: str, *, source_system: str) -> list[str]:
         warnings.append("single_statement_required")
     if "--" in stripped or "/*" in stripped or "*/" in stripped:
         warnings.append("sql_comments_not_allowed")
-    if "'" in stripped or '"' in stripped:
+    if "'" in stripped or '"' in stripped or _DOLLAR_QUOTE.search(stripped):
         warnings.append("literal_values_not_allowed")
     if re.search(r"\b(and|or)\b", lowered):
         warnings.append("boolean_operator_not_allowed")
 
-    for token in _FORBIDDEN_KEYWORDS:
-        if re.search(rf"\b{re.escape(token)}\b", lowered):
-            warnings.append("forbidden_keyword_detected")
-            break
+    if _matched_forbidden_keyword(lowered) is not None:
+        warnings.append("forbidden_keyword_detected")
 
-    referenced = [
-        next(value for value in match if value)
-        for match in re.findall(r"\bfrom\s+([A-Za-z_][\w.]*)|\bjoin\s+([A-Za-z_][\w.]*)", stripped, re.IGNORECASE)
-    ]
+    called = {
+        name.lower()
+        for name in _FUNCTION_CALL.findall(stripped)
+        # A clause keyword followed by "(" is not a function call: ``in (``,
+        # ``exists (`` and the set operators all take a parenthesised operand.
+        if name.lower() not in _TABLE_CLAUSE_TERMINATORS
+        and name.lower() not in {"in", "exists", "not", "and", "or", "all", "any", "values"}
+    }
+    unauthorized = sorted(called - _ALLOWED_FUNCTIONS)
+    if unauthorized:
+        warnings.append("unauthorized_function_call")
+
+    referenced = _referenced_source_tables(stripped)
+    if referenced is None:
+        # An unreadable table list is refused rather than treated as empty: the
+        # query does touch tables, we just cannot prove which ones are allowed.
+        warnings.append("unauthorized_table_reference")
+        return warnings
     if not referenced:
         warnings.append("missing_source_table")
         return warnings
 
     expected = _source_table_name(source_system).lower()
-    referenced_tables = {_safe_identifier(table.rsplit(".", 1)[-1]).lower() for table in referenced}
+    # Compare the WHOLE reference. Taking only the last dot-separated component
+    # made any qualification whose leaf matched pass the allow-list:
+    # pg_catalog.customer, otherdb.otherschema.customer and
+    # information_schema.customer all reduce to "customer". The drafter emits the
+    # bare name (_source_table_name), so a qualified reference is one the
+    # allow-list cannot prove. _safe_identifier maps the dot to "_", so a
+    # qualified name can never collide with the bare one.
+    referenced_tables = {_safe_identifier(table).lower() for table in referenced}
     if referenced_tables != {expected}:
         warnings.append("unauthorized_table_reference")
 
     return warnings
+
+
+# Declared datatypes that carry a point in time. The drafter's date window is
+# only meaningful against one of these.
+_TEMPORAL_DATATYPES = frozenset({"date", "datetime", "time", "timestamp", "timestamptz"})
+
+
+def _temporal_column(dataset: Any) -> str | None:
+    """Return the dataset's first declared temporal column, or ``None``.
+
+    The drafter hard-coded ``created_at`` into its window predicate while
+    claiming, in the same response, to use "카탈로그에서 검증된 테이블/컬럼만".
+    Three of the five seeded datasets declare no temporal column at all and not
+    one of them declares ``created_at``: ``crm-customer-master`` has
+    ``signup_at``, ``crm-event`` has ``event_timestamp``, and ``sales-order``,
+    ``semantic-glossary`` and ``marketing-campaign`` have none. Every draft
+    therefore filtered on a column its own dataset does not have.
+    """
+    for column in dataset.schema:
+        if str(column.datatype).lower() in _TEMPORAL_DATATYPES:
+            return column.name
+    return None
+
+
+def _audit_draft(
+    req: QueryDraftRequest, *, decision_id: str, result: str, reason: str
+) -> None:
+    """Record one audit event for a query-draft attempt.
+
+    ``draft_sql`` recorded a policy decision and **no audit event** - not on
+    denial and not on success. The repository's stated invariant is that the
+    browse/query paths evaluate policy *and* record evidence, and an auditor
+    reading the audit feed saw no trace that a governed SQL draft had been
+    requested at all. Measured before this change: `decisions +1  audits +0`.
+    """
+    ingest_event(
+        event_type="llm.draft_query",
+        actor=req.user,
+        dataset_id=req.dataset_id,
+        decision=result,
+        decision_id=decision_id,
+        reason=reason,
+        details={"purpose": req.purpose, "policy_decision_id": decision_id},
+    )
 
 
 def draft_sql(req: QueryDraftRequest) -> dict:
@@ -66,7 +354,22 @@ def draft_sql(req: QueryDraftRequest) -> dict:
         return {"error": "invalid_date_window", "reason": "date_window_days must be between 1 and 365"}
 
     dataset = get_dataset(req.dataset_id)
-    if not dataset:
+    # Scope before anything else is said about the dataset. This route reported
+    # `dataset_not_found` for a dataset that does not exist and `policy_denied`
+    # for one in another tenant, so an outside caller could tell which ids exist
+    # by reading the error code - the same oracle the browse and catalog families
+    # were repaired to close.
+    if dataset is None or not can_access_tenant(req.user, dataset.tenant_id):
+        if dataset is not None:
+            # Record the real reason before answering with the indistinguishable
+            # one, so the refusal is still evidence.
+            denial = evaluate(
+                subject=req.user,
+                resource=req.dataset_id,
+                action="query",
+                purpose=req.purpose,
+            )
+            _audit_draft(req, decision_id=denial.decision_id, result="denied", reason=denial.reason)
         return {"error": "dataset_not_found"}
     if dataset.status != "published":
         return {"error": "policy_denied", "reason": "dataset is not published"}
@@ -75,11 +378,20 @@ def draft_sql(req: QueryDraftRequest) -> dict:
 
     decision = evaluate(subject=req.user, resource=req.dataset_id, action="query", purpose=req.purpose)
     if decision.effect != "allow":
+        _audit_draft(req, decision_id=decision.decision_id, result="denied", reason=decision.reason)
         return {"error": "policy_denied", "reason": decision.reason}
 
     question = req.question.strip().lower()
-    if any(token in question for token in _FORBIDDEN_KEYWORDS):
-        return {"error": "policy_denied", "reason": "허용되지 않은 키워드가 질의에 포함되었습니다."}
+    # The reason names the offending keyword: the previous message said only
+    # that "a" keyword was present, so an integrator whose question mentioned
+    # created_at had no way to tell which word was refused - or that the refusal
+    # was spurious.
+    forbidden_in_question = _matched_forbidden_keyword(question)
+    if forbidden_in_question is not None:
+        return {
+            "error": "policy_denied",
+            "reason": f"허용되지 않은 키워드가 질의에 포함되었습니다: {forbidden_in_question}",
+        }
 
     allowed_columns = {column.name for column in dataset.schema if column.datatype}
     if req.columns:
@@ -94,8 +406,92 @@ def draft_sql(req: QueryDraftRequest) -> dict:
     if req.group_by and req.group_by not in allowed_columns:
         return {"error": "invalid_group_by", "reason": "요청한 그룹화 컬럼이 데이터셋에 없습니다."}
 
-    where_clause = f"WHERE created_at >= current_date - interval '{req.date_window_days} day'"
+    # ``_safe_identifier`` rewrites a declared column that cannot be emitted
+    # unquoted, and that rewrite is kept: a quoted identifier could never
+    # execute through this product's own gate, which refuses any statement
+    # containing a double quote (``literal_values_not_allowed``), and
+    # ``test_draft_query_sanitizes_group_by_identifier`` pins the rewrite
+    # deliberately so a hyphen cannot reach the SQL.
+    #
+    # Two things about it were wrong. The response **contradicted itself**:
+    # measured with a declared column ``order amount``, the query named
+    # ``order_amount`` while ``requested_columns`` reported ``order amount`` and
+    # the assumptions asserted only catalog-validated columns were used, so a
+    # buyer learned otherwise from the warehouse ("column order_amount does not
+    # exist"). And the mapping is **not injective** - ``order amount`` and
+    # ``order_amount``, or ``a-b`` and ``a_b``, collapse to one identifier - so
+    # a draft could silently aggregate a different column than the one asked
+    # for. The rewrite is now reported, and an ambiguous one is refused rather
+    # than guessed.
+    rewritten = {
+        name: _safe_identifier(name)
+        for name in list(requested_columns) + ([req.group_by] if req.group_by else [])
+        if name != "*" and name != _safe_identifier(name)
+    }
+    emitted_by_declared = {
+        column.name: _safe_identifier(column.name) for column in dataset.schema
+    }
+    collisions = sorted(
+        {
+            emitted
+            for name, emitted in rewritten.items()
+            for other, other_emitted in emitted_by_declared.items()
+            if other != name and other_emitted == emitted
+        }
+    )
+    if collisions:
+        return {
+            "error": "ambiguous_identifier",
+            "reason": (
+                "컬럼명을 SQL 식별자로 변환하면 다른 선언 컬럼과 같아져, 어느 컬럼을 "
+                "집계할지 확정할 수 없습니다: " + ", ".join(collisions)
+            ),
+        }
+
+    # `interval '<n> day'` is a single-quoted literal, and this module's own
+    # validate_sql_query refuses any statement containing a quote
+    # (literal_values_not_allowed). Every draft this route produced was therefore
+    # rejected by /browse/query, so the documented draft-then-execute workflow had
+    # no path through it for any dataset. PostgreSQL date arithmetic expresses the
+    # same window with no literal, and date_window_days is already validated as an
+    # integer in 1..365 above, so nothing caller-controlled reaches the SQL as text.
+    window_column = _temporal_column(dataset)
+    if window_column is None:
+        # No temporal column: emit no predicate rather than invent one. The
+        # response says the window was not applied, because a caller that passed
+        # date_window_days would otherwise assume it was.
+        where_clause = ""
+    else:
+        where_clause = (
+            f"WHERE {_safe_identifier(window_column)} >= current_date - {req.date_window_days}"
+        )
     table_name = _source_table_name(dataset.source_system)
+    # ``_referenced_source_tables`` treats a clause keyword as the end of the
+    # table list, so a source table named ``order`` - one of the most ordinary
+    # names in a sales warehouse - broke out of the list with ``expect_table``
+    # still true and returned ``None``, which the validator turns into
+    # ``unauthorized_table_reference``. Measured end to end::
+    #
+    #     POST /llm/draft-query -> 200
+    #       'SELECT count(*) AS active_customer_count FROM order
+    #        WHERE order_ts >= current_date - 90 LIMIT 1000'
+    #     POST /browse/query    -> 400
+    #       {'status': 'REJECTED', 'warnings': ['unauthorized_table_reference']}
+    #
+    # The product accused its own output of a governance violation with no way
+    # to proceed, and ``FROM order`` is unquoted reserved-word SQL that
+    # PostgreSQL would refuse anyway. All 24 members of
+    # ``_TABLE_CLAUSE_TERMINATORS`` fail this way.
+    if table_name.lower() in _TABLE_CLAUSE_TERMINATORS:
+        return {
+            "error": "unquotable_source_table",
+            "reason": (
+                "source table 이름이 SQL 절 키워드와 충돌해 이 게이트를 통과하는 "
+                "질의를 만들 수 없습니다. 인용 식별자는 "
+                "literal_values_not_allowed로 거부됩니다: "
+                f"{table_name}"
+            ),
+        }
 
     row_limit = min(req.row_limit, 2000)
     if row_limit <= 0:
@@ -122,13 +518,51 @@ def draft_sql(req: QueryDraftRequest) -> dict:
         requested_columns = ["*"]
 
     estimated_cost = max(1, len(requested_columns) * row_limit // 200 + 1)
-    sql = f"SELECT {select_fields} FROM {table_name} {where_clause} {group_clause} LIMIT {max_rows}"
+    # Join only the clauses that exist: an empty WHERE or GROUP BY would otherwise
+    # leave a double space in the emitted statement.
+    sql = " ".join(
+        part
+        for part in (
+            f"SELECT {select_fields}",
+            f"FROM {table_name}",
+            where_clause,
+            group_clause,
+            f"LIMIT {max_rows}",
+        )
+        if part
+    )
+
+    # The last word belongs to the validator that will judge this statement.
+    # The documented workflow is draft-then-execute, so a draft the very next
+    # call rejects is worse than a refusal: the buyer sees the product accuse
+    # its own output of a governance violation. Two causes have already been
+    # found and fixed one at a time (the ``interval '<n> day'`` literal, and a
+    # source table colliding with a clause keyword); this check is what catches
+    # the third without waiting for a report.
+    self_check = validate_sql_query(sql, source_system=dataset.source_system)
+    if self_check:
+        return {
+            "error": "draft_rejected_by_validator",
+            "reason": (
+                "생성된 질의가 이 제품의 SQL 안전성 게이트를 통과하지 못했습니다: "
+                f"{', '.join(self_check)}"
+            ),
+            "warnings": self_check,
+        }
 
     assumptions = [
         "카탈로그에서 검증된 테이블/컬럼만 사용",
         "read-only SELECT만 허용",
         "목적별 정책으로 PII 필드는 masking 또는 집계 제한",
     ]
+    if rewritten:
+        # Stated, because the emitted SQL names an identifier the dataset does
+        # not declare and the response otherwise asserted the opposite.
+        assumptions.append(
+            "SQL 식별자로 쓸 수 없는 컬럼명을 변환했습니다("
+            + ", ".join(f"{name} -> {emitted}" for name, emitted in sorted(rewritten.items()))
+            + "). 대상 엔진의 실제 컬럼명과 다를 수 있습니다."
+        )
     if req.group_by in {"signup_at", "event_timestamp", "created_at"}:
         assumptions.append("날짜 집계는 기간 기반 집계로만 제한")
 
@@ -143,6 +577,16 @@ def draft_sql(req: QueryDraftRequest) -> dict:
     if not req.group_by:
         assumptions.append("기본 집계는 건수 카운트 기반으로 반환")
 
+    if window_column is None:
+        assumptions.append(
+            f"이 데이터셋에는 시간 컬럼이 없어 {req.date_window_days}일 기간 필터를 적용하지 않았습니다"
+        )
+    else:
+        assumptions.append(
+            f"기간 필터는 {window_column} 기준 최근 {req.date_window_days}일"
+        )
+
+    _audit_draft(req, decision_id=decision.decision_id, result="allowed", reason="ok")
     return {
         "dataset_id": req.dataset_id,
         "query": sql,
@@ -153,9 +597,97 @@ def draft_sql(req: QueryDraftRequest) -> dict:
         "dialect": "postgresql",
         "row_limit": max_rows,
         "requested_columns": requested_columns,
+        # What the emitted SQL actually names, where it differs from the
+        # declared name. ``requested_columns`` reports the declared names and
+        # alone it contradicted the statement beside it.
+        "emitted_identifiers": dict(sorted(rewritten.items())),
         "timeout_ms": timeout_ms,
         "estimated_cost": estimated_cost,
+        "date_window_days": req.date_window_days if window_column else 0,
+        "date_window_column": window_column,
+        "date_window_applied": window_column is not None,
     }
+
+
+MOCK_ROW_COUNT_CAP = 2000
+MOCK_ROW_COUNT_WITHOUT_PROFILE = 1000
+
+
+def _row_count_estimate(dataset: Any, *, dry_run: bool) -> tuple[int, str]:
+    """Return the mock row count **and the name of where it came from**.
+
+    One label, ``catalog_profile_estimate``, was used for three different
+    provenances, so the compliance ledger asserted a provenance the figure did
+    not have. Measured before this change:
+
+        crm-customer-master  profile.row_count = 1200000
+          -> row_count 2000,  row_count_source "catalog_profile_estimate"
+        a dataset with profile = {}
+          -> row_count 1000,  row_count_source "catalog_profile_estimate"
+
+    The first is the cap, not the estimate - off by a factor of 600 from the
+    figure whose provenance it claims. The second is a hardcoded literal; there
+    is no estimate at all. The comment three lines above the defect already said
+    an unlabelled estimate in the ledger is a fabricated measurement; a
+    mislabelled one is worse, because it answers the question wrongly instead of
+    leaving it open.
+    """
+    if dry_run:
+        return 0, "dry_run_zero"
+    profiled = dataset.profile.get("row_count")
+    if profiled is None:
+        return MOCK_ROW_COUNT_WITHOUT_PROFILE, "fixed_default_no_catalog_profile"
+    # ``profile`` is a free-form ``Dict[str, Any]`` on both POST /catalog/datasets
+    # and PATCH, so ``row_count`` arrives as whatever the caller sent. Comparing
+    # it to an int raised ``TypeError``, which no handler catches, so the whole
+    # governed query route was permanently dead for that dataset. Measured with
+    # ``profile: {"row_count": "1200000"}`` - a JSON string, which is what a
+    # metadata harvester emitting counts as text produces:
+    #
+    #     POST /catalog/datasets           -> 200
+    #     POST /catalog/.../publish        -> 200
+    #     POST /browse/query               -> 500 Internal Server Error
+    #     ledger delta: decisions +1  audits +0
+    #
+    # The 500 is the lesser half. The crash lands between the policy decision
+    # and the audit write, so it produced a policy decision with no matching
+    # audit event - the one pairing CLAUDE.md names non-negotiable. A client also
+    # gets no error code it can act on, against this repo's KeyError -> 404 /
+    # ValueError -> 400 / PermissionError -> 403 contract.
+    #
+    # A non-numeric row count is not an estimate, so it is not labelled as one:
+    # the honest answer is the no-profile default with a source that says the
+    # profile value was unusable. ``bool`` is excluded deliberately - ``True``
+    # is an ``int`` in Python and a row count of ``True`` is not a measurement.
+    # ``bool`` is excluded deliberately - ``True`` is an ``int`` in Python and a
+    # row count of ``True`` is not a measurement. The int and float branches are
+    # separate because folding them raised on the values that cannot be
+    # converted: my first version used ``float(profiled) != int(profiled)``,
+    # which raises ``ValueError`` on ``NaN`` and ``OverflowError`` on
+    # ``Infinity`` - both of which Python's ``json`` accepts as literals, so
+    # that would have been a second uncaught 500 in the same function - and
+    # which also misclassified ``10**30`` as unusable, because ``float(10**30)``
+    # is not exactly ``10**30``.
+    if isinstance(profiled, bool):
+        return MOCK_ROW_COUNT_WITHOUT_PROFILE, "unusable_catalog_profile_row_count"
+    if isinstance(profiled, int):
+        count = profiled
+    elif isinstance(profiled, float):
+        # ``1200.0`` is a legitimate JSON spelling of 1200 and is accepted;
+        # ``1200.5`` would have to be silently truncated, and silently changing
+        # a number while labelling it ``catalog_profile_estimate`` is the
+        # mislabelling this function's docstring was written about.
+        if not math.isfinite(profiled) or not profiled.is_integer():
+            return MOCK_ROW_COUNT_WITHOUT_PROFILE, "unusable_catalog_profile_row_count"
+        count = int(profiled)
+    else:
+        return MOCK_ROW_COUNT_WITHOUT_PROFILE, "unusable_catalog_profile_row_count"
+    if count < 0:
+        # A negative count is not a count.
+        return MOCK_ROW_COUNT_WITHOUT_PROFILE, "unusable_catalog_profile_row_count"
+    if count > MOCK_ROW_COUNT_CAP:
+        return MOCK_ROW_COUNT_CAP, "mock_row_cap_below_catalog_profile_estimate"
+    return count, "catalog_profile_estimate"
 
 
 def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
@@ -195,6 +727,13 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
         details: dict[str, object] | None = None,
     ) -> None:
         audit_details = {"purpose": req.purpose, "request_id": request_id, "dry_run": req.dry_run}
+        # An audit row with no decision_id read as "policy was skipped". These
+        # branches refuse malformed input before a decision exists, so the stage
+        # is stated instead of left to be inferred from a null field. A reader of
+        # the ledger can now tell "policy not reached" from "policy not applied".
+        audit_details["policy_stage"] = (
+            "evaluated" if decision_id else "pre_policy_validation"
+        )
         if details:
             audit_details.update(details)
         ingest_event(
@@ -207,6 +746,11 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
             details=audit_details,
         )
 
+    if not req.dataset_ids:
+        # The contract requires one, but a programmatically built request can
+        # still arrive empty; answer, never index into nothing.
+        return response(dataset_id="", status="REJECTED", warnings=["dataset_ids_required"])
+
     dataset_id = req.dataset_ids[0]
     if req.language.strip().upper() != "SQL":
         audit(dataset_id=dataset_id, result="rejected", reason="unsupported_language")
@@ -217,7 +761,7 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
         )
 
     lowered = req.query.lower()
-    if any(token in lowered for token in _FORBIDDEN_KEYWORDS):
+    if _matched_forbidden_keyword(lowered) is not None:
         audit(dataset_id=dataset_id, result="rejected", reason="forbidden_keyword_detected")
         return response(
             dataset_id=dataset_id,
@@ -234,6 +778,29 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
         )
 
     dataset = get_dataset(dataset_id)
+    # This route names its dataset in the request *body*, which is why the
+    # path-shaped enumeration that repaired /browse/{id}/... and
+    # /catalog/datasets/{id}/... did not reach it: it answered 403 DENIED
+    # "tenant boundary denied" for a dataset in another tenant and 400 REJECTED
+    # "dataset_not_found" for one that does not exist, so the error code still
+    # told an outsider which ids exist. One answer for both, with the real reason
+    # recorded first.
+    if dataset is not None and not can_access_tenant(req.user, dataset.tenant_id):
+        denial = evaluate(
+            subject=req.user, resource=dataset_id, action="query", purpose=req.purpose
+        )
+        audit(
+            dataset_id=dataset_id,
+            result="denied",
+            reason=denial.reason,
+            decision_id=denial.decision_id,
+            details={"policy_decision_id": denial.decision_id},
+        )
+        return response(
+            dataset_id=dataset_id,
+            status="REJECTED",
+            warnings=["dataset_not_found"],
+        )
     if not dataset:
         audit(dataset_id=dataset_id, result="rejected", reason="dataset_not_found")
         return response(
@@ -279,10 +846,7 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
             warnings=validation_warnings,
         )
 
-    if req.dry_run:
-        row_count = 0
-    else:
-        row_count = min(2000, dataset.profile.get("row_count", 1000))
+    row_count, row_count_source = _row_count_estimate(dataset, dry_run=req.dry_run)
 
     now = datetime.now(timezone.utc).isoformat()
     query_id = f"qry-{now.replace(':', '')}"
@@ -292,7 +856,21 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
         if "group by" in lowered
         else [{"result": row_count}]
     )
-    execution = {"elapsedMs": 100, "source": "mock-trino", "bytesScanned": 1024}
+    # No query is executed here, so every figure below is labelled with where it
+    # came from. `elapsedMs` and `bytesScanned` are fixed constants and
+    # `row_count` is the catalog's own profile estimate, not a measurement.
+    execution = {
+        "elapsedMs": 100,
+        "source": "mock-trino",
+        "bytesScanned": 1024,
+        "measurement_status": "mock_execution_no_real_data",
+        "elapsed_ms_source": "fixed_mock_constant",
+        "bytes_scanned_source": "fixed_mock_constant",
+        # The response under-labelled relative to the ledger: it named the
+        # provenance of the two constants and said nothing about the row count,
+        # which is the only figure a reader is likely to act on.
+        "row_count_source": row_count_source,
+    }
     audit(
         dataset_id=dataset.id,
         result="allowed",
@@ -303,6 +881,14 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
             "query_id": query_id,
             "row_count": row_count,
             "bytes_scanned": execution["bytesScanned"],
+            # The HTTP response carried `mock_execution_no_real_data` while the
+            # audit row carried nothing, so the compliance ledger recorded
+            # "2000 rows, 1024 bytes scanned" as if it had been measured. The
+            # ledger is the surface a buyer's compliance team reads; an unlabelled
+            # estimate there is a fabricated measurement.
+            "measurement_status": "mock_execution_no_real_data",
+            "row_count_source": row_count_source,
+            "bytes_scanned_source": "fixed_mock_constant",
         },
     )
     return response(

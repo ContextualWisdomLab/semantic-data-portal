@@ -20,10 +20,12 @@ import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
+from sdp import orchestrator
 from sdp.domain import (
     DatasetCreateRequest,
     QueryDraftRequest,
     QueryExecutionRequest,
+    QueryExecutionResponse,
 )
 from tests.fuzz import invariants
 
@@ -134,6 +136,14 @@ exec_request = st.builds(
     language=st.sampled_from(["SQL", "sql", "python", "  SQL  ", "x"]),
     user=st.sampled_from(["analyst", "anonymous", "admin"]),
     purpose=st.sampled_from(["analysis", "external-export"]),
+    # min_size=1 is correct *now*: `dataset_ids` is a required field with
+    # min_length=1, so the validating constructor refuses the empty list and the
+    # HTTP boundary answers 400. It was not correct before - the field defaulted
+    # to `[]` while declaring that minimum, pydantic does not validate defaults,
+    # and this generator's own min_size=1 meant the property suite could never
+    # reach the input that crashed the route with a 500. The empty list is now
+    # unreachable through the contract, so it is exercised deliberately below via
+    # model_construct instead of being left to chance here.
     dataset_ids=st.lists(
         st.sampled_from(["crm-customer-master", "crm-event", "nope"]),
         min_size=1,
@@ -191,3 +201,27 @@ def test_dto_parsing_only_raises_validation_error(model, payload):
         # e.g. a payload key collides with a positional-only/duplicate arg;
         # still a controlled parse failure, not a logic crash.
         pass
+
+
+def test_execute_query_answers_a_bypassed_empty_dataset_list() -> None:
+    """The executor's own guard, reached past the contract.
+
+    ``dataset_ids`` is required with ``min_length=1``, so the validating
+    constructor and the HTTP boundary both refuse an empty list and this is the
+    only way to reach ``execute_query`` with one. The fuzz contract in
+    ``tests/fuzz/README.md`` is that the executor *always* returns a well-formed
+    response; before the repair it raised ``IndexError`` on
+    ``req.dataset_ids[0]``, which the HTTP layer surfaced as a 500.
+    """
+    request = QueryExecutionRequest.model_construct(
+        language="SQL",
+        user="analyst",
+        purpose="analysis",
+        dataset_ids=[],
+        query="select 1",
+        dry_run=False,
+    )
+    response = orchestrator.execute_query(request)
+    assert isinstance(response, QueryExecutionResponse)
+    assert response.status == "REJECTED"
+    assert response.warnings == ["dataset_ids_required"]

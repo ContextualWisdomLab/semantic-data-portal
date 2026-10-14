@@ -350,9 +350,25 @@ _CONSOLE_TEMPLATE = """<!doctype html>
     const width = (id, value) => document.getElementById(id).style.width = pct(value);
     const text = (id, value) => document.getElementById(id).textContent = value;
 
+    // The console propagates the actor from its OWN query string. It is read
+    // here rather than templated server-side so no caller-supplied value is ever
+    // injected into this page, and it is URL-encoded on the way out. A console
+    // that hard-coded an actor would hand every viewer that actor's scope.
+    const viewer = new URLSearchParams(window.location.search).get('user') || '';
+
+    function scoped(path) {
+      if (!viewer) return path;
+      const separator = path.includes('?') ? '&' : '?';
+      return `${path}${separator}user=${encodeURIComponent(viewer)}`;
+    }
+
     async function json(path) {
-      const response = await fetch(path);
-      if (!response.ok) throw new Error(path);
+      const response = await fetch(scoped(path));
+      if (!response.ok) {
+        const failure = new Error(path);
+        failure.status = response.status;
+        throw failure;
+      }
       return response.json();
     }
 
@@ -389,16 +405,136 @@ _CONSOLE_TEMPLATE = """<!doctype html>
         ['File lake connector', 'file_lake_connector', 'crm-event'],
         ['REST connector', 'rest_connector', 'marketing-campaign'],
       ].map(async ([label, connector, dataset]) => {
-        const path = `/enterprise/connectors/${connector}/probe?dataset_id=${dataset}`;
+        const path = `/enterprise/connectors/${connector}/probe?dataset_id=${encodeURIComponent(dataset)}`;
         const probe = await json(path);
         return `<tr><td><a class="endpoint-link" href="${esc(path)}" aria-label="${esc(label)} probe endpoint for ${esc(dataset)}"><strong>${esc(label)}</strong></a></td><td class="mono">${esc(dataset)}</td><td><span class="badge ${probe.status === 'ready_for_demo' ? 'ok' : 'warn'}">${esc(probe.status)}</span></td></tr>`;
       }));
       document.getElementById('connectorRows').innerHTML = rows.join('');
     }
 
-    Promise.all([loadEvidence(), loadControls(), loadKpis(), loadConnectors()])
-      .then(() => text('readyBadge', 'ready for pilot review'))
-      .catch(() => text('readyBadge', 'evidence load failed'));
+    // allSettled, not all: the connector panel needs an actor, and with
+    // Promise.all its 403 rejected the whole chain - every panel went blank and
+    // the badge read "evidence load failed" on a platform that was working. A
+    // buyer-handoff artifact must not report itself broken because the viewer is
+    // unauthenticated, and a panel that cannot load must not take the others
+    // with it.
+    const panels = [
+      ['evidence', loadEvidence],
+      ['controls', loadControls],
+      ['KPIs', loadKpis],
+      ['connectors', loadConnectors],
+    ];
+
+    Promise.allSettled(panels.map(([, load]) => load())).then((outcomes) => {
+      const failures = [];
+      const needActor = [];
+      const refusedForActor = [];
+      outcomes.forEach((outcome, index) => {
+        if (outcome.status === 'fulfilled') return;
+        const name = panels[index][0];
+        const status = outcome.reason && outcome.reason.status;
+        // Classified by whether an actor was supplied, NOT by which 4xx came
+        // back. The rule used to be an allow-list of the two auth statuses
+        // (401 and 403), and the
+        // connector probe later began answering 404 - it resolves its
+        // query-parameter dataset in the caller's tenant scope, and an
+        // out-of-scope dataset must be indistinguishable from an absent one.
+        // So every signed-out load fell through to `failures` and the badge
+        // read "evidence load failed: connectors" again, on a working platform.
+        // Measured signed-out against a live server: all four connector probes
+        // 404, the other three panels 200.
+        //
+        // A refusal with no actor is the expected signed-out view whatever its
+        // status; a refusal *with* an actor is a real problem worth naming. A
+        // 5xx is always a real failure, since no actor would have prevented it.
+        // This rule cannot be broken again by changing which 4xx a gate
+        // returns.
+        //
+        // Third bucket, because two were not enough. A refusal *with* an actor
+        // is not automatically a problem: a tenant-scoped panel answers 404 for
+        // a resource the viewer's tenant does not own, and that is the boundary
+        // working, not a broken platform. Measured with
+        // ``?user=external-analyst`` - a valid, shipped, documented actor:
+        //
+        //     /enterprise/connectors/sql_connector/probe -> 404  (tenant scope)
+        //     /policy/decisions, /audit/events           -> 200
+        //     evidence, controls, KPIs                   -> 200
+        //
+        // and the badge read "evidence load failed: connectors" on a platform
+        // answering every request correctly.
+        //
+        // No status allow-list here either, for exactly the reason the
+        // signed-out branch does not have one: the previous version keyed on
+        // ``401 || 403`` and broke the moment the probe began answering 404.
+        // ``test_the_badge_separates_a_signed_out_view_from_a_real_failure``
+        // asserts that allow-list is absent, and it was right to - my first
+        // attempt at this third bucket reintroduced one and that test caught
+        // it. A 4xx is the gate refusing *this* request; only a 5xx, or a
+        // status the client could not read at all, is the platform failing.
+        const serverError = typeof status === 'number' && status >= 500;
+        const refused = typeof status === 'number' && status >= 400 && status < 500;
+        if (!viewer && !serverError) {
+          needActor.push(name);
+        } else if (refused) {
+          refusedForActor.push(name);
+        } else {
+          failures.push(name);
+        }
+      });
+
+      if (failures.length) {
+        text('readyBadge', `evidence load failed: ${failures.join(', ')}`);
+      } else if (needActor.length) {
+        text('readyBadge', `signed-out view - add ?user= to load: ${needActor.join(', ')}`);
+      } else if (refusedForActor.length) {
+        // Worded as a refusal, not as a tenant reason: the console cannot know
+        // why the gate refused, only that it did, and claiming a tenant scope
+        // for a 400 would be a different wrong answer.
+        text('readyBadge', `refused for this actor: ${refusedForActor.join(', ')}`);
+      } else {
+        text('readyBadge', 'ready for pilot review');
+      }
+
+      // The hint REPLACES the panel body. It used to be appended only when the
+      // body was empty - and every one of these tables ships a static
+      // placeholder row from the server ("Loading | --", and for connectors
+      // "SQL connector | crm-customer-master | --"), so the old
+      // empty-body guard was never true and the hint was dead code for all
+      // three panels. The
+      // placeholder is worse than nothing on a signed-out view: it reads as a
+      // real connector row whose status is unknown, rather than as a panel that
+      // needs an actor.
+      const PANEL_TARGETS = {
+        connectors: ['connectorRows', 3],
+        controls: ['controlsRows', 2],
+        KPIs: ['kpiRows', 2],
+      };
+      // Refused panels get the same treatment as signed-out ones: the
+      // server-rendered placeholder row reads as a real connector row whose
+      // status is unknown, which is worse than saying the panel was refused.
+      // The hint text differs per bucket. Telling a viewer who *did* supply an
+      // actor that the panel "needs an actor" is a second wrong answer: the
+      // actor was supplied and the gate refused it.
+      const HINTS = {
+        needActor: '이 패널은 actor가 필요합니다 (?user=)',
+        refused: '이 actor에게는 거부된 패널입니다 (tenant 범위 밖이거나 권한 없음)',
+      };
+      needActor
+        .map((name) => [name, HINTS.needActor])
+        .concat(refusedForActor.map((name) => [name, HINTS.refused]))
+        .forEach(([name, hint]) => {
+          const target = PANEL_TARGETS[name];
+          if (!target) return;
+          const body = document.getElementById(target[0]);
+          if (!body) return;
+          const cell = document.createElement('td');
+          cell.colSpan = target[1];
+          cell.textContent = hint;
+          const row = document.createElement('tr');
+          row.appendChild(cell);
+          body.replaceChildren(row);
+        });
+    });
   </script>
 </body>
 </html>"""
