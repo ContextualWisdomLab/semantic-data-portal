@@ -2692,6 +2692,36 @@ write만 `anyio.to_thread.run_sync`로 worker 스레드에 넘깁니다. 동기 
 커버리지 공백(테스트 추가), 그리고 큐에 올라온 `api.py:427`은 목록 라우트까지 범위가 넓어져
 2건으로 처리되었습니다.
 
+### 감사 큐 소진 (4) 후속 — 같은 누출이 schema-history에 남아 있었습니다 (2026-10-14)
+
+소진 (4)에서 discovery 표면의 `schema`를 withhold했는데, **형제 라우트를 전수 확인하니 같은 값이
+한 곳에 더 남아 있었습니다.** 부분 수리는 수리가 아니므로 이어서 닫았습니다. 익명 호출자로 11개
+라우트를 모두 찔러 측정했습니다.
+
+| 라우트 | `pii` 플래그 | `postgresql://` | `example.internal` |
+| --- | --- | --- | --- |
+| `/catalog/datasets/{id}/schema-history` | **YES** → 제거 | - | - |
+| `/catalog/datasets/{id}/jsonld` | - | - | YES (의도된 DCAT distribution) |
+| `/profile`, `/schema-versions`, `/join-candidates`, `/validate`, `/semantic-validation`, `/lineage`, `/related`, `/audit`, `/catalog/search` | - | - | - |
+
+`schema-history` snapshot은 `_column_signature()` = `column.model_dump(exclude_unset=True)`이므로
+`{"name": "customer_email", ..., "pii": true}`를 그대로 내보냈습니다. `schema-diff`의
+`changed_columns`도 `before`/`after`에 완전한 컬럼 dict를 싣습니다.
+
+`discovery_column_view()`가 `pii`/`quality_issues`를 제거한 **사본**을 투영합니다. 저장 snapshot은
+완전한 상태를 유지합니다 — drift 탐지가 그것을 읽기 때문입니다(전용 테스트로 in-place 제거가
+아님을 고정했습니다). `pii` 재분류는 그 자체가 실제 schema drift이므로, 투영 때문에 신호가 사라지면
+수리가 가치를 파괴합니다. 그래서 diff는 해당 컬럼을 계속 changed로 보고하고
+`changed_withheld_fields: ["pii"]`로 **어떤 withhold 필드가 바뀌었는지**는 알리되 분류값은 공개하지
+않습니다.
+
+`/jsonld`의 `example.internal` endpoint는 누출로 보지 않습니다. DCAT 내보내기의 목적이 distribution
+endpoint 공개이고, `distributions`는 discovery view에도 의도적으로 남겨 두었습니다. 경계를 바꾸려면
+제품 결정이 필요하므로 범위를 넓히지 않았습니다.
+
+검증: RED 2건 선확인 → 수리, 대조군 1건(저장 snapshot 불변)도 함께. 전체 **337 passed / 8 skipped**,
+`tests/fuzz` 10 passed, `sdp.demo_smoke` ready=true, 11개 라우트 재측정으로 `pii` 소멸 확인.
+
 ### 병합 게이트 실측 (2026-10-14)
 
 감사 큐를 소진한 뒤 병합 가능성을 다시 측정했습니다. **열린 비-draft PR 7건 전부 APPROVED 리뷰가

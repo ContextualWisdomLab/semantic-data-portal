@@ -305,3 +305,65 @@ def test_mutation_audit_events_carry_the_dataset_tenant():
     assert recorded
     for event in recorded:
         assert event.details["tenant_id"] == "external", event.action
+
+
+# --- schema history / diff must honour the discovery boundary -------------
+
+
+def _publish_snapshot(dataset_id: str, **overrides) -> None:
+    """Seed a dataset and publish it so a schema-history snapshot exists."""
+    base = catalog._DATA["crm-customer-master"]
+    catalog._DATA[dataset_id] = base.model_copy(
+        update={"id": dataset_id, "status": "draft", **overrides}
+    )
+    catalog.publish_dataset(dataset_id, actor="admin")
+
+
+def test_schema_history_does_not_publish_per_column_pii_flags() -> None:
+    """``catalog.discovery_view()`` withholds the column schema from the ungated
+    catalog detail route, but the schema-history snapshot carried the same
+    columns — ``pii`` flags included — out of the same unauthenticated surface.
+    """
+    _publish_snapshot("hist-probe")
+    history = catalog.get_dataset_schema_history("hist-probe")
+    for entry in history["history"]:
+        for column in entry["schema"]:
+            assert "pii" not in column, column
+            assert "quality_issues" not in column, column
+            # The shape a consumer actually needs is still there.
+            assert {"name", "datatype"} <= set(column)
+
+
+def test_schema_history_projection_leaves_the_stored_snapshot_intact() -> None:
+    """Drift detection runs on the stored snapshot, so the public projection must
+    copy rather than strip in place."""
+    _publish_snapshot("hist-probe")
+    catalog.get_dataset_schema_history("hist-probe")
+    stored = catalog._SCHEMA_HISTORY["hist-probe"]
+    assert any("pii" in column for entry in stored for column in entry["schema"])
+
+
+def test_schema_diff_withholds_governed_column_fields_but_keeps_the_signal() -> None:
+    """A ``pii`` reclassification is real schema drift. The diff must still report
+    the column as changed — and say which withheld field changed — without
+    publishing the classification itself."""
+    _publish_snapshot("diff-probe")
+    first = catalog.list_dataset_schema_versions("diff-probe")[0]
+
+    # Flip one column's PII classification, then snapshot again.
+    dataset = catalog._DATA["diff-probe"]
+    flipped = [
+        column.model_copy(update={"pii": not column.pii}) if column.name == "customer_email" else column
+        for column in dataset.schema
+    ]
+    catalog._DATA["diff-probe"] = dataset.model_copy(
+        update={"schema": flipped, "schema_version": "2.0.0"}
+    )
+    catalog._record_schema_snapshot(catalog._DATA["diff-probe"])
+
+    diff = catalog.get_dataset_schema_diff("diff-probe", first, "2.0.0")
+    changed = {entry["name"]: entry for entry in diff["changed_columns"]}
+    assert "customer_email" in changed, diff
+    entry = changed["customer_email"]
+    assert "pii" not in entry["before"] and "pii" not in entry["after"]
+    assert entry["changed_withheld_fields"] == ["pii"]

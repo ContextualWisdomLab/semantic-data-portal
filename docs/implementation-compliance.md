@@ -28,6 +28,11 @@
   row-count `profile`, 소유 `tenant_id`은 withhold하고 `schema_field_count`만 공개한다. 해당
   필드는 정책을 평가하고 감사 기록을 남기는 `GET /browse/{dataset_id}/schema` 경로가 유일한
   공개 지점이다.
+- 같은 경계를 컬럼 단위로도 적용한다. `schema-history`/`schema-diff`는 저장된 컬럼 signature를
+  공개하므로 `catalog.discovery_column_view()`가 `pii`/`quality_issues`를 제거한 **사본**을
+  투영한다(저장 snapshot은 drift 탐지용으로 완전한 상태를 유지). `pii` 재분류는 실제 schema
+  drift이므로 diff는 해당 컬럼을 계속 changed로 보고하고 `changed_withheld_fields`로 어떤 withhold
+  필드가 바뀌었는지 알리되 분류값 자체는 공개하지 않는다.
 - 증빙 테스트:
   - `tests/test_api.py::test_catalog_search_and_detail`
   - `tests/test_api.py::test_dataset_profile_endpoint`

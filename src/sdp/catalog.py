@@ -38,6 +38,30 @@ _SCHEMA_HISTORY: dict[str, list[dict[str, Any]]] = {}
 _GOVERNED_DATASET_FIELDS = ("schema", "source_system", "profile", "tenant_id")
 
 
+# The same boundary at column granularity. The schema-history and schema-diff
+# routes publish stored column signatures, so without this they re-published the
+# per-column PII classification that discovery_view withholds.
+_GOVERNED_COLUMN_FIELDS = ("pii", "quality_issues")
+
+
+def discovery_column_view(column: Dict[str, Any]) -> Dict[str, Any]:
+    """Copy one stored column signature without its governed fields."""
+    return {key: value for key, value in column.items() if key not in _GOVERNED_COLUMN_FIELDS}
+
+
+def _changed_governed_column_fields(before: Dict[str, Any], after: Dict[str, Any]) -> list[str]:
+    """Name the withheld column fields whose values differ between two snapshots.
+
+    A PII reclassification is real schema drift, so the diff still reports which
+    governed field changed; only the classification itself stays withheld.
+    """
+    return [
+        field
+        for field in _GOVERNED_COLUMN_FIELDS
+        if before.get(field) != after.get(field)
+    ]
+
+
 def discovery_view(dataset: Dataset) -> Dict[str, Any]:
     """Project a dataset onto the fields the ungated catalog surface may publish.
 
@@ -316,9 +340,18 @@ def get_dataset_schema_history(dataset_id: str) -> dict[str, Any]:
     history = _SCHEMA_HISTORY.get(dataset_id, [])
     if not history:
         raise KeyError("no schema history found")
+    # Project a copy: drift detection reads the stored snapshot, which keeps the
+    # governed column fields.
+    published = [
+        {
+            **entry,
+            "schema": [discovery_column_view(column) for column in entry.get("schema", [])],
+        }
+        for entry in history
+    ]
     return {
         "dataset_id": dataset_id,
-        "history": history,
+        "history": published,
     }
 
 
@@ -351,8 +384,11 @@ def get_dataset_schema_diff(dataset_id: str, from_version: str, to_version: str)
     changed = [
         {
             "name": name,
-            "before": before_names[name],
-            "after": after_names[name],
+            "before": discovery_column_view(before_names[name]),
+            "after": discovery_column_view(after_names[name]),
+            "changed_withheld_fields": _changed_governed_column_fields(
+                before_names[name], after_names[name]
+            ),
         }
         for name in before_names.keys() & after_names.keys()
         if before_names[name] != after_names[name]
