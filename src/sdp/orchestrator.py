@@ -123,6 +123,34 @@ def _referenced_source_tables(sql: str) -> list[str] | None:
     return tables
 
 
+def _matched_forbidden_keyword(text: str) -> str | None:
+    """Return the first forbidden keyword appearing in ``text`` as a whole word.
+
+    Every gate that consults ``_FORBIDDEN_KEYWORDS`` goes through here, because
+    they did not agree before: ``validate_sql_query`` matched on word boundaries
+    while ``draft_sql`` and ``execute_query`` matched on bare substrings. The
+    canonical validator therefore returned no warning for
+    ``select created_at from customer`` while ``/browse/query`` rejected the
+    identical SQL as hostile.
+
+    Substring matching refuses ordinary identifiers: ``create`` is inside
+    ``created_at``, ``update`` inside ``updated_at``, ``delete`` inside
+    ``deleted_flag``, and the same holds for ``merged_at``, ``locked_at``,
+    ``granted_scope``, ``execution_count``, ``dropoff_rate`` and ``intopic`` -
+    nine shapes an ordinary warehouse column carries. Word boundaries still
+    catch the real cases (``drop table``, ``select ... into exfil``), which is
+    what the keyword list exists for.
+
+    The list is iterated in sorted order so the keyword reported back to the
+    caller is deterministic rather than set-iteration dependent.
+    """
+    lowered = text.lower()
+    for token in sorted(_FORBIDDEN_KEYWORDS):
+        if re.search(rf"\b{re.escape(token)}\b", lowered):
+            return token
+    return None
+
+
 def validate_sql_query(sql: str, *, source_system: str) -> list[str]:
     stripped = sql.strip()
     lowered = stripped.lower()
@@ -139,10 +167,8 @@ def validate_sql_query(sql: str, *, source_system: str) -> list[str]:
     if re.search(r"\b(and|or)\b", lowered):
         warnings.append("boolean_operator_not_allowed")
 
-    for token in _FORBIDDEN_KEYWORDS:
-        if re.search(rf"\b{re.escape(token)}\b", lowered):
-            warnings.append("forbidden_keyword_detected")
-            break
+    if _matched_forbidden_keyword(lowered) is not None:
+        warnings.append("forbidden_keyword_detected")
 
     referenced = _referenced_source_tables(stripped)
     if referenced is None:
@@ -186,8 +212,16 @@ def draft_sql(req: QueryDraftRequest) -> dict:
         return {"error": "policy_denied", "reason": decision.reason}
 
     question = req.question.strip().lower()
-    if any(token in question for token in _FORBIDDEN_KEYWORDS):
-        return {"error": "policy_denied", "reason": "허용되지 않은 키워드가 질의에 포함되었습니다."}
+    # The reason names the offending keyword: the previous message said only
+    # that "a" keyword was present, so an integrator whose question mentioned
+    # created_at had no way to tell which word was refused - or that the refusal
+    # was spurious.
+    forbidden_in_question = _matched_forbidden_keyword(question)
+    if forbidden_in_question is not None:
+        return {
+            "error": "policy_denied",
+            "reason": f"허용되지 않은 키워드가 질의에 포함되었습니다: {forbidden_in_question}",
+        }
 
     allowed_columns = {column.name for column in dataset.schema if column.datatype}
     if req.columns:
@@ -325,7 +359,7 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
         )
 
     lowered = req.query.lower()
-    if any(token in lowered for token in _FORBIDDEN_KEYWORDS):
+    if _matched_forbidden_keyword(lowered) is not None:
         audit(dataset_id=dataset_id, result="rejected", reason="forbidden_keyword_detected")
         return response(
             dataset_id=dataset_id,
