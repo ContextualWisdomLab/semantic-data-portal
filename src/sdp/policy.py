@@ -74,6 +74,58 @@ def _has_data_reader_role(subject: str) -> bool:
     return has_role(subject, *_DATA_READER_ROLES)
 
 
+# Every action this engine can decide. `evaluate` fell through to an `allow` at
+# the end of its branch chain, so any action it did not recognize was permitted:
+#
+#   evaluate(subject="analyst", action="administer_tenants", ...)  -> allow
+#   evaluate(subject="analyst", action="totally_made_up",    ...)  -> allow
+#
+# and `POST /policy/decision` takes `action` verbatim from an unauthenticated
+# request body, so the published policy API answered `allow` for anything and
+# recorded that answer as evidence. Worse, the RBAC matrix's own
+# `action_catalog` is spelled verb_noun (`patch_dataset`) while this engine
+# matches bare verbs (`patch`), so *every one* of the ten published action names
+# was unrecognized - including the four the matrix publishes as denied to
+# data-analyst, and `administer_tenants`.
+KNOWN_ACTIONS = frozenset(
+    {
+        "create",
+        "deprecate",
+        "discover",
+        "list",
+        "patch",
+        "preview",
+        "publish",
+        "query",
+        "schema",
+        "search",
+        "search_catalog",
+    }
+)
+
+# The published RBAC vocabulary, mapped onto the engine's. These are two
+# spellings of one action, not two policies: `patch_dataset` in the matrix and
+# `patch` here decide the same thing, so the matrix becomes testable against the
+# engine instead of being prose nobody can check.
+CATALOG_ACTION_ALIASES = {
+    "deprecate_dataset": "deprecate",
+    "discover_catalog": "search",
+    "patch_dataset": "patch",
+    "preview_data": "preview",
+    "publish_dataset": "publish",
+    "register_dataset": "create",
+    "run_governed_query": "query",
+    "view_schema": "schema",
+}
+
+# The two published actions with no engine equivalent. They are refused with
+# their own reason rather than folded into "unknown action": the matrix grants
+# `review_security_evidence` to `security` and `administer_tenants` to
+# `platform-admin`, so what they should decide is a product question, and a
+# distinct refusal keeps that gap visible instead of making it look like a typo.
+UNMAPPED_CATALOG_ACTIONS = frozenset({"administer_tenants", "review_security_evidence"})
+
+
 def evaluate(
     subject: str,
     resource: str,
@@ -82,7 +134,8 @@ def evaluate(
     *,
     target_tenant_id: str | None = None,
 ) -> PolicyDecision:
-    action_key = action.lower()
+    action_key = action.strip().lower()
+    action_key = CATALOG_ACTION_ALIASES.get(action_key, action_key)
     decision_id = str(uuid4())
     decision_base = {
         "subject": subject,
@@ -91,6 +144,26 @@ def evaluate(
         "decision_id": decision_id,
         "tenant_id": _effective_tenant_id(subject, resource, target_tenant_id),
     }
+
+    if action_key in UNMAPPED_CATALOG_ACTIONS:
+        return _decision(
+            **decision_base,
+            effect="deny",
+            reason="이 action은 아직 정책 엔진에 매핑되지 않았습니다.",
+            obligations={"unmapped_published_action": action_key},
+        )
+
+    if action_key not in KNOWN_ACTIONS:
+        # Fail closed. An engine that answers "allow" to an action it does not
+        # understand is wrong under any policy design, and this one is also the
+        # published decision API. The known set is returned so the caller can see
+        # what is evaluable instead of guessing.
+        return _decision(
+            **decision_base,
+            effect="deny",
+            reason="평가할 수 없는 action입니다.",
+            obligations={"known_actions": sorted(KNOWN_ACTIONS)},
+        )
 
     if action_key == "create":
         if not _is_admin(subject):
