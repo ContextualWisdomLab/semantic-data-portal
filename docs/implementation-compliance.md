@@ -125,6 +125,10 @@
   상태(`proposed/approved/rejected`), 근거 문자열/신뢰도
   - `POST /ontology/patches`
   - `POST /ontology/patches/{id}/review`
+  - `GET /ontology/patches?user=<actor>` — 제안 큐 읽기는 거버닝 읽기입니다.
+    모든 행이 제안자/심사자 신원을 담으므로 `/ontology/change-log`와 같은 게이트를
+    쓰고, 공개로 남는 `/enterprise/steward-review`는 `requestor`를 담지 않습니다
+    (`withheld_review_item_fields`로 선언).
   - 게이트는 공유 pre-write 검증기(`ontology.validate_concept_registration`)에
     있으므로 두 게시 경로가 하나의 검사로 막힌다. 응답의 `concept_validation`이
     평가 결과를 담는다.

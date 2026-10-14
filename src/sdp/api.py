@@ -1460,9 +1460,12 @@ def ontology_change_log(
     are gated. The counts are published openly on ``/ontology/version``; the
     identity is not.
 
-    (``GET /ontology/patches`` does serve ``requestor`` and ``reviewed_by`` to
-    an anonymous caller today. That is a pre-existing disclosure this change
-    does not widen: it is not precedent for a second open identity surface.)
+    (``GET /ontology/patches`` served ``requestor``, ``reviewed_by``,
+    ``reviewed_at`` and ``review_comment`` to an anonymous caller when this
+    route was added, and that disagreement was recorded here rather than used as
+    precedent for a second open identity surface. It is closed: that route now
+    runs this same gate, and ``/enterprise/steward-review`` withholds the
+    proposer rather than republishing it.)
     """
     # The same gate as ``/audit/events`` and ``/policy/decisions``, through the
     # same helper, because this is the same kind of record. Its tenant list is
@@ -1533,7 +1536,57 @@ def ontology_search(
 
 
 @app.get("/ontology/patches")
-def ontology_patches(status: str | None = Query(default=None)) -> dict[str, Any]:
+def ontology_patches(
+    status: str | None = Query(default=None),
+    user: str = Query(default="anonymous"),
+) -> dict[str, Any]:
+    """The steward review queue. Governed, because every row names actors.
+
+    This route ran **no** authorization at all. Measured, with no actor supplied
+    and with two unknown ones::
+
+        GET /ontology/patches                  200  requestor=analyst
+                                                    reviewed_by=admin
+                                                    reviewed_at=2026-...
+                                                    review_comment='스튜어드 승인 사유'
+        GET /ontology/patches?user=anonymous   200  (the same four fields)
+        GET /ontology/patches?user=nobody      200  (the same four fields)
+
+    at the same moment as, for the same identities::
+
+        GET /ontology/change-log               403
+        GET /audit/events                      403
+        GET /policy/decisions                  403
+
+    So the platform published who proposed a vocabulary change, who signed it off
+    and the reviewer's own comment to an unauthenticated caller, while refusing
+    the same facts on the three surfaces built to carry them. ONT-004 gated the
+    change log on the argument that ``{actor_id, reviewer_id, recorded_at}`` *is*
+    an access record; this route serves that record plus the review comment, so
+    the argument applies unchanged and the two surfaces no longer disagree.
+
+    The gate is ``_authorize_evidence_read`` - the same helper, not a parallel
+    rule - and its tenant list is deliberately not applied, for the reason the
+    change log states: the concept vocabulary is shared rather than tenant-owned,
+    so there is no tenant predicate to scope a proposal by. The scope that does
+    apply is authorization.
+
+    Authorization runs **before** the status-filter validation, matching
+    ``ontology_patch_review``: an unauthorized caller must not learn the payload
+    rules. ``?status=nope`` therefore answers 403 without an actor and 400 with
+    one, and both are declared in ``api_error_contract``.
+
+    The companion half is ``steward_review.build_steward_review_summary``, which
+    republished ``requestor`` on the open ``/enterprise/steward-review``. Gating
+    only this route would have been theatre: the identity was reachable either
+    way. That surface now withholds the field and declares the withholding.
+    """
+    # The gate first, then the payload rules. A refusal here writes exactly one
+    # decision row, which is the same shape every other governed read produces -
+    # and no GET on this app answers 200 while writing a ledger row, so the
+    # alternative (evaluate, then serve a redacted 200) would have made this the
+    # only read in the product that bills the ledger for an anonymous success.
+    decision, _ = _authorize_evidence_read(user)
     # An unknown or wrongly-cased filter matched nothing and returned
     # `count: 0`, so `?status=PROPOSED` and `?status=not-a-status` both reported
     # an empty steward queue - indistinguishable from a genuinely empty one. A
@@ -1548,7 +1601,16 @@ def ontology_patches(status: str | None = Query(default=None)) -> dict[str, Any]
             },
         )
     patches = ontology.list_patches(status=status)
-    return {"count": len(patches), "patches": patches}
+    return {
+        "count": len(patches),
+        "patches": patches,
+        "scope_note": (
+            "제안 큐의 각 행은 제안자/승인자 신원을 담으므로 이 읽기는 "
+            "거버닝 읽기다. 온톨로지 어휘는 테넌트 소유가 아니라 공유 자원이므로 "
+            "테넌트 범위는 적용되지 않고, 적용되는 범위는 권한 뿐이다."
+        ),
+        "policy_decision_id": decision.decision_id,
+    }
 
 
 @app.post("/ontology/patches")

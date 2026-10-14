@@ -430,6 +430,13 @@ SDP_DATABASE_DSN='postgresql+psycopg://sdp_graph_app:<url-encoded-password>@loca
 - `GET /ontology/version`
 - `GET /ontology/change-log?user=<actor>`
 - `GET /ontology/vocabulary/jsonld`
+- `GET /ontology/patches?user=<actor>` — steward 제안 큐. **거버닝 읽기**: 모든 행이
+  제안자를, 승인된 행은 심사자와 심사 사유까지 담으므로 `/ontology/change-log`와
+  같은 게이트를 쓴다(인증 없는 호출은 403). 권한 검사가 `?status=` 검증보다
+  **먼저** 실행된다 — 권한 없는 호출자가 payload 규칙을 알게 되면 안 되므로
+  `?status=nope`는 actor 없이는 403, actor와 함께는 400이다.
+  `/enterprise/steward-review`는 공개 증빙 링크로 남고 `requestor`를 담지 않으며,
+  그 사실을 `withheld_review_item_fields`로 선언한다.
 - `POST /ontology/concepts`·`POST /ontology/patches/{id}/review` — 게시 전에
   **ConceptShape**를 평가하고(`definition` 필수) 결과를 `concept_validation`으로
   응답에 담는다. 비적합 개념은 게시되지 않는다(400). 계층 target이 등록된 개념으로

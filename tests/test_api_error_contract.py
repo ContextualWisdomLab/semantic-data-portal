@@ -209,6 +209,12 @@ def test_the_refusal_schema_admits_both_detail_shapes() -> None:
     assert string_detail.status_code == 404
     assert isinstance(string_detail.json()["detail"], str)
 
-    structured_detail = client.get("/ontology/patches", params={"status": "nope"})
+    # The actor is required because this route authorizes before it validates:
+    # an unauthorized caller must not learn the payload rules, so without one
+    # the probe answers 403 and never reaches the structured detail. Pinned in
+    # tests/test_steward_queue_identity_scope.py.
+    structured_detail = client.get(
+        "/ontology/patches", params={"status": "nope", "user": "admin"}
+    )
     assert structured_detail.status_code == 400
     assert isinstance(structured_detail.json()["detail"], dict)

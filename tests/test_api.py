@@ -1557,7 +1557,11 @@ def test_ontology_patch_workflow():
     patch = propose.json()
     assert patch["status"] == "proposed"
 
-    patches = client.get("/ontology/patches")
+    # The queue read carries an actor: every row names the proposer and, on an
+    # approval, the reviewer, so it is a governed read rather than an open one.
+    # It served those four fields to an anonymous caller until
+    # tests/test_steward_queue_identity_scope.py pinned it closed.
+    patches = client.get("/ontology/patches", params={"user": "analyst"})
     assert patches.status_code == 200
     patch_list = patches.json()["patches"]
     assert any(item["id"] == patch["id"] for item in patch_list)

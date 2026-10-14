@@ -26,16 +26,124 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 84
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                       1150 passed, 11 skipped
-    pytest (파일 순서 정/역/난수)  각 1139 passed, 11 skipped — 순서 무관
+    pytest                       1162 passed, 11 skipped
+    pytest (파일 순서 정/역/난수)  각 1151 passed, 11 skipped — 순서 무관
                                  (정순 · 역순 · seed 11/707/31337)
     pytest tests/fuzz            11 passed
     python -m sdp.demo_smoke     exit 0, "ready": true
 
-`tests/fuzz`는 파일 순서 측정 대상(`tests/test_*.py`)에 포함되지 않으므로 1150 - 1139
+`tests/fuzz`는 파일 순서 측정 대상(`tests/test_*.py`)에 포함되지 않으므로 1162 - 1151
 = 11건의 차이가 납니다. 트리를 **동결**한 상태에서만 측정합니다 — 이 세션에서 백그라운드
 측정 중에 트리를 고친 탓에 seed 11이 4건 실패로 나온 일이 있고, 그것은 결함이 아니라
 동시 편집이었습니다.
+
+### Fixed — steward 신원이 인증 없이 공개되던 두 표면 (high)
+
+`GET /ontology/patches`는 **권한 검사를 전혀 하지 않았습니다.** `analyst`가 제안하고
+`admin`이 승인한 패치 하나를 두고 측정:
+
+    GET /ontology/patches                  200  requestor=analyst
+                                                reviewed_by=admin
+                                                reviewed_at=2026-10-14T18:44:32Z
+                                                review_comment='스튜어드 승인 사유'
+    GET /ontology/patches?user=anonymous   200  (같은 네 필드)
+    GET /ontology/patches?user=nobody      200  (같은 네 필드)
+
+같은 시점, 같은 신원에 대해:
+
+    GET /ontology/change-log               403
+    GET /audit/events                      403
+    GET /policy/decisions                  403
+
+즉 누가 어휘 변경을 제안했고 누가 승인했으며 심사자가 무슨 사유를 적었는지를 인증
+없는 호출자에게 게시하면서, 같은 사실을 그걸 담도록 만든 세 표면에서는 거부하고
+있었습니다. ONT-004가 변경 로그를 게이트한 근거는 `{actor_id, reviewer_id,
+recorded_at}`이 **접근 기록 그 자체**라는 것이었고, 이 경로는 그 기록에 심사 사유까지
+더해 서빙합니다 — 근거는 그대로 적용되며, 두 표면이 더는 엇갈리지 않습니다.
+ONT-004 당시 이 불일치는 "이번 변경이 넓히지 않은 기존 결함"으로 기록만 해 두고
+닫지 않았습니다. 그 기록이 이번에 닫혔습니다.
+
+**표면은 하나가 아니라 둘이었습니다.** 앱이 서빙하는 모든 GET 라우트를 열거하고,
+응답 본문을 필드 **이름으로 grep하지 않고** 파싱해 mapping key로 훑은 결과:
+
+    /ontology/patches            requestor, reviewed_by, reviewed_at, review_comment
+    /enterprise/steward-review   requestor
+
+그래서 앞의 경로만 게이트하면 제안자 이름은 뒤의 경로로 그대로 읽혔을 것입니다 —
+점검이 아니라 연극이 됩니다. 두 표면을 한 커밋에서 함께 바꿉니다.
+
+- **`GET /ontology/patches` → 거버닝 읽기.** `_authorize_evidence_read`(변경 로그와
+  같은 헬퍼, 평행 규칙이 아님)를 쓰고, 그 tenant 목록은 변경 로그와 같은 이유로
+  적용하지 않습니다 — 개념 어휘는 tenant 소유가 아니라 공유 자원이므로 제안을
+  범위 지을 tenant 술어가 없습니다. 적용되는 범위는 권한뿐이고, 응답은 그 사실을
+  `scope_note`로, 통과한 판정을 `policy_decision_id`로 말합니다. 권한 검사는
+  `?status=` 검증보다 **먼저** 돕니다(`ontology_patch_review`가 명시한 규칙):
+  400 본문이 `known_statuses`를 게시하므로 순서를 바꾸면 권한 없는 호출자가 물을
+  자격이 없는 질문에 답하게 됩니다. 측정: `?status=nope`는 actor 없이 403,
+  actor와 함께 400. 능력은 사라지지 않습니다 — 인증된 actor는 네 필드를 포함한
+  큐 전체를 그대로 읽습니다. steward가 제안을 판단하려면 제안자를 알아야 하므로
+  무조건 삭제가 아니라 게이트입니다.
+- **`/enterprise/steward-review` → `requestor` 미게시 + 선언.** 이쪽은 게이트하지
+  않습니다: 게시된 공개 증빙 링크(`OPEN_PROOF_ENDPOINTS`)이고
+  `test_every_published_proof_link_resolves_as_published`가 인쇄된 그대로 400 미만을
+  요구하며, 이 요약이 답하는 조달 질문(큐가 얼마나 깊은지, 핸드오프 준비가 됐는지)에
+  제안자 이름은 필요 없습니다. 짧아진 행이 "제안자 정보가 없는 행"으로 읽히지 않도록
+  `withheld_review_item_fields: ["requestor"]`와, 신원이 어디 있는지 말하는 note를
+  함께 게시합니다. 필드는 **권한이 있는 호출자에게도** 빠집니다 — 여기서 actor에 따라
+  신원을 바꾸려면 판정 행을 남기지 않는 술어로 권한을 결정해야 하고, 그러면 증빙 없는
+  권한 판단이 하나 생깁니다.
+
+**게이트냐 리댁션이냐를 가른 측정.** 모든 GET 라우트를 돌려 익명 호출의 상태와 원장
+증가를 함께 쟀습니다: 정책을 평가하는 19개 라우트는 **전부** actor 없이 403이고,
+**200을 주면서 원장에 행을 쓰는 GET은 하나도 없습니다.** 그래서 "평가하고 리댁션된
+200을 주는" 설계는 익명 성공에 원장 비용을 물리는 유일한 읽기를 만들게 됩니다 —
+인증 없는 호출자가 통제하는 무한 증가 표면입니다.
+`test_the_scoped_route_is_not_a_new_ledger_write_surface`가 한 라우트에 대해 말하던
+그 불변식을 이제 플랫폼 전체에 대해 기계적으로 고정합니다.
+
+**검사 도구 자체의 결함 세 건** — 전부 도구를 읽어서가 아니라 **돌려서** 찾았습니다.
+
+1. **거짓 양성.** 처음 쓴 열거 도구는 응답 **본문 텍스트**에서 필드 이름을 찾았고,
+   `"withheld_review_item_fields": ["requestor"]` — 그 필드가 **없다는 선언** — 을
+   유출로 보고했습니다. 선언은 유출이 아닙니다. 파싱 후 mapping key 순회로 바꿨고,
+   `test_the_declaration_is_not_itself_a_disclosure`가 그 구분을 고정합니다(본문
+   텍스트에는 `requestor`가 **있고**, 값을 담은 key는 **없다**) — 다음 사람이 선언을
+   지워 거짓 양성을 "고치지" 못하게.
+2. **JSON이 아닌 200을 전부 건너뜀.** 도구가 `response.json()`에서 예외가 나면
+   `continue`했고, 그 대상이 바로 200 HTML(`/enterprise/console`)과 200
+   text(`/metrics`)입니다 — 큐를 서버에서 렌더링하는 표면은 그것을 잡으려고 쓴
+   테스트를 그대로 통과했을 것입니다. 역검증: 콘솔 HTML에 `list_patches()`를
+   심어 보니 두 검출기가 모두 걸렸습니다(심사 사유 값, 그리고 행 id). `requestor`와
+   `reviewed_by`는 **구별 가능한 값으로 심을 수 없습니다** — 제안/심사 게이트를
+   통과하는 실제 actor여야 하고, `analyst`를 부분문자열로 찾으면
+   `/enterprise/rbac-matrix`의 `data-analyst` 역할에 걸립니다. 그래서 JSON이 아닌
+   표면은 **행 자체를 담지 않음**을 증명하는 쪽으로 덮습니다(행이 없으면 그 행의
+   제안자를 렌더링할 수 없습니다). 그 표면 목록도 열거해서 단언하므로 세 번째
+   non-JSON 표면이 생기면 함께 검사됩니다.
+3. **그 수리의 과잉 적용.** 2를 고치면서 심은 개념 이름과 patch id까지 "행 표지"로
+   보고 금지했고, 다섯 표면에서 걸렸습니다 — 그리고 **다섯 다 설계상 맞습니다**:
+   승인된 패치는 그 개념을 공개 어휘에 게시하고(`/ontology/concepts`,
+   `/ontology/vocabulary/jsonld`, `/enterprise/evidence-pack`),
+   `/enterprise/steward-review`는 큐 행의 id·concept·status·confidence를 게시합니다
+   (요약이 답해야 하는 "큐가 얼마나 깊고 무엇에 대한 것인가"입니다). 그것을 유출로
+   단언하면 고치려는 것과 **반대 방향의 거짓 주장**이 됩니다. 식별 값만 남겼습니다.
+
+값 검색은 **직렬화 형식에 민감**합니다: 위 역검증에서 심사 사유는 걸렸지만
+`reviewed_at`은 걸리지 않았습니다 — 콘솔은 datetime을 `2026-10-14 19:02:31+00:00`로,
+라우트는 ISO `...T...Z`로 쓰기 때문입니다. 그래서 값 검색은 세 검출기 중 하나이고,
+의지하는 쪽이 아닙니다. 이 한계도 테스트에 적어 둡니다.
+
+양방향 역검증: steward 요약에 `requestor`를 되살리면 4건 실패, 큐에서 게이트를 빼면
+5건 + `test_api_error_contract.py` 1건 실패, 게이트는 두고 거부 표를 되돌리면
+`api_error_contract` 2건 실패. 핸들러와 표를 따로 바꾸면 어느 쪽이든 실패합니다.
+
+**선언 자체도 파생값으로.** `withheld_review_item_fields`를 처음에는 `["requestor"]`
+리터럴로 썼습니다. 그러면 누군가 그 필드를 다시 넣어도 선언은 계속 "숨긴다"고
+주장합니다 — 이 제품이 거부하려는 바로 그 종류의 드리프트(코드와 어긋나는 게시된
+주장)입니다. 이제 항목들로부터 파생합니다: 필드가 되살아나면 선언에서 **자동으로
+빠집니다**. 역검증에서 `requestor`를 되살리니 선언이
+`['reviewed_by','reviewed_at','review_comment']`로 줄었고(주장이 거짓이 될 수 없음),
+그와 동시에 테스트 4건이 실패했습니다.
 
 ### Fixed — ConceptShape 게이트가 스스로 만든 결함 6건 (적대적 검증에서 발견)
 

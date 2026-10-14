@@ -133,7 +133,7 @@ ROUTE_REFUSALS: dict[tuple[str, str], tuple[int, ...]] = {
     ("POST", "/llm/search"): (400, 403),
     ("GET", "/ontology/change-log"): (403,),
     ("POST", "/ontology/concepts"): (400, 403, 409),
-    ("GET", "/ontology/patches"): (400,),
+    ("GET", "/ontology/patches"): (400, 403),
     ("POST", "/ontology/patches"): (400, 403),
     ("POST", "/ontology/patches/{patch_id}/review"): (400, 403, 404, 409),
     ("POST", "/ontology/resolve"): (400, 409),

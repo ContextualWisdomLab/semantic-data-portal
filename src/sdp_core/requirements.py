@@ -476,11 +476,14 @@ REQUIREMENT_COVERAGE: dict[str, RequirementCoverage] = {
         evidence=[
             "route:POST /ontology/patches",
             "route:POST /ontology/patches/{patch_id}/review",
+            "route:GET /ontology/patches",
             "func:sdp.semantic_validation.validate_concept_semantics",
             "test:tests/test_ontology_publication_loop.py::test_approving_a_patch_publishes_the_term_to_every_read_surface",
             "test:tests/test_concept_shape_gate.py::test_a_concept_with_no_definition_is_refused_at_both_publication_paths",
             "test:tests/test_concept_shape_gate.py::test_the_approval_gate_is_still_a_backstop_behind_intake",
             "test:tests/test_semantic_validation.py::test_every_published_required_property_is_evaluated",
+            "test:tests/test_steward_queue_identity_scope.py::test_no_open_surface_names_a_proposal_actor",
+            "test:tests/test_steward_queue_identity_scope.py::test_the_queue_and_the_change_log_agree_on_who_may_read_identity",
         ],
         note=(
             "The requirement half is implemented and tested: a patch is stored "
@@ -518,15 +521,30 @@ REQUIREMENT_COVERAGE: dict[str, RequirementCoverage] = {
             "checks consistency, and the export carries no OWL axiom for a "
             "reasoner to act on — so this stays partial and NFR-QUAL-002 stays "
             "unmet. "
-            "Separately, and deliberately not closed here: GET /ontology/patches "
-            "runs no authorization at all and serves requestor, reviewed_by, "
-            "reviewed_at and review_comment in the clear to an anonymous caller "
-            "— measured. ONT-004 added a change log carrying the same "
-            "identities and gated it like /audit/events, so the two surfaces now "
-            "disagree about whether steward identity is public. The open route "
-            "is the one to close; it was left alone rather than widened to "
-            "match, because gating it changes this requirement's own route and "
-            "the tests that pin its open shape."
+            "The disclosure this note recorded as deliberately deferred is "
+            "closed. It read: GET /ontology/patches runs no authorization at all "
+            "and serves requestor, reviewed_by, reviewed_at and review_comment "
+            "in the clear to an anonymous caller — measured, at the same "
+            "moment /ontology/change-log, /audit/events and /policy/decisions "
+            "all answered 403 for the same identities. The queue read now runs "
+            "`_authorize_evidence_read`, the same helper and the same reasoning "
+            "as the change log (the vocabulary is shared, so no tenant "
+            "predicate applies and the scope that does is authorization), and "
+            "authorization precedes the status-filter validation so an "
+            "unauthorized caller does not learn the payload rules. "
+            "It was two surfaces, not one: enumerated across every GET route "
+            "with the bodies walked for a mapping key rather than grepped for a "
+            "field name, /enterprise/steward-review also republished "
+            "`requestor`. Gating only the queue would have left the name "
+            "reachable, so the summary withholds the field — withheld "
+            "rather than gated, because it is a published open proof link "
+            "pinned to resolve below 400, and the procurement question it "
+            "answers does not need the proposer. The withholding is declared "
+            "(`withheld_review_item_fields`), and the field is dropped for "
+            "every caller including an authorized one: an actor-dependent "
+            "field there would need a predicate that writes no decision row, "
+            "and no GET in this product answers 200 while billing the ledger. "
+            "That invariant is now pinned platform-wide rather than per route."
         ),
     ),
     "ONT-006": RequirementCoverage(

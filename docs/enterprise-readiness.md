@@ -58,7 +58,7 @@
 - `GET /policy/decisions`: policy decision evidence inspection
 - `GET /audit/events`: audit trail
 - `GET /metrics`: minimal Prometheus-style metrics
-- `GET /ontology/search`, `POST /ontology/resolve`, `GET /ontology/patches`: ontology coverage 및 steward workflow
+- `GET /ontology/search`, `POST /ontology/resolve`, `GET /ontology/patches?user=<actor>`: ontology coverage 및 steward workflow. 제안 큐는 제안자/심사자 신원을 담으므로 거버닝 읽기이며 actor 없이는 403입니다.
 
 ## 로컬 데모 Smoke
 
