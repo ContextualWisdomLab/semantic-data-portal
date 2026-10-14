@@ -75,15 +75,67 @@ def can_access_tenant(subject: str, tenant_id: str) -> bool:
     return "platform-admin" in context.roles or context.tenant_id == tenant_id
 
 
+# A claim list is caller-supplied and was unbounded in both count and length,
+# on a route that needs no credential. Measured against
+# ``POST /enterprise/auth/oidc-preview``, one request each:
+#
+#     groups      10  ->   1,162 bytes      16 ms
+#     groups   1,000  ->  72,262 bytes       9 ms
+#     groups  20,000  -> 1.50 MB           135 ms
+#     groups 100,000  -> 7.58 MB           642 ms
+#     one 2 MB group name -> 4.00 MB        31 ms   (echoed twice)
+#
+# The last row is the shape that matters: the response is *larger than the
+# request*, because each group name comes back both in ``groups`` and in
+# ``group_role_bindings[].group_name``. An unauthenticated amplifier is the same
+# defect class as the unbounded observation row in ``observability.py``, reached
+# through a different surface, and the caps here match that one's reasoning: a
+# real IdP token carries tens to low hundreds of groups, not tens of thousands.
+MAX_CLAIM_VALUES = 256
+MAX_CLAIM_VALUE_CHARS = 256
+_CLAIM_TRUNCATION_MARKER = "...[truncated]"
+
+
+def _bounded_claim_value(value: str) -> str:
+    """Cap one claim string, marking what was cut.
+
+    The marker keeps the row honest: a silently shortened group name reads as
+    the whole name, and a reviewer comparing it against the IdP's group list
+    would not know why it does not match.
+    """
+    if len(value) <= MAX_CLAIM_VALUE_CHARS:
+        return value
+    keep = MAX_CLAIM_VALUE_CHARS - len(_CLAIM_TRUNCATION_MARKER)
+    return value[:keep] + _CLAIM_TRUNCATION_MARKER
+
+
 def _claim_values(value: Any) -> list[str]:
-    """Coerce a scalar, list, or absent claim value into a string list."""
+    """Coerce a scalar, list, or absent claim value into a bounded string list."""
     if value is None:
         return []
     if isinstance(value, str):
-        return [value]
+        values = [value]
+    elif isinstance(value, list):
+        values = [str(item) for item in value]
+    else:
+        values = [str(value)]
+    return [_bounded_claim_value(item) for item in values[:MAX_CLAIM_VALUES]]
+
+
+def claim_value_count(value: Any) -> int:
+    """How many values the claim carried, before the cap.
+
+    Published as ``withheld_group_count`` so a truncated list is declared rather
+    than read as the whole list - the same rule every other bounded list in this
+    product follows.
+    """
+    if value is None:
+        return 0
+    if isinstance(value, str):
+        return 1
     if isinstance(value, list):
-        return [str(item) for item in value]
-    return [str(value)]
+        return len(value)
+    return 1
 
 
 def oidc_role_claims(claims: dict[str, Any]) -> list[str]:
@@ -93,6 +145,21 @@ def oidc_role_claims(claims: dict[str, Any]) -> list[str]:
     reported for audit rather than honoured as grants.
     """
     return _claim_values(claims.get("roles"))
+
+
+def oidc_role_map_is_operator_configured() -> bool:
+    """Whether the active role map came from the environment rather than the default.
+
+    The distinction decides whether reading the map back to an unauthenticated
+    caller discloses anything. ``_DEFAULT_OIDC_GROUP_ROLE_MAP`` is a constant in
+    this file - public, in the repository, and what makes the demo preview work
+    with no configuration - so echoing a mapping derived from it leaks nothing.
+    ``SDP_OIDC_GROUP_ROLE_MAP`` is the deployment's real group-to-role policy,
+    and ``/enterprise/auth/oidc-preview`` turned it into an enumeration oracle:
+    an outsider could read which group grants which role in which tenant scope,
+    one guessed group name at a time.
+    """
+    return bool(os.getenv("SDP_OIDC_GROUP_ROLE_MAP"))
 
 
 def load_oidc_role_map() -> dict[str, Any]:

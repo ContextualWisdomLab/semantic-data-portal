@@ -291,7 +291,15 @@ seed의 `security` subject는 `platform-admin`도 들고 있어 여전히 previe
     전부 점유했습니다 — 측정: 동시 20건에서 slot 8개면 sink 호출 8회, 무제한이면 20회.
     이제 cooldown 만료 후 정확히 1회만 probe합니다.
 - `POST /enterprise/auth/oidc-verify`: issuer/audience/expiry/JWKS 서명 검증 후 tenant scoped group mapping으로 `ActorContext`를 생성하고 raw token은 응답에 포함하지 않는다. 신뢰 기준(issuer, audience, JWKS, role map)은 operator 환경 설정에서만 읽으며, request body가 이 네 필드를 보내면 검증 전에 400으로 거절한다.
-- `POST /enterprise/auth/oidc-preview`, `POST /enterprise/auth/oidc-verify`: group별 `group_role_bindings`(group 이름, 부여한 tenant scope, 부여된 role)와 `audit_event_id`를 반환하고 `enterprise/auth/oidc` resource audit event를 남긴다. `sso_oidc_adapter` control은 이로써 `implemented`가 되고 `GET /enterprise/controls`의 `planned_controls`는 0, `status`는 `pilot_ready`가 된다.
+- `POST /enterprise/auth/oidc-preview`, `POST /enterprise/auth/oidc-verify`: group별 `group_role_bindings`- **정정(oidc-preview 경계)**: 이 라우트는 운영자 설정 role map의 열거 oracle이었습니다.
+  측정: 자격증명 없이 임의 subject/tenant로 `groups: ["admins"]` → `roles: ["platform-admin"]`,
+  `tenant_scope: "acme-finance"`. 매핑된 group과 매핑되지 않은 group이 구별 가능했습니다. 이제
+  actor 없는 호출에는 `SDP_OIDC_GROUP_ROLE_MAP`을 쓰지 않고(요청이 보낸 map과 저장소의 공개 기본
+  map은 그대로), `role_map_source`와 `actor_context_verified`를 게시합니다. 또한 claim 목록의
+  개수·길이에 상한을 두었습니다 — 이전에는 group 100,000개가 7.58 MB, 2 MB 이름 하나가 4.00 MB
+  응답을 만드는 미인증 증폭기였습니다. 잘린 양은 `declared_group_count`/`withheld_group_count`로
+  선언하며, verify 경로에도 같은 카운터를 노출합니다(상한이 권한 결과를 바꿀 수 있으므로).
+  증빙: `tests/test_oidc_preview_boundary.py` (13건).(group 이름, 부여한 tenant scope, 부여된 role)와 `audit_event_id`를 반환하고 `enterprise/auth/oidc` resource audit event를 남긴다. `sso_oidc_adapter` control은 이로써 `implemented`가 되고 `GET /enterprise/controls`의 `planned_controls`는 0, `status`는 `pilot_ready`가 된다.
 - `GET /enterprise/evidence-pack`: metadata validation, SHACL-compatible validation, steward queue, ontology mapping coverage, policy/audit counts, controls, KPI ids, proof endpoints.
   - **정정(connector control 판정)**: `implemented`가 `bool(_IMPLEMENTED_PROOF.get(control, []))`
     였습니다 — 같은 파일의 손으로 쓴 dict 멤버십. 측정: 필수 control 11종이 모두 dict에 있어

@@ -256,11 +256,56 @@ def enterprise_oidc_preview(payload: dict[str, Any]) -> dict[str, Any]:
     if role_map is not None and not isinstance(role_map, dict):
         raise HTTPException(status_code=400, detail="role_map must be an object")
 
+    # Who is asking. The same predicate gates the ledger write below, so this
+    # route has one notion of "an authenticated operator" rather than two.
+    actor_id = _actor(payload)
+    operator = actor_id != "anonymous" and bool(resolve_actor_context(actor_id).roles)
+
+    # The configured role map is operator configuration, and this route turned it
+    # into an oracle. Measured with
+    # SDP_OIDC_GROUP_ROLE_MAP={"acme-finance": {"admins": ["platform-admin"]}},
+    # no credential of any kind:
+    #
+    #   POST /enterprise/auth/oidc-preview
+    #     {"claims": {"sub": "attacker@evil.example", "tenant_id": "acme-finance",
+    #                 "groups": ["admins"], "exp": <future>}}
+    #   -> 200 {"actor_context": {"roles": ["platform-admin"], ...},
+    #           "group_role_bindings": [{"group_name": "admins",
+    #                                    "tenant_scope": "acme-finance",
+    #                                    "granted_roles": ["platform-admin"]}]}
+    #
+    # An unmapped group comes back with an empty scope and no roles, so the two
+    # are distinguishable and an outsider can enumerate the whole group -> role
+    # map, and the valid tenant scopes, one guessed group name at a time.
+    #
+    # A caller previewing against a role map **they supplied in the request**
+    # learns nothing they did not already know, and that is the route's stated
+    # purpose - validating a claim shape against a candidate map. So that path
+    # stays open. Nor is the shipped default a secret: it is a constant in
+    # ``authz.py``, public and in the repository, and it is what makes the demo
+    # preview work with no configuration. What must not be readable without an
+    # actor is the **deployment's own** map from SDP_OIDC_GROUP_ROLE_MAP, which
+    # is the real group-to-role policy. The response says which map produced the
+    # mapping instead of leaving it to be inferred.
+    effective_role_map = role_map
+    if role_map is not None:
+        role_map_source = "request"
+    elif not authz.oidc_role_map_is_operator_configured():
+        role_map_source = "shipped_default"
+    elif operator:
+        role_map_source = "operator_configured"
+    else:
+        effective_role_map = {}
+        role_map_source = "withheld_operator_configured_map_requires_an_actor"
+
     try:
-        context = authz.resolve_oidc_actor_context(claims, role_map=role_map)
-        group_bindings = authz.oidc_group_role_bindings(claims, role_map=role_map)
+        context = authz.resolve_oidc_actor_context(claims, role_map=effective_role_map)
+        group_bindings = authz.oidc_group_role_bindings(claims, role_map=effective_role_map)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+    declared_group_count = authz.claim_value_count(claims.get("groups"))
+    withheld_group_count = max(0, declared_group_count - len(group_bindings))
 
     ignored_role_claims = authz.oidc_role_claims(claims)
     # An unauthenticated caller must not be able to write to the evidence
@@ -275,9 +320,8 @@ def enterprise_oidc_preview(payload: dict[str, Any]) -> dict[str, Any]:
     # now needs an authenticated actor, and even then the row is marked
     # unverified: this route does not check a signature, so its tenant is a
     # claim rather than a fact.
-    actor_id = _actor(payload)
     audit_event = None
-    if actor_id != "anonymous" and resolve_actor_context(actor_id).roles:
+    if operator:
         audit_event = authz.record_oidc_mapping_audit_event(
             context,
             group_bindings,
@@ -297,8 +341,19 @@ def enterprise_oidc_preview(payload: dict[str, Any]) -> dict[str, Any]:
             "표시됩니다)."
         ),
         "actor_context": context.model_dump(),
-        "groups": claims.get("groups", []),
+        # Shaped exactly like a resolved ``ActorContext``, so say plainly that it
+        # is not one. No signature was checked here; the subject, tenant and
+        # roles are what a token carrying these claims *would* map to.
+        "actor_context_verified": False,
+        # Which role map produced the mapping above.
+        "role_map_source": role_map_source,
+        # The caller's own group claim, bounded and echoed back. Unbounded, this
+        # was an amplifier: a 2 MB group name produced a 4 MB response, and
+        # 100,000 groups produced 7.58 MB, on a route needing no credential.
+        "groups": [binding["group_name"] for binding in group_bindings],
         "group_role_bindings": group_bindings,
+        "declared_group_count": declared_group_count,
+        "withheld_group_count": withheld_group_count,
         "ignored_role_claims": ignored_role_claims,
         "audit_event_id": audit_event.id if audit_event else None,
     }
@@ -338,6 +393,14 @@ def enterprise_oidc_verify(payload: dict[str, Any]) -> dict[str, Any]:
 
     group_bindings = authz.oidc_group_role_bindings(claims)
     ignored_role_claims = authz.oidc_role_claims(claims)
+    # The group claim is capped (``authz.MAX_CLAIM_VALUES``), and on this path the
+    # cap can change an authorization outcome: groups past the cap grant no
+    # roles. That direction is fail-closed - it withholds roles rather than
+    # granting them - but an operator debugging a missing role must be able to
+    # see that it happened, so the truncation is declared here as it is on the
+    # preview rather than being silent.
+    declared_group_count = authz.claim_value_count(claims.get("groups"))
+    withheld_group_count = max(0, declared_group_count - len(group_bindings))
     audit_event = authz.record_oidc_mapping_audit_event(
         context,
         group_bindings,
@@ -355,8 +418,10 @@ def enterprise_oidc_verify(payload: dict[str, Any]) -> dict[str, Any]:
         "actor_context": context.model_dump(),
         "issuer": claims.get("iss"),
         "audience": claims.get("aud"),
-        "groups": claims.get("groups", []),
+        "groups": [binding["group_name"] for binding in group_bindings],
         "group_role_bindings": group_bindings,
+        "declared_group_count": declared_group_count,
+        "withheld_group_count": withheld_group_count,
         "ignored_role_claims": ignored_role_claims,
         "audit_event_id": audit_event.id,
     }

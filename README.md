@@ -92,6 +92,27 @@ guardrail("제안 mapping은 승인으로 취급하지 않는다")과 모순이�
 REST connector secret은 `SDP_CONNECTOR_SECRET_REF_PREFIX=SDP_CONNECTOR_SECRET_` 기준의 env secret reference로 조회합니다. 예: `SDP_CONNECTOR_SECRET_REST_CONNECTOR_MARKETING_CAMPAIGN_TOKEN` 값은 presence만 검증하며 API 응답에는 노출하지 않습니다.
 OIDC token verification은 `SDP_OIDC_ISSUER`, `SDP_OIDC_AUDIENCE`, `SDP_OIDC_JWKS_URL`(또는 JWKS 문서를 그대로 담는 `SDP_OIDC_JWKS`), `SDP_OIDC_GROUP_ROLE_MAP`를 사용합니다. 이 네 가지는 **operator 설정 전용**입니다. `POST /enterprise/auth/oidc-verify`의 body는 `token` 하나만 받고, `issuer`·`audience`·`jwks`·`role_map`이 body에 오면 400으로 거절합니다 — 호출자가 자기 토큰의 신뢰 기준을 지정할 수 있으면 스스로 서명한 토큰으로 임의 tenant의 platform-admin을 발급받을 수 있기 때문입니다.
 `SDP_OIDC_GROUP_ROLE_MAP`은 두 가지 형태를 받습니다. flat `{"group": ["role"]}`은 모든 tenant에 적용되는 wildcard scope(`*`)가 되고, tenant scoped `{"tenant": {"group": ["role"]}}`은 해당 tenant에만 적용됩니다. 같은 group이 두 scope에 모두 있으면 tenant scope가 wildcard를 대체하므로, tenant scope에 빈 role 목록을 쓰면 wildcard 부여를 해당 tenant에서만 회수할 수 있습니다. 두 형태를 한 map에 섞으면 tenant 식별자를 group 이름으로 잘못 읽는 설정 오류이므로 요청이 400으로 거절됩니다.
+`POST /enterprise/auth/oidc-preview`는 **운영자가 설정한 role map을 열거할 수 있는 oracle**이었습니다.
+측정(`SDP_OIDC_GROUP_ROLE_MAP={"acme-finance": {"admins": ["platform-admin"]}}`, 자격증명 없음):
+임의 subject/tenant로 `groups: ["admins"]`를 보내면 200과 함께
+`actor_context.roles: ["platform-admin"]`, `group_role_bindings[0].tenant_scope: "acme-finance"`가
+돌아왔고, 매핑되지 않은 group은 빈 scope·빈 role로 돌아와 **구별 가능**했으므로 group 이름을 하나씩
+추측해 배포의 group→role 정책과 유효한 tenant scope를 전부 읽을 수 있었습니다. trust anchor를 request
+body에서 거절하는 이유, 그리고 이 라우트의 원장 기록에 actor를 요구한 이유와 같은 범주입니다. 수정은
+의도적으로 좁습니다 — 호출자가 **직접 보낸** `role_map`에 대한 preview는 그대로 열려 있고(이 라우트의
+목적), 저장소에 상수로 들어 있는 **기본 map**도 비밀이 아니므로 그대로 동작합니다. actor 없이 숨기는
+것은 배포 자신의 `SDP_OIDC_GROUP_ROLE_MAP`뿐이며, 응답의 `role_map_source`
+(`request`/`shipped_default`/`operator_configured`/`withheld_...`)가 어느 map을 썼는지 밝힙니다.
+`actor_context_verified: false`도 함께 반환합니다 — 이 값은 해석된 `ActorContext`와 같은 모양이지만
+서명을 검증하지 않은 "이런 claim이면 이렇게 매핑된다"의 결과입니다.
+
+claim 목록은 개수와 값 길이에 상한이 있습니다(`MAX_CLAIM_VALUES` / `MAX_CLAIM_VALUE_CHARS` = 256).
+이전에는 둘 다 무제한이었고 group 이름이 `groups`와 `group_role_bindings[].group_name`에 **두 번**
+돌아와, 자격증명이 필요 없는 라우트가 증폭기였습니다 — 측정: group 100,000개 → 7.58 MB / 642 ms,
+2 MB짜리 group 이름 하나 → 4.00 MB(요청보다 큰 응답). 지금은 각각 17.8 KB, 1.2 KB이고 잘린 양은
+`declared_group_count`/`withheld_group_count`와 `...[truncated]` 표시로 **선언**합니다.
+`oidc-verify`에서는 이 상한이 권한 결과를 바꿀 수 있습니다(상한을 넘은 group은 role을 부여하지 않음 —
+부여가 아니라 보류이므로 fail-closed). 그래서 같은 두 카운터를 verify 응답에도 게시합니다.
 `POST /enterprise/auth/oidc-preview`와 `POST /enterprise/auth/oidc-verify`는 group별 `group_role_bindings`(group 이름, 부여한 tenant scope, 부여된 role)와 `audit_event_id`를 함께 반환하고, 같은 내용을 `enterprise/auth/oidc` resource의 audit event로 기록합니다. token과 raw claim payload는 응답에도 evidence store에도 기록되지 않습니다.
 
 Docker 기반 로컬 데모는 다음 명령으로 실행합니다.

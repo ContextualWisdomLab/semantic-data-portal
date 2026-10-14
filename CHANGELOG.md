@@ -17,7 +17,7 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                    675 passed, 11 skipped
+    pytest                    688 passed, 11 skipped
     pytest (역방향/난수 순서)  순서 무관 통과 (역순 + seed 11/29/77)
     pytest tests/fuzz          11 passed
     python -m sdp.demo_smoke   exit 0, "ready": true
@@ -54,6 +54,24 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
   수 없으므로 단조 카운터를 함께 추가했습니다.
 
 ### Fixed — 문서화된 워크플로가 실제로 동작하지 않던 것들
+- `POST /enterprise/auth/oidc-preview`가 **운영자 role map의 열거 oracle**이었습니다.
+  측정(`SDP_OIDC_GROUP_ROLE_MAP={"acme-finance": {"admins": ["platform-admin"]}}`, 자격증명
+  없음): 임의 subject·tenant로 `groups: ["admins"]`를 보내면 200과 함께
+  `roles: ["platform-admin"]`, `tenant_scope: "acme-finance"`가 돌아왔고 매핑되지 않은 group은
+  빈 scope·빈 role이어서 **구별 가능**했습니다 — group 이름을 하나씩 추측해 배포의 group→role
+  정책 전체와 유효한 tenant scope를 읽을 수 있었습니다. trust anchor를 request body에서 거절한
+  이유, 이 라우트의 원장 기록에 actor를 요구한 이유와 같은 범주입니다. 수정은 좁습니다: 호출자가
+  보낸 `role_map`과 저장소 상수인 기본 map은 비밀이 아니므로 그대로 두고, actor 없는 호출에서
+  `SDP_OIDC_GROUP_ROLE_MAP`만 쓰지 않습니다. 매핑된 group과 매핑되지 않은 group의 응답은 이제
+  이름을 제외하면 동일합니다(이 제품이 외부 테넌트 데이터셋과 없는 id에 적용하는 것과 같은 규칙).
+- 같은 라우트가 **미인증 증폭기**였습니다. claim 목록이 개수·길이 모두 무제한이고 group 이름이
+  `groups`와 `group_role_bindings[].group_name`에 두 번 돌아왔습니다. 측정, 요청 1건:
+  group 10 → 1,162 B / group 1,000 → 72 KB / group 20,000 → 1.50 MB(135 ms) /
+  group 100,000 → **7.58 MB**(642 ms), 그리고 2 MB짜리 group 이름 하나 → **4.00 MB**
+  (요청보다 큰 응답). 상한은 256개/256자이고 지금은 각각 17.8 KB와 1.2 KB이며, 잘린 양은
+  `declared_group_count`/`withheld_group_count`와 `...[truncated]` 표시로 선언합니다.
+  `observability.py`의 무제한 관측 행과 같은 결함 범주를 다른 표면에서 만난 것입니다.
+
 
 - 문서화된 draft→execute 워크플로에 **통과 경로가 없었습니다**. 통과합니다.
 - 제안→승인→노출 루프가 두 개의 단절된 개념 저장소 때문에 승인에서 멈춰
@@ -198,6 +216,10 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
 - http(s) sink의 `Authorization` 분리는 **로컬에서 포착한 요청 객체**로 검증했습니다
   (urllib이 다이얼하는 host, 재구성된 URL, 헤더). 실제 원격 sink에 대한 왕복은
   실행하지 않았습니다.
+- `oidc-verify`에서 claim 상한은 **권한 결과를 바꿀 수 있습니다**: 상한을 넘은 group은 role을
+  부여하지 않습니다. 부여가 아니라 보류이므로 fail-closed이지만 동작 변경이며, 그래서 verify 응답도
+  `declared_group_count`/`withheld_group_count`를 게시해 운영자가 사라진 role의 이유를 볼 수
+  있게 했습니다. 256개를 넘는 group을 담은 토큰을 쓰는 배포는 이 상한을 먼저 검토해야 합니다.
 - connector control의 `proof_route_served`는 "선언된 proof endpoint가 이 빌드의 라우트로
   존재한다"는 뜻이고, 그 control이 실제로 동작한다는 뜻이 **아닙니다**. 11종 중 runtime 확인이
   있는 것은 `credential_vault` 하나뿐이며, 나머지 10종에 실제 검증을 붙이는 것은 별도 작업입니다
