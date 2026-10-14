@@ -249,32 +249,39 @@ def enterprise_oidc_preview(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# The trust anchors a token is verified against are operator configuration, not
+# request input. A caller that could name its own issuer, audience, signing keys
+# or role map would be verifying its own signature and could mint any tenant and
+# role it liked, so these fields are refused outright rather than ignored.
+_OIDC_VERIFY_OPERATOR_ONLY_FIELDS = ("issuer", "audience", "jwks", "role_map")
+
+
 @app.post("/enterprise/auth/oidc-verify")
 def enterprise_oidc_verify(payload: dict[str, Any]) -> dict[str, Any]:
     token = payload.get("token")
     if not isinstance(token, str) or not token:
         raise HTTPException(status_code=400, detail="token is required")
 
-    jwks = payload.get("jwks")
-    if jwks is not None and not isinstance(jwks, dict):
-        raise HTTPException(status_code=400, detail="jwks must be an object")
-
-    role_map = payload.get("role_map")
-    if role_map is not None and not isinstance(role_map, dict):
-        raise HTTPException(status_code=400, detail="role_map must be an object")
+    supplied_operator_fields = [
+        field for field in _OIDC_VERIFY_OPERATOR_ONLY_FIELDS if field in payload
+    ]
+    if supplied_operator_fields:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "issuer, audience, jwks and role_map are operator configuration "
+                "(SDP_OIDC_ISSUER, SDP_OIDC_AUDIENCE, SDP_OIDC_JWKS or "
+                "SDP_OIDC_JWKS_URL, SDP_OIDC_GROUP_ROLE_MAP) and are not accepted "
+                "in the request body: " + ", ".join(supplied_operator_fields)
+            ),
+        )
 
     try:
-        context, claims = authz.verify_oidc_jwks_token(
-            token,
-            issuer=payload.get("issuer"),
-            audience=payload.get("audience"),
-            jwks=jwks,
-            role_map=role_map,
-        )
+        context, claims = authz.verify_oidc_jwks_token(token)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    group_bindings = authz.oidc_group_role_bindings(claims, role_map=role_map)
+    group_bindings = authz.oidc_group_role_bindings(claims)
     ignored_role_claims = authz.oidc_role_claims(claims)
     audit_event = authz.record_oidc_mapping_audit_event(
         context,

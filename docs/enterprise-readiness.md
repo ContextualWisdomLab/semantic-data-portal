@@ -48,7 +48,7 @@
 - `GET /enterprise/steward-review`: SHACL validation failure와 ontology patch proposal을 묶은 steward 검토 대기열 및 buyer handoff readiness 요약
 - `GET /enterprise/console`: evidence, KPI, control, connector status를 한 화면에서 확인하는 운영자 콘솔
 - `POST /enterprise/auth/oidc-preview`: 실제 JWKS token verification 전 단계에서 만료/subject/tenant claim shape를 검증하고, `groups` 기반 role mapping만 `ActorContext`로 검토하는 증빙 endpoint. 직접 `roles` claim은 권한으로 쓰지 않고 `ignored_role_claims`로 반환한다. role 부여는 token tenant claim이 허용하는 scope에서만 이뤄지므로 한 tenant에서 role을 주는 group이 다른 tenant에서는 아무것도 주지 못한다.
-- `POST /enterprise/auth/oidc-verify`: issuer, audience, expiry, token `kid`, JWKS 서명을 검증한 뒤 같은 tenant scoped group mapping으로 `ActorContext`를 생성한다. Raw token은 응답에 포함하지 않는다. 두 endpoint 모두 group별 `group_role_bindings`와 `audit_event_id`를 반환하고 `enterprise/auth/oidc` resource audit event를 남긴다.
+- `POST /enterprise/auth/oidc-verify`: issuer, audience, expiry, token `kid`, JWKS 서명을 검증한 뒤 같은 tenant scoped group mapping으로 `ActorContext`를 생성한다. Raw token은 응답에 포함하지 않는다. 검증 기준은 `SDP_OIDC_ISSUER`/`SDP_OIDC_AUDIENCE`/`SDP_OIDC_JWKS`(또는 `SDP_OIDC_JWKS_URL`)/`SDP_OIDC_GROUP_ROLE_MAP`이며, body는 `token`만 받는다. 두 endpoint 모두 group별 `group_role_bindings`와 `audit_event_id`를 반환하고 `enterprise/auth/oidc` resource audit event를 남긴다.
 - `GET /enterprise/connectors/{connector_id}/probe`: demo dataset 기준 connector contract, source metadata, control evidence, proof endpoint 확인
 - `GET /catalog/datasets/{dataset_id}/validate`: metadata quality
 - `GET /catalog/datasets/{dataset_id}/semantic-validation`: dataset 단위 SHACL 호환 shape, conformance, violation path 리포트

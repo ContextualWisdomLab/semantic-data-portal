@@ -310,6 +310,30 @@ def _load_jwks_from_url(jwks_url: str) -> dict[str, Any]:
         return json.loads(response.read().decode("utf-8"))
 
 
+def _load_configured_jwks() -> dict[str, Any]:
+    """Return the JWKS the operator configured, inline first, then by URL.
+
+    ``SDP_OIDC_JWKS`` carries the JWKS document itself so an air-gapped or
+    offline deployment can verify tokens without an outbound fetch;
+    ``SDP_OIDC_JWKS_URL`` is fetched when no inline document is configured.
+    Both are operator configuration: a JWKS must never come from the request
+    being verified, or the caller chooses the key that signs its own identity.
+    """
+    inline = os.getenv("SDP_OIDC_JWKS")
+    if inline:
+        try:
+            document = json.loads(inline)
+        except ValueError as exc:
+            raise ValueError(f"invalid OIDC JWKS configuration: {exc}") from exc
+        if not isinstance(document, dict):
+            raise ValueError("invalid OIDC JWKS configuration: expected an object")
+        return document
+    jwks_url = os.getenv("SDP_OIDC_JWKS_URL")
+    if not jwks_url:
+        raise ValueError("missing OIDC JWKS")
+    return _load_jwks_from_url(jwks_url)
+
+
 def _select_jwk(jwks: dict[str, Any], kid: str | None) -> dict[str, Any]:
     """Select the JWKS key matching the token's key identifier."""
     if not kid:
@@ -334,16 +358,13 @@ def verify_oidc_jwks_token(
     """Verify a token against JWKS and map its claims to an actor context."""
     expected_issuer = issuer or os.getenv("SDP_OIDC_ISSUER")
     expected_audience = audience or os.getenv("SDP_OIDC_AUDIENCE")
-    jwks_url = os.getenv("SDP_OIDC_JWKS_URL")
 
     if not expected_issuer:
         raise ValueError("missing OIDC issuer")
     if not expected_audience:
         raise ValueError("missing OIDC audience")
     if jwks is None:
-        if not jwks_url:
-            raise ValueError("missing OIDC JWKS")
-        jwks = _load_jwks_from_url(jwks_url)
+        jwks = _load_configured_jwks()
 
     try:
         header = jwt.get_unverified_header(token)

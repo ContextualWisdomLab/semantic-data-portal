@@ -407,34 +407,18 @@ def test_oidc_preview_ignores_direct_role_escalation_claims():
     assert body["ignored_role_claims"] == ["sdp-platform-admins"]
 
 
-def test_oidc_jwks_verification_maps_verified_token_without_token_leak():
-    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    jwk = json.loads(RSAAlgorithm.to_jwk(private_key.public_key()))
-    jwk.update({"kid": "buyer-key-1", "alg": "RS256", "use": "sig"})
-    token = jwt.encode(
-        {
-            "iss": "https://idp.example.com/",
-            "aud": "semantic-data-portal",
-            "email": "analyst@example.com",
-            "tenant_id": "buyer-demo",
-            "groups": ["sdp-analysts"],
-            "roles": ["sdp-platform-admins"],
-            "exp": int(time()) + 3600,
-        },
-        private_key,
-        algorithm="RS256",
-        headers={"kid": "buyer-key-1"},
+def test_oidc_jwks_verification_maps_verified_token_without_token_leak(monkeypatch):
+    token, jwks = _signed_identity_token(
+        issuer="https://idp.example.com/",
+        audience="semantic-data-portal",
+        kid="buyer-key-1",
+        claims_extra={"roles": ["sdp-platform-admins"]},
     )
+    monkeypatch.setenv("SDP_OIDC_ISSUER", "https://idp.example.com/")
+    monkeypatch.setenv("SDP_OIDC_AUDIENCE", "semantic-data-portal")
+    monkeypatch.setenv("SDP_OIDC_JWKS", json.dumps(jwks))
 
-    response = client.post(
-        "/enterprise/auth/oidc-verify",
-        json={
-            "token": token,
-            "issuer": "https://idp.example.com/",
-            "audience": "semantic-data-portal",
-            "jwks": {"keys": [jwk]},
-        },
-    )
+    response = client.post("/enterprise/auth/oidc-verify", json={"token": token})
 
     assert response.status_code == 200
     body = response.json()
@@ -447,33 +431,17 @@ def test_oidc_jwks_verification_maps_verified_token_without_token_leak():
     assert token not in json.dumps(body)
 
 
-def test_oidc_jwks_verification_rejects_wrong_audience():
-    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    jwk = json.loads(RSAAlgorithm.to_jwk(private_key.public_key()))
-    jwk.update({"kid": "buyer-key-1", "alg": "RS256", "use": "sig"})
-    token = jwt.encode(
-        {
-            "iss": "https://idp.example.com/",
-            "aud": "wrong-audience",
-            "email": "analyst@example.com",
-            "tenant_id": "buyer-demo",
-            "groups": ["sdp-analysts"],
-            "exp": int(time()) + 3600,
-        },
-        private_key,
-        algorithm="RS256",
-        headers={"kid": "buyer-key-1"},
+def test_oidc_jwks_verification_rejects_wrong_audience(monkeypatch):
+    token, jwks = _signed_identity_token(
+        issuer="https://idp.example.com/",
+        audience="wrong-audience",
+        kid="buyer-key-1",
     )
+    monkeypatch.setenv("SDP_OIDC_ISSUER", "https://idp.example.com/")
+    monkeypatch.setenv("SDP_OIDC_AUDIENCE", "semantic-data-portal")
+    monkeypatch.setenv("SDP_OIDC_JWKS", json.dumps(jwks))
 
-    response = client.post(
-        "/enterprise/auth/oidc-verify",
-        json={
-            "token": token,
-            "issuer": "https://idp.example.com/",
-            "audience": "semantic-data-portal",
-            "jwks": {"keys": [jwk]},
-        },
-    )
+    response = client.post("/enterprise/auth/oidc-verify", json={"token": token})
 
     assert response.status_code == 400
     assert "invalid token" in response.json()["detail"]
@@ -1696,39 +1664,26 @@ def test_oidc_mapping_audit_event_records_bindings_without_claim_leak(tmp_path):
     }
 
 
-def test_oidc_jwks_verification_records_group_role_bindings(tmp_path):
+def test_oidc_jwks_verification_records_group_role_bindings(tmp_path, monkeypatch):
     """The signature-verified path must produce the same auditable binding
     evidence as the preview path, labelled with its own mapping mode."""
-    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    jwk = json.loads(RSAAlgorithm.to_jwk(private_key.public_key()))
-    jwk.update({"kid": "buyer-key-2", "alg": "RS256", "use": "sig"})
-    token = jwt.encode(
-        {
-            "iss": "https://idp.example.com/",
-            "aud": "semantic-data-portal",
-            "email": "analyst@example.com",
-            "tenant_id": "buyer-demo",
-            "groups": ["sdp-analysts"],
-            "exp": int(time()) + 3600,
-        },
-        private_key,
-        algorithm="RS256",
-        headers={"kid": "buyer-key-2"},
+    token, jwks = _signed_identity_token(
+        issuer="https://idp.example.com/",
+        audience="semantic-data-portal",
+        kid="buyer-key-2",
+    )
+    monkeypatch.setenv("SDP_OIDC_ISSUER", "https://idp.example.com/")
+    monkeypatch.setenv("SDP_OIDC_AUDIENCE", "semantic-data-portal")
+    monkeypatch.setenv("SDP_OIDC_JWKS", json.dumps(jwks))
+    monkeypatch.setenv(
+        "SDP_OIDC_GROUP_ROLE_MAP",
+        json.dumps({"buyer-demo": {"sdp-analysts": ["data-analyst"]}}),
     )
 
     store = sdp_core.SQLiteEvidenceStore(tmp_path / "oidc-verify-evidence.sqlite3")
     previous = app_evidence.configure_evidence_store(store)
     try:
-        response = client.post(
-            "/enterprise/auth/oidc-verify",
-            json={
-                "token": token,
-                "issuer": "https://idp.example.com/",
-                "audience": "semantic-data-portal",
-                "jwks": {"keys": [jwk]},
-                "role_map": {"buyer-demo": {"sdp-analysts": ["data-analyst"]}},
-            },
-        )
+        response = client.post("/enterprise/auth/oidc-verify", json={"token": token})
         assert response.status_code == 200
     finally:
         app_evidence.configure_evidence_store(previous)
@@ -1773,21 +1728,99 @@ def test_oidc_preview_rejects_non_object_claims_and_role_map():
 
 
 def test_oidc_verify_rejects_malformed_payload_fields():
-    """A missing token, a non-object JWKS, and a non-object role map must each
-    fail before any signature verification is attempted."""
+    """A missing token fails before verification, and a body that carries the
+    operator-owned trust anchors is refused whatever shape they are in."""
     missing_token = client.post("/enterprise/auth/oidc-verify", json={})
-    non_object_jwks = client.post(
+    supplied_jwks = client.post(
         "/enterprise/auth/oidc-verify",
         json={"token": "header.payload.signature", "jwks": "keys"},
     )
-    non_object_role_map = client.post(
+    supplied_role_map = client.post(
         "/enterprise/auth/oidc-verify",
         json={"token": "header.payload.signature", "role_map": ["sdp-analysts"]},
     )
 
     assert missing_token.status_code == 400
     assert missing_token.json()["detail"] == "token is required"
-    assert non_object_jwks.status_code == 400
-    assert non_object_jwks.json()["detail"] == "jwks must be an object"
-    assert non_object_role_map.status_code == 400
-    assert non_object_role_map.json()["detail"] == "role_map must be an object"
+    assert supplied_jwks.status_code == 400
+    assert supplied_jwks.json()["detail"].endswith("in the request body: jwks")
+    assert supplied_role_map.status_code == 400
+    assert supplied_role_map.json()["detail"].endswith("in the request body: role_map")
+
+
+def _signed_identity_token(*, issuer, audience, kid, claims_extra=None):
+    """Mint an RSA-signed identity token and return it with its public JWKS."""
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    jwk = json.loads(RSAAlgorithm.to_jwk(private_key.public_key()))
+    jwk.update({"kid": kid, "alg": "RS256", "use": "sig"})
+    claims = {
+        "iss": issuer,
+        "aud": audience,
+        "email": "analyst@example.com",
+        "tenant_id": "buyer-demo",
+        "groups": ["sdp-analysts"],
+        "exp": int(time()) + 3600,
+    }
+    claims.update(claims_extra or {})
+    token = jwt.encode(claims, private_key, algorithm="RS256", headers={"kid": kid})
+    return token, {"keys": [jwk]}
+
+
+def test_oidc_verify_refuses_request_supplied_trust_anchors(monkeypatch):
+    """A caller must not be able to name the issuer, audience, signing keys or
+    role map that its own token is verified against.
+
+    Without this guard any anonymous caller self-signs a token, posts its own
+    public JWKS alongside it, and receives a `jwks_signature_verified` verdict
+    plus whatever tenant and roles the token claims - the operator's configured
+    identity provider is never consulted.
+    """
+    monkeypatch.setenv("SDP_OIDC_ISSUER", "https://idp.example.com/")
+    monkeypatch.setenv("SDP_OIDC_AUDIENCE", "semantic-data-portal")
+    monkeypatch.setenv("SDP_OIDC_JWKS_URL", "https://idp.example.com/.well-known/jwks.json")
+
+    forged_token, forged_jwks = _signed_identity_token(
+        issuer="https://attacker.example/",
+        audience="anything",
+        kid="attacker-key",
+        claims_extra={"email": "attacker@evil.test", "tenant_id": "victim-tenant", "groups": ["made-up"]},
+    )
+
+    response = client.post(
+        "/enterprise/auth/oidc-verify",
+        json={
+            "token": forged_token,
+            "issuer": "https://attacker.example/",
+            "audience": "anything",
+            "jwks": forged_jwks,
+            "role_map": {"made-up": ["platform-admin"]},
+        },
+    )
+
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    for field in ("issuer", "audience", "jwks", "role_map"):
+        assert field in detail
+    assert "actor_context" not in response.json()
+
+
+def test_oidc_verify_trusts_only_operator_configured_jwks(monkeypatch):
+    """With the trust anchors configured by the operator, a token signed by the
+    configured key verifies from a body that carries the token alone."""
+    token, jwks = _signed_identity_token(
+        issuer="https://idp.example.com/",
+        audience="semantic-data-portal",
+        kid="operator-key-1",
+    )
+    monkeypatch.setenv("SDP_OIDC_ISSUER", "https://idp.example.com/")
+    monkeypatch.setenv("SDP_OIDC_AUDIENCE", "semantic-data-portal")
+    monkeypatch.setenv("SDP_OIDC_JWKS", json.dumps(jwks))
+
+    response = client.post("/enterprise/auth/oidc-verify", json={"token": token})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["token_verification"] == "jwks_signature_verified"
+    assert body["actor_context"]["subject"] == "analyst@example.com"
+    assert body["actor_context"]["tenant_id"] == "buyer-demo"
+    assert token not in json.dumps(body)

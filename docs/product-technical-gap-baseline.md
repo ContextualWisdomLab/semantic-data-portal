@@ -2378,6 +2378,67 @@ PR 큐는 소스 결함이 아닌 이유로 멈춰 있습니다). 그렇다고 �
 않았습니다 — 포털은 org 파이프라인에 접근 권한이 없고, 접근 없이 외부 시스템의 상태를 단언하는 필드를 추가하는 것은
 정직한 증거가 아니라 추측을 계약으로 만드는 일입니다. 상태 보고의 위치는 이 문서이고, 조치 위치는 owner입니다.
 
+## 다중 렌즈 감사로 CRITICAL 하나를 찾아 닫았습니다 — `/enterprise/auth/oidc-verify` (2026-10-14)
+
+PR 경로가 전부 막힌 사이, 저장소 위험면을 여덟 개 렌즈로 병렬 감사하고 각 후보를 **서로 다른 세 관점의 반박자**
+(코드 정독 / 도달 가능성 / 실제 실행)에게 넘겨 다수결로 살아남은 것만 채택했습니다. 원시 발견 31건 → 중복 제거 31건 →
+심각도 상위 14건 검증 → **12건 생존**. 하위 17건은 검증 대상에서 제외했고 그 사실을 로그에 남겼습니다(조용한 절단 없음).
+
+### 고친 것 — 호출자가 자기 토큰의 신뢰 기준을 지정할 수 있었습니다
+
+`POST /enterprise/auth/oidc-verify`가 `issuer`, `audience`, `jwks`, `role_map`을 **request body에서** 받아
+`verify_oidc_jwks_token`에 그대로 넘겼고, 그 함수는 `issuer or os.getenv(...)` 순서로 해석했습니다. 즉 **body가
+operator 설정을 이겼습니다.** 에이전트 보고를 믿지 않고 직접 재현했습니다 — `SDP_OIDC_ISSUER`,
+`SDP_OIDC_AUDIENCE`, `SDP_OIDC_JWKS_URL`을 진짜 IdP로 설정한 상태에서, 공격자가 만든 RSA 키로 자기 서명한 토큰과
+자기 공개 JWK를 함께 보냈더니:
+
+```text
+HTTP 200
+"token_verification": "jwks_signature_verified"
+"actor_context": {"subject": "attacker@evil.test", "tenant_id": "victim-tenant", "roles": ["platform-admin"]}
+"audit_event_id": "189fbb69-..."
+```
+
+설정된 IdP는 **한 번도 조회되지 않습니다.** body의 `role_map`은 알려진 group 이름조차 필요 없게 만들어 주고,
+감사 이벤트는 정상 매핑처럼 기록됩니다. enterprise manifest가 `sso_oidc_adapter` control의 증빙으로 내세우는
+엔드포인트가, 아무 서명 권한 없는 익명 호출자에게 임의 tenant의 platform-admin 신원을 발급하고 있었습니다.
+
+수리는 계약을 되돌리는 것입니다. 신뢰 기준은 operator 설정에서만 읽고, body는 `token` 하나만 받습니다. 네 필드가
+body에 오면 **조용히 무시하지 않고 400으로 거절**합니다 — 무시하면 호출자는 자기 값이 반영된 줄 알게 됩니다.
+오프라인·에어갭 배포를 위해 JWKS 문서를 그대로 담는 `SDP_OIDC_JWKS` 설정 채널을 추가했습니다(요청 채널이 아니라
+설정 채널입니다). RED를 먼저 확인했습니다: 새 테스트 2건이 수리 전에는 실패하고 수리 후에 통과하며, 위 재현
+스크립트는 이제 `HTTP 400`과 `actor_context: null`을 돌려줍니다.
+
+기존 테스트 4건이 **취약한 계약을 고정하고 있었기 때문에** 함께 고쳤습니다 — body에 issuer/audience/jwks를 넣어
+200을 기대하던 세 건과, `"jwks must be an object"` 메시지를 기대한 한 건입니다. 테스트가 보안 구멍을 지키고 있던
+경우이므로 변경 사실을 여기 명시합니다. 검증: CI parity 전체 스위트 **280 passed, 8 skipped**, `sdp.demo_smoke`
+ready=true. 문서(README, enterprise-readiness, implementation-compliance)와 `sso_oidc_adapter` /
+`oidc_jwks_verification` manifest의 release/acceptance criteria도 같은 커밋에서 갱신했습니다.
+
+### 아직 고치지 않은 11건 — 제가 직접 재현하지 않았습니다
+
+아래는 반박자 다수결을 통과한 나머지 항목입니다. **이 11건은 감사 에이전트의 검증 결과이고, 제가 손으로 재현한
+것은 위 CRITICAL 하나뿐입니다.** 각 항목은 고치기 전에 같은 방식으로 직접 재현해야 합니다.
+
+| 심각도 | 위치 | 주장 | 반박 투표 |
+| --- | --- | --- | --- |
+| critical | `src/sdp/orchestrator.py:50` | Comma-separated FROM list defeats the source-table allowlist | 0/3 refuted |
+| critical | `src/sdp/observability.py:103` | Log-sink URL credentials are published verbatim on the unauthenticated /enterprise/observability endpoint | 1/3 refuted |
+| high | `src/sdp/api.py:427` | GET /catalog/datasets/{dataset_id} returns full dataset state (schema, PII flags, source DSN) with no policy evaluation and no evidence record | 1/3 refuted |
+| high | `src/sdp/orchestrator.py:12` | SELECT ... INTO passes the read-only SELECT guard and writes a new table | 0/3 refuted |
+| high | `src/sdp/orchestrator.py:38` | Dollar-quoted strings bypass the literal_values_not_allowed guard | 0/3 refuted |
+| high | `src/sdp/browse.py:60` | preview PII masking is bypassed by naming a different dataset_id in the path | 1/3 refuted |
+| high | `src/sdp_core/stores.py:25` | PostgresEvidenceStore writes tenant_id='demo' for every audit event, mis-attributing every tenant's audit trail | 0/3 refuted |
+| high | `src/sdp_core/stores.py:21` | Policy denials are recorded under tenant 'demo' because deny branches omit tenant_id from obligations | 0/3 refuted |
+| high | `docker/entrypoint.sh:13` | Entrypoint execs the app after 30 failed migration attempts, and the /health healthcheck cannot detect it | 0/3 refuted |
+| high | `src/sdp/api.py:131` | Synchronous sink export runs on the event loop in the async observability middleware, serializing every request | 0/3 refuted |
+| high | `tests/test_api.py:1258` | Catalog publish/patch/deprecate authorization guard is defended by no test | 0/3 refuted |
+
+이 목록 자체는 증거가 아니라 **작업 큐**입니다. 다음 순서로 직접 재현 → RED → 수리 → 로컬 검증을 반복합니다:
+SQL validator 세 건(`FROM a, b` 콤마 조인으로 allowlist 우회, `SELECT ... INTO`가 read-only 가드를 통과,
+`$$...$$` dollar-quote가 literal 가드를 우회)이 서로 같은 함수에 모여 있어 한 묶음으로 처리하기 적합하고,
+observability의 netloc userinfo 노출은 한 줄 수리입니다.
+
 ## 운영 메모
 
 - Database objects: 두 단어 이상 `snake_case`, 3NF. Catalog plane 테이블은 #73의 `migrations/0002_ontology_catalog_plane.sql`.
