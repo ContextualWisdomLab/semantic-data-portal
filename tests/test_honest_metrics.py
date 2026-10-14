@@ -108,11 +108,18 @@ def test_preview_pagination_null_means_unset() -> None:
 def test_file_sink_path_is_not_published(monkeypatch: pytest.MonkeyPatch) -> None:
     """A UNC file sink published its internal hostname — the very authority
     component the redaction helper exists to suppress."""
+    # The UNC form is now refused outright rather than redacted: on POSIX a
+    # ``file://host/path`` URL is not a path the container can write, and
+    # folding the authority into the path is what made README's own documented
+    # value resolve to the filesystem root. The manifest must still not publish
+    # the hostname or the tenant segment in saying so.
     monkeypatch.setenv(
         "SDP_LOG_SINK_URL", "file://logs.internal.corp/sdp-prod/tenant-acme/requests.ndjson"
     )
     status = obs._sink_status()
     assert status["scheme"] == "file"
+    assert status["configured"] is False
+    assert status["invalid_configuration"]
     assert "logs.internal.corp" not in str(status)
     assert "tenant-acme" not in str(status)
 

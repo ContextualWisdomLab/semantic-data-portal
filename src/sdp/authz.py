@@ -11,6 +11,7 @@ import json
 import os
 from collections.abc import Mapping
 from datetime import datetime, timezone
+from time import monotonic
 from typing import Any
 from urllib.parse import urlsplit
 from urllib.request import urlopen
@@ -352,7 +353,26 @@ def _load_jwks_from_url(jwks_url: str) -> dict[str, Any]:
         return json.loads(response.read().decode("utf-8"))
 
 
-def _load_configured_jwks() -> dict[str, Any]:
+# One cached JWKS document per configured URL, with the moment it was fetched.
+# Without it ``verify_oidc_jwks_token`` refetched on every call: an outsider
+# turned one cheap unauthenticated request into one request the portal makes to
+# the operator's identity provider, from the portal's own address, and made the
+# route's latency and availability a function of the IdP on every call
+# (``SDP_OIDC_JWKS_TIMEOUT_SECONDS`` defaults to 2s per inbound request).
+_JWKS_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+
+
+def _jwks_cache_ttl_seconds() -> float:
+    """How long a fetched JWKS stays usable before it is refetched."""
+    return float(os.getenv("SDP_OIDC_JWKS_TTL_SECONDS", "300"))
+
+
+def clear_jwks_cache() -> None:
+    """Drop the cached JWKS documents (for tests and for a key rotation)."""
+    _JWKS_CACHE.clear()
+
+
+def _load_configured_jwks(*, refresh: bool = False) -> dict[str, Any]:
     """Return the JWKS the operator configured, inline first, then by URL.
 
     ``SDP_OIDC_JWKS`` carries the JWKS document itself so an air-gapped or
@@ -373,19 +393,64 @@ def _load_configured_jwks() -> dict[str, Any]:
     jwks_url = os.getenv("SDP_OIDC_JWKS_URL")
     if not jwks_url:
         raise ValueError("missing OIDC JWKS")
-    return _load_jwks_from_url(jwks_url)
+    cached = _JWKS_CACHE.get(jwks_url)
+    if cached is not None and not refresh:
+        fetched_at, document = cached
+        if monotonic() - fetched_at < _jwks_cache_ttl_seconds():
+            return document
+    document = _load_jwks_from_url(jwks_url)
+    _JWKS_CACHE[jwks_url] = (monotonic(), document)
+    return document
 
 
-def _select_jwk(jwks: dict[str, Any], kid: str | None) -> dict[str, Any]:
-    """Select the JWKS key matching the token's key identifier."""
+# The key type each signature algorithm family needs. Selecting a key by ``kid``
+# alone let the token's header name an algorithm the selected key cannot
+# possibly carry, and the resulting library error was not a token error.
+_ALGORITHM_KEY_TYPES = {"RS": "RSA", "ES": "EC"}
+
+
+def _select_jwk(jwks: dict[str, Any], kid: str | None, alg: str) -> dict[str, Any]:
+    """Select the JWKS key matching the token's key identifier **and algorithm**.
+
+    Matching on ``kid`` alone let an outsider pair any allow-listed algorithm
+    with any configured key. The algorithm allow-list already refuses ``none``
+    and the HMAC families, so this is not a signature bypass - but PyJWT raises
+    ``InvalidKeyError`` or a plain ``TypeError`` for the mismatch, and neither
+    is an ``InvalidTokenError``, so the refusal escaped as an unauthenticated
+    500 with a traceback. Measured against an operator JWKS holding one RSA key
+    ``kid=op-key-1``::
+
+        header {"alg": "ES256", "kid": "op-key-1"} -> 500 Internal Server Error
+        header {"alg": "ES384", "kid": "op-key-1"} -> 500 Internal Server Error
+        header {"alg": "RS512", "kid": "op-key-1"} -> 400 invalid token
+        header {"alg": "HS256", "kid": "op-key-1"} -> 400 unsupported algorithm
+        header {"alg": "none",  "kid": "op-key-1"} -> 400 unsupported algorithm
+
+    ``src/sdp/api_error_contract.py`` publishes ``(400,)`` for this route, so
+    the document was wrong for any outsider who flipped one header field.
+    """
     if not kid:
         raise ValueError("missing token kid")
     keys = jwks.get("keys")
     if not isinstance(keys, list):
         raise ValueError("jwks must contain keys")
+    expected_type = _ALGORITHM_KEY_TYPES.get(alg[:2])
     for key in keys:
-        if isinstance(key, dict) and key.get("kid") == kid:
-            return key
+        if not isinstance(key, dict) or key.get("kid") != kid:
+            continue
+        key_type = key.get("kty")
+        if expected_type and key_type != expected_type:
+            raise ValueError(
+                f"jwks key {kid!r} is a {key_type} key and cannot verify an "
+                f"{alg} signature"
+            )
+        key_alg = key.get("alg")
+        if key_alg and key_alg != alg:
+            raise ValueError(
+                f"jwks key {kid!r} is published for {key_alg} and cannot verify "
+                f"an {alg} signature"
+            )
+        return key
     raise ValueError("no matching jwks key")
 
 
@@ -405,15 +470,36 @@ def verify_oidc_jwks_token(
         raise ValueError("missing OIDC issuer")
     if not expected_audience:
         raise ValueError("missing OIDC audience")
-    if jwks is None:
-        jwks = _load_configured_jwks()
-
+    # The token header is parsed and its algorithm checked **before** any key
+    # material is loaded. ``_load_configured_jwks`` used to run first and
+    # unconditionally, with no cache, so a token that cannot even be
+    # base64-decoded triggered a round trip to the operator's identity
+    # provider: 25 unauthenticated posts of the literal ``"a.b.c"`` produced 25
+    # GETs on the IdP's JWKS endpoint, turning one cheap request into one
+    # request the portal makes to the IdP from its own address.
     try:
         header = jwt.get_unverified_header(token)
         alg = header.get("alg")
         if alg not in _ALLOWED_JWT_ALGORITHMS:
             raise ValueError("unsupported token algorithm")
-        jwk = _select_jwk(jwks, header.get("kid"))
+    except (InvalidTokenError, ValueError) as exc:
+        raise ValueError(f"invalid token: {exc}") from exc
+
+    cacheable = jwks is None
+    if jwks is None:
+        jwks = _load_configured_jwks()
+
+    try:
+        try:
+            jwk = _select_jwk(jwks, header.get("kid"), alg)
+        except ValueError:
+            # An unknown ``kid`` is the one case that legitimately needs a
+            # refetch - the operator rotated keys. Exactly one retry, and only
+            # when the document came from the cache rather than from the caller.
+            if not cacheable:
+                raise
+            jwks = _load_configured_jwks(refresh=True)
+            jwk = _select_jwk(jwks, header.get("kid"), alg)
         signing_key = PyJWK.from_dict(jwk).key
         claims = jwt.decode(
             token,
@@ -423,7 +509,13 @@ def verify_oidc_jwks_token(
             issuer=expected_issuer,
             options={"require": ["exp", "iss", "aud"]},
         )
-    except (InvalidTokenError, ValueError) as exc:
+    # ``InvalidKeyError`` descends from ``PyJWTError``, **not** from
+    # ``InvalidTokenError``, and a key-type mismatch can surface as a plain
+    # ``TypeError`` ("Expecting a PEM-formatted key"). Catching only
+    # ``(InvalidTokenError, ValueError)`` therefore let an attacker-chosen
+    # alg/kid pairing escape as an unauthenticated 500 with a traceback, while
+    # the published contract for this route is ``(400,)``.
+    except (jwt.PyJWTError, ValueError, TypeError) as exc:
         raise ValueError(f"invalid token: {exc}") from exc
 
     context = resolve_oidc_actor_context(claims, role_map=role_map)

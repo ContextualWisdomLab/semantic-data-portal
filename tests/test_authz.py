@@ -133,14 +133,29 @@ def test_validate_oidc_claim_shape_guard_branches():
 
 
 def test_select_jwk_guard_branches():
+    """``_select_jwk`` now takes the token's algorithm as well as its kid.
+
+    Matching on ``kid`` alone let an outsider pair any allow-listed algorithm
+    with any configured key. The allow-list already refuses ``none`` and the
+    HMAC families so this was never a signature bypass, but PyJWT raises
+    ``InvalidKeyError`` (a ``PyJWTError``, *not* an ``InvalidTokenError``) or a
+    plain ``TypeError`` for the mismatch, and neither was caught - so the
+    refusal escaped as an unauthenticated 500 while the published contract for
+    the route is ``(400,)``.
+    """
     jwks = {"keys": [{"kid": "k1", "kty": "RSA"}]}
-    assert authz._select_jwk(jwks, "k1")["kid"] == "k1"
+    assert authz._select_jwk(jwks, "k1", "RS256")["kid"] == "k1"
     with pytest.raises(ValueError):  # missing kid
-        authz._select_jwk(jwks, None)
+        authz._select_jwk(jwks, None, "RS256")
     with pytest.raises(ValueError):  # keys not a list
-        authz._select_jwk({"keys": "nope"}, "k1")
+        authz._select_jwk({"keys": "nope"}, "k1", "RS256")
     with pytest.raises(ValueError):  # no matching kid
-        authz._select_jwk(jwks, "absent")
+        authz._select_jwk(jwks, "absent", "RS256")
+    with pytest.raises(ValueError):  # an RSA key cannot verify ES256
+        authz._select_jwk(jwks, "k1", "ES256")
+    published = {"keys": [{"kid": "k2", "kty": "RSA", "alg": "RS256"}]}
+    with pytest.raises(ValueError):  # published for a different algorithm
+        authz._select_jwk(published, "k2", "RS512")
 
 
 def test_verify_oidc_jwks_token_config_and_alg_guards(monkeypatch):
@@ -321,3 +336,115 @@ def test_an_unverified_mapping_is_not_attributed_to_the_claimed_tenant():
     assert event.details["tenant_verified"] is False
     # "mapped" would read as a real grant.
     assert event.result == "previewed"
+
+
+def test_an_attacker_chosen_alg_kid_pairing_is_a_400_not_a_500(monkeypatch):
+    """The published contract for ``/enterprise/auth/oidc-verify`` is ``(400,)``.
+
+    ``_select_jwk`` matched on ``kid`` alone and the token's own header ``alg``
+    was then handed to ``jwt.decode``. For a key-type mismatch PyJWT raises
+    ``InvalidKeyError`` - which descends from ``PyJWTError``, **not** from
+    ``InvalidTokenError`` - or a plain ``TypeError``, and the handler caught
+    neither. Measured against an operator JWKS holding one RSA key::
+
+        header {"alg": "ES256", "kid": "op-key-1"} -> 500 Internal Server Error
+        header {"alg": "ES384", "kid": "op-key-1"} -> 500 Internal Server Error
+        header {"alg": "RS512", "kid": "op-key-1"} -> 400 invalid token
+        header {"alg": "HS256", "kid": "op-key-1"} -> 400 unsupported algorithm
+        header {"alg": "none",  "kid": "op-key-1"} -> 400 unsupported algorithm
+
+    The allow-list already refused ``none`` and the HMAC families, so this was
+    never a signature bypass - but an unauthenticated 500 with a traceback
+    contradicted the document this repository publishes.
+    """
+    import json
+
+    import jwt
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from fastapi.testclient import TestClient
+    from jwt.utils import to_base64url_uint
+
+    from sdp.api import app
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    numbers = key.public_key().public_numbers()
+    jwks = {
+        "keys": [
+            {
+                "kty": "RSA",
+                "kid": "op-key-1",
+                "use": "sig",
+                "alg": "RS256",
+                "n": to_base64url_uint(numbers.n).decode(),
+                "e": to_base64url_uint(numbers.e).decode(),
+            }
+        ]
+    }
+    monkeypatch.setenv("SDP_OIDC_JWKS", json.dumps(jwks))
+    monkeypatch.setenv("SDP_OIDC_ISSUER", "https://idp.example")
+    monkeypatch.setenv("SDP_OIDC_AUDIENCE", "sdp")
+    authz.clear_jwks_cache()
+
+    client = TestClient(app, raise_server_exceptions=False)
+    for alg in sorted(authz._ALLOWED_JWT_ALGORITHMS | {"HS256", "none"}):
+        header = jwt.utils.base64url_encode(
+            json.dumps({"alg": alg, "kid": "op-key-1"}).encode()
+        ).decode()
+        body = jwt.utils.base64url_encode(json.dumps({"sub": "x"}).encode()).decode()
+        response = client.post(
+            "/enterprise/auth/oidc-verify", json={"token": f"{header}.{body}.AAAA"}
+        )
+        assert response.status_code == 400, f"{alg}: {response.status_code} {response.text}"
+
+
+def test_a_malformed_token_does_not_reach_the_identity_provider(monkeypatch, tmp_path):
+    """The JWKS was fetched before the token was parsed, and on every call.
+
+    ``_load_configured_jwks`` ran unconditionally with no cache, so a token
+    that cannot even be base64-decoded triggered a round trip to the operator's
+    IdP: 25 unauthenticated posts of the literal ``"a.b.c"`` produced 25 GETs
+    on the JWKS endpoint, from the portal's own address. A repeated *valid*
+    verification did the same.
+    """
+    import json
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    from fastapi.testclient import TestClient
+
+    from sdp.api import app
+
+    hits: list[str] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802 - http.server's interface
+            hits.append(self.path)
+            payload = json.dumps({"keys": []}).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *args):  # noqa: D102 - silence the test server
+            return
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        monkeypatch.delenv("SDP_OIDC_JWKS", raising=False)
+        monkeypatch.setenv("SDP_OIDC_JWKS_URL", f"http://127.0.0.1:{port}/jwks")
+        monkeypatch.setenv("SDP_OIDC_ISSUER", "https://idp.example")
+        monkeypatch.setenv("SDP_OIDC_AUDIENCE", "sdp")
+        authz.clear_jwks_cache()
+
+        client = TestClient(app, raise_server_exceptions=False)
+        for _ in range(25):
+            refused = client.post("/enterprise/auth/oidc-verify", json={"token": "a.b.c"})
+            assert refused.status_code == 400, refused.text
+        assert hits == [], f"a malformed token fetched the JWKS {len(hits)} time(s)"
+    finally:
+        server.shutdown()
+        server.server_close()
+        authz.clear_jwks_cache()

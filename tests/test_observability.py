@@ -53,11 +53,37 @@ def test_header_value_attributeerror_fallback_returns_default() -> None:
 # --- _file_sink_path -----------------------------------------------------
 
 
-def test_file_sink_path_netloc_only_and_with_path() -> None:
-    netloc_only = obs._file_sink_path("file://logs", urlparse("file://logs"))
-    assert netloc_only == Path("logs")
-    with_netloc_path = obs._file_sink_path("file://host/var/log", urlparse("file://host/var/log"))
-    assert str(with_netloc_path).startswith("//host/")
+def test_file_sink_path_refuses_every_form_that_cannot_be_written() -> None:
+    """These forms used to resolve to a path, and the wrong one.
+
+    The authority was folded into the path and a scheme-less value defaulted to
+    ``file``, so the shipped container wrote - or rather failed to write -
+    somewhere nobody intended:
+
+        file://.local/sdp-requests.jsonl  ->  //.local/sdp-requests.jsonl
+        configured                        ->  configured   (a file in the CWD)
+        .local/x.jsonl                    ->  .local/x.jsonl
+
+    README documented the first one. The image runs ``USER 10001`` with only
+    ``/data`` writable, so every export raised ``PermissionError``, the breaker
+    opened after five, and the manifest still said ``implemented``.
+    """
+    for value in (
+        "file://logs",
+        "file://host/var/log",
+        "file://.local/sdp-requests.jsonl",
+        "configured",
+        ".local/x.jsonl",
+        "relative/path.jsonl",
+    ):
+        with pytest.raises(obs.SinkConfigurationError):
+            obs._file_sink_path(value, urlparse(value))
+
+
+def test_file_sink_path_accepts_an_absolute_file_url() -> None:
+    assert obs._file_sink_path(
+        "file:///data/sdp-requests.jsonl", urlparse("file:///data/sdp-requests.jsonl")
+    ) == Path("/data/sdp-requests.jsonl")
 
 
 # --- _sink_status --------------------------------------------------------
@@ -304,3 +330,67 @@ def test_manifest_does_not_publish_a_per_request_activity_feed(monkeypatch: pyte
     # The evidence the manifest exists for is still there.
     assert manifest["metrics"]["request_observations_total"] >= 1
     assert manifest["structured_logs"]["fields"]
+
+
+# --------------------------------------------------------------------------- #
+# The ring buffer was bounded in rows but not in bytes.
+#
+# uvicorn accepts a header of roughly 64 KB, and the caller-supplied tenant,
+# actor and evidence-id values were copied verbatim. Measured with 500
+# ``GET /health`` requests - no credentials, no body, nothing reaching policy
+# evaluation - carrying 60,000-character headers and twenty evidence ids:
+#
+#     rows retained 500   bytes retained 70.2 MB   largest row 137 KB
+#
+# The deque never shrinks, so that is pinned for the process lifetime, and with
+# a sink configured the same bytes leave as POSTs.
+# --------------------------------------------------------------------------- #
+
+
+def test_a_caller_cannot_pin_unbounded_bytes_in_the_observation_buffer() -> None:
+    obs.reset_request_observability()
+    oversized = "x" * 60_000
+    observation = obs.build_request_observation(
+        method="GET",
+        route="/health",
+        status_code=200,
+        latency_ms=1.0,
+        headers={
+            "X-SDP-Tenant": oversized,
+            "X-SDP-Actor": oversized,
+            "X-SDP-Evidence-Ids": ",".join([oversized] * 100),
+        },
+        request_id=oversized,
+    )
+    for field in ("request_id", "tenant_id", "actor"):
+        assert len(observation[field]) <= obs.MAX_OBSERVATION_FIELD_CHARS, field
+        assert observation[field].endswith("...[truncated]"), field
+    assert len(observation["evidence_ids"]) == obs.MAX_OBSERVATION_EVIDENCE_IDS
+    for item in observation["evidence_ids"]:
+        assert len(item) <= obs.MAX_OBSERVATION_FIELD_CHARS
+    # Declared rather than silently dropped, like every other bounded list here.
+    assert observation["withheld_evidence_id_count"] == 100 - obs.MAX_OBSERVATION_EVIDENCE_IDS
+
+    row_bytes = len(repr(observation))
+    ceiling = (3 + obs.MAX_OBSERVATION_EVIDENCE_IDS) * obs.MAX_OBSERVATION_FIELD_CHARS + 512
+    assert row_bytes <= ceiling, f"{row_bytes} > {ceiling}"
+
+
+def test_an_ordinary_observation_is_not_truncated() -> None:
+    """The cap must not mark a normal value as cut."""
+    observation = obs.build_request_observation(
+        method="GET",
+        route="/health",
+        status_code=200,
+        latency_ms=1.0,
+        headers={
+            "X-SDP-Tenant": "demo",
+            "X-SDP-Actor": "analyst",
+            "X-SDP-Evidence-Ids": "d-1, d-2",
+        },
+        request_id="sdp-abc",
+    )
+    assert observation["tenant_id"] == "demo"
+    assert observation["actor"] == "analyst"
+    assert observation["evidence_ids"] == ["d-1", "d-2"]
+    assert "withheld_evidence_id_count" not in observation

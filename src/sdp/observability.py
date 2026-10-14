@@ -51,16 +51,105 @@ def request_id_from_headers(headers: Any) -> str:
     return _header_value(headers, request_id_header()) or f"sdp-{uuid4().hex}"
 
 
-def _file_sink_path(sink_url: str, parsed: Any) -> Path:
-    if parsed.netloc and not parsed.path:
-        return Path(url2pathname(parsed.netloc))
+class SinkConfigurationError(ValueError):
+    """The configured observability sink can never be written."""
 
-    raw_path = url2pathname(parsed.path or sink_url)
-    if os.name == "nt" and len(raw_path) >= 3 and raw_path[0] in {"\\", "/"} and raw_path[2] == ":":
-        raw_path = raw_path[1:]
+
+def _file_sink_path(sink_url: str, parsed: Any) -> Path:
+    """Resolve a ``file://`` sink to an absolute path, or refuse the configuration.
+
+    This folded a ``file://`` URL's authority into the path
+    (``raw_path = f"//{parsed.netloc}{raw_path}"``), and ``_export_to_sink``
+    defaulted a scheme-less value to ``file``. So README's own documented value
+    did not mean what it reads as:
+
+        file://.local/sdp-requests.jsonl  ->  //.local/sdp-requests.jsonl
+        configured                        ->  configured   (a file in the CWD)
+        .local/x.jsonl                    ->  .local/x.jsonl
+
+    The first is ``.local`` at the **filesystem root**. The shipped image runs
+    ``USER 10001:10001`` with only ``/data`` writable, so the open raises
+    ``PermissionError`` on every request, the breaker opens after five, and the
+    rest are dropped silently - while ``GET /enterprise/observability`` kept
+    reporting ``structured_logs.status: "implemented"`` and a configured sink.
+    The reason lived only in ``_EXPORT_ERRORS``, which the manifest withholds,
+    so no surface could tell an operator the log was empty. The relative forms
+    also explain the stray files that appeared in the repository root during
+    development.
+
+    Failing closed at resolution time, with the reason named, is the point: a
+    sink that cannot be written is a configuration error, not a per-request
+    exception to swallow.
+    """
+    if os.name == "nt":
+        # Windows keeps the UNC and drive-letter forms the original supported.
+        if parsed.netloc and not parsed.path:
+            return Path(url2pathname(parsed.netloc))
+        raw_path = url2pathname(parsed.path or sink_url)
+        if len(raw_path) >= 3 and raw_path[0] in {"\\", "/"} and raw_path[2] == ":":
+            raw_path = raw_path[1:]
+        if parsed.netloc:
+            raw_path = f"//{parsed.netloc}{raw_path}"
+        return Path(raw_path)
+
+    # None of these messages echo the configured value. ``_sink_status`` is
+    # published unauthenticated, and the value carries the sink's internal host
+    # and path - the authority component ``_redacted_sink_target`` exists to
+    # suppress. The first draft of this repair interpolated ``sink_url`` and a
+    # retained test caught it publishing ``logs.internal.corp`` and a tenant
+    # path segment.
+    if not parsed.scheme:
+        raise SinkConfigurationError(
+            "SDP_LOG_SINK_URL must name a scheme: use file:///absolute/path for a "
+            "local file sink, or an http(s) URL"
+        )
     if parsed.netloc:
-        raw_path = f"//{parsed.netloc}{raw_path}"
-    return Path(raw_path)
+        raise SinkConfigurationError(
+            "a file:// sink must have an empty authority: file://host/path is not "
+            "supported, and file://relative/path is not a relative path"
+        )
+    raw_path = url2pathname(parsed.path or "")
+    path = Path(raw_path)
+    if not path.is_absolute():
+        raise SinkConfigurationError(
+            "SDP_LOG_SINK_URL must be an absolute path (file:///data/...)"
+        )
+    return path
+
+
+# A caller-supplied observation field is bounded in length, and the evidence-id
+# list in count. The ring buffer is bounded at 500 *rows* and the rows were
+# unbounded in bytes: uvicorn accepts a header of roughly 64 KB, so one
+# unauthenticated request produced a six-figure row. Measured with 500
+# ``GET /health`` requests - no credentials, no body, nothing that reaches
+# policy evaluation - carrying 60,000-character tenant and actor headers and
+# twenty evidence ids:
+#
+#     rows retained 500   bytes retained 70.2 MB   largest row 137 KB
+#
+# The deque never shrinks, so that is pinned for the process lifetime, and with
+# a sink configured the same bytes go out as POSTs - the service becomes an
+# amplifier aimed at the operator's log sink. ``docker-compose.yml`` sets no
+# memory limit, so the ceiling is the host's.
+# With these caps a row's caller-supplied content is at most
+# (3 + 32) * 256 bytes, so the 500-row buffer has a ceiling near 4.5 MB instead
+# of none. Measured after the cap, same 500 requests: 3.0 MB retained, largest
+# row 6 KB (was 70.2 MB and 137 KB).
+MAX_OBSERVATION_FIELD_CHARS = 256
+MAX_OBSERVATION_EVIDENCE_IDS = 32
+_TRUNCATION_MARKER = "...[truncated]"
+
+
+def _bounded_field(value: str) -> str:
+    """Cap one caller-supplied observation field, marking what was cut.
+
+    The marker keeps the row honest: a silently shortened value reads as the
+    whole value.
+    """
+    if len(value) <= MAX_OBSERVATION_FIELD_CHARS:
+        return value
+    keep = MAX_OBSERVATION_FIELD_CHARS - len(_TRUNCATION_MARKER)
+    return value[:keep] + _TRUNCATION_MARKER
 
 
 def build_request_observation(
@@ -73,18 +162,30 @@ def build_request_observation(
     request_id: str,
 ) -> dict[str, Any]:
     evidence_header = _header_value(headers, "X-SDP-Evidence-Ids", "")
-    evidence_ids = [item.strip() for item in evidence_header.split(",") if item.strip()] if evidence_header else []
-    return {
+    evidence_ids = (
+        [item.strip() for item in evidence_header.split(",") if item.strip()]
+        if evidence_header
+        else []
+    )
+    withheld_evidence_ids = max(0, len(evidence_ids) - MAX_OBSERVATION_EVIDENCE_IDS)
+    observation = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "request_id": request_id,
-        "tenant_id": _header_value(headers, "X-SDP-Tenant", "unknown"),
-        "actor": _header_value(headers, "X-SDP-Actor", "anonymous"),
+        "request_id": _bounded_field(request_id),
+        "tenant_id": _bounded_field(_header_value(headers, "X-SDP-Tenant", "unknown")),
+        "actor": _bounded_field(_header_value(headers, "X-SDP-Actor", "anonymous")),
         "route": route,
         "method": method,
         "status_code": status_code,
         "latency_ms": round(latency_ms, 3),
-        "evidence_ids": evidence_ids,
+        "evidence_ids": [
+            _bounded_field(item) for item in evidence_ids[:MAX_OBSERVATION_EVIDENCE_IDS]
+        ],
     }
+    if withheld_evidence_ids:
+        # Declared rather than silently dropped, like every other bounded list
+        # in this product.
+        observation["withheld_evidence_id_count"] = withheld_evidence_ids
+    return observation
 
 
 def _redacted_sink_target(parsed: Any) -> str:
@@ -122,7 +223,17 @@ def _sink_status() -> dict[str, Any]:
         }
 
     parsed = urlparse(sink_url)
-    scheme = parsed.scheme or "file"
+    scheme = parsed.scheme
+    # A configuration that can never be written is reported as such, rather than
+    # as a configured sink whose failures are invisible outside _EXPORT_ERRORS.
+    invalid_reason: str | None = None
+    if scheme == "file":
+        try:
+            _file_sink_path(sink_url, parsed)
+        except SinkConfigurationError as exc:
+            invalid_reason = str(exc)
+    elif scheme not in {"http", "https"}:
+        invalid_reason = "SDP_LOG_SINK_URL must use the file, http or https scheme"
     if scheme == "file":
         # A file sink published its absolute server path verbatim, and for the UNC
         # form _file_sink_path deliberately supports (file://host/share/...) that
@@ -134,12 +245,18 @@ def _sink_status() -> dict[str, Any]:
     else:
         target = _redacted_sink_target(parsed)
 
-    return {
-        "configured": True,
+    status = {
+        # ``configured`` means "a sink is set AND it can be written". A sink that
+        # raises on every export is not a configured sink, and reporting it as
+        # one is how an empty audit log went unnoticed.
+        "configured": invalid_reason is None,
         "scheme": scheme,
         "target": target,
         "alert_webhook_configured": bool(alert_webhook_url),
     }
+    if invalid_reason is not None:
+        status["invalid_configuration"] = invalid_reason
+    return status
 
 
 def _export_to_sink(observation: dict[str, Any]) -> None:
@@ -148,7 +265,9 @@ def _export_to_sink(observation: dict[str, Any]) -> None:
         return
 
     parsed = urlparse(sink_url)
-    scheme = parsed.scheme or "file"
+    # No scheme default: a bare value used to be treated as ``file`` and written
+    # relative to the working directory.
+    scheme = parsed.scheme
     payload = json.dumps(observation, ensure_ascii=False, sort_keys=True)
 
     if scheme == "file":
