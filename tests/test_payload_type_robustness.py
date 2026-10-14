@@ -96,3 +96,210 @@ def test_the_control_bodies_actually_work() -> None:
     for path, body, _ in RAW_PAYLOAD_ROUTES:
         response = client.post(path, json=body)
         assert response.status_code < 400, f"{path} control body failed: {response.text}"
+
+
+# --------------------------------------------------------------------------- #
+# The same class reached through stored catalog metadata rather than the request.
+#
+# ``profile`` is a free-form ``Dict[str, Any]`` on both POST /catalog/datasets
+# and PATCH, so ``profile.row_count`` is stored verbatim. ``_row_count_estimate``
+# compared it to an int, which raised ``TypeError`` - uncaught - so the governed
+# query route was permanently dead for that dataset. Measured with
+# ``profile: {"row_count": "1200000"}``, which is what a metadata harvester
+# emitting counts as text produces:
+#
+#     POST /catalog/datasets    -> 200
+#     POST /catalog/.../publish -> 200
+#     POST /browse/query        -> 500 Internal Server Error
+#     ledger delta: decisions +1  audits +0
+#
+# The 500 is the lesser half: the crash lands between the policy decision and
+# the audit write, so it produced a decision with no matching audit event - the
+# one pairing CLAUDE.md calls non-negotiable.
+#
+# This is the request-body defect class one surface over: the untrusted value is
+# a *stored* one, so no amount of request validation on /browse/query would have
+# caught it.
+# --------------------------------------------------------------------------- #
+
+ROW_COUNT_VALUES = (
+    "1200000",          # a JSON string - the reported case
+    "",
+    [1, 2],
+    {"a": 1},
+    True,               # bool is an int in Python; not a measurement
+    False,
+    -5,                 # a negative count is not a count
+    1200.5,             # fractional: would have to be silently truncated
+    1200.0,             # a legitimate JSON spelling of 1200
+    150,
+    99999999,           # above the mock cap
+    10**30,             # a float round-trip of this is not equal to it
+    0,
+)
+
+
+def _publish_with_row_count(dataset_id: str, row_count) -> None:
+    payload = {
+        "actor": "admin",
+        "id": dataset_id,
+        "tenant_id": "demo",
+        "title": "T",
+        "description": "d",
+        "owner": "admin",
+        "steward": "admin",
+        "domain": "sales",
+        "source_system": "postgresql://analytics.dw/customer",
+        "sensitivity": "internal",
+        "update_frequency": "daily",
+        "quality_score": 0.9,
+        "freshness_score": 0.9,
+        "schema": [
+            {
+                "name": "customer_id",
+                "datatype": "string",
+                "nullable_ratio": 0.0,
+                "distinct_ratio": 1.0,
+            }
+        ],
+        "distributions": [{"id": "d1", "format": "table", "endpoint": "https://dw/c"}],
+        "profile": {"row_count": row_count},
+    }
+    assert client.post("/catalog/datasets", json=payload).status_code == 200
+    assert (
+        client.post(f"/catalog/datasets/{dataset_id}/publish", json={"actor": "admin"}).status_code
+        == 200
+    )
+
+
+@pytest.mark.parametrize("row_count", ROW_COUNT_VALUES, ids=lambda v: repr(v)[:18])
+def test_a_stored_row_count_of_any_type_does_not_5xx(row_count) -> None:
+    dataset_id = f"rowcount-{abs(hash(repr(row_count))) % 10**8}"
+    _publish_with_row_count(dataset_id, row_count)
+    response = client.post(
+        "/browse/query",
+        json={
+            "user": "admin",
+            "purpose": "analysis",
+            "dataset_ids": [dataset_id],
+            "query": "SELECT count(*) FROM customer",
+            "language": "sql",
+        },
+    )
+    assert response.status_code < 500, (row_count, response.status_code, response.text[:200])
+
+
+@pytest.mark.parametrize("row_count", ROW_COUNT_VALUES, ids=lambda v: repr(v)[:18])
+def test_the_decision_and_audit_halves_stay_paired(row_count) -> None:
+    """The invariant the crash broke, checked per value rather than once.
+
+    A policy decision with no matching audit event is the pairing CLAUDE.md
+    declares non-negotiable, and an exception between the two is how it breaks.
+    """
+    from sdp import catalog as catalog_module
+    from sdp import evidence as evidence_module
+
+    dataset_id = f"rowpair-{abs(hash(repr(row_count))) % 10**8}"
+    _publish_with_row_count(dataset_id, row_count)
+    decisions = len(evidence_module._POLICY_DECISION_LOG)
+    audits = len(catalog_module._AUDIT_LOG)
+    client.post(
+        "/browse/query",
+        json={
+            "user": "admin",
+            "purpose": "analysis",
+            "dataset_ids": [dataset_id],
+            "query": "SELECT count(*) FROM customer",
+            "language": "sql",
+        },
+    )
+    assert len(evidence_module._POLICY_DECISION_LOG) > decisions, row_count
+    assert len(catalog_module._AUDIT_LOG) > audits, (
+        f"row_count={row_count!r} produced a policy decision with no audit event"
+    )
+
+
+def test_a_non_numeric_row_count_is_labelled_unusable_not_estimated() -> None:
+    """Provenance, not a silent substitute.
+
+    This module's sibling defect was a figure labelled
+    ``catalog_profile_estimate`` that was the cap, off by a factor of 600 from
+    the thing it claimed. Falling back to the default is fine; calling it an
+    estimate of the catalog profile is not.
+    """
+    _publish_with_row_count("rowcount-label", "1200000")
+    body = client.post(
+        "/browse/query",
+        json={
+            "user": "admin",
+            "purpose": "analysis",
+            "dataset_ids": ["rowcount-label"],
+            "query": "SELECT count(*) FROM customer",
+            "language": "sql",
+        },
+    ).json()
+    assert body["execution"]["row_count_source"] == "unusable_catalog_profile_row_count"
+
+
+def test_a_float_spelling_of_an_integer_is_still_an_estimate() -> None:
+    """``1200.0`` is 1200; ``1200.5`` is not a row count."""
+    from sdp import catalog as catalog_module
+    from sdp.orchestrator import _row_count_estimate
+
+    base = catalog_module._DATA["crm-customer-master"]
+    integral = base.model_copy(update={"profile": {**base.profile, "row_count": 1200.0}})
+    assert _row_count_estimate(integral, dry_run=False) == (1200, "catalog_profile_estimate")
+    fractional = base.model_copy(update={"profile": {**base.profile, "row_count": 1200.5}})
+    assert _row_count_estimate(fractional, dry_run=False)[1] == "unusable_catalog_profile_row_count"
+
+
+def test_non_finite_row_counts_do_not_raise() -> None:
+    """``NaN`` and ``Infinity`` are reachable: Python's ``json`` accepts them.
+
+    My first version of the type guard used ``float(v) != int(v)``, which raises
+    ``ValueError`` on ``NaN`` and ``OverflowError`` on ``Infinity`` - a second
+    uncaught 500 in the same function - and also misclassified ``10**30``,
+    because ``float(10**30)`` is not exactly ``10**30``.
+    """
+    from sdp import catalog as catalog_module
+    from sdp.orchestrator import MOCK_ROW_COUNT_CAP, _row_count_estimate
+
+    base = catalog_module._DATA["crm-customer-master"]
+    for value in (float("nan"), float("inf"), float("-inf")):
+        probe = base.model_copy(update={"profile": {**base.profile, "row_count": value}})
+        assert _row_count_estimate(probe, dry_run=False)[1] == "unusable_catalog_profile_row_count"
+
+    huge = base.model_copy(update={"profile": {**base.profile, "row_count": 10**30}})
+    assert _row_count_estimate(huge, dry_run=False) == (
+        MOCK_ROW_COUNT_CAP,
+        "mock_row_cap_below_catalog_profile_estimate",
+    )
+
+    # And reachable end to end, not only through the helper.
+    created = client.post(
+        "/catalog/datasets",
+        content=(
+            b'{"actor":"admin","id":"rowcount-nan","tenant_id":"demo","title":"T",'
+            b'"description":"d","owner":"admin","steward":"admin","domain":"s",'
+            b'"source_system":"postgresql://a.dw/customer","sensitivity":"internal",'
+            b'"update_frequency":"daily","quality_score":0.9,"freshness_score":0.9,'
+            b'"schema":[{"name":"c","datatype":"string","nullable_ratio":0.0,'
+            b'"distinct_ratio":1.0}],"distributions":[{"id":"d1","format":"table",'
+            b'"endpoint":"https://x/y"}],"profile":{"row_count":NaN}}'
+        ),
+        headers={"content-type": "application/json"},
+    )
+    assert created.status_code == 200, created.text
+    client.post("/catalog/datasets/rowcount-nan/publish", json={"actor": "admin"})
+    response = client.post(
+        "/browse/query",
+        json={
+            "user": "admin",
+            "purpose": "analysis",
+            "dataset_ids": ["rowcount-nan"],
+            "query": "SELECT count(*) FROM customer",
+            "language": "sql",
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["execution"]["row_count_source"] == "unusable_catalog_profile_row_count"

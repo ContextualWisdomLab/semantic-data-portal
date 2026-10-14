@@ -301,6 +301,18 @@ seed의 `security` subject는 `platform-admin`도 들고 있어 여전히 previe
   선언하며, verify 경로에도 같은 카운터를 노출합니다(상한이 권한 결과를 바꿀 수 있으므로).
   증빙: `tests/test_oidc_preview_boundary.py` (13건).(group 이름, 부여한 tenant scope, 부여된 role)와 `audit_event_id`를 반환하고 `enterprise/auth/oidc` resource audit event를 남긴다. `sso_oidc_adapter` control은 이로써 `implemented`가 되고 `GET /enterprise/controls`의 `planned_controls`는 0, `status`는 `pilot_ready`가 된다.
 - `GET /enterprise/evidence-pack`: metadata validation, SHACL-compatible validation, steward queue, ontology mapping coverage, policy/audit counts, controls, KPI ids, proof endpoints.
+  - **정정(거버넌스 경계 5건)**: (1) purpose가 `.strip()` 없이 비교되어 `' external-export'`로
+    403→200 우회, 기록된 결정은 `allow`. row-level filter는 같은 필드의 정확 비교로
+    `'Analysis'`에서 조용히 사라짐. 진입점 정규화로 둘 다 수리. (2)
+    `GET /ontology/term/{term}/graph`가 미인증으로 전 테넌트 dataset id 제공(정책 0, 감사 0);
+    `policy.scope_concept_graph` 통과 + `dataset_ids` 반환 라우트 열거 강제. (3) 그래프 쓰기가
+    `target_tenant_id` 없이 평가되어 외부 테넌트 컬럼의 `pii`를 뒤집을 수 있었음(읽기는 404);
+    노드와 엣지 양 끝점 모두 검사. (4) preview 거부가 호출자 자신의 `/policy/decisions`에
+    존재를 누출; `evaluate_dataset_scope_refusal`로 라우팅. (5)
+    `profile.row_count`가 문자열이면 `/browse/query`가 500이고 결정-감사 짝이 깨짐; 전 타입
+    열거 처리 + `unusable_catalog_profile_row_count` 라벨. 증빙:
+    `tests/test_governance_boundary.py` (22건), `tests/test_concept_graph_scope.py` (8건),
+    `tests/test_payload_type_robustness.py` (+12건).
   - **200 응답 계약 게시**: 변경 전 쓸 수 있는 200 스키마가 60개 중 **0개**였습니다(54개 bare
     `object/additionalProperties`, 4개 bare array, 1개 빈 스키마, 1개 타입만). JSON을 반환하는
     GET **38개**에 대해 라우트를 실행해 유도한 스키마를 게시하고,

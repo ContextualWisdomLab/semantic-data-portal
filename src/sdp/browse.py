@@ -5,7 +5,7 @@ from typing import Any, Dict, List
 from .authz import can_access_tenant
 from .catalog import get_dataset, get_dataset_profile, ingest_event
 from .domain import ColumnMetadata, Dataset
-from .policy import evaluate
+from .policy import evaluate, evaluate_dataset_scope_refusal
 
 # Demo sample values, keyed by the column they belong to. The preview rows are
 # built by projecting these onto the *named* dataset's declared schema, so a
@@ -83,23 +83,41 @@ def preview(dataset_id: str, user: str, purpose: str, limit: int = 100, offset: 
     if offset < 0:
         raise ValueError("offset must be greater than or equal to 0")
 
-    # Policy first, then the record. The missing-dataset branch used to write an
-    # audit event before evaluating anything, inverting the documented
-    # policy-before-access order and letting an unauthenticated caller grow the
-    # ledger: 5 anonymous previews of nonexistent ids gave audit +5, policy +0.
-    decision = evaluate(subject=user, resource=dataset_id, action="preview", purpose=purpose)
+    # The existence lookup comes before the policy call, and that is not a
+    # regression of the policy-before-access order: no data is read here, and
+    # the generic ``evaluate`` cannot file an absent-id refusal safely.
+    #
+    # ``evaluate`` resolves the owning tenant from the catalog, so a *foreign*
+    # id files its deny row to that tenant and the prober reads nothing - but an
+    # *absent* id has no owner, so ``_effective_tenant_id`` falls through to the
+    # prober's own tenant and the row lands in the prober's readable scope.
+    # Measured through the caller's own ``GET /policy/decisions``, with the HTTP
+    # bodies already identical::
+    #
+    #     POST /browse/{foreign}/preview  -> 404   decisions visible to prober: 0
+    #     POST /browse/{absent}/preview   -> 404   decisions visible to prober: 1
+    #
+    # A row appearing exactly when the id is free answers the question the 404
+    # collapse exists to refuse, and the row even confirms it was filed into the
+    # prober's tenant. Every sibling dataset-resolving route already routes its
+    # refusals through ``policy.evaluate_dataset_scope_refusal``, which files to
+    # the owning tenant or the reserved ``unresolved`` scope; preview was the one
+    # caller that did not, so this is a missed caller rather than a new design.
     dataset = get_dataset(dataset_id)
     if not dataset:
+        refusal = evaluate_dataset_scope_refusal(user, dataset_id)
         ingest_event(
             event_type="browse.preview",
             actor=user,
             dataset_id=dataset_id,
             decision="denied",
             reason="dataset_not_found",
-            decision_id=decision.decision_id,
-            details={"policy_decision_id": decision.decision_id},
+            decision_id=refusal.decision_id,
+            details={"policy_decision_id": refusal.decision_id},
         )
         raise KeyError("dataset not found")
+
+    decision = evaluate(subject=user, resource=dataset_id, action="preview", purpose=purpose)
 
     if decision.effect != "allow":
         ingest_event(

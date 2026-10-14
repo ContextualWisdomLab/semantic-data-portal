@@ -6,7 +6,7 @@ from uuid import uuid4
 from sdp_core.stores import UNRESOLVED_TENANT_ID
 
 from .authz import can_access_tenant, has_role, resolve_actor_context
-from .catalog import get_dataset
+from .catalog import get_dataset, list_datasets
 from .domain import PolicyDecision
 from .evidence import record_policy_decision
 
@@ -195,6 +195,36 @@ def evaluate(
 ) -> PolicyDecision:
     action_key = action.strip().lower()
     action_key = CATALOG_ACTION_ALIASES.get(action_key, action_key)
+    # ``purpose`` is the other caller-controlled dimension this function
+    # branches on, and it was compared raw while ``action`` was normalized four
+    # lines above. The denial for ``external-export`` used ``.lower()`` with no
+    # ``.strip()``, so the headline purpose-binding control was defeated by one
+    # space. Measured against a data-analyst with no export approval::
+    #
+    #     preview  purpose='external-export'    -> 403 (operator approval required)
+    #     preview  purpose='EXTERNAL-EXPORT'    -> 403
+    #     preview  purpose=' external-export'   -> 200
+    #     preview  purpose='external-export '   -> 200
+    #     preview  purpose='external-export\t'  -> 200
+    #     query    purpose='external-export'    -> 403 DENIED
+    #     query    purpose=' external-export'   -> 200 SUCCEEDED
+    #
+    # and the recorded decision then read ``effect: allow``, so the evidence
+    # ledger a compliance team reads certified the export as policy-approved.
+    # Because the *casing* variant was blocked, nothing told an integrator the
+    # field was whitespace-sensitive.
+    #
+    # The row-filter obligation had the mirror-image bug on the same field: it
+    # compared ``purpose == "analysis"`` exactly, so the only row filter the
+    # engine emits silently vanished for ``'Analysis'`` or ``' analysis'``::
+    #
+    #     crm-event (high) purpose='analysis'  -> applied_row_filter=[...]
+    #     crm-event (high) purpose='Analysis'  -> applied_row_filter=None
+    #     crm-event (high) purpose=' analysis' -> applied_row_filter=None
+    #
+    # One normalization at the entry point fixes both, and keeps the two
+    # branches from drifting apart again.
+    purpose_key = purpose.strip().lower()
     decision_id = str(uuid4())
     decision_base = {
         "subject": subject,
@@ -294,7 +324,7 @@ def evaluate(
             obligations={"redact": True, "masking": True},
         )
 
-    if purpose.lower() == "external-export" and not _is_admin(subject):
+    if purpose_key == "external-export" and not _is_admin(subject):
         return _decision(
             **decision_base,
             effect="deny",
@@ -327,7 +357,7 @@ def evaluate(
         )
 
     row_filter = []
-    if action_key in {"query", "preview"} and purpose == "analysis" and dataset.sensitivity == "high":
+    if action_key in {"query", "preview"} and purpose_key == "analysis" and dataset.sensitivity == "high":
         row_filter.append("business_unit = current_user_unit")
 
     obligations = {
@@ -387,6 +417,42 @@ def can_see_graph_node(subject: str, node_id: str) -> bool:
     return can_access_tenant(subject, dataset.tenant_id)
 
 
+def graph_node_target_tenant(node_id: str) -> str | None:
+    """The tenant that owns this graph node, or ``None`` if it is not dataset-owned.
+
+    The write counterpart to :func:`can_see_graph_node`, and it exists because
+    the two directions disagreed. ``_authorize_graph_write`` evaluated the
+    ``create`` action with no ``target_tenant_id``, and ``create`` is the one
+    branch that cannot resolve the owning tenant from the catalog itself, so it
+    skipped the tenant check entirely. The role check ran; the boundary did not.
+    Measured with a tenant-``zeta`` dataset and a ``data-admin`` whose tenant is
+    ``demo``::
+
+        READ  /graph/nodes/zeta-secret:customer_email  -> 404 node not found
+        WRITE /graph/nodes  {node_id: zeta-secret:customer_email,
+                             properties: {pii: false}}
+                                                      -> 200 upserted
+        READ as platform-admin, before -> {'datatype': 'string', 'pii': True}
+        READ as platform-admin, after  -> {'pii': False, 'datatype': 'string'}
+
+    So the tenant boundary was read-only: a foreign admin could flip the ``pii``
+    classification of a column it cannot even read, silently, on governed
+    metadata that feeds ``POST /search/semantic`` and ``POST /graph/query``.
+
+    A node that belongs to no dataset (a concept) is shared vocabulary and has
+    no owning tenant, which is the same answer :func:`can_see_graph_node` gives
+    on the read side - the two must agree or the boundary is inconsistent again.
+    """
+    dataset_id = graph_node_dataset_id(node_id)
+    if dataset_id is None:
+        return None
+    dataset = get_dataset(dataset_id)
+    # An id shaped like a dataset node whose dataset does not exist is not
+    # tenant-owned, matching the read predicate. It cannot reach another
+    # tenant's content, because there is no content there to reach.
+    return dataset.tenant_id if dataset else None
+
+
 def filter_graph_traversal(subject: str, traversal: dict[str, Any]) -> dict[str, Any]:
     """Withhold traversal nodes the subject may not see, and the edges touching them.
 
@@ -421,6 +487,53 @@ def filter_graph_search_results(subject: str, results: list[dict[str, Any]]) -> 
     """
     visible = [result for result in results if can_see_graph_node(subject, result.get("node_id", ""))]
     return visible, len(results) - len(visible)
+
+
+def scope_concept_graph(subject: str, graph: dict[str, Any]) -> dict[str, Any]:
+    """Withhold the dataset identity in a concept graph the subject may not see.
+
+    ``dataset_ids`` is dataset identity, and this payload has now leaked it
+    three times through three different callers. The first two were
+    ``POST /llm/search`` and ``GET /ontology/concept/{concept}``, both fixed by
+    giving ``ontology.concept_assets`` a tenant scope. The third,
+    ``GET /ontology/term/{term}/graph``, reads the *graph store's* own
+    ``concept_graph`` instead and took no actor at all. Measured, with a
+    tenant-``zeta`` dataset present and no credential of any kind::
+
+        anon GET /ontology/concept/고객     -> dataset_ids [], withheld 4
+        anon POST /llm/search              -> 403
+        anon GET /ontology/term/고객/graph  -> 200, dataset_ids
+            ['crm-customer-master', 'marketing-campaign', 'sales-order',
+             'semantic-glossary', 'zeta-secret']
+        ledger delta for that call: decisions +0  audits +0
+
+    So the one fact two sibling routes refuse was handed over in full, including
+    a foreign tenant's dataset, with no policy decision and no audit event -
+    contradicting the product's own published guardrail ("No unauthorized
+    dataset existence disclosure", ``sdp_core.kpis``) and the governance
+    invariant that a governed read evaluates policy and records evidence.
+
+    Scoping lives here rather than in the store so the store stays a data layer
+    with no policy opinion, and
+    ``tests/test_concept_graph_scope.py::test_every_route_returning_dataset_ids_is_scoped``
+    enumerates the routes that return this field rather than trusting that the
+    third caller was the last one.
+    """
+    dataset_ids = graph.get("dataset_ids")
+    if not isinstance(dataset_ids, list):
+        return graph
+    tenant_ids = accessible_tenant_ids(subject)
+    if tenant_ids is None:
+        return {**graph, "withheld_dataset_count": 0}
+    visible = {dataset.id for dataset in list_datasets(tenant_ids)}
+    scoped = [dataset_id for dataset_id in dataset_ids if dataset_id in visible]
+    return {
+        **graph,
+        "dataset_ids": scoped,
+        # Declared, so a short list does not read as the whole mapping - the
+        # same rule ``concept_assets`` follows.
+        "withheld_dataset_count": len(dataset_ids) - len(scoped),
+    }
 
 
 def accessible_tenant_ids(subject: str) -> list[str] | None:

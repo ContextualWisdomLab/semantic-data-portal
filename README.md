@@ -107,6 +107,44 @@ drift(코드와 일치하지 않는 게시된 주장)이기 때문입니다. `te
 이미 게시되어 있습니다). `GET /metrics`는 `application/json` + 빈 스키마로 문서화되어 있어 생성된
 클라이언트가 Prometheus 텍스트를 JSON으로 파싱하려 했을 것이므로, 실제 content type
 (`text/plain; version=0.0.4; charset=utf-8`)으로 정정했습니다.
+**거버넌스 경계 5건 수리.** 모두 한쪽 방향으로는 유지되고 다른 방향으로 열려 있던 것들입니다.
+
+1. **purpose binding이 공백 하나로 우회**되었습니다. `policy.evaluate`는 `action`을
+   `.strip().lower()`로 정규화하면서 다른 호출자 제어 차원인 `purpose`는 `.lower()`만
+   했습니다. 측정: `'external-export'`·`'EXTERNAL-EXPORT'` → 403이지만
+   `' external-export'`·`'external-export '`·`'external-export\t'` → **200**
+   (preview와 governed query 양쪽). 기록된 결정은 `effect: allow`였으므로 **증빙 원장이
+   해당 반출을 정책 승인된 것으로 증명**했습니다. 대소문자는 막히므로 통합 담당자가 공백
+   민감성을 의심할 이유가 없었습니다. 같은 필드의 거울 결함도 함께: high sensitivity
+   데이터셋의 row-level filter가 `purpose == "analysis"` 정확 비교였으므로 `'Analysis'`나
+   `' analysis'`에서 **조용히 사라졌습니다**(거부가 아니라 obligation 누락). 진입점에서 한 번
+   정규화해 두 분기가 다시 어긋나지 않게 했습니다.
+2. **`GET /ontology/term/{term}/graph`가 미인증 호출자에게 모든 테넌트의 dataset id를
+   제공**했습니다 — 정책 평가 0건, 감사 이벤트 0건. 같은 사실을 제공하는 두 형제 라우트
+   (`/ontology/concept/{concept}`는 `dataset_ids: []` + `withheld 4`,
+   `POST /llm/search`는 403)는 이를 거부합니다. 이 payload의 **세 번째** 유출 경로이며,
+   앞의 두 건은 `ontology.concept_assets`에 tenant scope를 주어 닫았지만 이 라우트는 graph
+   store의 `concept_graph`를 읽습니다. 이제 `policy.scope_concept_graph`를 통과하고
+   `withheld_dataset_count`를 선언합니다. 개념 어휘(정의·alias)는 공유 자산이므로 그대로
+   열려 있습니다. 네 번째 호출자를 잡기 위해 **게시된 응답 계약에서 `dataset_ids`를 반환하는
+   라우트를 열거**해 익명 호출에 타 테넌트 id가 섞이지 않는지 기계적으로 강제합니다.
+3. **그래프 쓰기 경계가 fail-open**이었습니다. `_authorize_graph_write`가 `create` 액션을
+   `target_tenant_id` 없이 평가했고, `create`는 카탈로그에서 소유 테넌트를 해석할 수 없는
+   유일한 분기이므로 테넌트 검사를 **건너뛰었습니다**. 측정: tenant=demo인 `data-admin`이
+   `zeta-secret:customer_email`을 **읽으면 404**인데 **쓰면 200**이고 `pii: true → false`로
+   바뀌었습니다. 읽을 수도 없는 컬럼의 PII 분류를 외부 테넌트 admin이 조용히 뒤집을 수
+   있었고, 그 메타데이터는 `POST /search/semantic`·`POST /graph/query`가 사용합니다. 엣지는
+   source만 검사했으므로 target도 함께 검사합니다. 남은 구별(존재하지 않는 데이터셋 접두사는
+   허용, 외부 테넌트는 403)은 `admin` 역할이 필요하므로 익명·analyst로 닫은 oracle보다
+   좁으며, 테스트로 **명시**해 두었습니다.
+4. **preview 거부가 원장을 통해 존재를 누출**했습니다. HTTP 본문은 이미 동일했지만 호출자
+   자신의 `GET /policy/decisions`는 아니었습니다 — 외부 id는 0행, 없는 id는 1행. 형제
+   라우트는 모두 `policy.evaluate_dataset_scope_refusal`을 쓰는데 preview만 빠져 있었습니다.
+5. **`POST /browse/query`가 500**이었습니다. `profile.row_count`가 JSON 문자열이면
+   (`POST /catalog/datasets`가 그대로 저장합니다) `_row_count_estimate`가 `TypeError`로
+   죽었고, 그 crash가 **정책 결정과 감사 기록 사이**에 떨어져 `decisions +1 audits +0` —
+   CLAUDE.md가 타협 불가로 선언한 짝을 깼습니다. 모든 타입을 열거해 처리하며, 숫자가 아닌
+   값은 추정치로 **라벨하지 않고** `unusable_catalog_profile_row_count`로 보고합니다.
 REST connector secret은 `SDP_CONNECTOR_SECRET_REF_PREFIX=SDP_CONNECTOR_SECRET_` 기준의 env secret reference로 조회합니다. 예: `SDP_CONNECTOR_SECRET_REST_CONNECTOR_MARKETING_CAMPAIGN_TOKEN` 값은 presence만 검증하며 API 응답에는 노출하지 않습니다.
 OIDC token verification은 `SDP_OIDC_ISSUER`, `SDP_OIDC_AUDIENCE`, `SDP_OIDC_JWKS_URL`(또는 JWKS 문서를 그대로 담는 `SDP_OIDC_JWKS`), `SDP_OIDC_GROUP_ROLE_MAP`를 사용합니다. 이 네 가지는 **operator 설정 전용**입니다. `POST /enterprise/auth/oidc-verify`의 body는 `token` 하나만 받고, `issuer`·`audience`·`jwks`·`role_map`이 body에 오면 400으로 거절합니다 — 호출자가 자기 토큰의 신뢰 기준을 지정할 수 있으면 스스로 서명한 토큰으로 임의 tenant의 platform-admin을 발급받을 수 있기 때문입니다.
 `SDP_OIDC_GROUP_ROLE_MAP`은 두 가지 형태를 받습니다. flat `{"group": ["role"]}`은 모든 tenant에 적용되는 wildcard scope(`*`)가 되고, tenant scoped `{"tenant": {"group": ["role"]}}`은 해당 tenant에만 적용됩니다. 같은 group이 두 scope에 모두 있으면 tenant scope가 wildcard를 대체하므로, tenant scope에 빈 role 목록을 쓰면 wildcard 부여를 해당 tenant에서만 회수할 수 있습니다. 두 형태를 한 map에 섞으면 tenant 식별자를 group 이름으로 잘못 읽는 설정 오류이므로 요청이 400으로 거절됩니다.

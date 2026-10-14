@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import re
 from typing import Any
 from datetime import datetime, timezone
@@ -431,9 +432,57 @@ def _row_count_estimate(dataset: Any, *, dry_run: bool) -> tuple[int, str]:
     profiled = dataset.profile.get("row_count")
     if profiled is None:
         return MOCK_ROW_COUNT_WITHOUT_PROFILE, "fixed_default_no_catalog_profile"
-    if profiled > MOCK_ROW_COUNT_CAP:
+    # ``profile`` is a free-form ``Dict[str, Any]`` on both POST /catalog/datasets
+    # and PATCH, so ``row_count`` arrives as whatever the caller sent. Comparing
+    # it to an int raised ``TypeError``, which no handler catches, so the whole
+    # governed query route was permanently dead for that dataset. Measured with
+    # ``profile: {"row_count": "1200000"}`` - a JSON string, which is what a
+    # metadata harvester emitting counts as text produces:
+    #
+    #     POST /catalog/datasets           -> 200
+    #     POST /catalog/.../publish        -> 200
+    #     POST /browse/query               -> 500 Internal Server Error
+    #     ledger delta: decisions +1  audits +0
+    #
+    # The 500 is the lesser half. The crash lands between the policy decision
+    # and the audit write, so it produced a policy decision with no matching
+    # audit event - the one pairing CLAUDE.md names non-negotiable. A client also
+    # gets no error code it can act on, against this repo's KeyError -> 404 /
+    # ValueError -> 400 / PermissionError -> 403 contract.
+    #
+    # A non-numeric row count is not an estimate, so it is not labelled as one:
+    # the honest answer is the no-profile default with a source that says the
+    # profile value was unusable. ``bool`` is excluded deliberately - ``True``
+    # is an ``int`` in Python and a row count of ``True`` is not a measurement.
+    # ``bool`` is excluded deliberately - ``True`` is an ``int`` in Python and a
+    # row count of ``True`` is not a measurement. The int and float branches are
+    # separate because folding them raised on the values that cannot be
+    # converted: my first version used ``float(profiled) != int(profiled)``,
+    # which raises ``ValueError`` on ``NaN`` and ``OverflowError`` on
+    # ``Infinity`` - both of which Python's ``json`` accepts as literals, so
+    # that would have been a second uncaught 500 in the same function - and
+    # which also misclassified ``10**30`` as unusable, because ``float(10**30)``
+    # is not exactly ``10**30``.
+    if isinstance(profiled, bool):
+        return MOCK_ROW_COUNT_WITHOUT_PROFILE, "unusable_catalog_profile_row_count"
+    if isinstance(profiled, int):
+        count = profiled
+    elif isinstance(profiled, float):
+        # ``1200.0`` is a legitimate JSON spelling of 1200 and is accepted;
+        # ``1200.5`` would have to be silently truncated, and silently changing
+        # a number while labelling it ``catalog_profile_estimate`` is the
+        # mislabelling this function's docstring was written about.
+        if not math.isfinite(profiled) or not profiled.is_integer():
+            return MOCK_ROW_COUNT_WITHOUT_PROFILE, "unusable_catalog_profile_row_count"
+        count = int(profiled)
+    else:
+        return MOCK_ROW_COUNT_WITHOUT_PROFILE, "unusable_catalog_profile_row_count"
+    if count < 0:
+        # A negative count is not a count.
+        return MOCK_ROW_COUNT_WITHOUT_PROFILE, "unusable_catalog_profile_row_count"
+    if count > MOCK_ROW_COUNT_CAP:
         return MOCK_ROW_COUNT_CAP, "mock_row_cap_below_catalog_profile_estimate"
-    return profiled, "catalog_profile_estimate"
+    return count, "catalog_profile_estimate"
 
 
 def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:

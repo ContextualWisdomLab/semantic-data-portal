@@ -75,6 +75,8 @@ from .policy import (
     evaluate_dataset_scope_refusal,
     filter_graph_search_results,
     filter_graph_traversal,
+    scope_concept_graph,
+    graph_node_target_tenant,
 )
 from .semantic_validation import enterprise_shacl_validation_summary, validate_dataset_semantics
 from .steward_review import build_steward_review_summary
@@ -1345,13 +1347,24 @@ def ontology_patch_review(patch_id: str, payload: dict[str, str]) -> dict[str, A
 
 
 @app.get("/ontology/term/{term}/graph")
-def ontology_term_graph(term: str) -> dict[str, Any]:
+def ontology_term_graph(
+    term: str, user: str = Query(default="anonymous")
+) -> dict[str, Any]:
+    """Describe one concept's graph, with its dataset mapping scoped to the caller.
+
+    This took **no actor at all** and served every tenant's dataset ids, while
+    its two siblings serving the same fact withheld them. See
+    ``policy.scope_concept_graph`` for the measurement; the concept vocabulary
+    itself is shared and stays open, it is dataset identity that is scoped.
+    """
     # Backed by the persistent graph store now; falls back to the legacy
     # in-memory ontology module when the concept is not in the store.
     graph = get_store().concept_graph(term)
     if graph.get("not_found"):
-        return ontology.concept_graph(term)
-    return graph
+        # The legacy payload carries no ``dataset_ids``; scope it anyway so a
+        # future field added there cannot bypass the boundary.
+        return scope_concept_graph(user, ontology.concept_graph(term))
+    return scope_concept_graph(user, graph)
 
 
 # --- Graph ingestion (nodes / edges / concepts) ------------------------------
@@ -1393,7 +1406,12 @@ def _audit_governed_write(
 
 
 def _authorize_graph_write(
-    actor: str, resource: str, *, event_type: str = "graph.write", audit_allow: bool = True
+    actor: str,
+    resource: str,
+    *,
+    event_type: str = "graph.write",
+    audit_allow: bool = True,
+    also_touches: tuple[str, ...] = (),
 ) -> Any:
     """Graph/ontology writes require an authorized (admin) subject.
 
@@ -1415,7 +1433,34 @@ def _authorize_graph_write(
     auditor counting reviews counted each one twice.
     """
 
-    decision = evaluate(subject=actor, resource=resource, action="create", purpose="graph")
+    # The owning tenant of the node being written. ``create`` is the one policy
+    # branch that cannot resolve this from the catalog - the asset may not exist
+    # yet - so it takes the target from the caller, and this function never
+    # supplied it. The result was a tenant boundary that held on reads and
+    # failed open on writes; see ``policy.graph_node_target_tenant``.
+    decision = evaluate(
+        subject=actor,
+        resource=resource,
+        action="create",
+        purpose="graph",
+        target_tenant_id=graph_node_target_tenant(resource),
+    )
+    # An edge touches two nodes. Checking only its source let an authorized
+    # writer attach an edge to a foreign tenant's node, which the read side then
+    # withholds - so the edge would exist, unreadable by the tenant whose graph
+    # it altered. Every endpoint is checked, with the same refusal and the same
+    # audit row.
+    if decision.effect == "allow":
+        for touched in also_touches:
+            if not can_see_graph_node(actor, touched):
+                decision = evaluate(
+                    subject=actor,
+                    resource=touched,
+                    action="create",
+                    purpose="graph",
+                    target_tenant_id=graph_node_target_tenant(touched),
+                )
+                break
     if decision.effect != "allow":
         _audit_governed_write(
             event_type=event_type,
@@ -1529,7 +1574,12 @@ def ingest_graph_node(payload: GraphNodeRequest) -> dict[str, Any]:
 
 @app.post("/graph/edges")
 def ingest_graph_edge(payload: GraphEdgeRequest) -> dict[str, Any]:
-    _authorize_graph_write(payload.actor, payload.source_id, event_type="graph.edge_upsert")
+    _authorize_graph_write(
+        payload.actor,
+        payload.source_id,
+        event_type="graph.edge_upsert",
+        also_touches=(payload.target_id,),
+    )
     try:
         edge = get_store().upsert_edge(
             payload.edge_type,

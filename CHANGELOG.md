@@ -17,12 +17,37 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                    738 passed, 11 skipped
+    pytest                    797 passed, 11 skipped
     pytest (역방향/난수 순서)  순서 무관 통과 (역순 + seed 11/29/77)
     pytest tests/fuzz          11 passed
     python -m sdp.demo_smoke   exit 0, "ready": true
 
 ### Security — 테넌트 경계와 존재 oracle
+
+- **purpose binding이 공백 하나로 우회**되었습니다. `policy.evaluate`가 `action`은
+  `.strip().lower()`로 정규화하면서 `purpose`는 `.lower()`만 했습니다. 측정:
+  `'external-export'`·`'EXTERNAL-EXPORT'` → 403, `' external-export'` → **200**
+  (preview와 governed query 양쪽). 기록된 결정은 `effect: allow`였으므로 **증빙 원장이 그
+  반출을 정책 승인으로 증명**했습니다 — 우회보다 이게 더 나쁩니다. 대소문자는 막히므로
+  통합 담당자가 공백 민감성을 의심할 단서가 없었습니다. 같은 필드의 거울 결함: high
+  sensitivity row-level filter가 정확 비교여서 `'Analysis'`·`' analysis'`에서 조용히
+  사라졌습니다(거부 아님, obligation 누락). 진입점에서 한 번 정규화합니다.
+- **`GET /ontology/term/{term}/graph`가 미인증 호출자에게 모든 테넌트의 dataset id를
+  제공**했습니다 — 정책 평가 0, 감사 이벤트 0. 같은 사실을 주는 형제 두 라우트는 거부합니다
+  (`/ontology/concept/{concept}` → `dataset_ids: []`, `withheld 4`; `POST /llm/search` → 403).
+  이 payload의 **세 번째** 유출 경로입니다. 제품이 스스로 게시하는 guardrail("No unauthorized
+  dataset existence disclosure")과 거버넌스 invariant 양쪽에 어긋납니다. 네 번째를 잡기 위해
+  게시된 응답 계약에서 `dataset_ids`를 반환하는 라우트를 **열거**합니다.
+- **그래프 쓰기 경계가 fail-open**이었습니다. `create`는 소유 테넌트를 카탈로그에서 해석할 수
+  없는 유일한 분기이고 `target_tenant_id`를 받지 못해 테넌트 검사를 건너뛰었습니다. 측정:
+  tenant=demo `data-admin`이 `zeta-secret:customer_email`을 읽으면 **404**, 쓰면 **200**,
+  `pii: true → false`. 읽을 수도 없는 컬럼의 PII 분류를 외부 테넌트가 조용히 뒤집었고 그
+  메타데이터는 semantic search와 graph query가 씁니다. 엣지는 두 끝점 모두 검사합니다.
+  남은 구별(없는 데이터셋 접두사는 허용 / 외부 테넌트는 403)은 `admin` 역할이 필요해
+  익명·analyst로 닫은 oracle보다 좁으며, 닫지 않은 이유와 함께 테스트에 명시했습니다.
+- **preview 거부가 원장을 통해 존재를 누출**했습니다. HTTP 본문은 이미 동일했지만 호출자
+  자신의 `GET /policy/decisions`는 외부 id에 0행, 없는 id에 1행이었습니다. 형제 라우트는
+  모두 `evaluate_dataset_scope_refusal`을 쓰는데 preview만 빠진 **놓친 호출자**였습니다.
 
 - 데이터셋을 **지목할 수 있는 모든 수단**(경로 파라미터, 요청 본문, 쿼리
   파라미터, 변경 라우트, what-if 리소스)에 대해, 타 테넌트 데이터셋과 존재하지
@@ -54,6 +79,16 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
   수 없으므로 단조 카운터를 함께 추가했습니다.
 
 ### Fixed — 문서화된 워크플로가 실제로 동작하지 않던 것들
+- **`POST /browse/query`가 500**이었습니다. `profile.row_count`가 JSON 문자열이면
+  (`profile`은 `Dict[str, Any]`이고 `POST /catalog/datasets`가 그대로 저장합니다)
+  `_row_count_estimate`가 `TypeError`로 죽어 그 데이터셋의 governed query 경로가 영구히
+  죽었습니다. 500보다 중요한 건 crash 위치입니다 — **정책 결정과 감사 기록 사이**에
+  떨어져 `decisions +1 audits +0`, CLAUDE.md가 타협 불가로 선언한 짝이 깨졌습니다. 모든
+  타입을 열거해 처리하고, 숫자가 아닌 값은 추정치로 라벨하지 않고
+  `unusable_catalog_profile_row_count`로 보고합니다. 제 첫 수정은 `float(v) != int(v)`를
+  써서 `NaN`에 `ValueError`, `Infinity`에 `OverflowError`를 냈고(둘 다 Python `json`이
+  리터럴로 받으므로 **같은 함수의 두 번째 미포착 500**이었습니다) `10**30`도 오분류했습니다
+  — 값 열거가 잡았습니다.
 - `POST /enterprise/auth/oidc-preview`가 **운영자 role map의 열거 oracle**이었습니다.
   측정(`SDP_OIDC_GROUP_ROLE_MAP={"acme-finance": {"admins": ["platform-admin"]}}`, 자격증명
   없음): 임의 subject·tenant로 `groups: ["admins"]`를 보내면 200과 함께
