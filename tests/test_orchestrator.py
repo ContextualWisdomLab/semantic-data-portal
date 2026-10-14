@@ -195,3 +195,278 @@ def test_validate_sql_query_rejects_a_qualified_table_whose_leaf_matches(sql: st
     emits the bare table name (``_source_table_name``), so a qualified reference is
     one the allow-list cannot prove and must be refused."""
     assert "unauthorized_table_reference" in orch.validate_sql_query(sql, source_system=_SRC)
+
+
+# --------------------------------------------------------------------------- #
+# Soundness of the certification, not just of the parse.
+#
+# ``validate_sql_query`` is the documented boundary a real engine would sit
+# behind, so a statement it certifies with zero warnings is a claim about what
+# the engine will do. Two ways that claim was false, both measured against an
+# allow-list of ``customer``:
+#
+#   SELECT count(*) FROM customer$pii_raw LIMIT 1   -> [] , parsed ['customer']
+#   SELECT count(*) FROM customer×pii_raw LIMIT 1   -> [] , parsed ['customer']
+#   SELECT pg_terminate_backend(12345) FROM customer -> []
+#   SELECT lo_unlink(1) FROM customer                -> []
+#   SELECT pg_sleep(100000) FROM customer            -> []
+#   SELECT pg_reload_conf() FROM customer            -> []
+#
+# PostgreSQL's identifier continuation set is ``[A-Za-z\200-\377_0-9$]``, so the
+# first two name a single table that is not the allow-listed one; the parser
+# split it and discarded the remainder as an alias. The last four are the gap
+# the literal guard left: it catches an argument-bearing call through the string
+# rule, which leaves zero-argument and integer-argument calls in the safe lane.
+#
+# Nothing executes here - ``execute_query`` is a mock engine - so what those
+# functions do, and that ``$`` continues an identifier, is PostgreSQL's
+# documented behaviour rather than an observation. The false certification is
+# the defect either way, and it is what is measured above.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT count(*) FROM customer$pii_raw LIMIT 1",
+        "SELECT count(*) FROM customer×pii_raw LIMIT 1",
+        "SELECT count(*) FROM customer$ LIMIT 1",
+        "SELECT count(*) FROM ¢ustomer LIMIT 1",
+        "SELECT count(*) FROM customer, customer$pii_raw",
+    ],
+)
+def test_an_identifier_continuation_character_cannot_shorten_a_table_name(sql: str) -> None:
+    assert "unauthorized_table_reference" in orch.validate_sql_query(sql, source_system=_SRC)
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT count(*) FROM customer",
+        "SELECT count(*) FROM customer AS c",
+        "SELECT c.customer_id FROM customer c",
+        "SELECT customer_id FROM customer JOIN customer ON 1=1",
+    ],
+)
+def test_widening_the_token_did_not_refuse_a_legitimate_reference(sql: str) -> None:
+    """The fail-closed direction must not have closed on the allow-listed name."""
+    assert "unauthorized_table_reference" not in orch.validate_sql_query(sql, source_system=_SRC)
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT pg_terminate_backend(12345) FROM customer",
+        "SELECT lo_unlink(1) FROM customer",
+        "SELECT pg_sleep(100000) FROM customer",
+        "SELECT pg_reload_conf() FROM customer",
+        "SELECT pg_read_file(customer_email) FROM customer",
+        "SELECT current_setting(customer_id) FROM customer",
+        "SELECT COUNT(*), pg_sleep(1) FROM customer",
+    ],
+)
+def test_a_function_outside_the_allowlist_is_refused(sql: str) -> None:
+    assert "unauthorized_function_call" in orch.validate_sql_query(sql, source_system=_SRC)
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT count(*) FROM customer",
+        "SELECT COUNT(*) FROM customer",
+        "SELECT sum(customer_id) FROM customer",
+        "SELECT avg(customer_id) FROM customer",
+        "SELECT min(customer_id), max(customer_id) FROM customer",
+        # A parenthesised expression and an IN list are not function calls.
+        "SELECT count(*) FROM customer WHERE customer_id IN (1, 2)",
+        "SELECT count(*) FROM customer WHERE (customer_id) > 1",
+    ],
+)
+def test_the_allowlist_admits_what_the_product_itself_emits(sql: str) -> None:
+    assert "unauthorized_function_call" not in orch.validate_sql_query(sql, source_system=_SRC)
+
+
+def test_the_allowlist_is_an_allowlist_not_a_denylist() -> None:
+    """A deny-list cannot certify, because the set of unsafe names is unbounded.
+
+    docs/prd-trd.md states BRW-005 ("read-only SELECT only ... block DDL/DML and
+    unsafe functions") as P0, so this is a declared requirement. An allow-list
+    is the only shape that can satisfy it; this test pins the shape so a future
+    change cannot invert it and keep the name.
+    """
+    assert orch._ALLOWED_FUNCTIONS == frozenset({"count", "sum", "avg", "min", "max"})
+    invented = "SELECT definitely_not_a_real_function(1) FROM customer"
+    assert "unauthorized_function_call" in orch.validate_sql_query(invented, source_system=_SRC)
+
+
+# --------------------------------------------------------------------------- #
+# The drafter must not emit SQL its own validator rejects.
+# --------------------------------------------------------------------------- #
+
+
+def _publish(dataset_id: str, table: str, columns: list[str]) -> None:
+    from fastapi.testclient import TestClient
+
+    from sdp.api import app
+
+    client = TestClient(app, raise_server_exceptions=False)
+    payload = {
+        "actor": "admin",
+        "id": dataset_id,
+        "tenant_id": "demo",
+        "title": "T",
+        "description": "d",
+        "owner": "a",
+        "steward": "a",
+        "domain": "s",
+        "source_system": f"postgresql://a.dw/{table}",
+        "sensitivity": "low",
+        "update_frequency": "daily",
+        "quality_score": 0.9,
+        "freshness_score": 0.9,
+        "schema": [
+            {
+                "name": name,
+                "datatype": "string",
+                "nullable_ratio": 0.0,
+                "distinct_ratio": 1.0,
+            }
+            for name in columns
+        ],
+        "distributions": [{"id": "d1", "format": "table", "endpoint": "https://x/y"}],
+        "profile": {},
+    }
+    assert client.post("/catalog/datasets", json=payload).status_code == 200, dataset_id
+    client.post(f"/catalog/datasets/{dataset_id}/publish", json={"actor": "admin"})
+    return client
+
+
+@pytest.mark.parametrize("table", sorted(orch._TABLE_CLAUSE_TERMINATORS))
+def test_a_clause_keyword_source_table_refuses_instead_of_drafting(table: str) -> None:
+    """All 24 of them, because ``order`` is the one that would be reported.
+
+    Measured before: the drafter returned 200 with
+    ``'... FROM order WHERE order_ts >= current_date - 90 LIMIT 1000'`` and the
+    very next call in the documented draft-then-execute workflow answered 400
+    ``unauthorized_table_reference`` - the product accusing its own output of a
+    governance violation, with no way to proceed. ``FROM order`` is also unquoted
+    reserved-word SQL that PostgreSQL would refuse.
+    """
+    client = _publish(f"clause-{table}", table, ["some_column"])
+    response = client.post(
+        "/llm/draft-query",
+        json={"user": "admin", "purpose": "analysis", "dataset_id": f"clause-{table}", "question": "q"},
+    )
+    assert response.status_code == 400, response.text
+    detail = response.json()["detail"]
+    assert detail["error"] in {"unquotable_source_table", "draft_rejected_by_validator"}, detail
+    assert table in detail["reason"], detail
+
+
+def test_a_rewritten_column_is_reported_rather_than_contradicted() -> None:
+    """The response asserted it used only catalog-validated columns.
+
+    Measured with a declared column ``order amount``: the query named
+    ``order_amount`` while ``requested_columns`` reported ``order amount``, so a
+    buyer learned otherwise from the warehouse. The rewrite is kept - a quoted
+    identifier could never pass this product's own gate, which refuses any
+    statement containing a double quote - and is now stated.
+    """
+    client = _publish("rewrite-space", "spacey", ["order amount"])
+    body = client.post(
+        "/llm/draft-query",
+        json={
+            "user": "admin",
+            "purpose": "analysis",
+            "dataset_id": "rewrite-space",
+            "question": "q",
+            "group_by": "order amount",
+        },
+    ).json()
+    assert "order_amount" in body["query"]
+    assert body["emitted_identifiers"] == {"order amount": "order_amount"}
+    assert any("변환" in assumption for assumption in body["assumptions"]), body["assumptions"]
+
+
+def test_an_ambiguous_rewrite_is_refused_rather_than_guessed() -> None:
+    """The mapping is not injective, so the draft could aggregate the wrong column."""
+    client = _publish("rewrite-collide", "collide", ["order amount", "order_amount"])
+    response = client.post(
+        "/llm/draft-query",
+        json={
+            "user": "admin",
+            "purpose": "analysis",
+            "dataset_id": "rewrite-collide",
+            "question": "q",
+            "group_by": "order amount",
+        },
+    )
+    assert response.status_code == 400, response.text
+    assert response.json()["detail"]["error"] == "ambiguous_identifier"
+
+
+def test_the_drafter_self_check_is_a_live_guard(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Not dead code: the backstop fires when validation would reject a draft.
+
+    Two causes of "the drafter emits SQL its own validator rejects" have been
+    found and fixed one at a time - the ``interval '<n> day'`` literal, and a
+    source table colliding with a clause keyword. This check is what catches the
+    third without waiting for a report, so it is exercised by making validation
+    reject what the drafter emits.
+    """
+    client = _publish("selfcheck-ds", "selfcheck_table", ["some_column"])
+    ok = client.post(
+        "/llm/draft-query",
+        json={"user": "admin", "purpose": "analysis", "dataset_id": "selfcheck-ds", "question": "q"},
+    )
+    assert ok.status_code == 200, ok.text
+
+    # ``count`` is what every draft emits; removing it from the allow-list makes
+    # the drafter's own output fail validation.
+    monkeypatch.setattr(orch, "_ALLOWED_FUNCTIONS", frozenset({"sum"}))
+    refused = client.post(
+        "/llm/draft-query",
+        json={"user": "admin", "purpose": "analysis", "dataset_id": "selfcheck-ds", "question": "q"},
+    )
+    assert refused.status_code == 400, refused.text
+    detail = refused.json()["detail"]
+    assert detail["error"] == "draft_rejected_by_validator", detail
+    assert "unauthorized_function_call" in detail["warnings"], detail
+
+
+def test_every_seeded_dataset_drafts_a_statement_its_validator_accepts() -> None:
+    """The documented workflow, end to end, for every dataset the demo ships.
+
+    This is the property both of those defects broke, and it is cheap to assert
+    over the whole seed rather than one dataset.
+    """
+    from fastapi.testclient import TestClient
+
+    from sdp import catalog
+    from sdp.api import app
+
+    client = TestClient(app, raise_server_exceptions=False)
+    for dataset in catalog.list_datasets():
+        if dataset.status != "published" or not dataset.schema:
+            continue
+        draft = client.post(
+            "/llm/draft-query",
+            json={
+                "user": "admin",
+                "purpose": "analysis",
+                "dataset_id": dataset.id,
+                "question": "q",
+            },
+        )
+        assert draft.status_code == 200, (dataset.id, draft.text)
+        executed = client.post(
+            "/browse/query",
+            json={
+                "user": "admin",
+                "purpose": "analysis",
+                "dataset_ids": [dataset.id],
+                "query": draft.json()["query"],
+                "language": "sql",
+            },
+        )
+        assert executed.status_code == 200, (dataset.id, draft.json()["query"], executed.text)

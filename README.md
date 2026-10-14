@@ -145,6 +145,40 @@ drift(코드와 일치하지 않는 게시된 주장)이기 때문입니다. `te
    죽었고, 그 crash가 **정책 결정과 감사 기록 사이**에 떨어져 `decisions +1 audits +0` —
    CLAUDE.md가 타협 불가로 선언한 짝을 깼습니다. 모든 타입을 열거해 처리하며, 숫자가 아닌
    값은 추정치로 **라벨하지 않고** `unusable_catalog_profile_row_count`로 보고합니다.
+**SQL 안전성 게이트 4건 수리.** `validate_sql_query`는 실제 엔진이 뒤에 놓일 문서화된 경계이므로,
+경고 0건으로 통과시킨 질의는 엔진이 할 일에 대한 **주장**입니다.
+
+- **식별자 연속 문자로 테이블 이름을 짧게 만들 수 있었습니다.** 토큰이 `[A-Za-z_][\w.]*`여서 `$`와
+  0x80 이상 바이트에서 끊겼고, 하나의 식별자를 둘로 쪼갠 뒤 뒷부분을 alias로 버렸습니다. 측정
+  (allowlist = `customer`): `FROM customer$pii_raw` → 경고 **0건**, parsed `['customer']`.
+  PostgreSQL의 identifier continuation은 `[A-Za-z\200-\377_0-9$]`이므로 엔진은 단일 테이블
+  `customer$pii_raw`를 읽습니다 — allowlist가 질의가 지칭하지 않는 이름에 대해 증명한 셈입니다
+  (이미 critical로 분류해 닫은 comma-FROM 우회와 같은 unsoundness 부류). 토큰을 넓혀 참조가 통째로
+  파싱되어 비교되게 했고, 증명할 수 없는 이름은 거부됩니다(fail-closed).
+- **함수 allowlist가 없었습니다.** literal guard가 인자 있는 호출
+  (`pg_read_file($$...$$)` → `literal_values_not_allowed`)은 잡지만, **무인자·정수인자** 호출은
+  안전 경로에 남아 있었습니다. 측정, 모두 경고 0건: `pg_terminate_backend(12345)`,
+  `lo_unlink(1)`, `pg_sleep(100000)`, `pg_reload_conf()`. `docs/prd-trd.md`의 BRW-005
+  ("read-only SELECT만 허용 … DDL/DML/unsafe function 차단")는 **P0 요구사항**입니다. deny-list는
+  무한집합이라 증명할 수 없으므로 allowlist(`count`·`sum`·`avg`·`min`·`max` — drafter가 실제로
+  내보내는 것 + 표준 집계)로 막고, 밖의 호출은 `unauthorized_function_call`입니다. 이 저장소에는
+  살아 있는 엔진이 없고 `execute_query`는 SQL을 실행하지 않으므로, 위 함수들의 부작용과 `$`의
+  식별자 의미는 PostgreSQL 문서 기준이며 **측정한 것은 게이트의 판정**입니다.
+- **drafter가 자기 validator가 거부하는 SQL을 내보냈습니다.** source table 이름이 SQL 절
+  키워드(`order` 등 24개)와 겹치면 파서가 테이블 목록을 벗어나 `None`을 반환하고 validator가
+  `unauthorized_table_reference`로 거부합니다. 측정: draft 200 → execute **400**. 문서화된
+  draft-then-execute 흐름에서 제품이 자기 출력을 거버넌스 위반으로 고발하는 셈이고,
+  `FROM order`는 인용 없는 예약어 SQL이라 PostgreSQL도 거부합니다. 이제 명확한 사유와 함께
+  거부하며, 더불어 **완성된 질의를 자기 validator로 자체 검사**해 세 번째 원인을 보고 없이
+  잡습니다(이 부류는 이미 두 번 — `interval '<n> day'` 리터럴, 절 키워드 — 하나씩 고쳐졌습니다).
+- **선언된 컬럼명을 조용히 다른 식별자로 바꾸고 원래 이름을 보고**했습니다. `order amount`가
+  `order_amount`로 나가는데 `requested_columns`는 `order amount`를 보고하고 assumptions는
+  "카탈로그에서 검증된 컬럼만 사용"이라고 주장했습니다 — 구매자는 창고가
+  `column "order_amount" does not exist`라고 답할 때 알게 됩니다. 변환 자체는 유지합니다(이 게이트가
+  큰따옴표를 `literal_values_not_allowed`로 거부하므로 인용 식별자는 애초에 실행될 수 없고,
+  하이픈이 SQL에 닿지 않게 하는 기존 계약도 있습니다). 대신 `emitted_identifiers`로 **보고**하고,
+  변환이 다른 선언 컬럼과 충돌해 **모호하면 거부**합니다(매핑이 injective가 아니므로 엉뚱한 컬럼을
+  집계할 수 있었습니다).
 REST connector secret은 `SDP_CONNECTOR_SECRET_REF_PREFIX=SDP_CONNECTOR_SECRET_` 기준의 env secret reference로 조회합니다. 예: `SDP_CONNECTOR_SECRET_REST_CONNECTOR_MARKETING_CAMPAIGN_TOKEN` 값은 presence만 검증하며 API 응답에는 노출하지 않습니다.
 OIDC token verification은 `SDP_OIDC_ISSUER`, `SDP_OIDC_AUDIENCE`, `SDP_OIDC_JWKS_URL`(또는 JWKS 문서를 그대로 담는 `SDP_OIDC_JWKS`), `SDP_OIDC_GROUP_ROLE_MAP`를 사용합니다. 이 네 가지는 **operator 설정 전용**입니다. `POST /enterprise/auth/oidc-verify`의 body는 `token` 하나만 받고, `issuer`·`audience`·`jwks`·`role_map`이 body에 오면 400으로 거절합니다 — 호출자가 자기 토큰의 신뢰 기준을 지정할 수 있으면 스스로 서명한 토큰으로 임의 tenant의 platform-admin을 발급받을 수 있기 때문입니다.
 `SDP_OIDC_GROUP_ROLE_MAP`은 두 가지 형태를 받습니다. flat `{"group": ["role"]}`은 모든 tenant에 적용되는 wildcard scope(`*`)가 되고, tenant scoped `{"tenant": {"group": ["role"]}}`은 해당 tenant에만 적용됩니다. 같은 group이 두 scope에 모두 있으면 tenant scope가 wildcard를 대체하므로, tenant scope에 빈 role 목록을 쓰면 wildcard 부여를 해당 tenant에서만 회수할 수 있습니다. 두 형태를 한 map에 섞으면 tenant 식별자를 group 이름으로 잘못 읽는 설정 오류이므로 요청이 400으로 거절됩니다.

@@ -74,11 +74,94 @@ _TABLE_CLAUSE_TERMINATORS = frozenset(
     }
 )
 
-_TABLE_LIST_TOKEN = re.compile(r",|[A-Za-z_][\w.]*")
+# PostgreSQL's identifier continuation set is ``[A-Za-z\200-\377_0-9$]`` - it
+# includes ``$`` and every byte at or above 0x80. The old token
+# ``[A-Za-z_][\w.]*`` stopped at both, so it split one identifier into two and
+# then discarded the second as an alias. Measured against an allow-list of
+# ``customer``::
+#
+#     SELECT count(*) FROM customer$pii_raw LIMIT 1
+#       warnings []            parsed ['customer']       <- certified clean
+#     SELECT count(*) FROM customer×pii_raw LIMIT 1
+#       warnings []            parsed ['customer']       <- certified clean
+#     SELECT count(*) FROM secret$customer
+#       warnings ['unauthorized_table_reference']        <- the prefix decides
+#
+# The engine resolves the single table ``customer$pii_raw``, so the allow-list
+# proved a claim about a table name that is not the one the query names - the
+# same unsoundness class as the comma-FROM bypass this repo rated critical and
+# closed. Widening the token makes the reference parse whole and be compared,
+# which is the fail-closed direction: a name the allow-list cannot prove is
+# refused.
+#
+# Note on evidence: that ``$`` and bytes >= 0x80 continue an identifier is
+# PostgreSQL's documented lexer behaviour, not something measured here - this
+# repository has no live engine, and ``execute_query`` never executes SQL. What
+# is measured is the parser's own output above.
+_TABLE_LIST_TOKEN = re.compile(r",|[A-Za-z_\u0080-\uffff][\w.$\u0080-\uffff]*")
+
+# A read-only certification cannot be given to a function it does not know.
+# The literal guard already stops an argument-bearing call
+# (``pg_read_file($$/etc/passwd$$)`` -> ``literal_values_not_allowed``), which
+# left zero-argument and integer-argument calls in the safe lane. Measured, all
+# with an allow-listed table and zero warnings before this gate::
+#
+#     SELECT pg_terminate_backend(12345) FROM customer   -> []
+#     SELECT lo_unlink(1) FROM customer                  -> []
+#     SELECT pg_sleep(100000) FROM customer              -> []
+#     SELECT pg_reload_conf() FROM customer              -> []
+#
+# docs/prd-trd.md states BRW-005 ("read-only SELECT only ... block DDL/DML and
+# unsafe functions") as P0 and NFR-SEC-007 repeats it, so this is a declared
+# requirement rather than an extra. A deny-list is unbounded and therefore
+# unsound; an allow-list is the only shape that can certify. This set is what
+# the drafter itself emits (``count``) plus the standard read-only aggregates -
+# measured from ``draft_sql`` output across every seeded dataset and column.
+# Widening it is a deliberate act, not a side effect.
+#
+# Nothing executes here, so the side effects of the examples above are
+# PostgreSQL's documented function semantics, not observed behaviour. The defect
+# is the false certification either way.
+_ALLOWED_FUNCTIONS = frozenset({"count", "sum", "avg", "min", "max"})
+
+# ``name(`` with optional whitespace. A bare ``(`` is not a call, so a
+# parenthesised expression or a subquery is untouched.
+_FUNCTION_CALL = re.compile(r"([A-Za-z_][A-Za-z_0-9]*)\s*\(")
 
 
 def _safe_identifier(value: str) -> str:
     return "".join(ch if ch.isalnum() or ch == "_" else "_" for ch in value)
+
+
+def _is_emittable_identifier(value: str) -> bool:
+    """Whether this name can be emitted unquoted and mean the same thing.
+
+    ``_safe_identifier`` replaces every non-alphanumeric character with ``_``,
+    which is right for deriving a *table* name from a source locator and wrong
+    for a *declared column*: the draft then names a column the dataset does not
+    declare, while the same response reports the original under
+    ``requested_columns`` and asserts it used only catalog-validated columns.
+    Measured with a declared column ``order amount``::
+
+        query             SELECT order_amount, count(*) ... FROM customer
+        requested_columns ['order amount']
+        assumptions       ['카탈로그에서 검증된 테이블/컬럼만 사용', ...]
+
+    The statement passed ``validate_sql_query`` and ``/browse/query`` answered
+    200, so nothing in the product flagged it; the buyer finds out when the
+    warehouse answers ``column "order_amount" does not exist``. The mapping is
+    also not injective - ``order amount`` and ``order_amount`` collapse to the
+    same emitted identifier - so a draft could silently aggregate a different
+    column than the one asked for.
+
+    Emitting a quoted identifier is not available: ``validate_sql_query``
+    refuses any statement containing a double quote
+    (``literal_values_not_allowed``), so a quoted name could never execute
+    through this product's own gate. Refusing with a reason is therefore the
+    honest answer, and it is also the one that surfaces the limitation at the
+    moment the caller can act on it.
+    """
+    return bool(value) and value == _safe_identifier(value)
 
 
 def _safe_request_id() -> str:
@@ -172,6 +255,18 @@ def validate_sql_query(sql: str, *, source_system: str) -> list[str]:
 
     if _matched_forbidden_keyword(lowered) is not None:
         warnings.append("forbidden_keyword_detected")
+
+    called = {
+        name.lower()
+        for name in _FUNCTION_CALL.findall(stripped)
+        # A clause keyword followed by "(" is not a function call: ``in (``,
+        # ``exists (`` and the set operators all take a parenthesised operand.
+        if name.lower() not in _TABLE_CLAUSE_TERMINATORS
+        and name.lower() not in {"in", "exists", "not", "and", "or", "all", "any", "values"}
+    }
+    unauthorized = sorted(called - _ALLOWED_FUNCTIONS)
+    if unauthorized:
+        warnings.append("unauthorized_function_call")
 
     referenced = _referenced_source_tables(stripped)
     if referenced is None:
@@ -299,6 +394,48 @@ def draft_sql(req: QueryDraftRequest) -> dict:
     if req.group_by and req.group_by not in allowed_columns:
         return {"error": "invalid_group_by", "reason": "요청한 그룹화 컬럼이 데이터셋에 없습니다."}
 
+    # ``_safe_identifier`` rewrites a declared column that cannot be emitted
+    # unquoted, and that rewrite is kept: a quoted identifier could never
+    # execute through this product's own gate, which refuses any statement
+    # containing a double quote (``literal_values_not_allowed``), and
+    # ``test_draft_query_sanitizes_group_by_identifier`` pins the rewrite
+    # deliberately so a hyphen cannot reach the SQL.
+    #
+    # Two things about it were wrong. The response **contradicted itself**:
+    # measured with a declared column ``order amount``, the query named
+    # ``order_amount`` while ``requested_columns`` reported ``order amount`` and
+    # the assumptions asserted only catalog-validated columns were used, so a
+    # buyer learned otherwise from the warehouse ("column order_amount does not
+    # exist"). And the mapping is **not injective** - ``order amount`` and
+    # ``order_amount``, or ``a-b`` and ``a_b``, collapse to one identifier - so
+    # a draft could silently aggregate a different column than the one asked
+    # for. The rewrite is now reported, and an ambiguous one is refused rather
+    # than guessed.
+    rewritten = {
+        name: _safe_identifier(name)
+        for name in list(requested_columns) + ([req.group_by] if req.group_by else [])
+        if name != "*" and name != _safe_identifier(name)
+    }
+    emitted_by_declared = {
+        column.name: _safe_identifier(column.name) for column in dataset.schema
+    }
+    collisions = sorted(
+        {
+            emitted
+            for name, emitted in rewritten.items()
+            for other, other_emitted in emitted_by_declared.items()
+            if other != name and other_emitted == emitted
+        }
+    )
+    if collisions:
+        return {
+            "error": "ambiguous_identifier",
+            "reason": (
+                "컬럼명을 SQL 식별자로 변환하면 다른 선언 컬럼과 같아져, 어느 컬럼을 "
+                "집계할지 확정할 수 없습니다: " + ", ".join(collisions)
+            ),
+        }
+
     # `interval '<n> day'` is a single-quoted literal, and this module's own
     # validate_sql_query refuses any statement containing a quote
     # (literal_values_not_allowed). Every draft this route produced was therefore
@@ -317,6 +454,32 @@ def draft_sql(req: QueryDraftRequest) -> dict:
             f"WHERE {_safe_identifier(window_column)} >= current_date - {req.date_window_days}"
         )
     table_name = _source_table_name(dataset.source_system)
+    # ``_referenced_source_tables`` treats a clause keyword as the end of the
+    # table list, so a source table named ``order`` - one of the most ordinary
+    # names in a sales warehouse - broke out of the list with ``expect_table``
+    # still true and returned ``None``, which the validator turns into
+    # ``unauthorized_table_reference``. Measured end to end::
+    #
+    #     POST /llm/draft-query -> 200
+    #       'SELECT count(*) AS active_customer_count FROM order
+    #        WHERE order_ts >= current_date - 90 LIMIT 1000'
+    #     POST /browse/query    -> 400
+    #       {'status': 'REJECTED', 'warnings': ['unauthorized_table_reference']}
+    #
+    # The product accused its own output of a governance violation with no way
+    # to proceed, and ``FROM order`` is unquoted reserved-word SQL that
+    # PostgreSQL would refuse anyway. All 24 members of
+    # ``_TABLE_CLAUSE_TERMINATORS`` fail this way.
+    if table_name.lower() in _TABLE_CLAUSE_TERMINATORS:
+        return {
+            "error": "unquotable_source_table",
+            "reason": (
+                "source table 이름이 SQL 절 키워드와 충돌해 이 게이트를 통과하는 "
+                "질의를 만들 수 없습니다. 인용 식별자는 "
+                "literal_values_not_allowed로 거부됩니다: "
+                f"{table_name}"
+            ),
+        }
 
     row_limit = min(req.row_limit, 2000)
     if row_limit <= 0:
@@ -357,11 +520,37 @@ def draft_sql(req: QueryDraftRequest) -> dict:
         if part
     )
 
+    # The last word belongs to the validator that will judge this statement.
+    # The documented workflow is draft-then-execute, so a draft the very next
+    # call rejects is worse than a refusal: the buyer sees the product accuse
+    # its own output of a governance violation. Two causes have already been
+    # found and fixed one at a time (the ``interval '<n> day'`` literal, and a
+    # source table colliding with a clause keyword); this check is what catches
+    # the third without waiting for a report.
+    self_check = validate_sql_query(sql, source_system=dataset.source_system)
+    if self_check:
+        return {
+            "error": "draft_rejected_by_validator",
+            "reason": (
+                "생성된 질의가 이 제품의 SQL 안전성 게이트를 통과하지 못했습니다: "
+                f"{', '.join(self_check)}"
+            ),
+            "warnings": self_check,
+        }
+
     assumptions = [
         "카탈로그에서 검증된 테이블/컬럼만 사용",
         "read-only SELECT만 허용",
         "목적별 정책으로 PII 필드는 masking 또는 집계 제한",
     ]
+    if rewritten:
+        # Stated, because the emitted SQL names an identifier the dataset does
+        # not declare and the response otherwise asserted the opposite.
+        assumptions.append(
+            "SQL 식별자로 쓸 수 없는 컬럼명을 변환했습니다("
+            + ", ".join(f"{name} -> {emitted}" for name, emitted in sorted(rewritten.items()))
+            + "). 대상 엔진의 실제 컬럼명과 다를 수 있습니다."
+        )
     if req.group_by in {"signup_at", "event_timestamp", "created_at"}:
         assumptions.append("날짜 집계는 기간 기반 집계로만 제한")
 
@@ -396,6 +585,10 @@ def draft_sql(req: QueryDraftRequest) -> dict:
         "dialect": "postgresql",
         "row_limit": max_rows,
         "requested_columns": requested_columns,
+        # What the emitted SQL actually names, where it differs from the
+        # declared name. ``requested_columns`` reports the declared names and
+        # alone it contradicted the statement beside it.
+        "emitted_identifiers": dict(sorted(rewritten.items())),
         "timeout_ms": timeout_ms,
         "estimated_cost": estimated_cost,
         "date_window_days": req.date_window_days if window_column else 0,

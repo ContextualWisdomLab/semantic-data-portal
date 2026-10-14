@@ -301,6 +301,15 @@ seed의 `security` subject는 `platform-admin`도 들고 있어 여전히 previe
   선언하며, verify 경로에도 같은 카운터를 노출합니다(상한이 권한 결과를 바꿀 수 있으므로).
   증빙: `tests/test_oidc_preview_boundary.py` (13건).(group 이름, 부여한 tenant scope, 부여된 role)와 `audit_event_id`를 반환하고 `enterprise/auth/oidc` resource audit event를 남긴다. `sso_oidc_adapter` control은 이로써 `implemented`가 되고 `GET /enterprise/controls`의 `planned_controls`는 0, `status`는 `pilot_ready`가 된다.
 - `GET /enterprise/evidence-pack`: metadata validation, SHACL-compatible validation, steward queue, ontology mapping coverage, policy/audit counts, controls, KPI ids, proof endpoints.
+  - **정정(SQL 게이트 4건)**: (1) 토큰이 `$`·0x80+ 에서 끊겨 `FROM customer$pii_raw`가 경고 0건
+    (parsed `['customer']`)으로 통과 — PostgreSQL identifier continuation 전체를 포함하도록 확장.
+    (2) 함수 allowlist 부재로 `pg_terminate_backend(12345)`·`pg_sleep(100000)`·`pg_reload_conf()`가
+    경고 0건 — PRD BRW-005(P0)가 요구하는 차단을 allowlist로 구현. (3) source table 이름이 절
+    키워드면 drafter가 validator가 거부하는 SQL을 내보냄(draft 200 → execute 400) — 명시적 거부 +
+    완성 질의 자체 검사. (4) 선언 컬럼명을 조용히 변환하고 원래 이름을 보고 — `emitted_identifiers`로
+    보고하고 모호한 변환은 거부. 증빙: `tests/test_orchestrator.py` (+52건, 절 키워드 24개 전수).
+    실행 엔진이 없으므로 함수 부작용과 `$`의 식별자 의미는 PostgreSQL 문서 기준이며 측정한 것은
+    게이트 판정입니다.
   - **정정(거버넌스 경계 5건)**: (1) purpose가 `.strip()` 없이 비교되어 `' external-export'`로
     403→200 우회, 기록된 결정은 `allow`. row-level filter는 같은 필드의 정확 비교로
     `'Analysis'`에서 조용히 사라짐. 진입점 정규화로 둘 다 수리. (2)

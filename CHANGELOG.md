@@ -17,12 +17,23 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                    797 passed, 11 skipped
+    pytest                    849 passed, 11 skipped
     pytest (역방향/난수 순서)  순서 무관 통과 (역순 + seed 11/29/77)
     pytest tests/fuzz          11 passed
     python -m sdp.demo_smoke   exit 0, "ready": true
 
 ### Security — 테넌트 경계와 존재 oracle
+
+- **SQL 안전성 게이트가 증명하지 못하는 것을 증명했습니다.** 두 가지 unsoundness를
+  allowlist = `customer`로 측정했습니다. (1) 토큰 `[A-Za-z_][\w.]*`가 `$`와 0x80 이상
+  바이트에서 끊겨 `FROM customer$pii_raw`를 `customer` + 버려진 alias로 쪼갰습니다 → 경고
+  **0건**. PostgreSQL identifier continuation은 `[A-Za-z\200-\377_0-9$]`이므로 엔진은 단일
+  테이블 `customer$pii_raw`를 읽습니다. 이미 critical로 닫은 comma-FROM 우회와 같은 부류입니다.
+  (2) 함수 allowlist가 없어 무인자·정수인자 호출이 안전 경로에 남았습니다 →
+  `pg_terminate_backend(12345)`·`lo_unlink(1)`·`pg_sleep(100000)`·`pg_reload_conf()` 모두
+  경고 0건. PRD BRW-005는 이를 **P0**로 선언합니다. deny-list는 무한집합이라 증명할 수 없으므로
+  allowlist로 막습니다. 실행 엔진이 없으므로(`execute_query`는 mock) 함수 부작용과 `$`의 의미는
+  PostgreSQL 문서 기준이고, 측정한 것은 게이트의 판정입니다 — 어느 쪽이든 결함은 **거짓 인증**입니다.
 
 - **purpose binding이 공백 하나로 우회**되었습니다. `policy.evaluate`가 `action`은
   `.strip().lower()`로 정규화하면서 `purpose`는 `.lower()`만 했습니다. 측정:
@@ -79,6 +90,20 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
   수 없으므로 단조 카운터를 함께 추가했습니다.
 
 ### Fixed — 문서화된 워크플로가 실제로 동작하지 않던 것들
+- **drafter가 자기 validator가 거부하는 SQL을 내보냈습니다**(이 부류 세 번째). source table
+  이름이 SQL 절 키워드(`order` 등 24개)와 겹치면 파서가 테이블 목록을 벗어나 `None`을 반환하고
+  validator가 `unauthorized_table_reference`로 거부합니다 — 측정: draft **200** → execute
+  **400**. 문서화된 draft-then-execute 흐름에서 제품이 자기 출력을 거버넌스 위반으로 고발하는
+  셈이고, `FROM order`는 인용 없는 예약어 SQL이라 PostgreSQL도 거부합니다. 명확한 사유와 함께
+  거부하고, 더불어 완성된 질의를 **자기 validator로 자체 검사**해 네 번째 원인을 보고 없이
+  잡습니다(앞의 둘은 `interval '<n> day'` 리터럴과 이 절 키워드였고, 하나씩 고쳐졌습니다).
+- **선언된 컬럼명을 조용히 바꾸고 원래 이름을 보고**했습니다. `order amount` → SQL은
+  `order_amount`, `requested_columns`는 `order amount`, assumptions는 "카탈로그에서 검증된
+  컬럼만 사용" — 응답이 스스로 모순이었고 구매자는 창고가 `column "order_amount" does not
+  exist`라고 답할 때 알게 됩니다. 변환은 유지하되(인용 식별자는 이 게이트가
+  `literal_values_not_allowed`로 거부하므로 실행 불가, 하이픈 차단 계약도 존재)
+  `emitted_identifiers`로 보고하고, 다른 선언 컬럼과 충돌하는 **모호한 변환은 거부**합니다 —
+  매핑이 injective가 아니라 엉뚱한 컬럼을 집계할 수 있었습니다.
 - **`POST /browse/query`가 500**이었습니다. `profile.row_count`가 JSON 문자열이면
   (`profile`은 `Dict[str, Any]`이고 `POST /catalog/datasets`가 그대로 저장합니다)
   `_row_count_estimate`가 `TypeError`로 죽어 그 데이터셋의 governed query 경로가 영구히
