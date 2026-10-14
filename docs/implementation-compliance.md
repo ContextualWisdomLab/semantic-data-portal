@@ -301,6 +301,14 @@ seed의 `security` subject는 `platform-admin`도 들고 있어 여전히 previe
   선언하며, verify 경로에도 같은 카운터를 노출합니다(상한이 권한 결과를 바꿀 수 있으므로).
   증빙: `tests/test_oidc_preview_boundary.py` (13건).(group 이름, 부여한 tenant scope, 부여된 role)와 `audit_event_id`를 반환하고 `enterprise/auth/oidc` resource audit event를 남긴다. `sso_oidc_adapter` control은 이로써 `implemented`가 되고 `GET /enterprise/controls`의 `planned_controls`는 0, `status`는 `pilot_ready`가 된다.
 - `GET /enterprise/evidence-pack`: metadata validation, SHACL-compatible validation, steward queue, ontology mapping coverage, policy/audit counts, controls, KPI ids, proof endpoints.
+  - **200 응답 계약 게시**: 변경 전 쓸 수 있는 200 스키마가 60개 중 **0개**였습니다(54개 bare
+    `object/additionalProperties`, 4개 bare array, 1개 빈 스키마, 1개 타입만). JSON을 반환하는
+    GET **38개**에 대해 라우트를 실행해 유도한 스키마를 게시하고,
+    `tests/test_api_response_contract.py`가 실제 응답과 대조합니다(유도 과정의 narrowing 버그 1건을
+    이 테스트가 잡았습니다 — `null`로 관측된 필드에 `string`을 게시하던 것). 게시하지 않는 22개는
+    사유와 함께 `UNPUBLISHED_RESPONSES`로 선언하며, 선언이 실제와 맞는지도 테스트가 강제합니다.
+    `GET /metrics`의 content type도 `application/json`에서 실제 Prometheus 텍스트 타입으로
+    정정했습니다.
   - **정정(connector control 판정)**: `implemented`가 `bool(_IMPLEMENTED_PROOF.get(control, []))`
     였습니다 — 같은 파일의 손으로 쓴 dict 멤버십. 측정: 필수 control 11종이 모두 dict에 있어
     `planned`는 도달 불가능했고, 유효한 5쌍 전부에서 11행이 모두 `implemented`였습니다. 이제

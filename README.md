@@ -89,6 +89,24 @@ guardrail("제안 mapping은 승인으로 취급하지 않는다")과 모순이�
 설정되어 있지 않습니다). secret을 설정하면 1개가 됩니다. 또한 `credential_vault`의
 `proof_endpoints`에 들어 있던 환경변수 이름 `SDP_CONNECTOR_SECRET_REF_PREFIX`는 endpoint가 아니므로
 `config_proof` 필드로 분리했습니다.
+`GET /openapi.json`이 **쓸 수 있는 200 스키마를 60개 operation 중 0개**에 게시하고 있었습니다
+(측정: 54개가 `{"type":"object","additionalProperties":true}`, 4개가 빈 배열, 1개가 빈 스키마,
+1개가 타입만). 모든 핸들러가 `-> dict[str, Any]`로 선언되어 있어 사실이지만 소비자에게는 아무 정보가
+없고, 문서로 클라이언트를 생성하는 구매자는 카탈로그·evidence pack·모든 거버닝 읽기에 대해
+`Dict[str, Any]`를 받았습니다. 거부 계약과 요청 본문을 게시한 것과 같은 이유로, 세 번째이자 마지막
+계약으로 200 본문을 게시합니다(JSON을 반환하는 GET **38개**).
+
+스키마는 **라우트를 실행해서 유도**합니다 — 손으로 쓴 응답 스키마는 이 제품이 거부하는 바로 그
+drift(코드와 일치하지 않는 게시된 주장)이기 때문입니다. `tests/test_api_response_contract.py`가
+게시된 모든 operation을 호출해 실제 응답이 게시 스키마를 만족하는지 검증하므로 drift는 CI에서
+실패합니다. 유도 규칙은 과대 주장을 막도록 선택했습니다: `required`를 **아무 것도** 표시하지 않고
+(상태에 따라 없는 필드가 있습니다), 숫자는 `integer`가 아니라 항상 `number`이며, `null`로 관측된
+값과 빈 배열의 items는 `type: null`이 아니라 `{}`("any")로, 서로 다른 타입이 관측되면 둘 중 하나를
+고르지 않고 `{}`로 게시합니다. 게시하지 않는 것은 **선언**합니다: 본문이 필요한 non-GET 20개
+(mutation을 구동해야 하고, 그러면 검증 테스트가 그래프 스토어 상태를 남깁니다 — 요청 본문 쪽은
+이미 게시되어 있습니다). `GET /metrics`는 `application/json` + 빈 스키마로 문서화되어 있어 생성된
+클라이언트가 Prometheus 텍스트를 JSON으로 파싱하려 했을 것이므로, 실제 content type
+(`text/plain; version=0.0.4; charset=utf-8`)으로 정정했습니다.
 REST connector secret은 `SDP_CONNECTOR_SECRET_REF_PREFIX=SDP_CONNECTOR_SECRET_` 기준의 env secret reference로 조회합니다. 예: `SDP_CONNECTOR_SECRET_REST_CONNECTOR_MARKETING_CAMPAIGN_TOKEN` 값은 presence만 검증하며 API 응답에는 노출하지 않습니다.
 OIDC token verification은 `SDP_OIDC_ISSUER`, `SDP_OIDC_AUDIENCE`, `SDP_OIDC_JWKS_URL`(또는 JWKS 문서를 그대로 담는 `SDP_OIDC_JWKS`), `SDP_OIDC_GROUP_ROLE_MAP`를 사용합니다. 이 네 가지는 **operator 설정 전용**입니다. `POST /enterprise/auth/oidc-verify`의 body는 `token` 하나만 받고, `issuer`·`audience`·`jwks`·`role_map`이 body에 오면 400으로 거절합니다 — 호출자가 자기 토큰의 신뢰 기준을 지정할 수 있으면 스스로 서명한 토큰으로 임의 tenant의 platform-admin을 발급받을 수 있기 때문입니다.
 `SDP_OIDC_GROUP_ROLE_MAP`은 두 가지 형태를 받습니다. flat `{"group": ["role"]}`은 모든 tenant에 적용되는 wildcard scope(`*`)가 되고, tenant scoped `{"tenant": {"group": ["role"]}}`은 해당 tenant에만 적용됩니다. 같은 group이 두 scope에 모두 있으면 tenant scope가 wildcard를 대체하므로, tenant scope에 빈 role 목록을 쓰면 wildcard 부여를 해당 tenant에서만 회수할 수 있습니다. 두 형태를 한 map에 섞으면 tenant 식별자를 group 이름으로 잘못 읽는 설정 오류이므로 요청이 400으로 거절됩니다.

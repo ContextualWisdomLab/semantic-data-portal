@@ -66,6 +66,7 @@ from .observability import (
 )
 from .api_error_contract import document_refusals
 from .api_request_contract import document_request_bodies
+from .api_response_contract import document_responses
 from .authz import can_access_tenant, resolve_actor_context
 from .policy import (
     accessible_tenant_ids,
@@ -1818,3 +1819,11 @@ DOCUMENTED_REFUSALS = document_refusals(app)
 # runtime parameter stays ``dict[str, Any]`` and the 400 shape is unchanged; see
 # ``sdp.api_request_contract`` for why the document was lying about them.
 document_request_bodies(app)
+# Publish the 200 bodies. Third of the three published contracts, and the last
+# place the document said ``Dict[str, Any]`` where the handler returns a known
+# shape: a usable 200 schema appeared on **0 of 60** operations. The schemas are
+# derived by executing the routes and re-checked against live responses by
+# ``tests/test_api_response_contract.py``; nothing about the runtime changes.
+# Order matters - ``document_responses`` wraps whatever ``app.openapi`` is now,
+# so it must come after the request-body wrapper, not before.
+document_responses(app)

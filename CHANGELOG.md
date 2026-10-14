@@ -17,7 +17,7 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                    690 passed, 11 skipped
+    pytest                    735 passed, 11 skipped
     pytest (역방향/난수 순서)  순서 무관 통과 (역순 + seed 11/29/77)
     pytest tests/fuzz          11 passed
     python -m sdp.demo_smoke   exit 0, "ready": true
@@ -197,6 +197,20 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
   문서화한 operation이 60개 중 **0개**. 이제 42개이고, 남은 18개는 실제로 거부가
   없는 열린 읽기입니다. 계약은 표 하나에 있고, 코드가 낼 수 있는 상태는
   `sdp.api`의 AST를 따라 유도해 **양방향**으로 대조합니다.
+- **200 응답 계약을 게시**합니다. 변경 전: 쓸 수 있는 200 스키마를 가진 operation이 60개 중
+  **0개**(54개가 `{"type":"object","additionalProperties":true}`, 4개 bare array, 1개 빈
+  스키마, 1개 타입만). 모든 핸들러가 `-> dict[str, Any]`여서 사실이지만 소비자에게는 무정보였고,
+  문서로 클라이언트를 만드는 구매자는 카탈로그·evidence pack·모든 거버닝 읽기에 `Dict[str, Any]`를
+  받았습니다. JSON을 반환하는 GET **38개**에 스키마를 게시합니다 — **라우트를 실행해 유도**하고
+  (손으로 쓴 응답 스키마는 이 제품이 거부하는 drift 그 자체입니다) 테스트가 실제 응답과 대조합니다.
+  그 테스트가 제 유도 코드의 narrowing 버그를 잡았습니다: `{}`("any")가 타입에 흡수되어 `null`로
+  관측된 `mappings[].steward`/`approved_at`에 `string`을 게시하고 있었습니다. 유도 규칙은
+  `required` 미표시, `integer` 대신 `number`, 관측된 `null`·빈 배열 items·타입 충돌은 `{}`입니다.
+  게시하지 않는 22개는 사유와 함께 선언하고 선언의 정확성도 테스트합니다.
+- `GET /metrics`가 `application/json` + 빈 스키마로 문서화되어 있었습니다. 실제로는
+  `text/plain; version=0.0.4; charset=utf-8`(Prometheus exposition)을 반환하므로, 생성된
+  클라이언트는 Prometheus 텍스트를 JSON으로 파싱하려 했을 것입니다. 실제 content type으로
+  정정했습니다.
 - **요청 본문 계약을 게시**합니다. 네 라우트(`POST /catalog/datasets`,
   `PATCH /catalog/datasets/{id}`, `POST /llm/draft-query`, `POST /browse/query`)는
   이미 pydantic 모델로 검증되고 있었지만 문서에는 `additionalProperties: true`로만
@@ -213,8 +227,11 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
   라이브 Postgres+AGE+pgvector에서 **실행해 보지 못했습니다**. in-memory 쪽은
   테스트가 덮고, 실제 DB가 필요한 단언은 `tests/test_integration_age.py`에
   있습니다(DSN 없으면 skip).
-- 200 응답 스키마 60건은 미게시입니다. `response_model`은 필드를 필터링하므로
-  동작 변경 위험이 크고 별도 변경이어야 합니다.
+- 200 응답 스키마는 JSON을 반환하는 GET 38개에 게시했고, 본문이 필요한 non-GET 20개는
+  미게시입니다(스키마를 유도하려면 mutation을 구동해야 하고, 그러면 검증 테스트가 그래프 스토어
+  상태를 남깁니다 — 요청 본문 쪽은 이미 게시되어 있습니다). `response_model`은 쓰지 않았습니다:
+  필드를 필터링하므로 동작 변경 위험이 있어, 런타임을 건드리지 않는 `responses=` 문서화 경로를
+  택했습니다.
 - 요청 본문 10건은 모델이 없는 라우트입니다(느슨한 키 읽기). 스키마를 손으로
   써 붙이면 핸들러가 읽는 것과 어긋날 수 있고, 모델을 주면 400이 422로 바뀝니다.
 - 그래프 스토어 싱글턴은 테스트 격리 대상에서 제외했습니다(snapshot API가 없고,
