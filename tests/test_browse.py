@@ -51,10 +51,25 @@ def test_preview_rejects_out_of_range_pagination(limit: int, offset: int) -> Non
         browse.preview("crm-customer-master", user="admin", purpose="analysis", limit=limit, offset=offset)
 
 
-def test_preview_denied_raises_permission_error() -> None:
-    """A cross-tenant subject is denied preview (policy deny -> PermissionError)."""
-    with pytest.raises(PermissionError):
+def test_preview_denied_for_a_cross_tenant_subject_reads_as_not_found() -> None:
+    """A cross-tenant subject is denied preview, and learns nothing about existence.
+
+    A cross-tenant refusal is now indistinguishable from a missing dataset -
+    ``KeyError``, mapped to 404 at the route - because 403-for-foreign plus
+    404-for-missing is an existence oracle over an enumerable id space. The
+    denial is still recorded: the assertions below check that the ledger keeps
+    the real reason.
+    """
+    before_audit = len(catalog._AUDIT_LOG)
+    before_decisions = len(evidence._POLICY_DECISION_LOG)
+    with pytest.raises(KeyError):
         browse.preview("crm-customer-master", user="external-analyst", purpose="analysis")
+
+    decisions = evidence._POLICY_DECISION_LOG[before_decisions:]
+    assert [decision.effect for decision in decisions] == ["deny"]
+    assert decisions[0].reason == "tenant boundary denied"
+    audited = catalog._AUDIT_LOG[before_audit:]
+    assert [event.reason for event in audited] == ["tenant boundary denied"]
 
 
 def test_schema_missing_dataset_raises_keyerror() -> None:
@@ -63,12 +78,38 @@ def test_schema_missing_dataset_raises_keyerror() -> None:
         browse.schema("__no_such_dataset__", user="admin")
 
 
-def test_schema_denied_raises_permission_error() -> None:
-    """schema denial (cross-tenant) records an audit event and raises PermissionError."""
+def test_schema_denied_for_a_cross_tenant_subject_reads_as_not_found() -> None:
+    """schema denial (cross-tenant) is still audited, and still discloses nothing.
+
+    A cross-tenant refusal is now indistinguishable from a missing dataset -
+    ``KeyError``, mapped to 404 at the route - because 403-for-foreign plus
+    404-for-missing is an existence oracle over an enumerable id space. The
+    denial is still recorded: the assertions below check that the ledger keeps
+    the real reason.
+    """
     before = len(catalog._AUDIT_LOG)
-    with pytest.raises(PermissionError):
+    with pytest.raises(KeyError):
         browse.schema("crm-customer-master", user="external-analyst", purpose="analysis")
-    assert len(catalog._AUDIT_LOG) == before + 1  # the denial is audited
+    audited = catalog._AUDIT_LOG[before:]
+    assert len(audited) == 1  # the denial is audited
+    assert audited[0].reason == "tenant boundary denied"
+    assert audited[0].decision_id, "the audit row must point at a real decision"
+
+
+def test_a_denial_inside_the_tenant_still_raises_permission_error() -> None:
+    """Only the cross-tenant case collapses into "not found".
+
+    A caller who may reach the dataset's tenant may legitimately know it exists,
+    so a refusal for any other cause - here critical sensitivity - stays a
+    ``PermissionError`` carrying its real reason.
+    """
+    base = catalog._DATA["crm-customer-master"]
+    catalog._DATA["critical-in-tenant"] = base.model_copy(
+        update={"id": "critical-in-tenant", "sensitivity": "critical"}
+    )
+    with pytest.raises(PermissionError) as refusal:
+        browse.schema("critical-in-tenant", user="analyst", purpose="analysis")
+    assert "critical" in str(refusal.value)
 
 
 def test_preview_masks_pii_columns() -> None:
@@ -148,7 +189,10 @@ def test_browse_audit_events_carry_the_owning_tenant():
     )
 
     before = len(catalog._AUDIT_LOG)
-    with pytest.raises(PermissionError):
+    # KeyError, not PermissionError: a cross-tenant refusal is indistinguishable
+    # from a missing dataset. The audit row this test is about is written either
+    # way, which is the point.
+    with pytest.raises(KeyError):
         browse.preview("external-customer-master", user="analyst", purpose="analysis")
     browse.preview("external-customer-master", user="external-analyst", purpose="analysis", limit=1)
 
@@ -174,7 +218,10 @@ def test_dataset_profile_is_gated_like_the_schema_it_profiles():
         update={"id": "external-profile-ds", "tenant_id": "external"}
     )
 
-    with pytest.raises(PermissionError):
+    # KeyError: a cross-tenant refusal is indistinguishable from a missing
+    # dataset, so the gate this test is about now refuses without disclosing
+    # that the dataset exists. The gate itself is what is being checked.
+    with pytest.raises(KeyError):
         browse.dataset_profile("external-profile-ds", user="analyst", purpose="analysis")
 
     allowed = browse.dataset_profile("external-profile-ds", user="external-analyst", purpose="analysis")
@@ -193,9 +240,12 @@ def test_dataset_profile_denial_is_audited():
         update={"id": "external-profile-ds", "tenant_id": "external"}
     )
     before = len(catalog._AUDIT_LOG)
-    with pytest.raises(PermissionError):
+    # The refusal reads as "not found" to the caller; the evidence this test is
+    # about is written regardless, and keeps the true reason.
+    with pytest.raises(KeyError):
         browse.dataset_profile("external-profile-ds", user="analyst", purpose="analysis")
     recorded = catalog._AUDIT_LOG[before:]
     assert len(recorded) == 1
     assert recorded[0].result == "denied"
+    assert recorded[0].reason == "tenant boundary denied"
     assert recorded[0].details["tenant_id"] == "external"

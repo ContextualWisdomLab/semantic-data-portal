@@ -383,3 +383,89 @@ def test_the_steward_queue_counts_platform_wide_and_names_only_in_scope() -> Non
         )
     assert anonymous["withheld_review_item_count"] >= 1
     assert platform_admin["withheld_review_item_count"] == 0
+
+
+def test_no_dataset_route_distinguishes_a_foreign_dataset_from_a_missing_one() -> None:
+    """One answer for "not yours" and "not there", across every dataset-named route.
+
+    Dataset ids are enumerable, so a route that answers 403 for a dataset in
+    another tenant and 404 for one that does not exist lets an outsider map the
+    whole catalog one id at a time. Measured before this repair:
+
+        GET  /browse/zeta-b/schema?user=analyst          -> 403 tenant boundary denied
+        GET  /browse/no-such-dataset/schema?user=analyst -> 404 dataset not found
+        POST /browse/zeta-b/preview                      -> 403
+        POST /browse/no-such-dataset/preview             -> 404
+        POST /llm/draft-query (zeta-b)                   -> 200 error=policy_denied
+        POST /llm/draft-query (no-such-dataset)          -> 200 error=dataset_not_found
+
+    An earlier commit in this series fixed the ``/catalog`` family and left
+    ``/browse`` at 403 on the reasoning that "the caller already names the id".
+    This measurement is why that reasoning was wrong: naming an id is not knowing
+    it exists.
+
+    The routes and both refusal causes are enumerated here, so the comparison
+    cannot pass by only checking the family that happened to be reported.
+    """
+    base = catalog._DATA["crm-customer-master"]
+    catalog._DATA["oracle-foreign-ds"] = base.model_copy(
+        update={"id": "oracle-foreign-ds", "tenant_id": "unreachable-tenant"}
+    )
+
+    probes = (
+        (
+            "GET /browse/{}/schema",
+            lambda dataset_id: client.get(
+                f"/browse/{dataset_id}/schema", params={"user": "analyst", "purpose": "analysis"}
+            ),
+        ),
+        (
+            "POST /browse/{}/preview",
+            lambda dataset_id: client.post(
+                f"/browse/{dataset_id}/preview", json={"user": "analyst", "purpose": "analysis"}
+            ),
+        ),
+        (
+            "GET /catalog/datasets/{}",
+            lambda dataset_id: client.get(
+                f"/catalog/datasets/{dataset_id}", params={"user": "analyst"}
+            ),
+        ),
+        (
+            "GET /catalog/datasets/{}/profile",
+            lambda dataset_id: client.get(
+                f"/catalog/datasets/{dataset_id}/profile", params={"user": "analyst"}
+            ),
+        ),
+    )
+
+    oracles = []
+    for label, probe in probes:
+        foreign = probe("oracle-foreign-ds")
+        missing = probe("definitely-not-a-dataset")
+        if (foreign.status_code, foreign.text) != (missing.status_code, missing.text):
+            oracles.append(
+                f"{label}: foreign -> {foreign.status_code} {foreign.text[:60]} | "
+                f"missing -> {missing.status_code} {missing.text[:60]}"
+            )
+    assert not oracles, "these routes tell an outsider which dataset ids exist:\n  " + "\n  ".join(
+        oracles
+    )
+
+
+def test_a_refusal_inside_the_tenant_still_states_its_reason() -> None:
+    """Only the out-of-scope case collapses; an in-tenant refusal stays explicit.
+
+    A caller who may reach the dataset's tenant may legitimately know it exists,
+    so withholding the reason there would cost diagnosability for no privacy gain.
+    """
+    base = catalog._DATA["crm-customer-master"]
+    catalog._DATA["critical-same-tenant"] = base.model_copy(
+        update={"id": "critical-same-tenant", "sensitivity": "critical"}
+    )
+    refused = client.get(
+        "/browse/critical-same-tenant/schema",
+        params={"user": "analyst", "purpose": "analysis"},
+    )
+    assert refused.status_code == 403, refused.text
+    assert "critical" in refused.text

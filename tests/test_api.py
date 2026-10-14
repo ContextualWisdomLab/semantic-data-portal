@@ -1126,11 +1126,28 @@ def test_preview_pagination_and_decision_traceability():
 
 
 def test_preview_denies_low_privilege_actor():
+    """A caller with no resolvable tenant is refused, and learns nothing.
+
+    404, not 403: ``guest`` resolves to no tenant and no roles, so it cannot
+    reach this dataset's tenant, and 403-for-foreign plus 404-for-missing is an
+    existence oracle over an enumerable id space. The refusal is still recorded -
+    the audit row below carries the real reason - so denial remains evidence.
+
+    Note the fixture gap this exposes: no seeded subject is *inside* the tenant
+    and *lacking* read rights, so the "insufficient role" refusal (which does
+    stay a 403) has no representative actor here. See
+    ``tests/test_browse.py::test_a_denial_inside_the_tenant_still_raises_permission_error``
+    for that case, which uses sensitivity instead of role.
+    """
+    before = len(app_catalog._AUDIT_LOG)
     response = client.post(
         "/browse/crm-customer-master/preview",
         json={"user": "guest", "purpose": "analysis"},
     )
-    assert response.status_code == 403
+    assert response.status_code == 404, response.text
+    audited = app_catalog._AUDIT_LOG[before:]
+    assert [event.result for event in audited] == ["denied"]
+    assert audited[0].reason == "tenant boundary denied"
 
 
 def test_audit_event_includes_policy_decision_id_for_preview():
@@ -1365,13 +1382,25 @@ def test_tenant_boundary_denies_cross_tenant_preview():
     created = client.post("/catalog/datasets", json=create_payload)
     assert created.status_code == 200
     assert created.json()["dataset"]["tenant_id"] == "external"
+    # The cross-tenant refusal below is a 404, not a 403: the two answers
+    # together would tell an outside caller which ids exist.
 
     denied = client.post(
         "/browse/external-tenant-dataset/preview",
         json={"user": "analyst", "purpose": "analysis", "limit": 1},
     )
-    assert denied.status_code == 403
-    assert "tenant boundary denied" in denied.json()["detail"]
+    assert denied.status_code == 404, denied.text
+    assert "tenant" not in denied.text, "the refusal must not explain itself to an outsider"
+    # The real reason moved from the response body to the ledger, where it
+    # belongs: the client learns nothing, the auditor learns everything.
+    decisions = app_evidence._POLICY_DECISION_LOG
+    boundary_denials = [
+        decision
+        for decision in decisions
+        if decision.resource == "external-tenant-dataset" and decision.effect == "deny"
+    ]
+    assert boundary_denials, "the denial must still be recorded as a policy decision"
+    assert boundary_denials[-1].reason == "tenant boundary denied"
 
     allowed = client.post(
         "/browse/external-tenant-dataset/preview",
@@ -1901,7 +1930,11 @@ def test_catalog_discovery_routes_do_not_publish_governed_dataset_internals():
         "/browse/crm-customer-master/schema",
         params={"user": "nobody", "purpose": "analysis"},
     )
-    assert denied.status_code == 403
+    # 404: an actor with no resolvable tenant must not be able to distinguish a
+    # dataset it may not see from one that is not there. The point of this test -
+    # that the ungated catalog surface may not hand over what browse refuses -
+    # is unchanged.
+    assert denied.status_code == 404, denied.text
 
     detail = client.get("/catalog/datasets/crm-customer-master", params={"user": "analyst"})
     assert detail.status_code == 200

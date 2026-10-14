@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
+from .authz import can_access_tenant
 from .catalog import get_dataset, get_dataset_profile, ingest_event
 from .domain import ColumnMetadata, Dataset
 from .policy import evaluate
@@ -110,7 +111,7 @@ def preview(dataset_id: str, user: str, purpose: str, limit: int = 100, offset: 
             decision_id=decision.decision_id,
             details={"purpose": purpose, "policy_decision_id": decision.decision_id},
         )
-        raise PermissionError(decision.reason)
+        _refuse(user, dataset, decision)
 
     rows = _sample_rows(dataset)
 
@@ -164,6 +165,32 @@ def apply_mask(row: Dict[str, Any], masked_columns: List[str]) -> Dict[str, Any]
     return row
 
 
+
+def _refuse(user: str, dataset: Dataset, decision: Any) -> None:
+    """Raise the refusal a denied decision deserves, without disclosing existence.
+
+    A caller outside the dataset's tenant must not be able to tell a dataset it
+    may not see from one that is not there. Measured before this change:
+
+        GET /browse/zeta-b/schema?user=analyst          -> 403 tenant boundary denied
+        GET /browse/no-such-dataset/schema?user=analyst -> 404 dataset not found
+
+    Dataset ids are enumerable, so that pair is an existence oracle over the whole
+    catalog - the same disclosure the discovery surface was repaired to close, and
+    an earlier commit in this series left it open here on the reasoning that "the
+    caller already names the id". Naming an id is not knowing it exists, so that
+    reasoning was wrong.
+
+    Nothing is lost for compliance: the policy decision row and the audit event
+    are written before this raises, both carrying the real reason, so a denial is
+    still evidence. Only the client is told less. A denial for any other cause -
+    insufficient role, critical sensitivity, export purpose - stays a 403, because
+    a caller inside the tenant may legitimately know the dataset exists.
+    """
+    if not can_access_tenant(user, dataset.tenant_id):
+        raise KeyError("dataset not found")
+    raise PermissionError(decision.reason)
+
 def schema(dataset_id: str, user: str, purpose: str = "analysis") -> Dict[str, Any]:
     dataset = get_dataset(dataset_id)
     if not dataset:
@@ -180,7 +207,7 @@ def schema(dataset_id: str, user: str, purpose: str = "analysis") -> Dict[str, A
             decision_id=decision.decision_id,
             details={"purpose": purpose, "policy_decision_id": decision.decision_id},
         )
-        raise PermissionError(decision.reason)
+        _refuse(user, dataset, decision)
 
     ingest_event(
         event_type="browse.schema",
@@ -226,7 +253,7 @@ def dataset_profile(dataset_id: str, user: str, purpose: str = "analysis") -> Di
             decision_id=decision.decision_id,
             details={"purpose": purpose, "policy_decision_id": decision.decision_id},
         )
-        raise PermissionError(decision.reason)
+        _refuse(user, dataset, decision)
 
     ingest_event(
         event_type="browse.profile",
