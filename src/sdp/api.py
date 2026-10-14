@@ -1085,6 +1085,29 @@ def browse_schema(dataset_id: str, user: str = Query(default="anonymous"), purpo
         raise HTTPException(status_code=403, detail=str(exc))
 
 
+def _payload_str(payload: dict[str, Any], field: str, default: str) -> str:
+    """Coerce one string field, refusing a non-string JSON value as a 400.
+
+    ``/browse/{dataset_id}/preview`` is the only route whose body is annotated
+    ``dict[str, Any]`` - it has to be, because ``limit``/``offset`` are integers -
+    and it read ``user``/``purpose`` straight out of that dict. A non-string value
+    flowed into the policy and masking code and raised there, so every one of
+    these produced a 500:
+
+        {"user": 123} {"user": null} {"user": ["a"]} {"user": {"x": 1}} {"user": true}
+
+    Sibling routes annotated ``dict[str, str]`` are validated by FastAPI and
+    already answered 422; a sweep of every raw-payload POST route found no other
+    5xx, so the coercion is applied here rather than everywhere.
+    """
+    value = payload.get(field, default)
+    if value is None:
+        return default
+    if not isinstance(value, str):
+        raise HTTPException(status_code=400, detail=f"{field} must be a string")
+    return value
+
+
 def _pagination_int(payload: dict[str, Any], field: str, default: int) -> int:
     """Coerce one pagination field, refusing a non-numeric JSON value as a 400.
 
@@ -1113,8 +1136,8 @@ def browse_preview(dataset_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         offset = _pagination_int(payload, "offset", 0)
         return browse.preview(
             dataset_id=dataset_id,
-            user=payload.get("user", "anonymous"),
-            purpose=payload.get("purpose", "analysis"),
+            user=_payload_str(payload, "user", "anonymous"),
+            purpose=_payload_str(payload, "purpose", "analysis"),
             limit=min(limit, 100),
             offset=max(offset, 0),
         )
