@@ -45,8 +45,16 @@ docker compose --profile postgres up --build
 
 ```bash
 uv pip compile pyproject.toml --generate-hashes -o requirements.txt
-uv pip compile pyproject.toml --extra dev --generate-hashes -o requirements-dev.txt
+uv pip compile pyproject.toml --extra dev --generate-hashes --universal \
+  --python-version 3.12 --constraint constraints-dev.txt -o requirements-dev.txt
 ```
+
+각 lock 파일의 헤더 주석이 자신을 재생성하는 정확한 명령이고,
+`tests/test_dependency_locks.py`가 그 헤더와 내용을 함께 강제한다.
+`constraints-dev.txt`는 dev lock을 **CI가 실제로 테스트하는 버전**에 묶는다 —
+dev extra를 자유 해석하면 `hypothesis`/`SQLAlchemy`가 CI pin보다 높은 minor로
+잡히고, SQLAlchemy는 `src/sdp/graph_store.py`와 `src/sdp/config.py`가 올라서는
+라이브러리이므로 로컬이 green인데 CI가 red인 상황이 만들어진다.
 
 supply-chain 하드닝 유지: base image는 digest-pinned(`python:3.12-slim@sha256:...`), 컨테이너는 non-root(uid 10001), GitHub Actions는 commit SHA로 pin. Dockerfile/requirements/workflow를 수정할 때 이 속성을 되돌리지 말 것.
 
@@ -78,7 +86,7 @@ supply-chain 하드닝 유지: base image는 digest-pinned(`python:3.12-slim@sha
 
 ### docker-compose 서비스 구성
 
-- `semantic-data-portal` (기본): 앱 단독, `SDP_SQLITE_PATH=/data/sdp-evidence.sqlite3` + `sdp-evidence` volume, 8000 포트, `/health` healthcheck.
+- `semantic-data-portal` (기본): 앱 단독, `SDP_SQLITE_PATH=/data/sdp-evidence.sqlite3` + `sdp-evidence` volume, 8000 포트, `/healthz` healthcheck (`Dockerfile`/`docker-compose.yml`가 조회하는 경로. 상수를 돌려주는 `/health`가 아니라 백엔드 준비 상태를 보고 503을 낼 수 있는 쪽이다).
 - `--profile postgres` 활성화 시: `postgres`(digest-pinned `postgres:16-alpine`, loopback host port 54329) + `semantic-data-portal-postgres`(필수 `POSTGRES_PASSWORD`/`SDP_DATABASE_URL`, `POSTGRES_USER` 기본값은 `sdp_app`, 호스트 8001) 추가. 두 앱 인스턴스로 SQLite/Postgres store protocol 동등성을 검증하는 구성이다.
 
 ### Fuzzing

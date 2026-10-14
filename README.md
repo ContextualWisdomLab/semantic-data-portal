@@ -37,10 +37,18 @@
 
 ```bash
 python -m venv .venv
-. .venv/Scripts/Activate.ps1
+. .venv/bin/activate          # Windows PowerShell: .\.venv\Scripts\Activate.ps1
 python -m pip install --require-hashes -r requirements-dev.txt
 PYTHONPATH=src uvicorn sdp.api:app --reload
 ```
+
+이 블록은 한 셸에서 그대로 실행됩니다. 이전에는 `bash` 펜스 안에 PowerShell
+활성화 경로(`.venv/Scripts/Activate.ps1`)가 있고 그다음 줄은 POSIX 전용
+`VAR=value command` 구문이어서, 어느 셸에서도 통째로 실행할 수 없었습니다.
+`requirements-dev.txt`는 **프로젝트 자체를 설치하지 않으므로** `PYTHONPATH=src`가
+필요합니다(이것이 이 저장소의 문서화된 경로입니다). `pip install -e .[dev]`로
+editable 설치를 하면 `PYTHONPATH` 없이도 import되지만, 그 경로는 hash-pinned
+lock을 우회합니다.
 
 `SDP_DATABASE_URL=postgresql://...`를 지정하면 policy decision과 audit event가 tenant/resource/evidence id 기준의 Postgres evidence store에 기록됩니다. `SDP_DATABASE_SSLMODE=require`처럼 SSL mode를 함께 지정할 수 있습니다.
 `SDP_SQLITE_PATH=.local/sdp-evidence.sqlite3`를 지정하면 production credential 없이도 같은 evidence store protocol을 로컬 SQLite fallback으로 검증할 수 있습니다. `SDP_DATABASE_URL`이 있으면 Postgres가 SQLite보다 우선합니다.
@@ -270,7 +278,10 @@ Docker 기반 로컬 데모는 다음 명령으로 실행합니다.
 docker compose up --build
 ```
 
-컨테이너는 `SDP_SQLITE_PATH=/data/sdp-evidence.sqlite3`를 사용하고 `/health` healthcheck를 노출합니다.
+컨테이너는 `SDP_SQLITE_PATH=/data/sdp-evidence.sqlite3`를 사용하고 healthcheck로
+`/healthz`를 조회합니다 — `Dockerfile`과 `docker-compose.yml`이 실제로 조회하는
+경로이며, 상수를 돌려주는 `/health`가 아니라 백엔드 준비 상태를 보고 503을 낼 수
+있는 쪽입니다(아래 Postgres 프로파일 설명과 같은 구분입니다).
 
 Postgres evidence store까지 포함한 paid-pilot 프로파일은 다음 명령으로 실행합니다.
 

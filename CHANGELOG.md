@@ -20,7 +20,7 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                    965 passed, 11 skipped
+    pytest                    971 passed, 11 skipped
     pytest (역방향/난수 순서)  순서 무관 통과 (역순 + seed 11/707/31337)
     pytest tests/fuzz          11 passed
     python -m sdp.demo_smoke   exit 0, "ready": true
@@ -156,6 +156,52 @@ before/after diff와 source/job/target이 여전히 없습니다). NFR-SEC-005�
 - 호출자가 제어하는 작업량과 메모리 증가에 상한을 두었습니다(쿼리 길이, 개념
   어휘, 제안 큐, 두 증빙 원장). 상한이 생기면 창의 길이로는 "기록됐는가"에 답할
   수 없으므로 단조 카운터를 함께 추가했습니다.
+
+### Fixed — 문서화된 개발자 경로가 테스트를 한 건도 돌리지 못했습니다
+
+- **문서화된 설치로 문서화된 테스트 명령이 0건을 수집했습니다.** `requirements-dev.txt`는
+  README·CLAUDE.md가 설치하라고 말하는 산출물이고 `PYTHONPATH=src pytest`는 그 다음에
+  실행하라고 말하는 명령입니다. 깨끗한 venv에서 측정:
+
+      pip install --require-hashes -r requirements-dev.txt   -> ok
+      PYTHONPATH=src pytest
+        -> ERROR tests/fuzz/test_fuzz_properties.py
+           Interrupted: 1 error during collection
+           0건 실행
+
+  lock에 `hypothesis`·`sortedcontainers`·`sqlalchemy`·`greenlet`이 빠져 있었습니다 —
+  `pyproject.toml`의 `dev` extra가 첫째와 셋째를 선언하고 **파일 자신의 헤더가 그 extra로
+  컴파일했다고 주장**하는데도 그랬습니다. CI는 영향받지 않았습니다(CI는 넷을 모두 pin하는
+  `requirements-test.txt`를 설치합니다) — 그래서 파이프라인의 어떤 것도 알아챌 수
+  없었습니다. 수리 후 같은 깨끗한 venv에서 **968 passed**입니다.
+  추가된 네 개는 **CI가 pin한 버전 그대로**입니다. 자유 해석은 `hypothesis==6.169.1`과
+  `sqlalchemy==2.1.4`를 잡는데 CI는 `6.156.6`/`2.0.51`을 pin하고, SQLAlchemy는
+  `src/sdp/graph_store.py`와 `src/sdp/config.py`가 올라서는 라이브러리입니다 — minor가
+  갈리면 로컬 green이 CI red을 가립니다. 네 개만 묶는 `constraints-dev.txt`를 두어
+  다른 pin은 전혀 움직이지 않습니다(그래서 pip-compile로 생성되는 Docker lock
+  `requirements-graph.txt`와의 합의도 그대로 유지됩니다).
+  `tests/test_dependency_locks.py`가 이제 강제합니다: dev extra가 선언한 모든 패키지가
+  lock에 있는지, 스위트가 import하는 것을 설치할 수 있는지, dev와 CI가 공유 pin마다
+  일치하는지, 각 lock의 헤더가 자신을 재생성하는 **실행 가능한** 명령인지.
+  일치 테스트에는 `tzdata` 하나를 **사유와 함께 선언된 예외**로 둡니다 — 전역 합의를
+  강제하려면 pip-compile로 생성되는 Docker lock(자체 `constraints-graph.txt`가
+  `greenlet==3.2.5`를 pin하는)까지 재생성해야 하므로, 이 저장소가 현재 충족하지 못하는
+  gate를 선언하지 않습니다. 예외가 더 이상 실재하지 않으면 테스트가 그 예외를 지우라고
+  실패합니다.
+- **README의 로컬 설치 블록이 어느 셸에서도 통째로 실행되지 않았습니다.** ```bash 펜스
+  안에 PowerShell 활성화 경로(`.venv/Scripts/Activate.ps1`)가 있고 그다음 줄은 POSIX 전용
+  `VAR=value command` 구문이었습니다. POSIX 활성화로 바꾸고 Windows 대응 경로를 주석으로
+  달았습니다.
+- **`docs/enterprise-readiness.md`의 두 명령이 `PYTHONPATH=src`를 빼먹었습니다.**
+  문서화된 설치는 프로젝트 자체를 설치하지 않으므로 `uvicorn sdp.api:app`은
+  `ModuleNotFoundError: No module named 'sdp'`로 실패합니다(측정 확인).
+  같은 스윕이 `AGENTS.md`의 `pip install -e .[dev]` 경로도 같은 결함이라고 보고했는데
+  **그것은 재현되지 않았습니다** — editable 설치는 실제로 동작하고 `PYTHONPATH` 없이
+  import됩니다. 그래서 그 줄은 고치지 않았습니다.
+- **컨테이너 healthcheck 경로를 문서가 틀리게 적고 있었습니다.** README와 CLAUDE.md는
+  `/health`를 노출한다고 했지만 `Dockerfile`과 `docker-compose.yml`은 `/healthz`를
+  조회합니다 — README의 더 아래 단락은 그 구분(상수 응답 vs 백엔드 준비 상태 503)을
+  정확히 설명하고 있어서 같은 문서가 자신과 모순이었습니다.
 
 ### Fixed — 문서화된 워크플로가 실제로 동작하지 않던 것들
 - **운영 콘솔이 유효한 actor에게 "플랫폼이 고장났다"고 보고**했습니다. 측정
