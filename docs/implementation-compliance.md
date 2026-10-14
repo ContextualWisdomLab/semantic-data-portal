@@ -293,6 +293,13 @@ seed의 `security` subject는 `platform-admin`도 들고 있어 여전히 previe
 - `POST /enterprise/auth/oidc-verify`: issuer/audience/expiry/JWKS 서명 검증 후 tenant scoped group mapping으로 `ActorContext`를 생성하고 raw token은 응답에 포함하지 않는다. 신뢰 기준(issuer, audience, JWKS, role map)은 operator 환경 설정에서만 읽으며, request body가 이 네 필드를 보내면 검증 전에 400으로 거절한다.
 - `POST /enterprise/auth/oidc-preview`, `POST /enterprise/auth/oidc-verify`: group별 `group_role_bindings`(group 이름, 부여한 tenant scope, 부여된 role)와 `audit_event_id`를 반환하고 `enterprise/auth/oidc` resource audit event를 남긴다. `sso_oidc_adapter` control은 이로써 `implemented`가 되고 `GET /enterprise/controls`의 `planned_controls`는 0, `status`는 `pilot_ready`가 된다.
 - `GET /enterprise/evidence-pack`: metadata validation, SHACL-compatible validation, steward queue, ontology mapping coverage, policy/audit counts, controls, KPI ids, proof endpoints.
+  - **정정(connector control 판정)**: `implemented`가 `bool(_IMPLEMENTED_PROOF.get(control, []))`
+    였습니다 — 같은 파일의 손으로 쓴 dict 멤버십. 측정: 필수 control 11종이 모두 dict에 있어
+    `planned`는 도달 불가능했고, 유효한 5쌍 전부에서 11행이 모두 `implemented`였습니다. 이제
+    선언된 proof endpoint를 이 빌드가 서비스하는지 확인하고(거짓이 될 수 있는 조건), 증거 강도를
+    `declared_only`/`proof_route_served`/`runtime_probe_verified`로 행마다 게시하며
+    `control_verification_counts`와 `verdict_basis`를 함께 노출합니다. 기본 데모 배포에서
+    runtime 검증 control은 0개입니다. 증빙: `tests/test_connector_verdict_evidence.py` (14건).
   - **정정(shape catalog)**: 게시된 `required_properties`가 평가되지 않았습니다. 측정:
     `format`/`endpoint`가 빈 distribution과 `concept`가 빈 mapping이 모두
     `conforms: true`·violation 0건이었고, `DatasetShape`는 실제 강제되는 네 필드를

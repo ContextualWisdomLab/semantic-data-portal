@@ -17,7 +17,7 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                    661 passed, 11 skipped
+    pytest                    675 passed, 11 skipped
     pytest (역방향/난수 순서)  순서 무관 통과 (역순 + seed 11/29/77)
     pytest tests/fuzz          11 passed
     python -m sdp.demo_smoke   exit 0, "ready": true
@@ -152,6 +152,19 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
   만족하므로 `validation_pass_rate`는 1.0에서 움직이지 않았습니다** — gate가 더 많이 측정하면서
   숫자는 그대로입니다.
 
+- connector probe의 control 판정이 **사전 멤버십 동어반복**이었습니다.
+  `implemented = bool(_IMPLEMENTED_PROOF.get(control, []))` — "이 control이 구현되었는가"를
+  "이 control 이름이 스무 줄 위 손으로 쓴 dict의 키인가"로 답했습니다. 측정(유효한 5쌍,
+  필수 control 11종 전부): dict에 11/11이 있어 `planned`가 **도달 불가능**했고, 전체 행렬에서
+  판정을 움직일 수 있는 것은 `credential_vault`의 secret 존재 확인 하나뿐이었습니다. control 11개가
+  "implemented"라고 세고 있던 구매자는 **주장 11개**를 세고 있었습니다. 각 control의 효과를 실제로
+  검증하는 것은 결함 수정이 아니라 별도 프로젝트이므로, 이번 변경은 주장을 **거짓이 될 수 있게** 만들고
+  **강도를 말하게** 합니다: control은 자신이 선언한 proof endpoint를 이 빌드가 전부 서비스할 때
+  implemented이고, 행마다 `verification`(`declared_only`/`proof_route_served`/
+  `runtime_probe_verified`)과 probe 단위 `control_verification_counts`, 그리고 `verdict_basis`를
+  게시합니다. 여기서 나오는 정직한 숫자: 기본 데모 배포에서 runtime 검증 control은 **0개**입니다.
+  환경변수 이름이 `proof_endpoints`에 섞여 있던 것도 `config_proof`로 분리했습니다.
+
 ### Added — 기계가 읽는 계약
 
 - **거부 계약을 OpenAPI 문서에 게시**합니다. 변경 전: 에러 상태를 하나라도
@@ -185,6 +198,10 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
 - http(s) sink의 `Authorization` 분리는 **로컬에서 포착한 요청 객체**로 검증했습니다
   (urllib이 다이얼하는 host, 재구성된 URL, 헤더). 실제 원격 sink에 대한 왕복은
   실행하지 않았습니다.
+- connector control의 `proof_route_served`는 "선언된 proof endpoint가 이 빌드의 라우트로
+  존재한다"는 뜻이고, 그 control이 실제로 동작한다는 뜻이 **아닙니다**. 11종 중 runtime 확인이
+  있는 것은 `credential_vault` 하나뿐이며, 나머지 10종에 실제 검증을 붙이는 것은 별도 작업입니다
+  (그래서 강도를 게시합니다 — 세 단계가 하나의 "implemented"로 합쳐져 있었습니다).
 - SHACL 엔진은 돌지 않습니다. 게시된 shape가 SHACL로 표현 가능하고 동등한 in-process
   검사로 강제된다는 것이 이 표면이 할 수 있는 정직한 주장이며, 그 둘을 모두 게시합니다.
   `pyshacl`을 의존성으로 들이는 것은 (RDF 스택을 끌어오고 CI가 hash-pinned 설치를 쓰므로)

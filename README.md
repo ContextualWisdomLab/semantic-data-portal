@@ -74,6 +74,21 @@ ontology coverage의 분자로 계산**되었습니다). 이제 세 수치를 �
 `unregistered_mapping_concept_count`. KPI 정의의 "또는 진행 중인 steward patch 제안" 구절은 같은 KPI의
 guardrail("제안 mapping은 승인으로 취급하지 않는다")과 모순이었고, 구현이 guardrail을 따르고 있었으므로
 정의를 엄격한 쪽으로 정정했습니다. 0.8 ≥ 0.7이므로 gate와 `ready`는 그대로입니다.
+`GET /enterprise/connectors/{connector_id}/probe`의 control 판정은 **사전 멤버십 동어반복**이었습니다.
+`implemented = bool(_IMPLEMENTED_PROOF.get(control, []))` — "이 control이 구현되었는가"를
+"이 control 이름이 같은 파일의 손으로 쓴 dict의 키인가"로 답했습니다. 측정(유효한 커넥터×데이터셋 5쌍,
+필수 control 11종 전부): dict에 11/11이 있으므로 `planned`는 **도달 불가능**했고, 판정을 움직일 수 있는
+것은 `credential_vault`의 secret 존재 확인 하나뿐이었습니다(그래서 전체 행렬에서
+`rest_connector`/`marketing-campaign`만 `contract_only`였습니다 — 측정하는 유일한 control이 정보를
+전부 나르고 있었습니다). 이제 control이 선언한 proof endpoint를 **이 빌드가 실제로 서비스하는지** 확인하고
+(라우트 이름이 바뀌면 control이 `planned`로 내려갑니다), 행마다 증거 강도를 함께 게시합니다 —
+`declared_only` / `proof_route_served` / `runtime_probe_verified`와 probe 단위 집계
+`control_verification_counts`, 그리고 `verdict_basis`(판정이 무엇을 주장하고 무엇을 주장하지 않는지).
+여기서 나오는 정직한 숫자: 기본 데모 배포에서 runtime으로 검증되는 control은 **0개**입니다
+(runtime 확인이 있는 control은 `credential_vault` 하나이고, 그것을 요구하는 커넥터의 secret reference가
+설정되어 있지 않습니다). secret을 설정하면 1개가 됩니다. 또한 `credential_vault`의
+`proof_endpoints`에 들어 있던 환경변수 이름 `SDP_CONNECTOR_SECRET_REF_PREFIX`는 endpoint가 아니므로
+`config_proof` 필드로 분리했습니다.
 REST connector secret은 `SDP_CONNECTOR_SECRET_REF_PREFIX=SDP_CONNECTOR_SECRET_` 기준의 env secret reference로 조회합니다. 예: `SDP_CONNECTOR_SECRET_REST_CONNECTOR_MARKETING_CAMPAIGN_TOKEN` 값은 presence만 검증하며 API 응답에는 노출하지 않습니다.
 OIDC token verification은 `SDP_OIDC_ISSUER`, `SDP_OIDC_AUDIENCE`, `SDP_OIDC_JWKS_URL`(또는 JWKS 문서를 그대로 담는 `SDP_OIDC_JWKS`), `SDP_OIDC_GROUP_ROLE_MAP`를 사용합니다. 이 네 가지는 **operator 설정 전용**입니다. `POST /enterprise/auth/oidc-verify`의 body는 `token` 하나만 받고, `issuer`·`audience`·`jwks`·`role_map`이 body에 오면 400으로 거절합니다 — 호출자가 자기 토큰의 신뢰 기준을 지정할 수 있으면 스스로 서명한 토큰으로 임의 tenant의 platform-admin을 발급받을 수 있기 때문입니다.
 `SDP_OIDC_GROUP_ROLE_MAP`은 두 가지 형태를 받습니다. flat `{"group": ["role"]}`은 모든 tenant에 적용되는 wildcard scope(`*`)가 되고, tenant scoped `{"tenant": {"group": ["role"]}}`은 해당 tenant에만 적용됩니다. 같은 group이 두 scope에 모두 있으면 tenant scope가 wildcard를 대체하므로, tenant scope에 빈 role 목록을 쓰면 wildcard 부여를 해당 tenant에서만 회수할 수 있습니다. 두 형태를 한 map에 섞으면 tenant 식별자를 group 이름으로 잘못 읽는 설정 오류이므로 요청이 400으로 거절됩니다.
