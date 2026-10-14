@@ -582,7 +582,12 @@ def test_enterprise_evidence_pack_summarizes_buyer_diligence():
     assert "/enterprise/production-readiness" in body["proof_endpoints"]
     assert "/enterprise/shacl-validation" in body["proof_endpoints"]
     assert "/enterprise/steward-review" in body["proof_endpoints"]
-    assert "/policy/decisions" in body["proof_endpoints"]
+    # The governed links now carry their actor parameter, so the published
+    # string is "/policy/decisions?user=<actor>" rather than the bare path.
+    assert any(
+        endpoint.startswith("/policy/decisions")
+        for endpoint in body["actor_scoped_proof_endpoints"]
+    )
 
 
 def test_sdp_core_owns_stable_contracts_with_app_compatibility_exports():

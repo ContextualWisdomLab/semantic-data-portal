@@ -172,3 +172,57 @@ def test_a_pre_policy_refusal_says_so_instead_of_leaving_a_null_decision() -> No
     audited = catalog._AUDIT_LOG[before:]
     assert audited[0].details["policy_stage"] == "evaluated"
     assert audited[0].decision_id
+
+
+def test_every_published_proof_link_resolves_as_published() -> None:
+    """A diligence link that 404s or 403s reads as a missing capability.
+
+    ``/enterprise/evidence-pack`` published thirteen ``proof_endpoints`` with no
+    distinction between open reads and governed ones. Measured before the repair,
+    fetching each exactly as printed:
+
+        403  /enterprise/connectors/sql_connector/probe?dataset_id=crm-customer-master
+        403  /policy/decisions
+        403  /audit/events
+
+    Those refusals are the access control working - but a reader following the
+    published list sees three dead links and cannot tell a refusal from an absent
+    capability. The list is split so each link resolves when used as documented.
+    """
+    pack = client.get("/enterprise/evidence-pack").json()
+
+    assert pack["proof_endpoints"] == (
+        pack["open_proof_endpoints"] + pack["actor_scoped_proof_endpoints"]
+    ), "the combined list must stay the union of the two, with nothing dropped"
+    assert pack["actor_scoped_proof_note"]
+
+    open_failures = [
+        (endpoint, client.get(endpoint).status_code)
+        for endpoint in pack["open_proof_endpoints"]
+        if client.get(endpoint).status_code >= 400
+    ]
+    assert not open_failures, f"open proof links failed as published: {open_failures}"
+
+    scoped_failures = []
+    for endpoint in pack["actor_scoped_proof_endpoints"]:
+        assert "<actor>" in endpoint, (
+            f"an actor-scoped link must name the parameter: {endpoint}"
+        )
+        resolved = endpoint.replace("<actor>", "admin")
+        status = client.get(resolved).status_code
+        if status >= 400:
+            scoped_failures.append((resolved, status))
+    assert not scoped_failures, (
+        f"actor-scoped proof links failed with an actor supplied: {scoped_failures}"
+    )
+
+
+def test_an_actor_scoped_proof_link_still_refuses_without_an_actor() -> None:
+    """The split documents the gate; it must not have removed it."""
+    pack = client.get("/enterprise/evidence-pack").json()
+    for endpoint in pack["actor_scoped_proof_endpoints"]:
+        without_actor = endpoint.replace("&user=<actor>", "").replace("?user=<actor>", "")
+        status = client.get(without_actor).status_code
+        assert status == 403, (
+            f"{without_actor} should still refuse an actor-less read, got {status}"
+        )

@@ -35,6 +35,32 @@ def _ontology_mapping_coverage() -> float:
     return _ratio(approved, len(mappings))
 
 
+# Published diligence links, split by whether they are governed reads.
+#
+# An unauthenticated fetch of a governed read answers 403, which is the access
+# control working - but the evidence pack listed those links beside the open ones
+# with no distinction, so a reader following the list saw three dead links and
+# had no way to tell a refusal from a missing capability.
+OPEN_PROOF_ENDPOINTS = [
+    "/enterprise/readiness",
+    "/enterprise/demo-plan",
+    "/enterprise/kpis",
+    "/enterprise/controls",
+    "/enterprise/rbac-matrix",
+    "/enterprise/observability",
+    "/enterprise/production-readiness",
+    "/enterprise/shacl-validation",
+    "/enterprise/steward-review",
+    "/metrics",
+]
+
+ACTOR_SCOPED_PROOF_ENDPOINTS = [
+    "/enterprise/connectors/sql_connector/probe?dataset_id=crm-customer-master&user=<actor>",
+    "/policy/decisions?user=<actor>",
+    "/audit/events?user=<actor>",
+]
+
+
 def build_enterprise_evidence_pack() -> dict[str, Any]:
     readiness = enterprise_readiness_manifest()
     demo_plan = buyer_demo_activation_plan()
@@ -67,21 +93,20 @@ def build_enterprise_evidence_pack() -> dict[str, Any]:
         "planned_enterprise_controls": controls.planned_controls,
         "primary_kpis": [kpi.id for kpi in kpis.primary_kpis],
         "guardrail_kpis": [kpi.id for kpi in kpis.guardrail_kpis],
-        "proof_endpoints": [
-            "/enterprise/readiness",
-            "/enterprise/demo-plan",
-            "/enterprise/kpis",
-            "/enterprise/controls",
-            "/enterprise/rbac-matrix",
-            "/enterprise/observability",
-            "/enterprise/production-readiness",
-            "/enterprise/shacl-validation",
-            "/enterprise/steward-review",
-            "/enterprise/connectors/sql_connector/probe?dataset_id=crm-customer-master",
-            "/policy/decisions",
-            "/audit/events",
-            "/metrics",
-        ],
+        "proof_endpoints": OPEN_PROOF_ENDPOINTS + ACTOR_SCOPED_PROOF_ENDPOINTS,
+        # Three of the thirteen published links are governed reads and answer 403
+        # without an actor. Measured: fetched exactly as published, the connector
+        # probe, /policy/decisions and /audit/events all refused - so a diligence
+        # reader following the list concluded the proof did not exist, when in
+        # fact it is the governance working. The list is now split and the
+        # parameter is named, rather than leaving the reader to guess.
+        "open_proof_endpoints": OPEN_PROOF_ENDPOINTS,
+        "actor_scoped_proof_endpoints": ACTOR_SCOPED_PROOF_ENDPOINTS,
+        "actor_scoped_proof_note": (
+            "이 경로들은 거버닝 읽기이므로 actor가 필요합니다. "
+            "`?user=<actor>`를 붙이지 않으면 403으로 거부되며, 그 거부 자체가 "
+            "접근 통제가 동작한다는 증거입니다."
+        ),
         "saleability_gates": {
             "metadata_validation_pass_rate": "pass" if _metadata_validation_pass_rate() >= 0.95 else "gap",
             "shacl_validation_pass_rate": "pass" if shacl_validation["validation_pass_rate"] >= 0.95 else "gap",
