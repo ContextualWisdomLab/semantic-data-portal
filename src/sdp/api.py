@@ -884,7 +884,21 @@ def ontology_patch_create(payload: dict[str, str]) -> dict[str, Any]:
         subject=actor_id, resource="ontology/patches", action="search", purpose="ontology"
     )
     if decision.effect != "allow":
+        _audit_governed_write(
+            event_type="ontology.patch_propose",
+            actor=actor_id,
+            resource="ontology/patches",
+            decision=decision,
+            result="denied",
+        )
         raise HTTPException(status_code=403, detail=decision.reason)
+    _audit_governed_write(
+        event_type="ontology.patch_propose",
+        actor=actor_id,
+        resource="ontology/patches",
+        decision=decision,
+        result="allowed",
+    )
     try:
         return ontology.propose_patch(
             concept=concept,
@@ -901,7 +915,7 @@ def ontology_patch_review(patch_id: str, payload: dict[str, str]) -> dict[str, A
     # authorization as POST /ontology/concepts rather than none at all.
     actor_id = _actor(payload)
     # Authorization first: an unauthorized caller must not learn the payload rules.
-    _authorize_graph_write(actor_id, f"ontology/patches/{patch_id}")
+    _authorize_graph_write(actor_id, f"ontology/patches/{patch_id}", event_type="ontology.patch_review")
     if "reviewer" in payload:
         # The reviewer is the authorized actor. A caller-chosen name would produce
         # a record naming a steward who never saw the patch, so the field is
@@ -955,17 +969,57 @@ def ontology_term_graph(term: str) -> dict[str, Any]:
 # --- Graph ingestion (nodes / edges / concepts) ------------------------------
 
 
-def _authorize_graph_write(actor: str, resource: str) -> None:
+def _audit_governed_write(
+    *, event_type: str, actor: str, resource: str, decision: Any, result: str
+) -> None:
+    """Record the audit half of a governed write.
+
+    The graph and ontology mutation routes evaluated policy and recorded the
+    decision, but **no audit event** - on denial or on success. Measured:
+    ``POST /ontology/concepts`` and ``POST /graph/edges`` each produced
+    ``decisions +1  audits +0``, so a concept or edge overwrite was
+    unattributable in the ledger an auditor reads, while the structurally
+    identical catalog mutations wrote both halves. The repository's stated
+    invariant is policy evaluation *and* evidence recording.
+    """
+    catalog.ingest_event(
+        event_type=event_type,
+        actor=actor,
+        dataset_id=resource,
+        decision=result,
+        decision_id=decision.decision_id,
+        reason=decision.reason,
+        details={"policy_decision_id": decision.decision_id, "resource": resource},
+    )
+
+
+def _authorize_graph_write(actor: str, resource: str, *, event_type: str = "graph.write") -> Any:
     """Graph/ontology writes require an authorized (admin) subject.
 
     Uses the same policy engine as the catalog mutation endpoints: the ``create``
     action is allowed only for an admin subject, so unauthenticated/anonymous
-    writers are refused with 403.
+    writers are refused with 403. Both outcomes are audited here rather than in
+    each route, so a new governed write cannot forget the evidence half.
     """
 
     decision = evaluate(subject=actor, resource=resource, action="create", purpose="graph")
     if decision.effect != "allow":
+        _audit_governed_write(
+            event_type=event_type,
+            actor=actor,
+            resource=resource,
+            decision=decision,
+            result="denied",
+        )
         raise HTTPException(status_code=403, detail=decision.reason)
+    _audit_governed_write(
+        event_type=event_type,
+        actor=actor,
+        resource=resource,
+        decision=decision,
+        result="allowed",
+    )
+    return decision
 
 
 def _authorize_graph_read(actor: str, resource: str) -> None:
@@ -992,14 +1046,14 @@ def _authorize_graph_node_read(actor: str, node_id: str) -> None:
 
 @app.post("/ontology/concepts")
 def ingest_concept(payload: OntologyConceptRequest) -> dict[str, Any]:
-    _authorize_graph_write(payload.actor, payload.concept)
+    _authorize_graph_write(payload.actor, payload.concept, event_type="ontology.concept_upsert")
     record = get_store().upsert_concept(payload.model_dump(exclude={"actor"}))
     return {"status": "upserted", "concept": record}
 
 
 @app.post("/graph/nodes")
 def ingest_graph_node(payload: GraphNodeRequest) -> dict[str, Any]:
-    _authorize_graph_write(payload.actor, payload.node_id)
+    _authorize_graph_write(payload.actor, payload.node_id, event_type="graph.node_upsert")
     node = get_store().upsert_node(
         payload.node_id,
         payload.kind,
@@ -1012,7 +1066,7 @@ def ingest_graph_node(payload: GraphNodeRequest) -> dict[str, Any]:
 
 @app.post("/graph/edges")
 def ingest_graph_edge(payload: GraphEdgeRequest) -> dict[str, Any]:
-    _authorize_graph_write(payload.actor, payload.source_id)
+    _authorize_graph_write(payload.actor, payload.source_id, event_type="graph.edge_upsert")
     try:
         edge = get_store().upsert_edge(
             payload.edge_type,

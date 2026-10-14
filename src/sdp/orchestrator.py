@@ -440,6 +440,13 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
         details: dict[str, object] | None = None,
     ) -> None:
         audit_details = {"purpose": req.purpose, "request_id": request_id, "dry_run": req.dry_run}
+        # An audit row with no decision_id read as "policy was skipped". These
+        # branches refuse malformed input before a decision exists, so the stage
+        # is stated instead of left to be inferred from a null field. A reader of
+        # the ledger can now tell "policy not reached" from "policy not applied".
+        audit_details["policy_stage"] = (
+            "evaluated" if decision_id else "pre_policy_validation"
+        )
         if details:
             audit_details.update(details)
         ingest_event(
@@ -484,6 +491,29 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
         )
 
     dataset = get_dataset(dataset_id)
+    # This route names its dataset in the request *body*, which is why the
+    # path-shaped enumeration that repaired /browse/{id}/... and
+    # /catalog/datasets/{id}/... did not reach it: it answered 403 DENIED
+    # "tenant boundary denied" for a dataset in another tenant and 400 REJECTED
+    # "dataset_not_found" for one that does not exist, so the error code still
+    # told an outsider which ids exist. One answer for both, with the real reason
+    # recorded first.
+    if dataset is not None and not can_access_tenant(req.user, dataset.tenant_id):
+        denial = evaluate(
+            subject=req.user, resource=dataset_id, action="query", purpose=req.purpose
+        )
+        audit(
+            dataset_id=dataset_id,
+            result="denied",
+            reason=denial.reason,
+            decision_id=denial.decision_id,
+            details={"policy_decision_id": denial.decision_id},
+        )
+        return response(
+            dataset_id=dataset_id,
+            status="REJECTED",
+            warnings=["dataset_not_found"],
+        )
     if not dataset:
         audit(dataset_id=dataset_id, result="rejected", reason="dataset_not_found")
         return response(

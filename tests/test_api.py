@@ -1574,6 +1574,16 @@ def test_browse_query_rejects_literal_tautology_injection():
 
 
 def test_browse_query_denied_without_user():
+    """An unresolvable actor is refused, and told nothing about the dataset.
+
+    ``guest`` resolves to no tenant, so it cannot reach this dataset's tenant and
+    the refusal collapses into the route's own "not found" answer - 400 REJECTED
+    ``dataset_not_found``, the same thing this route returns for a dataset that
+    is not there. Previously it was 403 ``tenant boundary denied`` for a dataset
+    that exists and 400 ``dataset_not_found`` for one that does not, which told
+    an outsider which ids exist. The real reason is in the ledger; the audit
+    assertion below is unchanged.
+    """
     response = client.post(
         "/browse/query",
         json={
@@ -1584,7 +1594,9 @@ def test_browse_query_denied_without_user():
             "query": "SELECT count(*) AS active_count FROM crm",
         },
     )
-    assert response.status_code == 403
+    assert response.status_code == 400, response.text
+    assert response.json()["detail"]["warnings"] == ["dataset_not_found"]
+    assert "tenant" not in response.text
 
     events = client.get("/audit/events", params={"resource": "crm-event", "user": "admin"})
     assert events.status_code == 200
