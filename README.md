@@ -385,6 +385,27 @@ SDP_DATABASE_DSN='postgresql+psycopg://sdp_graph_app:<url-encoded-password>@loca
 - `GET  /ontology/term/{term}/graph` — 개념 그래프 (그래프 스토어 백엔드)
 - `POST /search/semantic` — pgvector KNN 시맨틱 검색 (kind 필터)
 
+### Ontology versioning (ONT-004)
+- `GET /ontology/version` — 어휘의 현재 버전. 공개(open) — 식별자 없이 수치만.
+  `ontology_revision`(단조 증가)과 `content_digest`(sha256)를 함께 게시하고,
+  revision은 프로세스 수명 한정이라 `revision_is_durable: false`로 선언한다.
+  `digest_matches_recorded_revision`은 버전 경로를 거치지 않은 어휘 변경을 **보고**한다.
+- `GET /ontology/change-log?user=<actor>` — 무엇이 바뀌었고 누가 게시/심사했는지.
+  **거버닝 읽기**(`/audit/events`·`/policy/decisions`와 같은 게이트) — 모든 항목이
+  actor와, 승인 경로에서는 reviewer 신원을 담기 때문이다. 공개된 쪽은 수치뿐이다.
+- `GET /ontology/vocabulary/jsonld` — 어휘의 SKOS/RDFS JSON-LD 직렬화.
+  `owl:versionInfo`에 revision+digest를 담는다. 공개이며 **dataset id를 담지 않는다**
+  (`_INDEX`에는 tenant 술어가 없다 — `concept_assets`가 바로 그 이유로 고쳐졌다).
+  정의되지 않은 10개 계층 edge는 IRI를 만들지 않고 선언하고, alias 전용 target은
+  alias index로 해소한다(휴면 고객 → 이탈 고객).
+- `GET /ontology/search`·`POST /ontology/resolve` — 응답에 `ontology_version` 스탬프.
+  `ontology_content_digest`로 **버전 고정(pin)** 가능: 불일치는 409, 형식 오류는 400.
+  (`/ontology/search`에서는 query parameter라 OpenAPI 문서에 실리지만,
+  `/ontology/resolve`에서는 `dict[str, str]` 본문의 느슨한 키이므로 문서에는
+  실리지 않습니다 — 모델 없는 본문 10개의 선언된 경계 안입니다.)
+  revision은 고정 대상이 아니다(`revision_is_pinnable: false`) — 재시작 후 내용이
+  달라도 같은 번호를 다시 쓰므로, 조용히 고정이 풀리는 pin이 된다.
+
 ### Catalog / governance / enterprise (기존)
 
 - `GET /health`
@@ -400,8 +421,12 @@ SDP_DATABASE_DSN='postgresql+psycopg://sdp_graph_app:<url-encoded-password>@loca
 - `GET /catalog/datasets/{dataset_id}/semantic-validation`
 - `POST /policy/decision`
 - `GET /policy/decisions`
-- `POST /ontology/resolve`
+- `POST /ontology/resolve` — `defined_in_vocabulary`로 glossary가 **정의하지 않은**
+  dataset 선언 용어(캠페인·전환·비즈니스 용어)를 구분해 게시한다
 - `GET /ontology/concept/{concept}`
+- `GET /ontology/version`
+- `GET /ontology/change-log?user=<actor>`
+- `GET /ontology/vocabulary/jsonld`
 - `GET /browse/{dataset_id}/schema`
 - `POST /browse/{dataset_id}/preview`
 - `POST /llm/search`

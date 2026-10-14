@@ -108,8 +108,21 @@
 ## 2) Ontology / Terminology
 
 - ONT-001 동의어/다국어: [src/sdp/ontology.py: _build_index, search_concepts]
-- ONT-003 SKOS 계층: `GET /ontology/search`, `GET /ontology/concept/{concept}`, `GET /ontology/term/{term}/graph`
-- ONT-004~006: 용어 제안-승인-노출 흐름, 매핑 상태(`proposed/approved/rejected`), 근거 문자열/신뢰도
+- ONT-003 SKOS 계층: `GET /ontology/search`, `GET /ontology/concept/{concept}`,
+  `GET /ontology/term/{term}/graph`, 그리고 SKOS 직렬화
+  `GET /ontology/vocabulary/jsonld`
+- **ONT-004 버전관리**: 이 줄은 전에 "ONT-004~006: 용어 제안-승인-노출 흐름"으로
+  묶여 있었고, 그것은 ONT-005의 내용입니다(ONT-004는 버전관리입니다). 실제 대응:
+  - `GET /ontology/version` — revision + content digest (공개, 식별자 없음)
+  - `GET /ontology/change-log?user=<actor>` — 변경 로그 + 심사자 기록 (거버닝 읽기)
+  - `GET /ontology/vocabulary/jsonld` — revision이 이름 붙이는 SKOS/RDFS artifact
+  - `GET /ontology/search`·`POST /ontology/resolve` — 버전 스탬프 + digest pin
+  - 미해결 경계: OWL axiom이 없고 reasoner가 release를 검증하지 않습니다(ONT-007,
+    NFR-QUAL-002). revision·변경 로그·심사자 기록은 프로세스 메모리 한정이며
+    `revision_is_durable: false`로 선언합니다. 버전 범위는 어휘와 alias index뿐이고
+    `ontology._INDEX`(개념↔dataset 매핑)는 import 시점에 고정됩니다.
+- ONT-005 제안-승인-노출 흐름, ONT-006 매핑 상태(`proposed/approved/rejected`),
+  근거 문자열/신뢰도
   - `POST /ontology/patches`
   - `POST /ontology/patches/{id}/review`
 - 증빙 테스트:
@@ -117,6 +130,8 @@
   - `tests/test_api.py::test_ontology_concept_graph`
   - `tests/test_api.py::test_ontology_resolve`
   - `tests/test_api.py::test_ontology_patch_workflow`
+  - `tests/test_ontology_version_identity.py` (버전·변경 로그·심사자 기록·동시성)
+  - `tests/test_ontology_vocabulary_export.py` (SKOS/RDFS export·IRI 단사성·pin)
 
 ## 3) Browse / Query
 

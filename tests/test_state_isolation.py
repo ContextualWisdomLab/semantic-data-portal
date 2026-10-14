@@ -14,7 +14,7 @@ Bisected to two files with no isolation fixture at all. The fixture is now in
 
 from __future__ import annotations
 
-from sdp import catalog, evidence, ontology
+from sdp import catalog, evidence, ontology, ontology_version
 
 
 SEEDED_BASELINE_SIZES = {
@@ -46,3 +46,21 @@ def test_the_evidence_ledgers_start_empty_for_each_test() -> None:
     assert not catalog._AUDIT_LOG
     assert not evidence._POLICY_DECISION_LOG
     assert not evidence._AUDIT_EVENT_LOG
+
+
+def test_the_ontology_revision_and_the_vocabulary_are_restored_together() -> None:
+    """Restoring one without the other breaks the version for the whole session.
+
+    The revision names a content digest, so a fixture that put the vocabulary
+    back but left the revision where a previous test moved it would leave
+    ``digest_matches_recorded_revision`` false in every later test - and that
+    field exists precisely to report a vocabulary mutated outside the versioned
+    path, so it would stop meaning anything.
+    """
+    identity = ontology.ontology_version_identity()
+    assert identity["ontology_revision"] == ontology_version.BASELINE_REVISION
+    assert identity["digest_matches_recorded_revision"] is True
+    assert identity["change_log_entry_count"] == 1
+    assert identity["withheld_change_count"] == 0
+    baseline = ontology.vocabulary_change_log(limit=1)["changes"][0]
+    assert baseline["change_kind"] == "baseline"

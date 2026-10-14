@@ -182,20 +182,37 @@ def test_no_proof_endpoint_entry_is_something_other_than_an_endpoint() -> None:
 
 
 def test_only_a_control_with_a_runtime_check_claims_runtime_verification() -> None:
-    """And the honest headline: zero of them do, in the default demo deployment.
+    """A row may claim runtime verification only if the control has a check.
 
-    ``credential_vault`` is the only control whose effect is observed at probe
-    time, and it is required by one connector whose secret reference is not
-    configured - so no control in the whole matrix reaches
-    ``runtime_probe_verified`` without an operator action. Published rather than
-    left to be inferred from rows that all said "implemented".
+    This test used to assert the headline that **zero** controls reached
+    ``runtime_probe_verified`` in the default demo deployment, which was true
+    when written: ``credential_vault`` was the only control with a runtime
+    check, and it is required by one connector whose secret reference is not
+    configured, so the level was unreachable without an operator action.
+
+    ``ontology_version_pin`` now has one too, and unlike the vault it needs no
+    operator action - the vocabulary is always present, so its pin predicate can
+    be exercised in both directions at probe time. The count is therefore
+    derived from the rows rather than pinned to a number that was a measurement
+    of one moment, and the measured set is stated explicitly so a control
+    sliding into this level cannot do it silently.
     """
     for connector_id, dataset_id in VALID_PAIRS:
         probe = connector_probe(connector_id, dataset_id)
-        assert probe["control_verification_counts"][connectors.VERIFICATION_RUNTIME] == 0
-        for row in probe["control_evidence"]:
-            if row["verification"] == connectors.VERIFICATION_RUNTIME:
-                assert row["control"] in connectors._RUNTIME_VERIFIED_CONTROLS, row
+        runtime_rows = [
+            row
+            for row in probe["control_evidence"]
+            if row["verification"] == connectors.VERIFICATION_RUNTIME
+        ]
+        for row in runtime_rows:
+            assert row["control"] in connectors._RUNTIME_VERIFIED_CONTROLS, row
+        assert probe["control_verification_counts"][
+            connectors.VERIFICATION_RUNTIME
+        ] == len(runtime_rows)
+        # The measurement: the only control that reaches runtime verification
+        # with no operator action. ``credential_vault`` still does not - the
+        # next test is what proves that level is reachable for it at all.
+        assert {row["control"] for row in runtime_rows} <= {"ontology_version_pin"}
 
 
 def test_configuring_the_secret_reaches_runtime_verification(

@@ -4,6 +4,7 @@ from typing import Any
 
 from sdp_core import SourceConnector, buyer_demo_context_for_dataset, connector_registry_manifest
 
+from . import ontology_version
 from .catalog import get_dataset, redacted_source_system
 from .credentials import connector_secret_status
 
@@ -12,7 +13,11 @@ _IMPLEMENTED_PROOF = {
     "audit_event": ["/audit/events"],
     "credential_vault": ["/enterprise/connectors/{connector_id}/probe"],
     "lineage_capture": ["/catalog/datasets/{dataset_id}/lineage"],
-    "ontology_version_pin": ["/ontology/search", "/ontology/resolve"],
+    "ontology_version_pin": [
+        "/ontology/version",
+        "/ontology/search",
+        "/ontology/resolve",
+    ],
     "pii_masking": ["/browse/{dataset_id}/preview"],
     "pii_profile": ["/catalog/datasets/{dataset_id}/profile"],
     "policy_before_query": ["/browse/query", "/policy/decision", "/policy/decisions"],
@@ -49,7 +54,51 @@ _IMPLEMENTED_CONFIG_PROOF = {
 # ``rest_connector``/``marketing-campaign`` is the single ``contract_only`` pair
 # in the whole matrix - the only control doing measurement was carrying the only
 # information.
-_RUNTIME_VERIFIED_CONTROLS = frozenset({"credential_vault"})
+def _verify_credential_vault(connector_id: str, dataset_id: str) -> tuple[bool, dict[str, Any], str]:
+    """Runtime check for ``credential_vault``: is the secret reference present?"""
+    vault = connector_secret_status(connector_id, dataset_id)
+    gap = (
+        ""
+        if vault.secret_present
+        else "the configured secret reference is not present in this deployment"
+    )
+    return vault.secret_present, vault.public_dict(), gap
+
+
+def _verify_ontology_version_pin(connector_id: str, dataset_id: str) -> tuple[bool, dict[str, Any], str]:
+    """Runtime check for ``ontology_version_pin``: does the pin actually refuse?
+
+    This control was the clearest case of ``proof_route_served`` not being
+    evidence. It reported ``implemented`` because this build serves
+    ``/ontology/search`` and ``/ontology/resolve`` - and neither response
+    contained the string "version" anywhere, while ``ONT-004`` was recorded
+    ``not_implemented`` for exactly that reason. Serving the named route was a
+    true fact about the build and said nothing about the control.
+
+    The predicate is exercised in both directions (``version_pin_is_enforced``),
+    so this verdict can come out false: break the comparison and the control
+    stops claiming to be implemented.
+    """
+    del connector_id, dataset_id  # the vocabulary is shared, not per-dataset
+    from . import ontology
+
+    verdict = ontology_version.version_pin_is_enforced(
+        ontology.concept_vocabulary_snapshot()
+    )
+    enforced = bool(verdict.pop("enforced"))
+    gap = str(verdict.pop("gap_reason", ""))
+    return enforced, verdict, gap
+
+
+# control -> its runtime check. ``_RUNTIME_VERIFIED_CONTROLS`` is derived from
+# this mapping rather than written beside it: two hand-written collections of
+# the same set drift, and the one that decides the published verdict would win
+# silently.
+_RUNTIME_CONTROL_CHECKS = {
+    "credential_vault": _verify_credential_vault,
+    "ontology_version_pin": _verify_ontology_version_pin,
+}
+_RUNTIME_VERIFIED_CONTROLS = frozenset(_RUNTIME_CONTROL_CHECKS)
 
 # How strong the evidence behind one control row is. Published, because
 # "implemented" alone cannot distinguish these and a diligence reader assumes
@@ -401,19 +450,18 @@ def connector_probe(connector_id: str, dataset_id: str) -> dict[str, Any]:
                 "this build does not serve every declared proof endpoint: "
                 + ", ".join(missing_routes)
             )
-        if control in _RUNTIME_VERIFIED_CONTROLS:
-            vault = connector_secret_status(connector_id, dataset_id)
-            evidence_payload.update(vault.public_dict())
-            satisfied = implemented and vault.secret_present
-            # Only this control's verdict is backed by a runtime observation of
+        runtime_check = _RUNTIME_CONTROL_CHECKS.get(control)
+        if runtime_check is not None:
+            observed, observation, gap_reason = runtime_check(connector_id, dataset_id)
+            evidence_payload.update(observation)
+            satisfied = implemented and observed
+            # These controls' verdicts are backed by a runtime observation of
             # the control's own effect; the rest rest on the route existing.
             evidence_payload["verification"] = (
                 VERIFICATION_RUNTIME if satisfied else evidence_payload["verification"]
             )
-            if not vault.secret_present:
-                evidence_payload["gap_reason"] = (
-                    "the configured secret reference is not present in this deployment"
-                )
+            if gap_reason:
+                evidence_payload["gap_reason"] = gap_reason
         satisfied_controls += int(satisfied)
         control_evidence.append(evidence_payload)
 

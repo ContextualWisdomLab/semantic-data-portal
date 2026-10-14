@@ -158,10 +158,12 @@ def test_approval_does_not_overwrite_an_already_published_definition() -> None:
 def test_the_published_vocabulary_is_bounded() -> None:
     """Process-lifetime state must not grow without limit."""
     for index in range(ontology.MAX_REGISTERED_CONCEPTS + 10):
-        ontology.register_concept(f"bounded_concept_{index}", definition="d")
+        ontology.register_concept(
+            f"bounded_concept_{index}", change_source="concept_upsert", definition="d"
+        )
     assert len(ontology._CONCEPT_DEFINITIONS) <= ontology.MAX_REGISTERED_CONCEPTS
 
 
 def test_an_empty_concept_is_refused() -> None:
     with pytest.raises(ValueError):
-        ontology.register_concept("   ")
+        ontology.register_concept("   ", change_source="concept_upsert")

@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List
 from uuid import uuid4
 
+from . import ontology_version
 from .catalog import list_datasets, mapping_candidates
 from .domain import OntologyPatch
 
@@ -103,6 +104,12 @@ for base_concept in _CONCEPT_DEFINITIONS:
     _index_concept_terms(base_concept, _CONCEPT_DEFINITIONS[base_concept])
 del base_concept
 
+# The shipped vocabulary is the baseline the change log counts from. Recorded at
+# import, once, because no actor published it: five rows naming no actor would
+# be five fabrications of a publication event that never happened. See
+# ``ontology_version.record_baseline``.
+ontology_version.record_baseline(_CONCEPT_DEFINITIONS)
+
 # The vocabulary that ships with the product, captured before any registration
 # can add to it. Eviction at the cap must never reach these: see
 # ``register_concept``.
@@ -175,12 +182,15 @@ def validate_concept_registration(
 def register_concept(
     concept: str,
     *,
+    change_source: str,
     definition: str = "",
     aliases: list[str] | None = None,
     multilingual: list[str] | None = None,
     broader: str | None = None,
     narrower: list[str] | None = None,
     related: list[str] | None = None,
+    actor_id: str | None = None,
+    reviewer_id: str | None = None,
 ) -> dict[str, Any]:
     """Publish one concept into the vocabulary every read surface consults.
 
@@ -208,6 +218,51 @@ def register_concept(
     implementation; that is deliberately not done here rather than shipped
     untested.
     """
+    # ``change_source`` has no default on purpose. There are exactly two
+    # externally-triggered publication paths - a direct admin upsert and an
+    # approved patch - and they differ in whether anyone reviewed the change. A
+    # default would let a third caller land silently under one of the two
+    # labels, and the change log's whole value is that the label is true.
+    with ontology_version.vocabulary_change_lock():
+        return _register_concept_locked(
+            concept,
+            change_source=change_source,
+            definition=definition,
+            aliases=aliases,
+            multilingual=multilingual,
+            broader=broader,
+            narrower=narrower,
+            related=related,
+            actor_id=actor_id,
+            reviewer_id=reviewer_id,
+        )
+
+
+def _register_concept_locked(
+    concept: str,
+    *,
+    change_source: str,
+    definition: str = "",
+    aliases: list[str] | None = None,
+    multilingual: list[str] | None = None,
+    broader: str | None = None,
+    narrower: list[str] | None = None,
+    related: list[str] | None = None,
+    actor_id: str | None = None,
+    reviewer_id: str | None = None,
+) -> dict[str, Any]:
+    """Publish one concept. Call with the vocabulary lock held.
+
+    The lock is taken by the public wrapper **before** the existence read below,
+    not after. ``existing`` decides new-versus-no-op and the store write happens
+    nineteen lines later, so acquiring the lock after the read would leave the
+    window open: two concurrent registrations of the same concept could both
+    read ``None``, both answer ``already_published: False``, and one overwrite
+    the other - two acknowledged publications for one dict entry, and two
+    revisions for one change. Forced-interleaving measurement reproduced exactly
+    that. This is the same read-modify-write boundary ``catalog._MUTATION_LOCK``
+    exists to close.
+    """
     canonical = validate_concept_registration(
         concept, aliases=aliases, multilingual=multilingual
     )
@@ -220,7 +275,11 @@ def register_concept(
         return {"concept": canonical, "already_published": True, **existing}
 
     if len(_CONCEPT_DEFINITIONS) >= MAX_REGISTERED_CONCEPTS:
-        _evict_one_registered_concept()
+        # Eviction is a content change of its own, recorded by the evicting
+        # function rather than here: a published term leaves the ontology as a
+        # side effect of this caller's success, and the change log must show the
+        # deletion and the publication as two revisions, in that order.
+        _evict_one_registered_concept(actor_id=actor_id)
 
     record: Dict[str, Any] = {
         "aliases": list(aliases or []),
@@ -232,10 +291,21 @@ def register_concept(
     }
     _CONCEPT_DEFINITIONS[canonical] = record
     _index_concept_terms(canonical, record)
+    # Recorded after both writes, so the digest stamped into the entry is the
+    # content the revision names. Recorded before them, the entry would claim a
+    # digest the vocabulary does not have.
+    ontology_version.record_vocabulary_change(
+        change_kind="concept_published",
+        change_source=change_source,
+        concept_name=canonical,
+        vocabulary=_CONCEPT_DEFINITIONS,
+        actor_id=actor_id,
+        reviewer_id=reviewer_id,
+    )
     return {"concept": canonical, "already_published": False, **record}
 
 
-def _evict_one_registered_concept() -> None:
+def _evict_one_registered_concept(*, actor_id: str | None = None) -> None:
     """Make room at the cap by dropping the oldest **caller-added** concept.
 
     The eviction was ``next(iter(_CONCEPT_DEFINITIONS))``, and the dict is
@@ -257,6 +327,18 @@ def _evict_one_registered_concept() -> None:
         for term in stale_aliases:
             del _ALIAS_TO_CANONICAL[term]
         del _CONCEPT_DEFINITIONS[candidate]
+        # A deletion with no caller and no audit row was invisible: the only
+        # trace of a published term leaving the vocabulary was its absence.
+        # ``actor_id`` is whoever's registration forced the eviction, not
+        # someone who asked for a deletion - ``review_basis:
+        # "capacity_policy"`` says nobody decided it.
+        ontology_version.record_vocabulary_change(
+            change_kind="concept_evicted",
+            change_source="cap_eviction",
+            concept_name=candidate,
+            vocabulary=_CONCEPT_DEFINITIONS,
+            actor_id=actor_id,
+        )
         return
     raise ValueError(
         f"concept vocabulary is full ({MAX_REGISTERED_CONCEPTS}) and holds only "
@@ -277,10 +359,22 @@ class ConceptTerm:
 
 @dataclass(frozen=True)
 class Resolution:
+    """One resolved term, and whether the vocabulary actually defines it.
+
+    ``_INDEX`` is built from ``dataset.terms``, which are declared by datasets
+    and need not be registered concepts. Measured on the seed, resolution
+    published term IRIs for 캠페인, 전환 and 비즈니스 용어 - none of which the
+    glossary defines - identically shaped to the IRI of a defined concept, so a
+    client could not tell a definition it can look up from an identifier that
+    leads nowhere. ``defined_in_vocabulary`` is that distinction; the resolution
+    is still returned, because it is a real pointer to a dataset.
+    """
+
     term: str
     score: float
     uri: str
     aliases: List[str]
+    defined_in_vocabulary: bool
 
 
 def _canonicalize_concept(concept: str) -> str:
@@ -289,6 +383,42 @@ def _canonicalize_concept(concept: str) -> str:
 
 def list_concepts() -> List[str]:
     return sorted(_CONCEPT_DEFINITIONS.keys())
+
+
+def concept_vocabulary_snapshot() -> Dict[str, Any]:
+    """A copy of the vocabulary, for callers that only need to read it.
+
+    ``ontology_version`` takes the vocabulary as an argument rather than
+    importing this module, so the dependency stays one-way. Handing out a copy
+    keeps a reader from mutating the live dict behind the revision counter -
+    which ``ontology_version_identity`` would then report as
+    ``digest_matches_recorded_revision: false``.
+    """
+    return {concept: dict(record) for concept, record in _CONCEPT_DEFINITIONS.items()}
+
+
+def ontology_version_identity() -> dict[str, Any]:
+    """The live ontology version identity (ONT-004). See ``ontology_version``."""
+    return ontology_version.ontology_version_identity(_CONCEPT_DEFINITIONS)
+
+
+def vocabulary_change_log(limit: int = 100) -> dict[str, Any]:
+    """The ontology change log, newest first. Carries actor/reviewer identity."""
+    return ontology_version.vocabulary_change_log(limit=limit)
+
+
+def vocabulary_jsonld() -> dict[str, Any]:
+    """The vocabulary as versioned SKOS/RDFS JSON-LD.
+
+    ``canonical_concept_or_none`` is injected as the resolver so a hierarchy
+    target that is only an alias (활성 고객 ``related`` 휴면 고객, an alias of
+    이탈 고객) points at the real concept's IRI, and one that resolves to
+    nothing is declared instead of minting an IRI for a concept that does not
+    exist.
+    """
+    return ontology_version.vocabulary_jsonld(
+        _CONCEPT_DEFINITIONS, resolve_concept=canonical_concept_or_none
+    )
 
 
 def canonical_concept_or_none(concept: str) -> str | None:
@@ -379,8 +509,9 @@ def resolve_terms(text: str) -> list[Resolution]:
                 Resolution(
                     term=concept,
                     score=min(score, 1.0),
-                    uri=f"https://data.example.org/term/{concept.replace(' ', '-')}",
+                    uri=ontology_version.concept_iri(concept),
                     aliases=sorted(set(aliases)),
+                    defined_in_vocabulary=canonical_concept_or_none(concept) is not None,
                 )
             )
 
@@ -390,8 +521,10 @@ def resolve_terms(text: str) -> list[Resolution]:
                 Resolution(
                     term=candidate.concept,
                     score=0.55,
-                    uri=f"https://data.example.org/term/{candidate.concept.replace(' ', '-')}",
+                    uri=ontology_version.concept_iri(candidate.concept),
                     aliases=sorted(candidate.aliases),
+                    # ``search_concepts`` only ever yields registered concepts.
+                    defined_in_vocabulary=True,
                 )
             )
 
@@ -476,6 +609,25 @@ def review_patch(
     if normalized not in {"approve", "reject"}:
         raise ValueError("decision must be approve or reject")
 
+    # One lock across the publication *and* the patch's status write. They are
+    # two stores, and an approval that published the concept but failed to
+    # record the review - or recorded the review while another thread published
+    # the same concept - leaves 승인 and 노출 disagreeing, which is the exact
+    # break this path exists to close.
+    with ontology_version.vocabulary_change_lock():
+        return _review_patch_locked(
+            patch_id, normalized, reviewer=reviewer, comment=comment
+        )
+
+
+def _review_patch_locked(
+    patch_id: str,
+    normalized: str,
+    *,
+    reviewer: str,
+    comment: str,
+) -> dict[str, Any]:
+    """Apply one review decision. Call with the vocabulary lock held."""
     for idx, patch in enumerate(_ONTOLOGY_PATCHES):
         if patch.id != patch_id:
             continue
@@ -497,7 +649,18 @@ def review_patch(
         # to close.
         registration = None
         if normalized == "approve":
-            registration = register_concept(patch.concept, definition=patch.suggestion)
+            # ``actor_id`` is the proposer and ``reviewer_id`` the approver, so
+            # the change log shows both halves of the 제안 -> 승인 workflow. The
+            # reviewer is the authorized actor (``api`` refuses a body-supplied
+            # ``reviewer`` outright), and this is the only ``change_source``
+            # permitted to carry one.
+            registration = register_concept(
+                patch.concept,
+                change_source="patch_approval",
+                definition=patch.suggestion,
+                actor_id=patch.requestor,
+                reviewer_id=reviewer,
+            )
 
         patch.reviewed_by = reviewer
         patch.reviewed_at = datetime.now(timezone.utc)

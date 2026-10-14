@@ -110,7 +110,9 @@ def test_filling_the_vocabulary_never_evicts_a_seeded_concept() -> None:
     seeded = sorted(ontology.SEEDED_CONCEPTS)
     room = ontology.MAX_REGISTERED_CONCEPTS - len(ontology._CONCEPT_DEFINITIONS)
     for index in range(room + 3):
-        ontology.register_concept(f"filler-{index}", definition="f")
+        ontology.register_concept(
+            f"filler-{index}", change_source="concept_upsert", definition="f"
+        )
 
     survived = sorted(c for c in seeded if c in ontology._CONCEPT_DEFINITIONS)
     assert survived == seeded, f"eviction destroyed {sorted(set(seeded) - set(survived))}"
@@ -131,7 +133,9 @@ def test_a_full_vocabulary_of_seeded_concepts_is_reported_not_overwritten() -> N
     try:
         ontology.MAX_REGISTERED_CONCEPTS = len(ontology.SEEDED_CONCEPTS)
         with pytest.raises(ValueError) as refused:
-            ontology.register_concept("한계초과개념", definition="d")
+            ontology.register_concept(
+                "한계초과개념", change_source="concept_upsert", definition="d"
+            )
         assert "never evicted" in str(refused.value)
         assert dict(ontology._CONCEPT_DEFINITIONS) == original
     finally:

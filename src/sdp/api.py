@@ -17,7 +17,7 @@ from sdp_core import (
     enterprise_readiness_manifest,
 )
 
-from . import authz, browse, catalog, connectors, ontology, orchestrator
+from . import authz, browse, catalog, connectors, ontology, ontology_version, orchestrator
 from .config import get_app_config
 from .console import render_enterprise_console
 from .graph_models import (
@@ -1341,18 +1341,76 @@ def policy_decisions(
     ]
 
 
+def _ontology_version_stamp(pinned: str | None) -> dict[str, Any]:
+    """The version this answer came from, refusing a pin that names another one.
+
+    ``ontology_version_pin`` was published as an ``implemented`` connector
+    control whose proof endpoints are this route and ``/ontology/search`` -
+    measured, neither response contained the string "version" anywhere, so the
+    control's own proof routes evidenced nothing about it while ``ONT-004`` was
+    recorded ``not_implemented`` for exactly that reason.
+
+    Both refusals are distinct because they mean different things. A malformed
+    digest is a bad request (400); a well-formed digest naming a different
+    vocabulary is a conflict (409). Collapsing them would tell a client with a
+    typo that the server holds a different vocabulary, and a client holding a
+    genuinely older vocabulary that its request was malformed.
+    """
+    try:
+        verdict = ontology_version.version_pin_verdict(
+            pinned, ontology.concept_vocabulary_snapshot()
+        )
+    except ValueError as malformed:
+        raise HTTPException(status_code=400, detail=str(malformed)) from malformed
+    if not verdict["pin_matches"]:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"고정한 온톨로지 버전이 현재 버전과 다릅니다 "
+                f"(requested={verdict['requested_content_digest']}, "
+                f"live={verdict['live_content_digest']})"
+            ),
+        )
+    stamp = ontology.ontology_version_identity()
+    return {
+        "ontology_revision": stamp["ontology_revision"],
+        "content_digest": stamp["content_digest"],
+        "digest_algorithm": stamp["digest_algorithm"],
+        "revision_is_durable": stamp["revision_is_durable"],
+        "pin_basis": verdict["pin_basis"],
+        "revision_is_pinnable": verdict["revision_is_pinnable"],
+        "pin_requested": verdict["pin_requested"],
+    }
+
+
 @app.post("/ontology/resolve")
 def resolve_terms(payload: dict[str, str]) -> dict[str, Any]:
     text = payload.get("text", "")
     if not text:
         raise HTTPException(status_code=400, detail="question text required")
+    # Stamped **and** pinnable: a caller may send the vocabulary digest it
+    # compiled against and be refused rather than silently resolved against a
+    # different vocabulary.
+    version = _ontology_version_stamp(payload.get(ontology_version.PIN_PARAMETER))
     resolutions = ontology.resolve_terms(text)
     return {
         "query": text,
         "resolved": [
-            {"term": item.term, "score": item.score, "uri": item.uri, "aliases": item.aliases}
+            {
+                "term": item.term,
+                "score": item.score,
+                "uri": item.uri,
+                "aliases": item.aliases,
+                # A term IRI for a concept the glossary does not define looks
+                # exactly like one it does. See ``ontology.Resolution``.
+                "defined_in_vocabulary": item.defined_in_vocabulary,
+            }
             for item in resolutions
         ],
+        "undefined_resolution_count": sum(
+            1 for item in resolutions if not item.defined_in_vocabulary
+        ),
+        "ontology_version": version,
     }
 
 
@@ -1377,13 +1435,89 @@ def ontology_concepts() -> dict[str, Any]:
     return {"count": len(ontology.list_concepts()), "concepts": ontology.list_concepts()}
 
 
+@app.get("/ontology/version")
+def ontology_version_identity_route() -> dict[str, Any]:
+    """The live ontology version. Open, and carries no actor identity.
+
+    Open for the same reason ``GET /ontology/concepts`` is: the vocabulary is
+    shared, not tenant-scoped, and a client that cannot read the version it is
+    resolving against cannot pin it. Identity - who published or reviewed each
+    change - is not here; it is in the change log, which is a governed read.
+    """
+    return ontology.ontology_version_identity()
+
+
+@app.get("/ontology/change-log")
+def ontology_change_log(
+    user: str = Query(default="anonymous"),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> dict[str, Any]:
+    """The ontology change log: what changed, who published it, who reviewed it.
+
+    Governed, not open. Every entry is field-for-field an access record -
+    ``{actor_id, reviewer_id, change_kind, recorded_at}`` - and both existing
+    read surfaces for that shape, ``/audit/events`` and ``/policy/decisions``,
+    are gated. The counts are published openly on ``/ontology/version``; the
+    identity is not.
+
+    (``GET /ontology/patches`` does serve ``requestor`` and ``reviewed_by`` to
+    an anonymous caller today. That is a pre-existing disclosure this change
+    does not widen: it is not precedent for a second open identity surface.)
+    """
+    # The same gate as ``/audit/events`` and ``/policy/decisions``, through the
+    # same helper, because this is the same kind of record. Its tenant list is
+    # deliberately not applied: the concept vocabulary is shared rather than
+    # tenant-owned (``GET /ontology/concepts`` is open to anyone), so there is
+    # no tenant predicate to scope a vocabulary change by, and inventing one
+    # would hide a shared change from a reader entitled to it. The scope that
+    # does apply is authorization, and an unauthorized caller is refused.
+    decision, _ = _authorize_evidence_read(user)
+    return {
+        **ontology.vocabulary_change_log(limit=limit),
+        "scope_note": (
+            "온톨로지 어휘는 테넌트 소유가 아니라 공유 자원이므로 이 원장에는 "
+            "테넌트 범위가 적용되지 않는다. 적용되는 범위는 권한 뿐이다."
+        ),
+        "policy_decision_id": decision.decision_id,
+    }
+
+
+@app.get("/ontology/vocabulary/jsonld")
+def ontology_vocabulary_jsonld() -> dict[str, Any]:
+    """The vocabulary as versioned SKOS/RDFS JSON-LD.
+
+    ONT-004's subject is an "OWL/RDFS 기반" ontology and there was no RDF
+    artifact at all: the DCAT export covers datasets, and its
+    ``mappings[].concept`` is a plain literal, so no triple anywhere named a
+    concept. This is the artifact the revision versions.
+
+    Open and vocabulary-only - no dataset ids. ``ontology._INDEX`` is built with
+    no tenant predicate, and serving it is exactly how ``concept_assets`` leaked
+    every tenant's dataset ids to a caller its own policy decision denied; the
+    concept-to-dataset mapping stays on the governed
+    ``GET /ontology/concept/{term}``. The document says so in
+    ``sdp:datasetMappingIsVersioned false``.
+    """
+    return ontology.vocabulary_jsonld()
+
+
 @app.get("/ontology/search")
-def ontology_search(q: str = Query(..., min_length=1)) -> dict[str, Any]:
+def ontology_search(
+    q: str = Query(..., min_length=1),
+    ontology_content_digest: str | None = Query(default=None),
+) -> dict[str, Any]:
+    """Search the vocabulary, stamped with the version that answered.
+
+    See :func:`_ontology_version_stamp` for why the pin is matched on the
+    content digest and never on the revision.
+    """
+    version = _ontology_version_stamp(ontology_content_digest)
     matches = ontology.search_concepts(q)
     return {
         "query": q,
         "count": len(matches),
         "matches": [item.__dict__ for item in matches],
+        "ontology_version": version,
     }
 
 
@@ -1702,6 +1836,12 @@ def ingest_concept(payload: OntologyConceptRequest) -> dict[str, Any]:
     try:
         registration = ontology.register_concept(
             payload.concept,
+            # A direct upsert, with nobody reviewing it: the change log records
+            # ``reviewer_id: null`` and ``review_basis:
+            # "direct_admin_upsert"`` rather than naming a steward who never
+            # saw this concept.
+            change_source="concept_upsert",
+            actor_id=payload.actor,
             definition=payload.definition or "",
             aliases=aliases,
             multilingual=multilingual,

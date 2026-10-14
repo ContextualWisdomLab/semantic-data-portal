@@ -3,7 +3,8 @@
 The product's distinguishing behaviour is its *refusals*: a governed read is
 refused 403 for a role, sensitivity or purpose, 404 when the dataset is outside
 the caller's tenant scope or absent, 400 for a malformed request, 409 when a
-bounded resource is full. None of it reached the machine-readable contract.
+bounded resource is full or when a request pins an ontology version other than
+the one being served. None of it reached the machine-readable contract.
 Measured against ``GET /openapi.json`` before this module existed:
 
     routes with a typed request body               5 of 20
@@ -74,8 +75,11 @@ REFUSAL_DESCRIPTIONS: dict[int, str] = {
         "호출자가 읽을 수 없는 증빙 원장에만 남는다."
     ),
     409: (
-        "충돌. 상한이 있는 리소스가 가득 찼고 비울 수 있는 항목이 없다 "
-        "(시드 개념 어휘는 eviction 대상이 아니다)."
+        "충돌. 두 가지 경우다 — (1) 상한이 있는 리소스가 가득 찼고 비울 수 있는 "
+        "항목이 없다 (시드 개념 어휘는 eviction 대상이 아니다), (2) 요청이 고정한 "
+        "온톨로지 content digest가 현재 어휘의 digest와 다르다. 후자에서 형식이 "
+        "잘못된 digest는 409가 아니라 400이다 — 오타를 \"서버가 다른 어휘를 "
+        "들고 있다\"로 보고하면 클라이언트가 잘못된 조치를 하게 된다."
     ),
 }
 
@@ -124,11 +128,13 @@ ROUTE_REFUSALS: dict[tuple[str, str], tuple[int, ...]] = {
     ("POST", "/graph/query"): (400, 403, 404),
     ("POST", "/llm/draft-query"): (400, 403, 404),
     ("POST", "/llm/search"): (400, 403),
+    ("GET", "/ontology/change-log"): (403,),
     ("POST", "/ontology/concepts"): (400, 403, 409),
     ("GET", "/ontology/patches"): (400,),
     ("POST", "/ontology/patches"): (400, 403),
     ("POST", "/ontology/patches/{patch_id}/review"): (400, 403, 404),
-    ("POST", "/ontology/resolve"): (400,),
+    ("POST", "/ontology/resolve"): (400, 409),
+    ("GET", "/ontology/search"): (400, 409),
     ("POST", "/policy/decision"): (403, 404),
     ("GET", "/policy/decisions"): (403,),
     ("POST", "/search/semantic"): (403,),

@@ -2,16 +2,17 @@
 
 이 문서는 `claude/semantic-portal-pr-merge-e5a48k` 브랜치(PR
 [#102](https://github.com/ContextualWisdomLab/semantic-data-portal/pull/102))가
-베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **199개** 커밋 중 122개는
-gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 77개입니다. 측정 명령:
+베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **203개** 커밋 중 122개는
+gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 81개입니다. 측정 명령:
 
     git rev-list --count origin/docs/product-technical-gap-baseline..HEAD
     git log --format=%H origin/docs/product-technical-gap-baseline..HEAD \
       --name-only -- docs/product-technical-gap-baseline.md | grep -c '^[0-9a-f]\{40\}$'
 
-앞서 적혀 있던 164/112와 186/113은 각각 그 시점의 값이고 이후 커밋을 반영하지 않은
-숫자였습니다 — 자기 문서의 수치도 측정해서 맞춰 둡니다. 이 줄이 다시 낡으면 그것도
-같은 결함입니다.
+앞서 적혀 있던 164/112, 186/113, 199/122/77은 각각 그 시점의 값이고 이후 커밋을
+반영하지 않은 숫자였습니다 — 자기 문서의 수치도 측정해서 맞춰 둡니다. 199는 이 줄을
+쓴 뒤 3개 커밋이 더 쌓여 낡았고, 그것을 다시 측정해 203으로 고쳤습니다. 이 줄이 또
+낡으면 그것도 같은 결함입니다.
 
 형식은 [Keep a Changelog](https://keepachangelog.com/)를 따릅니다.
 
@@ -25,10 +26,155 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 77
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                    1023 passed, 11 skipped
+    pytest                    1079 passed, 11 skipped
     pytest (역방향/난수 순서)  순서 무관 통과 (역순 + seed 11/707/31337)
     pytest tests/fuzz          11 passed
     python -m sdp.demo_smoke   exit 0, "ready": true
+
+### Added — 온톨로지에 버전·변경 로그·심사자 기록이 생겼습니다 (ONT-004)
+
+ONT-004(P0)은 "OWL/RDFS 기반 도메인 ontology를 **버전관리**해야 한다"이고 수락 기준은
+"ontology version, change log, reviewer 기록"입니다. 세 가지 모두 없었습니다. 개념
+어휘는 릴리즈 정체성이 없는 모듈 수준 Python dict였고, 서로 모순되는 게시 주장이
+동시에 떠 있었습니다:
+
+* 요구사항 매트릭스는 ONT-004를 `not_implemented`로 기록하고 있었고 — 맞는 기록이었습니다;
+* 같은 시점에 `rdf_connector` 컨트롤 `ontology_version_pin`은
+  `status: implemented` / `verification: proof_route_served`를, proof endpoint로
+  `/ontology/search`와 `/ontology/resolve`를 들고 게시되고 있었습니다. 측정해 보면
+  두 응답 어디에도 "version"이라는 문자열이 없습니다. 컨트롤의 proof route가 그
+  컨트롤에 대해 아무것도 증명하지 않았습니다.
+* 유일한 심사자 신원은 `OntologyPatch.reviewed_by`뿐이고, 이는 patch 경로에만
+  존재합니다. `POST /ontology/concepts`는 모든 읽기 표면이 참조하는 공유 어휘에
+  심사 기록 없이 게시했고, 그 감사 행은 `result: "authorized"`이며 **변경 이전에**
+  기록됩니다 — alias 탈취 POST가 400으로 거부되어 아무것도 게시되지 않았는데도
+  동일한 "authorized" 행이 남는 것을 측정했습니다. 게시가 실제로 일어났다는 증거가
+  어디에도 없었습니다.
+
+`src/sdp/ontology_version.py`가 세 가지를 모두 소유합니다(`sdp.ontology`를 import하지
+않습니다 — 어휘를 인자로 받아 의존을 한 방향으로 유지합니다):
+
+* **version**: 기록된 baseline(revision 1)에서 시작하는 단조 `ontology_revision`과,
+  **매번 살아 있는 내용에서 다시 계산하는** sha256 `content_digest`. revision은
+  프로세스 수명 한정이므로 `revision_is_durable: false` /
+  `revision_scope: "process_lifetime"`으로 선언하고, 재시작을 넘는 정체성은 digest
+  쪽입니다. digest는 **의미 기준**입니다 — aliases/multilingual/narrower/related는
+  의미상 순서가 없으므로(RDF에서 무순서, alias index는 집합 취급) 정렬해서 해싱합니다.
+  순서만 뒤바뀐 두 배포가 서로 다른 버전을 보고하면, 의미 없는 차이로 클라이언트의
+  pin을 거절하게 됩니다. 멤버를 더하거나 빼면 여전히 움직입니다.
+* **change log**: 유효 변경 1건당 1개 항목, 최신 우선, 상한 500건이고 잘린 양을
+  `withheld_change_count`로 선언합니다. 이미 게시된 개념을 다시 등록하는 것은
+  no-op이므로(측정: 제출한 payload 전체를 버리고 저장된 레코드를 돌려줍니다) 아무것도
+  기록하지 않습니다. 어휘 상한에서의 **eviction은 자기 revision**입니다 — 게시된 용어가
+  무관한 호출자의 성공의 부작용으로 온톨로지를 떠나는데, 그때까지 그 삭제의 유일한
+  흔적은 그것의 부재였습니다(감사 행도, 호출자도 없었습니다).
+* **reviewer 기록**: 승인된 patch는 제안자(`actor_role: proposer`)와 승인한 심사자를
+  함께 기록합니다. 직접 upsert는 `reviewer_id: null` +
+  `review_basis: "direct_admin_upsert"`이고, recorder는 심사가 없는 source에 대한
+  reviewer를 **거부**합니다(조용히 버리지 않습니다). `catalog.deprecate_dataset`이
+  `reason`을 `"deprecated"`로 기본값 처리해 호출자가 주지 않은 사유를 보고했던 것과
+  같은 규칙입니다. `actor_id`의 뜻은 source마다 다르므로(직접 게시에서는 게시자,
+  승인에서는 **제안자**) 항목마다 `actor_role`을 적고 전체 매핑을 공개합니다 — 한
+  컬럼만 훑어 "누가 이것을 온톨로지에 넣었나"를 답하면 모든 승인에서 틀립니다.
+  그리고 `actor_id`는 요청 본문에서 오는 **권한이 확인된 주장**이지 인증된 신원이
+  아니므로 `actor_identity_basis`로 선언합니다.
+
+revision이 이름 붙이는 **artifact**도 생겼습니다. `GET /ontology/vocabulary/jsonld`가
+어휘를 SKOS/RDFS JSON-LD로 직렬화하고 `owl:versionInfo`에 revision+digest를 담습니다
+(기존 DCAT export와 같은 방식 — 손으로 쓴 inline `@context`, 새 의존성 없음). 그
+전에는 RDF artifact가 전혀 없었습니다: DCAT export는 dataset을 덮고 그
+`mappings[].concept`은 평범한 literal이라, 어디에도 개념을 가리키는 triple이 없었습니다.
+dict 위의 숫자는 버전관리가 아닙니다.
+
+export가 **선언하는** 것들:
+
+* 정의되지 않은 계층 target은 IRI를 만들지 않습니다. 측정: 시드 어휘의 19개
+  broader/narrower/related edge가 13개의 서로 다른 target을 가리키고, 그 중 **10개
+  edge**가 어휘가 정의하지 않는 이름(9개 distinct: 구매·거래·회원가입·구매자·재구매·
+  가입자·매출 성장·매출 채널별 집계·가격)을 가리킵니다. 존재하지 않는 개념의 IRI를
+  만들면 정의도 레이블도 scheme도 없는 subject 9개를 게시하는 것이므로,
+  `sdp:undefinedHierarchyTarget`로 개수와 함께 선언합니다. 이 결함이 읽는 사람에게
+  보이게 된 것도 이번이 처음입니다.
+* alias 전용 target은 alias index로 해소합니다(활성 고객 related 휴면 고객 →
+  이탈 고객). 그래프 순회는 여전히 해소하지 않습니다 — 그쪽은 ONT-003의 결함입니다.
+* **dataset id를 담지 않습니다.** `ontology._INDEX`에는 tenant 술어가 없고, 그것을
+  서빙하는 것이 바로 `concept_assets`가 자기 정책 결정이 거부한 호출자에게 모든
+  테넌트의 dataset id를 흘렸던 경로입니다. 이 라우트는 공개이므로 어휘만 담고,
+  개념↔dataset 매핑은 거버닝 읽기에 남습니다(`sdp:datasetMappingIsVersioned false`).
+
+**버전 고정(pin)**도 가능해졌습니다. `/ontology/search`와 `/ontology/resolve`가 답한
+버전을 스탬프하고, 호출자가 컴파일 시점의 digest를 `ontology_content_digest`로 고정하면
+다른 어휘로 조용히 응답하는 대신 **거부**합니다(불일치 409, 형식 오류 400 — 오타를
+"서버가 다른 어휘를 들고 있다"로 보고하면 클라이언트가 잘못된 조치를 합니다). revision은
+고정 대상이 아닙니다: 프로세스 수명 한정이므로 재시작 뒤 내용이 완전히 달라도 같은
+번호를 다시 쓰고, 그러면 조용히 고정이 풀리는 pin이 됩니다. 이로써
+`ontology_version_pin`은 route 존재가 아니라 **predicate를 양방향으로 실행해**
+`runtime_probe_verified`로 등급이 매겨집니다(살아 있는 digest는 통과, 한 글자 다른
+digest는 거부, 형식 오류는 거부). `credential_vault`에만 있던 runtime 검사 자리는
+control→검사 dispatch로 일반화했고, `_RUNTIME_VERIFIED_CONTROLS`는 그 dispatch에서
+**파생**합니다(같은 집합을 손으로 두 번 쓰면 갈라지고, 게시 판정을 결정하는 쪽이
+조용히 이깁니다).
+
+남은 경계 하나는 선언해 둡니다: `ontology_content_digest`는 `/ontology/search`에서는
+query parameter이므로 OpenAPI 문서에 자동으로 실리지만, `/ontology/resolve`에서는 이미
+`dict[str, str]` 본문을 받는 라우트의 느슨한 키이므로 **기계 판독 계약에는 실리지
+않습니다**. 이 라우트는 모델을 만들지 않는 10개 본문의 선언된 경계
+(`tests/test_api_request_contract.py::test_the_untyped_bodies_that_remain_are_the_ones_with_no_model`)
+안에 있고 이번 변경도 그 경계를 넘지 않지만, 그 경계에 키 하나를 **더한** 것은
+사실이므로 README에 적고 여기에도 적어 둡니다.
+
+### Fixed — 개념 IRI가 서로 다른 두 개념에 같은 식별자를 발급했습니다
+
+`concept.replace(" ", "-")`는 단사(injective)가 아닙니다. 측정: 개념 `활성 고객`과
+따로 등록 가능한 `활성-고객`이 **동일한 IRI**를 발급합니다. 해석 응답에서는 혼란스러운
+식별자일 뿐이지만 RDF 문서에서는 두 개념이 하나의 subject로 합쳐져 레이블·정의·계층이
+병합됩니다. IRI 세그먼트에 올 수 없는 문자(`%` 먼저, 그 다음 공백·`/`·`?`·`#`·`[`·`]`)만
+percent-escape합니다 — `urllib.parse.quote`는 비ASCII 전부를 인코딩해서 `고객`이
+`%EA%B3%A0%EA%B0%9D`가 되고, IRI는 Unicode를 담을 수 있으며 이 export는 사람이 읽는
+문서입니다. `resolve_terms`도 같은 함수를 쓰므로 정의가 하나입니다.
+
+### Fixed — 해석 결과가 정의되지 않은 용어에 정의된 개념과 똑같은 IRI를 붙였습니다
+
+`_INDEX`는 `dataset.terms`로 만들어지고 그것들은 dataset이 선언한 용어이지 등록된
+개념일 필요가 없습니다. 측정: `/ontology/resolve`가 캠페인·전환·비즈니스 용어에 대해
+term IRI를 게시하는데, 어휘는 그 중 어느 것도 정의하지 않습니다 — 정의된 개념의 IRI와
+형태가 동일해서, 클라이언트는 찾아볼 수 있는 정의와 아무데도 닿지 않는 식별자를
+구별할 수 없었습니다. 각 행에 `defined_in_vocabulary`를, 응답에
+`undefined_resolution_count`를 둡니다. 해석 자체는 계속 돌려줍니다 — dataset을 가리키는
+진짜 포인터이기 때문입니다.
+
+### Fixed — 어휘 변경에 락이 없었습니다
+
+`ontology.py`에는 `threading` 참조가 하나도 없었고, 비슷한 상태를 들고 있는 형제
+스토어 둘(`catalog`, `graph_store`)은 측정된 check-then-act 손상 때문에 이미 재진입
+락을 갖고 있었습니다. 임계 구역은 존재 확인 읽기부터 19줄 뒤의 저장 쓰기까지입니다.
+`ontology_version.vocabulary_change_lock()`(재진입)이 어휘·alias index·revision
+카운터·(승인 시)patch 상태를 한 구역으로 묶고, 공개 wrapper가 **존재 확인 읽기보다
+먼저** 락을 잡습니다 — 읽기 뒤에 잡으면 창이 그대로 열려 있습니다. 회귀 테스트는
+경쟁시키지 않고 **읽기 안에서** 첫 번째 writer를 멈춥니다: 이 구역에는 I/O도
+GIL을 놓는 호출도 없어서 CPython에서는 창이 저절로 열리지 않고, 열 수 없는 테스트는
+락이 하는 일을 보여줄 수 없습니다. 역검증: 공개 wrapper의 `with ...lock()`을
+`if True`로 바꾸면 한 개념에 대해 `already_published: False`가 2건 나오고 revision이
+2 올라갑니다.
+
+### Fixed — 모듈 수준 가변 상태 2건이 autouse fixture 밖에 있었습니다
+
+`tests/conftest.py`의 autouse fixture는 20여 개 파일이 격리 fixture를 갖지 않아
+역순 실행에서 5건이 깨졌기 때문에 존재합니다. 그런데 그 fixture의 재고 목록과 그것을
+지키는 `test_state_isolation.py`는 **둘 다 손으로 쓴 목록**이라, 새 스토어는 누군가
+기억했을 때만 덮입니다 — 바로 이 fixture가 막으려는 배치가 한 단계 위에서 반복되고
+있었습니다. 측정 결과 `authz._JWKS_CACHE`와 `observability._SINK_BREAKER`가 fixture에
+없었고, 그것을 더럽히는 두 파일이 테스트마다 각자 치우고 있었습니다
+(`test_honest_metrics.py`는 `_SINK_BREAKER["open_until"] = 0.0`을 다섯 곳에서,
+`test_authz.py`는 `clear_jwks_cache()`를 세 곳에서). 전체 스위트에 테스트별 probe를
+걸어 측정한 유출은 **두 스토어 모두 0건**입니다 — 지금 깨지고 있던 것은 없고, 잠재적
+취약성입니다. 둘을 fixture로 옮기고, `tests/test_module_state_coverage.py`가 두 패키지의
+모듈 수준 `dict`/`list`/`set`/`deque`를 **열거**해 각각이 "fixture가 복원함" 또는
+"런타임에 변경되지 않음"으로 선언되었는지 검사합니다. 선언하지 않고 추가하면 여기서
+실패합니다 — 작성자에게는 한 줄 판단이고, 그러지 않으면 다음 사람에게 파일 순서에
+의존하는 실패가 됩니다. 이 검사의 "fixture가 claim한 것을 실제로 복원하는가" 부분은
+처음에 파일 전체를 훑어서, 복원 줄을 지우고 snapshot 줄만 남겨도 통과했습니다(측정).
+`finally:` 이후로 범위를 좁혀 역검증했습니다.
 
 ### Security — 마스킹이 선언된 세 근거 중 하나만 보고 있었습니다
 

@@ -361,25 +361,82 @@ REQUIREMENT_COVERAGE: dict[str, RequirementCoverage] = {
             "test:tests/test_api.py::test_ontology_concept_graph",
         ],
         note=(
-            "broader/narrower/related are carried per concept and are both "
-            "readable (GET /ontology/term/{term}/graph returns all three) and "
-            "traversable (POST /graph/query, with an edge_types filter). What is "
-            "missing is SKOS itself: no skos: vocabulary or RDF/SKOS "
-            "serialization is emitted anywhere (the JSON-LD/DCAT export covers "
-            "datasets, not concepts), and 10 of the 13 broader/narrower/related "
-            "targets in the seed are not graph nodes, so traversal materializes "
-            "them as kind=\"unknown\" placeholders with no definition — including "
-            "휴면 고객, which duplicates the existing concept 이탈 고객 because edge "
-            "targets are not resolved through the alias index. the currently "
+            "broader/narrower/related are carried per concept, are readable "
+            "(GET /ontology/term/{term}/graph returns all three), traversable "
+            "(POST /graph/query, with an edge_types filter), and — since "
+            "ONT-004 — serialized as real SKOS: GET /ontology/vocabulary/jsonld "
+            "emits skos:broader/narrower/related between skos:Concept nodes in "
+            "one skos:ConceptScheme (this note previously said no skos: "
+            "vocabulary or RDF/SKOS serialization was emitted anywhere, which "
+            "that route falsified). What is still missing is in the **graph** "
+            "path, not the serialization: measured, 10 of the 19 "
+            "broader/narrower/related edges in the seed name a target the "
+            "vocabulary never defines, over 9 distinct names, and graph "
+            "traversal materializes them as kind=\"unknown\" placeholders with "
+            "no definition — including 휴면 고객, which duplicates the existing "
+            "concept 이탈 고객 because **edge targets are not resolved through "
+            "the alias index**. The export does resolve them (휴면 고객 → "
+            "이탈 고객) and declares the 10 undefined edges rather than minting "
+            "an IRI for a concept that does not exist, so the defect is now "
+            "visible to a reader; it is not fixed in the graph. the currently "
             "cited test_the_shared_vocabulary_itself_stays_open asserts only "
             "definition/aliases/canonical and proves nothing about the hierarchy."
         ),
     ),
     "ONT-004": RequirementCoverage(
-        status="not_implemented",
+        status="partial",
+        evidence=[
+            "route:GET /ontology/version",
+            "route:GET /ontology/change-log",
+            "route:GET /ontology/vocabulary/jsonld",
+            "func:sdp.ontology_version.record_vocabulary_change",
+            "test:tests/test_ontology_version_identity.py::test_publishing_a_concept_advances_the_revision_and_logs_it",
+            "test:tests/test_ontology_version_identity.py::test_an_approved_patch_records_both_the_proposer_and_the_reviewer",
+            "test:tests/test_ontology_version_identity.py::test_an_eviction_is_recorded_as_its_own_revision",
+            "test:tests/test_ontology_vocabulary_export.py::test_the_scheme_carries_the_version_it_serialized",
+        ],
         note=(
-            "There is no OWL/RDFS artifact and no ontology version. The concept "
-            "vocabulary is a Python dict with no release identity."
+            "All three acceptance items are implemented and tested. **version**: "
+            "a monotonic `ontology_revision` from a recorded baseline plus a "
+            "sha256 `content_digest` recomputed from live content, published on "
+            "GET /ontology/version. **change log**: a bounded, newest-first log "
+            "with one entry per effective change — a no-op re-publication "
+            "records nothing, and an eviction at the vocabulary cap is its own "
+            "revision, which is the first time that silent deletion left any "
+            "trace. **reviewer 기록**: an approved patch records the proposer "
+            "(`actor_role: proposer`) and the approving reviewer; a direct "
+            "upsert records `reviewer_id: null` with `review_basis: "
+            "direct_admin_upsert`, and the recorder refuses a reviewer on any "
+            "source that carries no review. The artifact the revision names is "
+            "a SKOS/RDFS JSON-LD serialization of the vocabulary carrying "
+            "`owl:versionInfo`. "
+            "Not implemented, which is why this is partial rather than "
+            "implemented: (1) the requirement says **OWL**/RDFS and there is no "
+            "OWL axiom anywhere — no owl:Class, no rdfs:subClassOf, no "
+            "restriction — and no reasoner validates the release (ONT-007 is "
+            "not_implemented, so NFR-QUAL-002 stays unmet); (2) the version is "
+            "not durable. The revision, the change log and every reviewer "
+            "record live in process memory and reset on restart, while "
+            "`sdp.evidence` already selects a Postgres or SQLite store for the "
+            "policy/audit ledgers — the asymmetry is declared "
+            "(`revision_is_durable: false`, `revision_scope: "
+            "process_lifetime`) but a declared limitation is what makes this "
+            "partial, not what closes it; (3) the version covers the concept "
+            "vocabulary and its alias index only — `ontology._INDEX`, the "
+            "concept-to-dataset map, is built once at import and no "
+            "registration updates it, so dataset mapping is outside the "
+            "versioned scope and the export says so "
+            "(`sdp:datasetMappingIsVersioned false`). "
+            "One published claim this closed: the `rdf_connector` control "
+            "`ontology_version_pin` reported `status: implemented` / "
+            "`verification: proof_route_served` with proof endpoints "
+            "/ontology/search and /ontology/resolve while neither response "
+            "contained the string \"version\" anywhere — two published claims "
+            "about one capability contradicting each other. Both routes now "
+            "stamp the version they answered from and accept a digest pin "
+            "(409 on a mismatch, 400 on a malformed digest), and the control is "
+            "graded `runtime_probe_verified` by exercising the pin predicate in "
+            "both directions."
         ),
     ),
     "ONT-005": RequirementCoverage(
@@ -402,7 +459,16 @@ REQUIREMENT_COVERAGE: dict[str, RequirementCoverage] = {
             "semantic_validation.py reports shacl_engine_executed = false (line "
             "74), its shapes target Dataset/BusinessMapping/DatasetDistribution "
             "only — there is no concept shape — and it is never called from the "
-            "review path. Reviewer approval is the sole merge gate."
+            "review path. Reviewer approval is the sole merge gate. "
+            "Separately, and deliberately not closed here: GET /ontology/patches "
+            "runs no authorization at all and serves requestor, reviewed_by, "
+            "reviewed_at and review_comment in the clear to an anonymous caller "
+            "— measured. ONT-004 added a change log carrying the same "
+            "identities and gated it like /audit/events, so the two surfaces now "
+            "disagree about whether steward identity is public. The open route "
+            "is the one to close; it was left alone rather than widened to "
+            "match, because gating it changes this requirement's own route and "
+            "the tests that pin its open shape."
         ),
     ),
     "ONT-006": RequirementCoverage(
@@ -1328,8 +1394,16 @@ REQUIREMENT_COVERAGE: dict[str, RequirementCoverage] = {
     "NFR-QUAL-002": RequirementCoverage(
         status="not_implemented",
         note=(
-            "There is no ontology release, so no release validation. ONT-004 is "
-            "the prerequisite and is also unbuilt."
+            "The prerequisite is now built: ONT-004 gives the vocabulary a "
+            "release identity (revision + content digest) and a versioned "
+            "SKOS/RDFS artifact, so there is something to validate — this note "
+            "previously said there was no ontology release at all. The "
+            "requirement itself is still unmet, and for the reason it names: no "
+            "reasoner runs. ONT-007 is not_implemented, nothing checks "
+            "consistency, and the publication path (`review_patch` → "
+            "`register_concept`) applies no reasoner and no SHACL shape before "
+            "a concept reaches the read surfaces (see ONT-005). The export "
+            "carries no OWL axiom for a reasoner to act on."
         ),
     ),
     "NFR-QUAL-003": RequirementCoverage(

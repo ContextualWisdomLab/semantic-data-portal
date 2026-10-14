@@ -113,7 +113,9 @@ def test_an_unmapped_glossary_concept_is_named_rather_than_excluded() -> None:
 def test_registering_an_unmapped_concept_lowers_coverage() -> None:
     """The denominator must respond to the glossary growing."""
     before = ontology_mapping_coverage_detail()
-    ontology.register_concept("거래 금액", definition="테스트용 미매핑 개념")
+    ontology.register_concept(
+        "거래 금액", change_source="concept_upsert", definition="테스트용 미매핑 개념"
+    )
     after = ontology_mapping_coverage_detail()
     assert after["glossary_concept_count"] == before["glossary_concept_count"] + 1
     assert after["ontology_mapping_coverage"] < before["ontology_mapping_coverage"]

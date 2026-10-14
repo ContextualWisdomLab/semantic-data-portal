@@ -13,7 +13,7 @@ from sdp_core import (
 
 from .catalog import count_audit_events, list_audit_events, list_datasets, validate_metadata
 from .evidence import count_policy_decisions, list_policy_decisions
-from .ontology import canonical_concept_or_none, list_concepts
+from .ontology import canonical_concept_or_none, list_concepts, ontology_version_identity
 from .semantic_validation import enterprise_shacl_validation_summary
 from .steward_review import build_steward_review_summary
 
@@ -116,6 +116,24 @@ def ontology_mapping_coverage_detail() -> dict[str, Any]:
     }
 
 
+def ontology_version_summary() -> dict[str, Any]:
+    """The ontology version, trimmed to what belongs in a diligence pack.
+
+    The full identity surface publishes seventeen fields including the digest
+    basis and the change vocabularies; a pack needs the identity and the one
+    limitation that changes how a reader may use it.
+    """
+    identity = ontology_version_identity()
+    return {
+        "revision": identity["ontology_revision"],
+        "content_digest": identity["content_digest"],
+        "revision_is_durable": identity["revision_is_durable"],
+        "concept_count": identity["concept_count"],
+        "change_log_entry_count": identity["change_log_entry_count"],
+        "digest_matches_recorded_revision": identity["digest_matches_recorded_revision"],
+    }
+
+
 def _ontology_mapping_coverage() -> float:
     """The glossary-coverage headline, for the gate and the evidence pack."""
     return float(ontology_mapping_coverage_detail()["ontology_mapping_coverage"])
@@ -137,6 +155,11 @@ OPEN_PROOF_ENDPOINTS = [
     "/enterprise/production-readiness",
     "/enterprise/shacl-validation",
     "/enterprise/steward-review",
+    # ONT-004's two open halves: the live ontology version, and the versioned
+    # SKOS/RDFS artifact the revision names. Both carry counts and content, no
+    # identity - the identity-bearing change log is actor-scoped below.
+    "/ontology/version",
+    "/ontology/vocabulary/jsonld",
     "/metrics",
 ]
 
@@ -144,6 +167,10 @@ ACTOR_SCOPED_PROOF_ENDPOINTS = [
     "/enterprise/connectors/sql_connector/probe?dataset_id=crm-customer-master&user=<actor>",
     "/policy/decisions?user=<actor>",
     "/audit/events?user=<actor>",
+    # Every entry names an actor and, on an approval, a reviewer, so this is
+    # gated like the other two ledgers rather than published open beside the
+    # version. ONT-004's reviewer-record evidence lives here.
+    "/ontology/change-log?user=<actor>",
 ]
 
 
@@ -169,6 +196,12 @@ def build_enterprise_evidence_pack() -> dict[str, Any]:
         "demo_domain": demo_plan.priority_domain,
         "dataset_count": len(datasets),
         "demo_seed_datasets": [dataset.id for dataset in demo_plan.demo_datasets],
+        # ONT-004: the version a diligence reader is comparing against, in the
+        # pack rather than only behind a link. Process-local, and labelled so.
+        **{
+            f"ontology_{key}": value
+            for key, value in ontology_version_summary().items()
+        },
         "metadata_validation_pass_rate": _metadata_validation_pass_rate(),
         "mean_metadata_completeness": _mean_metadata_completeness(),
         "shacl_validation_pass_rate": shacl_validation["validation_pass_rate"],

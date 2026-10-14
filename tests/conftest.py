@@ -26,10 +26,29 @@ they nest inside this one and restore to the same values.
 
 The state covered here was enumerated from the modules, not listed from memory::
 
-    sdp.catalog      _DATA, _AUDIT_LOG, _SCHEMA_HISTORY
-    sdp.evidence     _POLICY_DECISION_LOG, _AUDIT_EVENT_LOG
-    sdp.ontology     _CONCEPT_DEFINITIONS, _ALIAS_TO_CANONICAL, _ONTOLOGY_PATCHES
-    sdp.observability  request-observation ring buffer, export-error buffer
+    sdp.catalog          _DATA, _AUDIT_LOG, _SCHEMA_HISTORY
+    sdp.evidence         _POLICY_DECISION_LOG, _AUDIT_EVENT_LOG
+    sdp.ontology         _CONCEPT_DEFINITIONS, _ALIAS_TO_CANONICAL, _ONTOLOGY_PATCHES,
+                         _INDEX
+    sdp.ontology_version _CHANGE_LOG, _REVISION_STATE
+    sdp.observability    request-observation ring buffer, export-error buffer,
+                         _SINK_BREAKER
+    sdp.authz            _JWKS_CACHE
+
+The last three were added after the enumeration was mechanised. ``_CHANGE_LOG``
+and ``_REVISION_STATE`` must be restored **together with**
+``_CONCEPT_DEFINITIONS``: the revision names a content digest, so restoring the
+vocabulary without the revision leaves ``ontology_version_identity`` reporting
+``digest_matches_recorded_revision: false`` for the rest of the session.
+
+``_SINK_BREAKER`` and ``_JWKS_CACHE`` are runtime-mutated and were covered only
+by per-test cleanup inside the two files that dirty them
+(``test_honest_metrics.py`` pokes ``_SINK_BREAKER["open_until"] = 0.0`` in five
+places; ``test_authz.py`` calls ``clear_jwks_cache()`` in three). Measured over
+the whole suite with a per-test probe, neither leaked - 0 tests left either
+store dirty - so this is latent fragility rather than a live defect, and the
+honest reason to move them here is that per-file cleanup is the arrangement
+whose failure this fixture exists to prevent.
 
 **Deliberately not covered: the graph store singleton.** Catalog mutations now
 mirror into it, so it does accumulate across tests, but it exposes no snapshot
@@ -44,7 +63,7 @@ from copy import deepcopy
 
 import pytest
 
-from sdp import catalog, evidence, observability, ontology
+from sdp import authz, catalog, evidence, observability, ontology, ontology_version
 
 
 @pytest.fixture(autouse=True)
@@ -62,6 +81,10 @@ def restore_in_memory_app_state():
     concept_definitions = deepcopy(ontology._CONCEPT_DEFINITIONS)
     alias_to_canonical = dict(ontology._ALIAS_TO_CANONICAL)
     concept_index = deepcopy(ontology._INDEX)
+    change_log = [dict(entry) for entry in ontology_version._CHANGE_LOG]
+    revision_state = dict(ontology_version._REVISION_STATE)
+    jwks_cache = dict(authz._JWKS_CACHE)
+    sink_breaker = dict(observability._SINK_BREAKER)
     request_observations = observability.list_request_observations()
     export_errors = observability.list_observability_export_errors()
     try:
@@ -81,6 +104,13 @@ def restore_in_memory_app_state():
         ontology._ALIAS_TO_CANONICAL.update(alias_to_canonical)
         ontology._INDEX.clear()
         ontology._INDEX.update(concept_index)
+        ontology_version._CHANGE_LOG[:] = change_log
+        ontology_version._REVISION_STATE.clear()
+        ontology_version._REVISION_STATE.update(revision_state)
+        authz._JWKS_CACHE.clear()
+        authz._JWKS_CACHE.update(jwks_cache)
+        observability._SINK_BREAKER.clear()
+        observability._SINK_BREAKER.update(sink_breaker)
         observability.reset_request_observability()
         for observation in request_observations:
             observability.record_request_observation(observation, export=False)
