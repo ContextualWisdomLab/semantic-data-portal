@@ -2434,6 +2434,12 @@ ready=true. 문서(README, enterprise-readiness, implementation-compliance)와 `
 | high | `src/sdp/api.py:131` | Synchronous sink export runs on the event loop in the async observability middleware, serializing every request | 0/3 refuted |
 | high | `tests/test_api.py:1258` | Catalog publish/patch/deprecate authorization guard is defended by no test | 0/3 refuted |
 
+위 표는 **보고된 그대로의 기록**이고, 소진 상황은 아래 "감사 큐 소진" 절들이 가집니다. 2026-10-14 기준
+11건 중 9건이 닫혔습니다 — orchestrator 3건(소진 1), observability 1건(소진 2), `api.py:427` + `/catalog/datasets`
+목록(소진 3), `browse.py:60`(소진 4), `stores.py:21`+`:25`(소진 5), `entrypoint.sh:13`(소진 6).
+남은 2건은 `src/sdp/api.py:131`(async 미들웨어의 동기 sink export)과 `tests/test_api.py:1258`
+(catalog mutation 인가 가드에 테스트 없음)입니다.
+
 이 목록 자체는 증거가 아니라 **작업 큐**입니다. 다음 순서로 직접 재현 → RED → 수리 → 로컬 검증을 반복합니다:
 SQL validator 세 건(`FROM a, b` 콤마 조인으로 allowlist 우회, `SELECT ... INTO`가 read-only 가드를 통과,
 `$$...$$` dollar-quote가 literal 가드를 우회)이 서로 같은 함수에 모여 있어 한 묶음으로 처리하기 적합하고,
@@ -2498,6 +2504,122 @@ userinfo와 query를 포함하지 않고, 읽을 수 없는 authority는 raw URL
 검증: RED 선확인(단위 3건 + `/enterprise/observability` end-to-end 1건 실패 → 통과). 기존 테스트 1건이
 `target == "tcp://opaque-target"`로 **raw URL 반환을 고정**하고 있었으므로 함께 고쳤습니다(이제 `opaque-target`).
 전체 **295 passed / 8 skipped**, Hypothesis fuzz mirror 10 passed, `sdp.demo_smoke` ready=true.
+
+### 감사 큐 소진 (3) — browse 403이 보호하던 payload가 catalog 상세에 그대로 있었습니다 (2026-10-14)
+
+`GET /browse/{dataset_id}/schema`는 tenant/role/sensitivity 정책을 평가해 403을 돌려주고 그 거부를 감사
+기록에 남깁니다. 그런데 같은 익명 호출자가 `GET /catalog/datasets/{dataset_id}`에서 **같은 스키마를 `pii`
+플래그까지 붙은 채로** 받고 있었습니다. 직접 재현했습니다.
+
+| 호출 (actor 없음) | 결과 |
+| --- | --- |
+| `GET /browse/crm-customer-master/schema?user=nobody` | `403 tenant boundary denied` |
+| `GET /catalog/datasets/crm-customer-master` | `200` |
+| └ `source_system` | `postgresql://analytics.dw/customer` |
+| └ `schema`의 pii 컬럼 | `['customer_email']` |
+| └ `profile` | `{'row_count': 1200000, 'updated_at': ...}` |
+| └ policy decision / audit event 증가분 | `0` / `0` |
+
+`GET /catalog/datasets`(목록)도 같은 `Dataset.model_dump()` 전체를 **모든 데이터셋에 대해** 돌려주고 있어서,
+상세만 고치는 것은 의미가 없었습니다. 즉 접근 제어가 단지 없는 것이 아니라 **우회 가능**했고, 그게 더 나쁩니다.
+
+수리 범위를 고르는 데 판단이 필요했습니다. discovery 라우트를 정책 게이트 뒤로 보내면 README에 공개로 적힌
+라우트가 403이 됩니다 — 그건 "카탈로그는 공개 발견 표면인가"라는 제품 posture 결정이고, 저장소 문서가
+정하지 않은 사항입니다. 그래서 **더 작고 모호하지 않은 쪽**을 택했습니다: 라우트는 문서대로 200으로 두고,
+governed 필드를 payload에서 뺍니다. `catalog.discovery_view()`가 `schema`(및 `pii`/`quality_issues`),
+`source_system`, `profile`, `tenant_id`을 withhold하고 형태 정보는 `schema_field_count`로 대체합니다.
+스키마의 공개 지점은 정책을 평가·감사하는 browse 경로 하나로 남습니다.
+
+payload key 집합을 고정하는 contract test를 함께 넣었습니다. `Dataset`에 필드가 추가될 때 인증 없는
+payload로 자동 편입되지 않고 publish/withhold를 명시적으로 결정하게 됩니다(deny-list의 fail-open 성질 보완).
+
+검증: RED 2건 선확인 → 수리, 전체 **297 passed / 8 skipped**, `sdp.demo_smoke` ready=true.
+기존 상세 테스트는 `id`/`status`/`metadata_recommendation_score`만 확인하고 있어 governed 필드를 고정한
+테스트는 **하나도 없었습니다** — 즉 이 payload는 계약이 아니라 `model_dump()`의 부작용이었습니다.
+
+### 감사 큐 소진 (4) — preview가 어떤 데이터셋을 물어도 같은 CRM row를 돌려줬습니다 (2026-10-14)
+
+보고된 내용("다른 dataset_id를 대면 PII 마스킹이 우회된다")보다 실제가 더 나빴습니다. `browse.preview()`는
+**고정된 CRM row 집합 하나**를 모든 데이터셋에 돌려주면서, 마스킹 목록은 *지정된* 데이터셋의 `pii`
+플래그에서 계산했습니다. 직접 재현한 전수 결과입니다.
+
+| dataset_id | `masking_summary` | `rows[0]['customer_email']` |
+| --- | --- | --- |
+| `crm-customer-master` | `['customer_email']` | `***` |
+| `crm-event` | `[]` | `alice@example.com` |
+| `marketing-campaign` | `[]` | `alice@example.com` |
+| `sales-order` | `[]` | `alice@example.com` |
+| `semantic-glossary` | `[]` | `alice@example.com` |
+
+응답의 `columns`와 `rows`도 서로 다른 데이터셋을 가리켰습니다 (`semantic-glossary`는
+`columns=['concept_uri', ...]`인데 row는 CRM 필드). 그리고 `DemoSQLConnector.preview()`가 이 함수에
+위임하므로 connector 경로도 같이 새고 있었습니다.
+
+이는 저장소가 스스로 광고하는 control을 무효화합니다. `sdp_core/demo_seed.py:65`의 데모 체크포인트가
+"PII 컬럼이 preview/query에서 마스킹되고 policy decision id가 남는지 확인한다"이고,
+`connectors._IMPLEMENTED_PROOF["pii_masking"]`가 바로 이 엔드포인트를 그 control의 증빙으로 지목하며
+`connector_probe`가 이를 `ready_for_demo` 판정에 계산해 넣습니다.
+
+수리는 근본 원인을 닫습니다. `_sample_rows()`가 샘플 값을 **데이터셋의 선언 스키마에 투영**해 row를
+만듭니다 — 데이터셋이 선언하지 않은 컬럼은 들어갈 칸이 없으므로 어떤 dataset_id로도 남의 PII 컬럼에
+도달할 수 없고, `columns`/`rows` 불일치도 사라집니다. 마스킹은 **floor**로 바꿨습니다: 정책 obligation과
+데이터셋이 `pii`로 선언한 컬럼의 합집합을 마스킹하고 실제 적용 집합을 응답·감사에 보고합니다. 데모 가치는
+오히려 올라갑니다 — 각 데이터셋이 자기 스키마에 맞는 row를 보여줍니다.
+
+검증: RED 2건 선확인(3번째는 회귀 방지 대조군) → 수리, 전체 **300 passed / 8 skipped**,
+`tests/fuzz` 10 passed, `sdp.demo_smoke` ready=true.
+
+### 감사 큐 소진 (5) — NOT NULL tenant 컬럼이 사실상 상수였습니다 (2026-10-14)
+
+`stores.py:21,25` 두 건은 같은 결함의 두 면이라 한 묶음으로 처리했습니다. `PostgresEvidenceStore`는
+`tenant_id TEXT NOT NULL`과 tenant 선행 인덱스(`idx_*_tenant_resource_created`)로 행을 scope하는데, 그
+값을 읽는 helper 두 개가 `or "demo"` fallback을 갖고 있었고 생산 측은 대부분 tenant를 전달하지 않았습니다.
+**`demo`는 이 제품의 실제 tenant(seed 데이터셋 소유자)이므로**, 이 fallback은 값을 잃는 것이 아니라 남의
+tenant로 행을 오귀속시킵니다. tenant=`acme-corp` 데이터셋을 심고 직접 재현했습니다.
+
+| 분기 | 저장되던 tenant | 수리 후 |
+| --- | --- | --- |
+| deny tenant boundary | `acme-corp` (유일하게 stamp하던 분기) | 동일 |
+| deny external-export / mutation role | `demo` | 소유 tenant |
+| deny missing dataset (`obligations={}`) | `demo` | actor tenant |
+| allow create / search | `demo` | actor tenant |
+| audit event 전부 (`details['tenant_id']`를 쓰는 코드가 없었음) | `demo` | 소유 tenant |
+
+가장 날카로운 결과: `acme-customer-master`에 대한 **tenant 경계 위반 거부 감사 기록** — tenant 격리
+감사자가 정확히 찾는 그 행 — 이 `demo` 아래 들어갔습니다. tenant-scoped 질의는 자기 행을 놓치고 남의 행을
+봅니다. NOT NULL + 인덱스가 붙은 컬럼이 상수에 가까우면 컬럼이 없는 것보다 나쁩니다. 소비자가 신뢰하기 때문입니다.
+같은 resource에 대한 결정이 분기에 따라 `acme-corp`과 `demo`로 갈리므로, 컬럼이 *누구의* tenant를
+뜻하는지조차 일관되지 않았습니다.
+
+수리: `policy._effective_tenant_id()`가 존재하는 데이터셋이면 소유 tenant, 데이터셋을 지칭하지 않는
+행위(`create`/discovery/없는 resource)면 actor tenant를 돌려주고 `_decision()`이 모든 분기에 stamp합니다
+(명시값 보존). `catalog.ingest_event()`와 `_build_dataset_payload()`가 audit event에 같은 값을 넣습니다.
+store fallback은 `UNRESOLVED_TENANT_ID`로 바꿨습니다 — 귀속 불가 행은 어떤 tenant도 소유하지 않고 데이터
+품질 신호로 남습니다. 레거시 backfill DDL 두 곳도 같은 marker를 쓰고, JSON에서 꺼낸 빈 문자열도 unresolved로
+취급합니다(이전에는 `COALESCE`가 `''`를 통과시켜 NOT NULL만 만족하는 빈 tenant가 남았습니다).
+
+검증: RED 9건 선확인 → 수리, 전체 **313 passed / 8 skipped**, `tests/fuzz` 10 passed,
+`sdp.demo_smoke` ready=true.
+
+### 감사 큐 소진 (6) — 마이그레이션이 끝까지 실패해도 컨테이너가 서비스를 시작했습니다 (2026-10-14)
+
+`docker/entrypoint.sh`의 재시도 루프는 30회 실패 후 `break`로 빠져나와 `exec "$@"`로 떨어졌습니다. 즉
+**스키마가 한 번도 적용되지 않은 데이터베이스를 상대로 서비스가 뜹니다.** 실제 스크립트를 `sh`로 실행해
+재현했습니다 — `python` stub을 항상 실패하게, `sleep` stub을 즉시 반환하게 PATH에 올리면 60초 대기 없이
+30회 루프가 돌고, 앱 커맨드가 **실행되어 marker 파일이 생겼습니다**(종료 코드 0).
+
+루프는 "DB가 아직 안 떴다"와 영구 실패(잘못된 DSN, 실패하는 마이그레이션)를 구분할 수 없으므로, 영구
+실패도 60초를 태우고 나서 무시됩니다. `/health`는 DB를 보지 않으므로 컨테이너는 정상으로 보고되고,
+`graph_store.build_store()`는 DSN이 있을 때 `readiness()`를 확인해 **fail-closed로 `RuntimeError`를
+던지므로**, 결과는 "healthy한 컨테이너 뒤에서 요청마다 실패"입니다. README 82행이 적은 계약
+("기동 시 마이그레이션 + 시드를 멱등하게 적용합니다")과도 어긋납니다.
+
+수리: `break`를 `exit 1`로 바꿨습니다. 부트스트랩 실패는 컨테이너 기동 실패여야 하고, orchestrator의 재시작
+정책이 실제 원인을 드러내게 합니다.
+
+검증: `tests/test_container_entrypoint.py`가 실제 스크립트를 `sh`로 돌립니다 — RED 1건 선확인(marker 생성 +
+exit 0) → 수리 후 marker 없음 + 비정상 종료. 대조군 2건(마이그레이션 성공 시 앱 기동, DSN 없으면 in-memory
+backend로 기동)은 수리 전후 모두 통과. `sh -n`으로 문법 확인, 전체 **316 passed / 8 skipped**.
 
 ## 운영 메모
 
