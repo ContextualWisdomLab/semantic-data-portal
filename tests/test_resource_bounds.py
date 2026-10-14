@@ -21,6 +21,8 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 
+from copy import deepcopy
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -39,6 +41,10 @@ def _isolate():
     audit = list(catalog._AUDIT_LOG)
     decisions = list(evidence._POLICY_DECISION_LOG)
     patches = [p.model_copy(deep=True) for p in ontology._ONTOLOGY_PATCHES]
+    # register_concept mutates these, so a test that publishes a concept
+    # would otherwise leak it into every later test.
+    concept_definitions = deepcopy(ontology._CONCEPT_DEFINITIONS)
+    alias_to_canonical = dict(ontology._ALIAS_TO_CANONICAL)
     try:
         yield
     finally:
@@ -47,6 +53,10 @@ def _isolate():
         catalog._AUDIT_LOG[:] = audit
         evidence._POLICY_DECISION_LOG[:] = decisions
         ontology._ONTOLOGY_PATCHES[:] = patches
+        ontology._CONCEPT_DEFINITIONS.clear()
+        ontology._CONCEPT_DEFINITIONS.update(concept_definitions)
+        ontology._ALIAS_TO_CANONICAL.clear()
+        ontology._ALIAS_TO_CANONICAL.update(alias_to_canonical)
 
 
 def test_semantic_search_query_is_length_bounded() -> None:

@@ -33,6 +33,10 @@ def isolate_in_memory_app_state():
     policy_log = list(app_evidence._POLICY_DECISION_LOG)
     audit_event_log = list(app_evidence._AUDIT_EVENT_LOG)
     ontology_patches = [patch.model_copy(deep=True) for patch in app_ontology._ONTOLOGY_PATCHES]
+    # register_concept mutates these, so a test that publishes a concept
+    # would otherwise leak it into every later test.
+    concept_definitions = deepcopy(app_ontology._CONCEPT_DEFINITIONS)
+    alias_to_canonical = dict(app_ontology._ALIAS_TO_CANONICAL)
     request_observations = app_observability.list_request_observations()
     export_errors = app_observability.list_observability_export_errors()
     yield
@@ -44,6 +48,10 @@ def isolate_in_memory_app_state():
     app_evidence._POLICY_DECISION_LOG[:] = policy_log
     app_evidence._AUDIT_EVENT_LOG[:] = audit_event_log
     app_ontology._ONTOLOGY_PATCHES[:] = ontology_patches
+    app_ontology._CONCEPT_DEFINITIONS.clear()
+    app_ontology._CONCEPT_DEFINITIONS.update(concept_definitions)
+    app_ontology._ALIAS_TO_CANONICAL.clear()
+    app_ontology._ALIAS_TO_CANONICAL.update(alias_to_canonical)
     app_observability.reset_request_observability()
     for observation in request_observations:
         app_observability.record_request_observation(observation, export=False)

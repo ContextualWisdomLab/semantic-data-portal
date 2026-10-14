@@ -1048,7 +1048,26 @@ def _authorize_graph_node_read(actor: str, node_id: str) -> None:
 def ingest_concept(payload: OntologyConceptRequest) -> dict[str, Any]:
     _authorize_graph_write(payload.actor, payload.concept, event_type="ontology.concept_upsert")
     record = get_store().upsert_concept(payload.model_dump(exclude={"actor"}))
-    return {"status": "upserted", "concept": record}
+    # The store write populates the graph node and its embedding; it did not
+    # reach the ontology read surfaces, which read the module vocabulary. An
+    # upsert returned 200 while /ontology/search answered count=0 for the same
+    # term. Both are written now, and the response says whether the concept was
+    # newly published or already present.
+    registration = ontology.register_concept(
+        payload.concept,
+        definition=payload.definition or "",
+        aliases=list(payload.aliases or []),
+        multilingual=list(getattr(payload, "multilingual", None) or []),
+        broader=getattr(payload, "broader", None),
+        narrower=list(getattr(payload, "narrower", None) or []),
+        related=list(getattr(payload, "related", None) or []),
+    )
+    return {
+        "status": "upserted",
+        "concept": record,
+        "published_concept": registration["concept"],
+        "concept_already_published": registration["already_published"],
+    }
 
 
 @app.post("/graph/nodes")

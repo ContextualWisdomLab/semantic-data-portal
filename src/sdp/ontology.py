@@ -79,6 +79,77 @@ for base_concept in _CONCEPT_DEFINITIONS:
         _ALIAS_TO_CANONICAL[_normalize_term(alias)] = base_concept
 
 
+MAX_REGISTERED_CONCEPTS = 500
+
+
+def register_concept(
+    concept: str,
+    *,
+    definition: str = "",
+    aliases: list[str] | None = None,
+    multilingual: list[str] | None = None,
+    broader: str | None = None,
+    narrower: list[str] | None = None,
+    related: list[str] | None = None,
+) -> dict[str, Any]:
+    """Publish one concept into the vocabulary every read surface consults.
+
+    There were two disconnected concept stores. ``POST /ontology/concepts`` wrote
+    to the graph store, while ``/ontology/search``, ``/ontology/resolve``,
+    ``/ontology/concept/{term}`` and ``GET /ontology/concepts`` all read the
+    module-level ``_CONCEPT_DEFINITIONS``. So the write path and the read paths
+    never met. Measured before this change, after a successful upsert:
+
+        POST /ontology/concepts        -> 200
+        GET  /graph/nodes/<term>       -> 200      (the node was written)
+        GET  /ontology/search?q=<term> -> count=0
+        POST /ontology/resolve         -> resolved=[]
+        GET  /ontology/concepts        -> does not contain it
+
+    Writing here reaches all six readers, because they read this dict directly -
+    no accessor can be forgotten. The store write is kept as well: the graph node
+    and its embedding are what ``/graph/*`` serves.
+
+    Bounded like the proposal queue: this is process-lifetime state, so the
+    oldest registration is evicted at the cap. **It is not durable** - additions
+    are lost on restart, exactly as the in-memory evidence and graph defaults are.
+    Durable concept publication needs a store-backed read path, which would mean
+    extending the abstract ``GraphStore`` surface and its Postgres
+    implementation; that is deliberately not done here rather than shipped
+    untested.
+    """
+    canonical = concept.strip()
+    if not canonical:
+        raise ValueError("concept must not be empty")
+    if len(canonical) > MAX_ONTOLOGY_PATCH_FIELD:
+        raise ValueError(f"concept must be at most {MAX_ONTOLOGY_PATCH_FIELD} characters")
+
+    existing = _CONCEPT_DEFINITIONS.get(canonical)
+    if existing is not None:
+        # An approval must not silently rewrite a shipped definition; that needs
+        # its own explicit path. The record is returned unchanged so the caller
+        # can report that nothing was overwritten.
+        return {"concept": canonical, "already_published": True, **existing}
+
+    if len(_CONCEPT_DEFINITIONS) >= MAX_REGISTERED_CONCEPTS:
+        oldest = next(iter(_CONCEPT_DEFINITIONS))
+        del _CONCEPT_DEFINITIONS[oldest]
+
+    record: Dict[str, Any] = {
+        "aliases": list(aliases or []),
+        "broader": broader,
+        "narrower": list(narrower or []),
+        "related": list(related or []),
+        "definition": definition.strip(),
+        "multilingual": list(multilingual or []),
+    }
+    _CONCEPT_DEFINITIONS[canonical] = record
+    _ALIAS_TO_CANONICAL[_normalize_term(canonical)] = canonical
+    for alias in record["aliases"] + record["multilingual"]:
+        _ALIAS_TO_CANONICAL[_normalize_term(alias)] = canonical
+    return {"concept": canonical, "already_published": False, **record}
+
+
 @dataclass(frozen=True)
 class ConceptTerm:
     concept: str
@@ -281,5 +352,17 @@ def review_patch(
         patch.review_comment = comment
         patch.status = "approved" if normalized == "approve" else "rejected"
         _ONTOLOGY_PATCHES[idx] = patch
-        return patch.model_dump()
+        published = patch.model_dump()
+        if patch.status == "approved":
+            # The documented workflow is 제안 -> 승인 -> 노출. It stopped at 승인:
+            # approving a patch changed nothing in /ontology/search,
+            # /ontology/resolve, /ontology/concept or GET /ontology/concepts, and
+            # no documented path loaded an approved term into the read surface at
+            # all. Approval now publishes the concept through the same registrar
+            # POST /ontology/concepts uses, and the response says what happened
+            # rather than leaving the caller to check.
+            registration = register_concept(patch.concept, definition=patch.suggestion)
+            published["published_concept"] = registration["concept"]
+            published["concept_already_published"] = registration["already_published"]
+        return published
     raise KeyError("patch not found")
