@@ -2437,8 +2437,8 @@ ready=true. 문서(README, enterprise-readiness, implementation-compliance)와 `
 위 표는 **보고된 그대로의 기록**이고, 소진 상황은 아래 "감사 큐 소진" 절들이 가집니다. 2026-10-14 기준
 11건 중 9건이 닫혔습니다 — orchestrator 3건(소진 1), observability 1건(소진 2), `api.py:427` + `/catalog/datasets`
 목록(소진 3), `browse.py:60`(소진 4), `stores.py:21`+`:25`(소진 5), `entrypoint.sh:13`(소진 6).
-남은 2건은 `src/sdp/api.py:131`(async 미들웨어의 동기 sink export)과 `tests/test_api.py:1258`
-(catalog mutation 인가 가드에 테스트 없음)입니다.
+2026-10-14 두 번째 묶음까지 포함하면 10건이 닫혔고(소진 7이 `api.py:131`), 남은 1건은
+`tests/test_api.py:1258`(catalog mutation 인가 가드에 테스트 없음)입니다.
 
 이 목록 자체는 증거가 아니라 **작업 큐**입니다. 다음 순서로 직접 재현 → RED → 수리 → 로컬 검증을 반복합니다:
 SQL validator 세 건(`FROM a, b` 콤마 조인으로 allowlist 우회, `SELECT ... INTO`가 read-only 가드를 통과,
@@ -2620,6 +2620,38 @@ store fallback은 `UNRESOLVED_TENANT_ID`로 바꿨습니다 — 귀속 불가 �
 검증: `tests/test_container_entrypoint.py`가 실제 스크립트를 `sh`로 돌립니다 — RED 1건 선확인(marker 생성 +
 exit 0) → 수리 후 marker 없음 + 비정상 종료. 대조군 2건(마이그레이션 성공 시 앱 기동, DSN 없으면 in-memory
 backend로 기동)은 수리 전후 모두 통과. `sh -n`으로 문법 확인, 전체 **316 passed / 8 skipped**.
+
+### 감사 큐 소진 (7) — 동기 sink export가 event loop를 막아 요청을 직렬화했습니다 (2026-10-14)
+
+`record_request_observability` 미들웨어는 `async def`인데, `finally`에서 호출하는
+`_export_to_sink()`는 blocking `urlopen`(또는 파일 append)입니다. 즉 **sink 왕복이 event loop
+스레드에서 실행**되어 동시 요청 전부가 그 뒤에 줄을 섭니다. 측정했습니다 — `httpx.ASGITransport`로
+실제 앱에 `/health` 8개를 동시에 던지고, `urlopen`을 0.2초 sleep으로 치환했습니다.
+
+| | 수리 전 | 수리 후 |
+| --- | --- | --- |
+| 8개 동시 요청 소요 | **1.63s** | **0.23s** |
+| sink 왕복 1회(0.2s) 대비 | 8.1x (완전 직렬화) | 1.1x |
+| 완전 직렬화 기준선 | 1.60s | — |
+
+기본 `SDP_LOG_SINK_TIMEOUT_MS=500`이므로 sink가 죽으면 요청 10개가 ~0.5초가 아니라 ~5초를
+직렬로 소모합니다. 이것은 성능 취향이 아니라 가용성 결함입니다 — telemetry sink 하나가 API 전체의
+처리량 상한이 됩니다.
+
+수리: `record_request_observation_async()`를 추가해 미들웨어가 이를 await합니다. ring buffer append는
+**동기로 유지**해 요청이 끝난 즉시 `/metrics` 독자에게 보이고 순서가 흔들리지 않게 했고, blocking sink
+write만 `anyio.to_thread.run_sync`로 worker 스레드에 넘깁니다. 동기 `record_request_observation()`은
+그대로 두었습니다(테스트·비-loop 호출자용 진입점이며 `production.py` 증빙도 두 함수를 함께 가리킵니다).
+
+**남은 경계(확장하지 않았습니다):** 각 응답은 여전히 *자기* export를 기다리며, 그 상한은 문서화된
+`SDP_LOG_SINK_TIMEOUT_MS`입니다. 이번 수리가 없앤 것은 *다른* 요청들이 그 뒤에 직렬화되는 현상입니다.
+응답과 export를 완전히 분리하려면 fire-and-forget 태스크와 종료 시 drain 정책이 필요하고, 그건 보고된
+결함의 범위를 넘습니다.
+
+검증: RED 선확인(동일 테스트가 1.62s로 실패) → 수리 후 통과. 임계값은 "완전 직렬화의 1/2"로 느슨하게
+두어 머신 속도가 아니라 blocking 성질을 측정합니다. async 분기 2건(export=False, sink 실패 시 오류
+기록만 하고 요청을 깨지 않음)도 동기 쪽과 동등하게 덮었습니다. 전체 **319 passed / 8 skipped**,
+`tests/fuzz` 10 passed, `sdp.demo_smoke` ready=true.
 
 ## 운영 메모
 

@@ -186,3 +186,84 @@ def test_record_request_observation_records_sink_error(monkeypatch: pytest.Monke
     monkeypatch.setattr(obs, "_export_to_sink", _boom)
     obs.record_request_observation({"event": "http_request"}, export=True)
     assert any("sink down" in e.get("message", "") for e in obs.list_observability_export_errors())
+
+
+# --- the request path must not block the event loop on the sink -----------
+
+
+def test_sink_export_does_not_serialize_concurrent_requests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The observability middleware is ``async def`` and exported to the sink with
+    a blocking ``urlopen``/file write, so the export ran on the event loop thread:
+    every concurrent request queued behind the sink round-trip. Measured before
+    this contract, 8 concurrent ``/health`` calls against a 0.2s sink took 1.63s
+    — 8.1x one round-trip, fully serialized.
+
+    The threshold is deliberately loose (half of fully-serialized) so the test
+    measures the blocking property rather than machine speed.
+    """
+    import asyncio
+    import time
+
+    import httpx
+
+    from sdp.api import app
+
+    sink_delay = 0.2
+    concurrency = 8
+    monkeypatch.setenv("SDP_LOG_SINK_URL", "https://sink.example/ingest")
+
+    class _FakeResp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def _blocking_urlopen(request, timeout=None):
+        time.sleep(sink_delay)
+        return _FakeResp()
+
+    monkeypatch.setattr(obs, "urlopen", _blocking_urlopen)
+
+    async def _drive() -> float:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            started = time.monotonic()
+            responses = await asyncio.gather(*(client.get("/health") for _ in range(concurrency)))
+            elapsed = time.monotonic() - started
+        assert all(response.status_code == 200 for response in responses)
+        return elapsed
+
+    elapsed = asyncio.run(_drive())
+    fully_serialized = sink_delay * concurrency
+    assert elapsed < fully_serialized / 2, (
+        f"{concurrency} concurrent requests took {elapsed:.2f}s against a "
+        f"{sink_delay:.2f}s sink; the export is still blocking the event loop"
+    )
+    # Every request is still exported - offloading must not drop observations.
+    assert len(obs.list_request_observations()) >= concurrency
+
+
+def test_record_request_observation_async_export_false_skips_sink(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The async recorder honours export=False exactly as the sync one does."""
+    import asyncio
+
+    def _boom(*_a, **_k):
+        raise AssertionError("sink must not be called when export=False")
+
+    monkeypatch.setattr(obs, "_export_to_sink", _boom)
+    asyncio.run(obs.record_request_observation_async({"event": "http_request", "status_code": 204}, export=False))
+    assert obs.list_request_observations()[-1]["status_code"] == 204
+
+
+def test_record_request_observation_async_records_sink_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A sink failure inside the worker thread is captured, not raised into the
+    request path — the response must not fail because telemetry did."""
+    import asyncio
+
+    def _boom(_obs):
+        raise RuntimeError("async sink down")
+
+    monkeypatch.setattr(obs, "_export_to_sink", _boom)
+    asyncio.run(obs.record_request_observation_async({"event": "http_request"}, export=True))
+    assert any("async sink down" in e.get("message", "") for e in obs.list_observability_export_errors())

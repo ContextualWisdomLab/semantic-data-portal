@@ -60,7 +60,7 @@ from .observability import (
     build_observability_manifest,
     build_request_observation,
     prometheus_metrics_text,
-    record_request_observation,
+    record_request_observation_async,
     request_id_from_headers,
     request_id_header,
 )
@@ -128,9 +128,12 @@ async def record_request_observability(request: Request, call_next):
             headers=request.headers,
             request_id=request_id,
         )
-        record_request_observation(observation)
         if response is not None:
             response.headers[request_id_header()] = request_id
+        # The sink write is blocking, so it is awaited off the event loop; see
+        # record_request_observation_async. Setting the header first keeps the
+        # response untouched by the export path.
+        await record_request_observation_async(observation)
 
 
 def _actor(payload: dict[str, Any] | None) -> str:

@@ -120,6 +120,7 @@ def production_integration_registry() -> list[ProductionIntegration]:
                 "SDP_LOG_SINK_URL",
                 "SDP_REQUEST_ID_HEADER",
                 "sdp.observability.record_request_observation",
+                "sdp.observability.record_request_observation_async",
                 "/enterprise/observability",
                 "/metrics",
                 "tests/test_api.py::test_enterprise_observability_and_metrics_endpoints",
