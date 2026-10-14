@@ -2,8 +2,11 @@
 
 이 문서는 `claude/semantic-portal-pr-merge-e5a48k` 브랜치(PR
 [#102](https://github.com/ContextualWisdomLab/semantic-data-portal/pull/102))가
-베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. 164개 커밋 중 112개는
-gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입니다.
+베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **186개** 커밋 중 113개는
+gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입니다
+(`git rev-list --count origin/docs/product-technical-gap-baseline..HEAD`로 측정;
+앞서 적혀 있던 164/112는 그 시점의 값이고 이후 커밋을 반영하지 않은 숫자였습니다 — 자기 문서의
+수치도 측정해서 맞춰 둡니다).
 
 형식은 [Keep a Changelog](https://keepachangelog.com/)를 따릅니다.
 
