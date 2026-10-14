@@ -356,8 +356,16 @@ def build_observability_manifest() -> dict[str, Any]:
             "request_observations_total": count_request_observations(),
             "observability_export_errors_total": count_observability_export_errors(),
         },
-        "recent_requests": request_observations[-10:],
-        "export_errors": export_errors[-5:],
+        # No per-request feed on an unauthenticated manifest. Each observation
+        # carries the caller's actor and tenant plus the route - which embeds the
+        # dataset id - so publishing them made one tenant's governed-access
+        # activity readable by anyone. Filtering by the observation's tenant_id
+        # would not help: that value comes from the caller-supplied X-SDP-Tenant
+        # header, so it is asserted by the very caller whose rows would be
+        # filtered. Export errors are withheld for the same reason - a sink
+        # exception string can quote the sink URL.
+        "recent_request_count": count_request_observations(),
+        "export_error_count": count_observability_export_errors(),
         "retention": {
             "local_evidence_store": "SDP_SQLITE_PATH",
             "production_target": "tenant-configurable append-only log sink plus queryable hot store",

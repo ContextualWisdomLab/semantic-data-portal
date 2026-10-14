@@ -118,6 +118,31 @@
   - `tests/test_api.py::test_browse_query_denied_without_user`
   - `tests/test_api.py::test_draft_query`
 
+### 제 수리의 형제 경로 자체 점검 (2026-10-14)
+
+evidence/catalog 읽기에 `tenant_ids` scope를 넣을 때 **기본값을 `None`(= 전체 tenant)**
+으로 두었습니다. 이는 fail-open 기본값이므로, scope를 넘기지 않는 호출처가 하나라도
+있으면 조용히 전체를 봅니다. 직접 전수 점검했습니다.
+
+| 호출처 | 판정 |
+| --- | --- |
+| `api.py:430` `catalog.search_catalog(` | **오탐** — 다음 줄에서 `tenant_ids=tenant_ids`를 넘깁니다(여러 줄 호출을 grep이 놓침) |
+| `/enterprise/evidence-pack` | 타 tenant 내용 없음 — 집계만 공개 |
+| `/enterprise/observability` | **실제 누출** — 미인증 GET 응답에 `acme-payroll`이 포함 |
+| `ontology`/`steward_review`/`semantic_validation`/`seed`의 `list_datasets()` | 집계·내부용. 타 tenant 식별 내용을 응답에 싣지 않음 |
+
+누출 하나는 `recent_requests`였습니다. 관측 레코드마다 호출자의 `actor`,
+`tenant_id`, 그리고 **데이터셋 id가 박힌 `route`** 가 들어 있고 manifest는 actor 없이
+서비스됩니다. 즉 한 tenant의 governed-access 활동 기록이 누구에게나 읽혔습니다.
+
+**관측의 `tenant_id`로 필터링하는 방식은 쓰지 않았습니다.** 그 값은 호출자가 보낸
+`X-SDP-Tenant` 헤더에서 나오므로(`build_request_observation`), 필터 대상이 될 행을 쓴
+바로 그 호출자가 스스로 주장한 값입니다. 자기 신고 값으로 tenant scope를 만들 수는
+없습니다. 그래서 미인증 manifest에서는 요청 단위 상세를 **공개하지 않고** 집계만
+남깁니다(`recent_request_count`, `export_error_count`). sink 예외 문자열이 sink URL을
+인용할 수 있으므로 `export_errors`도 같이 withhold합니다. 추적은 배포로 tenant가
+정해지는 설정된 sink에서 그대로 가능합니다.
+
 ### 조회 게이트가 매트릭스와 어긋나 있었습니다 (정정)
 
 앞 절에서 저는 "매트릭스는 역할 단위로 일관되고 문제는 seed 번들링뿐"이라고 적었습니다.

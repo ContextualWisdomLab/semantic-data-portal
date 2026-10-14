@@ -319,7 +319,12 @@ def test_request_observability_export_writes_bodyless_jsonl(tmp_path, monkeypatc
     assert manifest["structured_logs"]["status"] == "implemented"
     assert manifest["structured_logs"]["sink"]["scheme"] == "file"
     assert manifest["metrics"]["request_observations_total"] >= 1
-    assert any(item["request_id"] == "buyer-trace-001" for item in manifest["recent_requests"])
+    # The manifest no longer publishes a per-request feed: it is served with no
+    # actor, and each observation names the caller and the dataset route. The
+    # trace stays verifiable where it belongs - in the configured sink, read above
+    # from the log file - and the manifest reports the count.
+    assert manifest["recent_request_count"] >= 1
+    assert "recent_requests" not in manifest
 
     metrics = client.get("/metrics").text
     assert "sdp_request_observations_total" in metrics

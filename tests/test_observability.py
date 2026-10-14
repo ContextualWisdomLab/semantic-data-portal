@@ -267,3 +267,40 @@ def test_record_request_observation_async_records_sink_error(monkeypatch: pytest
     monkeypatch.setattr(obs, "_export_to_sink", _boom)
     asyncio.run(obs.record_request_observation_async({"event": "http_request"}, export=True))
     assert any("async sink down" in e.get("message", "") for e in obs.list_observability_export_errors())
+
+
+def test_manifest_does_not_publish_a_per_request_activity_feed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``/enterprise/observability`` is served with no actor, and the manifest
+    published the last 10 request observations verbatim under ``recent_requests``.
+    Each carries ``route`` (which embeds the dataset id), plus the caller's
+    ``actor`` and ``tenant_id``, so one tenant's governed-access activity was
+    readable by anyone. Measured: an unauthenticated GET mentioned
+    ``acme-payroll`` after another tenant previewed it.
+
+    This cannot be fixed by filtering on the observation's ``tenant_id``: that
+    value comes from the caller-supplied ``X-SDP-Tenant`` header
+    (``observability.build_request_observation``), so it is self-asserted by the
+    very caller whose rows would be filtered. The per-request detail is therefore
+    withheld from the unauthenticated manifest and only aggregates are published —
+    which is what the manifest's buyer-evidence purpose actually needs.
+    """
+    obs.record_request_observation(
+        {
+            "event": "http_request",
+            "route": "/browse/acme-payroll/preview",
+            "actor": "someone@acme.example",
+            "tenant_id": "acme-bank",
+            "status_code": 200,
+        },
+        export=False,
+    )
+    manifest = obs.build_observability_manifest()
+    rendered = json.dumps(manifest, ensure_ascii=False, default=str)
+
+    assert "acme-payroll" not in rendered
+    assert "someone@acme.example" not in rendered
+    assert "recent_requests" not in manifest
+
+    # The evidence the manifest exists for is still there.
+    assert manifest["metrics"]["request_observations_total"] >= 1
+    assert manifest["structured_logs"]["fields"]
