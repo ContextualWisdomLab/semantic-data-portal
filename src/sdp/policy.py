@@ -51,8 +51,27 @@ def _can_mutate(subject: str, action: str) -> bool:
     return _is_admin(subject) and action.lower() in {"create", "publish", "patch", "deprecate"}
 
 
+# The published RBAC matrix grants `security` discover_catalog + view_schema and
+# *denies* preview_data + run_governed_query. One combined reader gate granted all
+# of them, so the role over-granted against its own published contract - and the
+# default OIDC map `sdp-security -> ['security']` carries no platform-admin, so a
+# real federated security reviewer got data access the matrix publishes as denied.
+_DATA_READER_ROLES = ("data-analyst", "admin", "platform-admin")
+_METADATA_READER_ROLES = (*_DATA_READER_ROLES, "security")
+
+# Actions that release rows, versus actions that release only metadata.
+_DATA_READ_ACTIONS = {"query", "preview"}
+_METADATA_READ_ACTIONS = {"schema", "search", "list"}
+
+
 def _has_reader_role(subject: str) -> bool:
-    return has_role(subject, "data-analyst", "admin", "platform-admin", "security")
+    """Report whether the subject may read dataset *metadata*."""
+    return has_role(subject, *_METADATA_READER_ROLES)
+
+
+def _has_data_reader_role(subject: str) -> bool:
+    """Report whether the subject may read dataset *rows*."""
+    return has_role(subject, *_DATA_READER_ROLES)
 
 
 def evaluate(
@@ -159,7 +178,15 @@ def evaluate(
             obligations={"required_role": "admin"},
         )
 
-    if action_key in {"query", "preview", "schema", "search", "list"} and not _has_reader_role(subject):
+    if action_key in _DATA_READ_ACTIONS and not _has_data_reader_role(subject):
+        return _decision(
+            **decision_base,
+            effect="deny",
+            reason="조회 권한이 없습니다.",
+            obligations={"required_role": "data-analyst"},
+        )
+
+    if action_key in _METADATA_READ_ACTIONS and not _has_reader_role(subject):
         return _decision(
             **decision_base,
             effect="deny",

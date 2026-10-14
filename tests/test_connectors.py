@@ -164,3 +164,37 @@ def test_connector_probe_route_is_gated_like_the_dataset_it_describes():
     )
     assert allowed.status_code == 200
     assert "p@payroll" not in allowed.text
+
+
+def test_credential_vault_acceptance_criterion_names_the_connectors_it_covers():
+    """The ``connector_credential_vault`` integration is published as
+    ``implemented`` with the criterion "Connector probes use secret references and
+    fail closed when a secret reference is missing." Measured with every
+    ``SDP_CONNECTOR_SECRET*`` variable removed, only one of the four connectors
+    behaves that way:
+
+        sql_connector        secret_present=False  -> status=ready_for_demo
+        rdf_connector        secret_present=False  -> status=ready_for_demo
+        file_lake_connector  secret_present=False  -> status=ready_for_demo
+        rest_connector       secret_present=False  -> status=contract_only
+
+    ``credential_vault`` is in ``required_controls`` for ``rest_connector`` alone
+    (``sdp_core/readiness.py``), so ``connector_probe`` never checks the vault for
+    the other three. The criterion is corrected to state the scope that actually
+    holds; extending the control to all four connectors would require operators to
+    configure three more secret references to reach ``ready_for_demo``, which is a
+    product decision and is deliberately left to the owner.
+    """
+    from sdp_core import production, readiness
+
+    vault = [i for i in production.production_integration_registry()
+             if i.id == "connector_credential_vault"][0]
+    criteria = " ".join(vault.acceptance_criteria)
+    assert "rest_connector" in criteria, criteria
+
+    enforcing = [
+        connector.id
+        for connector in readiness.connector_registry_manifest()
+        if "credential_vault" in connector.required_controls
+    ]
+    assert enforcing == ["rest_connector"], enforcing

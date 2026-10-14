@@ -107,7 +107,10 @@ def production_integration_registry() -> list[ProductionIntegration]:
             ],
             acceptance_criteria=[
                 "raw connector credentials are never stored in dataset records, prompt context, audit payloads, or logs.",
-                "Connector probes use secret references and fail closed when a secret reference is missing.",
+                "rest_connector probes use a secret reference and fail closed when it is missing "
+                "(credential_vault is in required_controls for rest_connector only, so the sql, rdf and "
+                "file_lake probes do not check the vault - extending it to all four would require three "
+                "more operator-configured secret references to reach ready_for_demo).",
                 "SQL/RDF/REST/file connectors enforce read-only scope, row limits, and audit events.",
             ],
         ),

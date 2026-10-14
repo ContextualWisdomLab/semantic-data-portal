@@ -118,6 +118,27 @@
   - `tests/test_api.py::test_browse_query_denied_without_user`
   - `tests/test_api.py::test_draft_query`
 
+### 조회 게이트가 매트릭스와 어긋나 있었습니다 (정정)
+
+앞 절에서 저는 "매트릭스는 역할 단위로 일관되고 문제는 seed 번들링뿐"이라고 적었습니다.
+**그 결론이 틀렸습니다.** `policy._has_reader_role`가 `security`를 포함했고, 조회 게이트가
+`query`/`preview`/`schema`/`search`/`list`를 **하나로** 묶어 검사했으므로 `security` 역할
+자체가 `preview_data`와 `run_governed_query`를 얻었습니다 — 매트릭스가 `denied_actions`로
+공개하는 바로 그 두 개입니다. 기본 OIDC map `sdp-security → ['security']`에는
+`platform-admin`이 없으므로, **실제 federated security 검토자**가 거부된다고 공개된 데이터
+접근을 갖고 있었습니다(측정: `user=security` preview → 200, rows=2).
+
+게이트를 행위 종류로 분리했습니다.
+
+| 행위 | 필요 역할 | 매트릭스가 `security`에 대해 |
+| --- | --- | --- |
+| `schema`, `search`, `list` | `_METADATA_READER_ROLES` (= data readers + `security`) | 허용 (`view_schema`, `discover_catalog`) |
+| `preview`, `query` | `_DATA_READER_ROLES` (`data-analyst`, `admin`, `platform-admin`) | 거부 (`preview_data`, `run_governed_query`) |
+
+수리 후 `security` 역할만 가진 subject는 schema/search는 allow, preview/query는 deny입니다.
+seed의 `security` subject는 `platform-admin`도 들고 있어 여전히 preview가 되며, 그것은
+매트릭스가 정직하게 공개하는 권한입니다(앞 절의 `seeded_subject_bindings`).
+
 ### RBAC 매트릭스와 seed 번들링
 
 `GET /enterprise/rbac-matrix`는 **역할 단위** 매트릭스이고 그 자체로 일관됩니다 —

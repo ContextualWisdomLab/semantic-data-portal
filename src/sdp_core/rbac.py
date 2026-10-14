@@ -67,7 +67,11 @@ def enterprise_rbac_matrix() -> RBACMatrix:
                 ],
                 denied_actions=["administer_tenants"],
                 tenant_scope="own_tenant_only",
-                evidence=["sdp.policy.evaluate", "tests/test_api.py::test_catalog_mutation_flow"],
+                evidence=[
+                    "sdp.policy.evaluate",
+                    "tests/test_api.py::test_dataset_mutation_policy_and_lifecycle",
+                    "tests/test_api.py::test_catalog_mutation_guard_denies_non_admin_actors",
+                ],
             ),
             RolePermission(
                 role="security",

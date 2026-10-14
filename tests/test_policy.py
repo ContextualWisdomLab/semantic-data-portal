@@ -188,3 +188,58 @@ def test_create_allows_the_actor_own_tenant_and_platform_admin_crossing() -> Non
         subject="data-admin", resource="new-ds", action="create", purpose="catalog"
     )
     assert legacy.effect == "allow"
+
+
+# --- the reader gate must match the published RBAC matrix -----------------
+
+
+def test_security_role_may_read_metadata_but_not_data() -> None:
+    """The published matrix allows ``security`` ``discover_catalog`` and
+    ``view_schema`` and **denies** ``preview_data`` and ``run_governed_query``,
+    with ``tenant_scope='platform_evidence_only'``. ``_has_reader_role`` returned
+    True for ``security``, so the single reader gate granted all five — measured:
+    ``user=security`` previewed data and got 200 with 2 rows.
+
+    This corrects an earlier conclusion of mine: I judged the matrix row
+    consistent and blamed only the seed's ``platform-admin`` bundling. The role
+    itself over-granted. The default OIDC map ``sdp-security -> ['security']``
+    carries no ``platform-admin``, so a real federated security reviewer got
+    preview access the matrix publishes as denied.
+    """
+    # Metadata: allowed by the matrix, so still allowed here.
+    assert policy.evaluate(
+        subject="__security_role_only__", resource="crm-customer-master",
+        action="schema", purpose="analysis",
+    ).effect == "deny"  # unknown subject has no roles at all
+
+    from sdp.authz import ActorContext, _SUBJECTS
+
+    _SUBJECTS["security-reviewer"] = ActorContext(
+        subject="security-reviewer", tenant_id="demo", roles=["security"]
+    )
+    try:
+        schema = policy.evaluate(
+            subject="security-reviewer", resource="crm-customer-master",
+            action="schema", purpose="analysis",
+        )
+        assert schema.effect == "allow", schema.reason
+
+        for denied_action in ("preview", "query"):
+            decision = policy.evaluate(
+                subject="security-reviewer", resource="crm-customer-master",
+                action=denied_action, purpose="analysis",
+            )
+            assert decision.effect == "deny", f"{denied_action}: {decision.reason}"
+    finally:
+        _SUBJECTS.pop("security-reviewer", None)
+
+
+def test_data_reader_roles_keep_full_read_access() -> None:
+    """Splitting the gate must not narrow the roles the matrix grants data to."""
+    for subject in ("analyst", "admin"):
+        for action in ("schema", "preview", "query"):
+            decision = policy.evaluate(
+                subject=subject, resource="crm-customer-master",
+                action=action, purpose="analysis",
+            )
+            assert decision.effect == "allow", f"{subject}/{action}: {decision.reason}"

@@ -2165,3 +2165,29 @@ def test_rbac_matrix_scope_claims_match_the_seeded_grants():
                 for role in entry["roles"]
                 if role in rows
             ), f"{entry['subject']} crosses tenants but no row claims all_tenants: {narrow}"
+
+
+def test_published_test_evidence_references_all_exist():
+    """Manifests cite ``tests/<file>.py::test_name`` strings as proof, and
+    ``GET /enterprise/rbac-matrix`` served ``tests/test_api.py::test_catalog_mutation_flow``
+    — a test that does not exist anywhere in the repository — under a control whose
+    release criterion is "Roles, actions, and denied cases are documented and
+    test-covered". A dangling proof reference is worse than none: it reads as
+    evidence.
+    """
+    import re
+
+    root = Path(__file__).resolve().parents[1]
+    defined = set()
+    for path in (root / "tests").rglob("*.py"):
+        for match in re.finditer(r"^def (test_\w+)", path.read_text(encoding="utf-8"), re.M):
+            defined.add(f"tests/{path.relative_to(root / 'tests')}::{match.group(1)}")
+            defined.add(match.group(1))
+
+    referenced = set()
+    for path in list((root / "src").rglob("*.py")):
+        for match in re.finditer(r"tests/[\w/]+\.py::(test_\w+)", path.read_text(encoding="utf-8")):
+            referenced.add((str(path.relative_to(root)), match.group(0), match.group(1)))
+
+    dangling = [(src, ref) for src, ref, name in referenced if name not in defined]
+    assert not dangling, f"published evidence references no such test: {dangling}"
