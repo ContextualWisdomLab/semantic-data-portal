@@ -189,3 +189,76 @@ def evaluate(
 def is_mutable(subject: str, action: str, resource: str) -> bool:
     decision = evaluate(subject=subject, resource=resource, action=action, purpose="analysis")
     return decision.effect == "allow"
+
+
+# --- graph read visibility ------------------------------------------------
+#
+# Graph dataset and column nodes carry the same governed content the catalog
+# does - a column node's properties include its ``pii`` classification. Entry
+# gating alone cannot scope the graph: traversal walks through shared business
+# concept nodes, so a start node in one tenant reaches another tenant's datasets
+# at depth 2. Visibility is therefore decided per node.
+
+
+def graph_node_dataset_id(node_id: str) -> str | None:
+    """Return the dataset a graph node belongs to, or ``None`` if it belongs to none.
+
+    Dataset nodes are keyed by the dataset id and column nodes by
+    ``"<dataset_id>:<column_name>"``, so the owning dataset is the part before the
+    first colon. A node whose prefix names no dataset - a business concept or
+    glossary term - is not dataset-owned.
+    """
+    dataset = get_dataset(node_id.split(":", 1)[0])
+    return dataset.id if dataset else None
+
+
+def can_see_graph_node(subject: str, node_id: str) -> bool:
+    """Decide whether a subject may see one graph node.
+
+    A dataset-owned node inherits its dataset's tenant, so the boundary that gates
+    ``/browse/{id}/schema`` applies. Nodes that belong to no dataset are not
+    tenant-owned and stay visible to any authorized reader.
+    """
+    dataset_id = graph_node_dataset_id(node_id)
+    if dataset_id is None:
+        return True
+    dataset = get_dataset(dataset_id)
+    if not dataset:
+        return True
+    return can_access_tenant(subject, dataset.tenant_id)
+
+
+def filter_graph_traversal(subject: str, traversal: dict[str, Any]) -> dict[str, Any]:
+    """Withhold traversal nodes the subject may not see, and the edges touching them.
+
+    An edge left pointing at a withheld node would disclose that the node exists,
+    so edges are dropped with their endpoints. The withheld count is reported
+    rather than silently truncating the result.
+    """
+    nodes = traversal.get("nodes") or []
+    visible_nodes = [node for node in nodes if can_see_graph_node(subject, node.get("node_id", ""))]
+    visible_ids = {node.get("node_id") for node in visible_nodes}
+    edges = traversal.get("edges") or []
+    visible_edges = [
+        edge
+        for edge in edges
+        if edge.get("source_id") in visible_ids and edge.get("target_id") in visible_ids
+    ]
+    return {
+        **traversal,
+        "nodes": visible_nodes,
+        "edges": visible_edges,
+        "withheld_node_count": len(nodes) - len(visible_nodes),
+        "withheld_edge_count": len(edges) - len(visible_edges),
+    }
+
+
+def filter_graph_search_results(subject: str, results: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    """Withhold semantic-search hits the subject may not see.
+
+    Returns the visible hits and how many were withheld. The result count drops
+    below the requested limit rather than being backfilled: backfilling would let
+    a caller infer how many neighbours it cannot see.
+    """
+    visible = [result for result in results if can_see_graph_node(subject, result.get("node_id", ""))]
+    return visible, len(results) - len(visible)

@@ -64,7 +64,12 @@ from .observability import (
     request_id_from_headers,
     request_id_header,
 )
-from .policy import evaluate
+from .policy import (
+    can_see_graph_node,
+    evaluate,
+    filter_graph_search_results,
+    filter_graph_traversal,
+)
 from .semantic_validation import enterprise_shacl_validation_summary, validate_dataset_semantics
 from .steward_review import build_steward_review_summary
 
@@ -739,12 +744,22 @@ def _authorize_graph_read(actor: str, resource: str) -> None:
     """Graph traversal / semantic search require an authenticated reader.
 
     Uses the catalog discovery policy branch (``search``): allowed for any reader
-    role, denied for anonymous/unauthenticated subjects.
+    role, denied for anonymous/unauthenticated subjects. That branch returns before
+    the policy engine's tenant check, so it establishes authentication only - the
+    tenant boundary is enforced per node by ``policy.can_see_graph_node`` on
+    everything these routes release.
     """
 
     decision = evaluate(subject=actor, resource=resource, action="search", purpose="graph")
     if decision.effect != "allow":
         raise HTTPException(status_code=403, detail=decision.reason)
+
+
+def _authorize_graph_node_read(actor: str, node_id: str) -> None:
+    """Require an authorized reader who may also see this particular node."""
+    _authorize_graph_read(actor, node_id)
+    if not can_see_graph_node(actor, node_id):
+        raise HTTPException(status_code=403, detail="tenant boundary denied")
 
 
 @app.post("/ontology/concepts")
@@ -783,7 +798,8 @@ def ingest_graph_edge(payload: GraphEdgeRequest) -> dict[str, Any]:
 
 
 @app.get("/graph/nodes/{node_id}")
-def get_graph_node(node_id: str) -> dict[str, Any]:
+def get_graph_node(node_id: str, actor: str = Query(default="anonymous")) -> dict[str, Any]:
+    _authorize_graph_node_read(actor, node_id)
     node = get_store().get_node(node_id)
     if node is None:
         raise HTTPException(status_code=404, detail="node not found")
@@ -795,9 +811,9 @@ def get_graph_node(node_id: str) -> dict[str, Any]:
 
 @app.post("/graph/query")
 def graph_query(payload: GraphTraversalRequest) -> dict[str, Any]:
-    _authorize_graph_read(payload.actor, payload.start_id)
+    _authorize_graph_node_read(payload.actor, payload.start_id)
     try:
-        return get_store().traverse(
+        traversal = get_store().traverse(
             payload.start_id,
             edge_types=payload.edge_types,
             direction=payload.direction,
@@ -807,6 +823,7 @@ def graph_query(payload: GraphTraversalRequest) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    return filter_graph_traversal(payload.actor, traversal)
 
 
 @app.post("/search/semantic")
@@ -815,7 +832,13 @@ def semantic_search(payload: SemanticSearchRequest) -> dict[str, Any]:
     results = get_store().semantic_search(
         payload.query, kind=payload.kind, limit=payload.limit
     )
-    return {"query": payload.query, "count": len(results), "results": results}
+    visible, withheld = filter_graph_search_results(payload.actor, results)
+    return {
+        "query": payload.query,
+        "count": len(visible),
+        "results": visible,
+        "withheld_result_count": withheld,
+    }
 
 
 @app.get("/graph/stats")
