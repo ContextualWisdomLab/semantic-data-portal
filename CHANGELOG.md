@@ -17,7 +17,7 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                    735 passed, 11 skipped
+    pytest                    738 passed, 11 skipped
     pytest (역방향/난수 순서)  순서 무관 통과 (역순 + seed 11/29/77)
     pytest tests/fuzz          11 passed
     python -m sdp.demo_smoke   exit 0, "ready": true
@@ -162,6 +162,18 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
   같은 KPI의 guardrail과 모순이었고 구현이 guardrail을 따르고 있었으므로, 숫자를 느슨하게
   맞추는 대신 정의를 엄격한 쪽으로 정정했습니다. **0.8 ≥ 0.7이므로 gate와 `ready`는
   불변입니다** — 결함 수정이고 제품 결정이 아닙니다.
+  이 수리에 대한 적대적 리뷰가 두 방향을 더 짚었고 둘 다 처리했습니다. (1) steward가 유일하게
+  커버되지 않은 glossary 개념에 mapping을 **제안**하는 것 — 실제 커버리지를 가장 크게 개선하는
+  행동 — 이 옛 지표에서는 숫자를 **떨어뜨렸습니다**(측정 0.917 → 0.846; 제안 행이 분모에만
+  들어가므로). 지표가 측정 대상과 역상관이었습니다. glossary 기준 coverage는 구조적으로 이를
+  해결하며(검증: 제안 시 0.8 → 0.8, 승인하면 상승), 방향을 테스트로 고정했습니다.
+  (2) gate의 `evidence`와 KPI의 `source_endpoints`가 `/ontology/patches`를 게시하는데 측정은
+  patch 큐를 **읽지 않습니다**. 게시된 증빙을 따라간 diligence 독자는 아무것도 기여하지 않는 큐를
+  가져갔습니다. 측정이 실제로 읽는 표면(`/ontology/concepts` = 분모,
+  `/catalog/datasets/{dataset_id}` = 분자, `/enterprise/evidence-pack` = 게시 지점)으로
+  교체했습니다. patch 큐는 그것을 실제로 읽는 steward-review 표면의 증빙입니다. 보고된 1건만
+  보지 않고 일반 경우도 확인했습니다: 전 manifest의 endpoint 형태 증빙 포인터 **34건**이 모두
+  실제 라우트이며, 라우트 이름이 바뀌어 404를 가리키지 않도록 기계적으로 고정했습니다.
 
 - 게시된 SHACL shape catalog가 **평가되지 않았습니다**. `required_properties`를 읽은
   사람은 그것이 `conforms`를 만든 제약이라고 받아들이는데, 실제로 돌던 것은 shape id만
