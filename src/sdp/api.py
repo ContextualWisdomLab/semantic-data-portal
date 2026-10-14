@@ -150,6 +150,49 @@ async def record_request_observability(request: Request, call_next):
         await record_request_observation_async(observation)
 
 
+def _audit_refused_catalog_mutation(
+    *, event_type: str, actor: str, dataset_id: str, decision: Any
+) -> None:
+    """Record the audit half of a *refused* catalog mutation.
+
+    ``CLAUDE.md`` states the governance invariant for this product: a policy
+    evaluation **and** an evidence record accompany every catalog mutation and
+    every browse/query path. The browse paths honoured both halves on a denial
+    (``browse.py`` calls ``ingest_event(decision="denied", ...)``); the four
+    catalog mutations evaluated policy and then raised, so a refused attempt
+    left a decision and no audit row. Measured on each verb as an
+    unauthorized actor:
+
+        PATCH  /catalog/datasets/{id}            -> 403  decisions +1  audits +0
+        POST   /catalog/datasets/{id}/publish    -> 403  decisions +1  audits +0
+        POST   /catalog/datasets/{id}/deprecate  -> 403  decisions +1  audits +0
+        POST   /catalog/datasets                 -> 403  decisions +1  audits +0
+
+    An auditor looking for refused attempts on a catalog mutation - which is
+    exactly what an auditor looks for - found nothing in ``/audit/events`` or
+    ``/catalog/datasets/{id}/audit``. The ontology and graph writes were already
+    covered, because they share ``_authorize_graph_write``, which audits; these
+    four authorize inline. The row carries the same ``action`` as the allow-path
+    row so a filter by action returns both outcomes, with ``result`` telling
+    them apart.
+
+    The real reason is recorded even where the response withholds it: an
+    out-of-scope dataset answers 404 with a generic detail so the status and the
+    body cannot be an existence oracle, while the ledger - which the refused
+    caller cannot read - keeps the reason the engine gave. That is the same
+    split ``browse`` already makes.
+    """
+    catalog.ingest_event(
+        event_type=event_type,
+        actor=actor,
+        dataset_id=dataset_id,
+        decision="denied",
+        reason=decision.reason,
+        decision_id=decision.decision_id,
+        details={"purpose": "catalog", "policy_decision_id": decision.decision_id},
+    )
+
+
 def _actor(payload: dict[str, Any] | None) -> str:
     if not payload:
         return "anonymous"
@@ -990,6 +1033,12 @@ def create_dataset(payload: dict[str, Any]) -> dict[str, Any]:
         target_tenant_id=request.tenant_id,
     )
     if decision.effect != "allow":
+        _audit_refused_catalog_mutation(
+            event_type="dataset.register",
+            actor=actor_id,
+            dataset_id=request.id or "new",
+            decision=decision,
+        )
         raise HTTPException(status_code=403, detail=decision.reason)
 
     # The catalog write and its graph mirror are one critical section. They were
@@ -1018,6 +1067,12 @@ def publish_catalog_dataset(dataset_id: str, payload: dict[str, Any] | None = No
     actor_id = _actor(payload)
     decision = evaluate(subject=actor_id, resource=dataset_id, action="publish", purpose="catalog")
     if decision.effect != "allow":
+        _audit_refused_catalog_mutation(
+            event_type="dataset.publish",
+            actor=actor_id,
+            dataset_id=dataset_id,
+            decision=decision,
+        )
         # Foreign and absent both answered 403 here, but with different reasons -
         # "tenant boundary denied" versus "존재하지 않는 데이터셋입니다." - so the
         # reason string carried the oracle even though the status matched. A
@@ -1046,6 +1101,12 @@ def patch_catalog_dataset(dataset_id: str, payload: dict[str, Any]) -> dict[str,
     actor_id = _actor(payload)
     decision = evaluate(subject=actor_id, resource=dataset_id, action="patch", purpose="catalog")
     if decision.effect != "allow":
+        _audit_refused_catalog_mutation(
+            event_type="dataset.patch",
+            actor=actor_id,
+            dataset_id=dataset_id,
+            decision=decision,
+        )
         # Foreign and absent both answered 403 here, but with different reasons -
         # "tenant boundary denied" versus "존재하지 않는 데이터셋입니다." - so the
         # reason string carried the oracle even though the status matched. A
@@ -1075,6 +1136,12 @@ def deprecate_catalog_dataset(dataset_id: str, payload: dict[str, str] | None = 
     actor_id = _actor(payload)
     decision = evaluate(subject=actor_id, resource=dataset_id, action="deprecate", purpose="catalog")
     if decision.effect != "allow":
+        _audit_refused_catalog_mutation(
+            event_type="dataset.deprecate",
+            actor=actor_id,
+            dataset_id=dataset_id,
+            decision=decision,
+        )
         # Foreign and absent both answered 403 here, but with different reasons -
         # "tenant boundary denied" versus "존재하지 않는 데이터셋입니다." - so the
         # reason string carried the oracle even though the status matched. A

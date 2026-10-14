@@ -20,10 +20,37 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지입
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                    983 passed, 11 skipped
+    pytest                    994 passed, 11 skipped
     pytest (역방향/난수 순서)  순서 무관 통과 (역순 + seed 11/707/31337)
     pytest tests/fuzz          11 passed
     python -m sdp.demo_smoke   exit 0, "ready": true
+
+### Security — 거부된 카탈로그 변경이 감사 기록을 남기지 않았습니다
+
+`CLAUDE.md`가 이 제품의 거버넌스 불변식을 선언합니다: 카탈로그 mutation과 browse/query
+경로에 정책 평가 **그리고** evidence 기록이 따른다. browse 경로는 거부에서도 양쪽을
+지켰지만(`browse.py`가 `ingest_event(decision="denied", ...)`를 호출합니다), 네 개 카탈로그
+mutation은 정책을 평가하고 바로 raise해서 **거부된 시도가 decision만 남기고 감사 행을
+남기지 않았습니다**. 권한 없는 actor로 각 verb를 측정:
+
+    PATCH  /catalog/datasets/{id}            -> 403  decisions +1  audits +0
+    POST   /catalog/datasets/{id}/publish    -> 403  decisions +1  audits +0
+    POST   /catalog/datasets/{id}/deprecate  -> 403  decisions +1  audits +0
+    POST   /catalog/datasets                 -> 403  decisions +1  audits +0
+
+거부된 시도는 **감사자가 정확히 찾는 것**인데 `/audit/events`와
+`/catalog/datasets/{id}/audit` 어디에도 없었습니다.
+
+`tests/test_governed_write_evidence.py`는 이미 이 짝을 단언하고 있었지만, 그
+`GOVERNED_WRITES` 목록은 `/ontology/concepts`·`/ontology/patches`·`/graph/edges` —
+감사를 수행하는 `_authorize_graph_write`를 공유하는 세 라우트 — 만 덮습니다. 네 개
+카탈로그 mutation은 인라인으로 권한을 검사하고, **손으로 쓴 governed-write 목록**이
+바로 그것들을 빼놓는 모양입니다. 새 테스트는 커버리지를 **라우트 테이블에서 유도**하므로
+다섯 번째 mutation이 추가되면 케이스를 받거나 의식적으로 제외되기 전까지 실패합니다.
+
+응답이 숨기는 경우에도 원장은 실제 사유를 적습니다 — 범위 밖 데이터셋은 상태와 본문이
+존재 oracle이 되지 않도록 일반적인 detail과 함께 404를 돌려주고, 거부된 호출자가 읽을 수
+없는 원장은 엔진이 준 사유를 유지합니다. browse가 이미 하는 것과 같은 분리입니다.
 
 ### Security — 동시성: 유실된 쓰기, 거짓 증빙, 그래프 모순
 

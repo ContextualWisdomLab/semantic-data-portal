@@ -752,15 +752,23 @@ REQUIREMENT_COVERAGE: dict[str, RequirementCoverage] = {
             "func:sdp.catalog.ingest_event",
             "test:tests/test_governed_write_evidence.py::test_a_governed_write_records_a_decision_and_an_audit_event",
             "test:tests/test_catalog_mutation_atomicity.py::test_the_ledger_never_certifies_a_change_that_is_not_stored",
+            "test:tests/test_refused_mutation_evidence.py::test_a_refused_catalog_mutation_records_both_halves",
+            "test:tests/test_refused_mutation_evidence.py::test_every_catalog_mutation_route_is_covered_here",
         ],
         note=(
             "Every preview, query, policy evaluation and catalog change records "
-            "a decision and an audit event. The recording is also now true "
-            "under concurrency: two interleaved patches used to record "
-            "result=success for a change that was not stored, so the ledger was "
-            "100% complete and partly false. 100% of writes being recorded is "
-            "what this requirement asks; CAT-005's note covers what those "
-            "records do and do not contain."
+            "a decision and an audit event, on refusal as well as on success. "
+            "Two holes in that 100% were found and closed rather than assumed "
+            "absent. Concurrent patches used to record result=success for a "
+            "change that was not stored, so the ledger was complete and partly "
+            "false. And a *refused* catalog mutation recorded the decision and "
+            "no audit row at all - measured on all four verbs: 403, decisions "
+            "+1, audits +0 - while the browse paths audited their denials; the "
+            "pairing test's governed-write list covered only the three routes "
+            "sharing the auditing gate, which is how four inline-authorizing "
+            "routes stayed uncovered. The new coverage is derived from the "
+            "route table. What this row does not claim is the *content* of a "
+            "record: see CAT-005 for the reason field and the before/after diff."
         ),
     ),
     "NFR-SEC-006": RequirementCoverage(
