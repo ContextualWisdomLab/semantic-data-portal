@@ -239,10 +239,17 @@ def test_no_enterprise_aggregate_route_discloses_a_foreign_tenants_dataset() -> 
         GET /enterprise/shacl-validation   (no actor) -> 200, reports[] contains
                                                         "acme-secret" (tenant acme)
 
-    Ten of the eleven parameterless ``/enterprise`` GET routes were already clean
-    because they publish no dataset identity. The routes are enumerated from
-    ``app.routes`` rather than listed, so a new aggregate that starts embedding
-    dataset identity fails here instead of shipping.
+    The routes are enumerated from ``app.routes`` rather than listed, so a new
+    aggregate that starts embedding dataset identity fails here instead of
+    shipping.
+
+    The planted dataset is deliberately **non-conforming**. An earlier version of
+    this test planted a healthy copy of a seeded dataset and passed while
+    ``/enterprise/steward-review`` was disclosing exactly this - because that
+    route names a dataset only when it *fails* validation, so the identity branch
+    never fired. Enumerating the routes is not enough on its own: the fixture has
+    to reach the conditional branches, or the sweep certifies the paths it never
+    exercised.
     """
     base = catalog._DATA["crm-customer-master"]
     catalog._DATA["acme-enterprise-secret"] = base.model_copy(
@@ -250,10 +257,18 @@ def test_no_enterprise_aggregate_route_discloses_a_foreign_tenants_dataset() -> 
             "id": "acme-enterprise-secret",
             "tenant_id": "acme",
             "title": "ACME 기밀 매출",
-            "owner": "acme-finance",
+            "owner": "",
+            "steward": "",
+            "distributions": [],
         }
     )
-    secrets = ("acme-enterprise-secret", "ACME 기밀 매출", "acme-finance")
+    from sdp.semantic_validation import validate_dataset_semantics
+
+    assert not validate_dataset_semantics("acme-enterprise-secret")["conforms"], (
+        "the plant must fail validation, or the routes that name only failing "
+        "datasets are never exercised"
+    )
+    secrets = ("acme-enterprise-secret", "ACME 기밀 매출")
 
     paths = sorted(
         {
@@ -316,3 +331,55 @@ def test_the_shacl_aggregate_stays_platform_wide_while_its_reports_scope() -> No
     visible_to_admin = {report["dataset_id"] for report in platform_admin["reports"]}
     assert "acme-rate-secret" in visible_to_admin
     assert platform_admin["withheld_report_count"] == 0
+
+
+def test_the_steward_queue_counts_platform_wide_and_names_only_in_scope() -> None:
+    """``/enterprise/steward-review`` republished what it reads.
+
+    ``enterprise_shacl_validation_summary`` was scoped so an unauthenticated
+    caller could not read another tenant's dataset ids from it. This route then
+    called it with no scope and put the ids of every non-conforming dataset, in
+    any tenant, into ``review_items``. Measured at that moment: the planted
+    dataset was absent from ``/enterprise/shacl-validation`` and named in
+    ``/enterprise/steward-review`` in the same request pair.
+
+    The split is the same one the SHACL surface uses: the queue count and
+    ``buyer_handoff_ready`` are procurement signals and stay platform-wide, so a
+    withheld item still blocks handoff; only the naming is scoped.
+    """
+    base = catalog._DATA["crm-customer-master"]
+    catalog._DATA["zeta-review-secret"] = base.model_copy(
+        update={
+            "id": "zeta-review-secret",
+            "tenant_id": "zeta",
+            "owner": "",
+            "steward": "",
+            "distributions": [],
+        }
+    )
+
+    def review(actor: str | None) -> dict:
+        params = {} if actor is None else {"user": actor}
+        response = client.get("/enterprise/steward-review", params=params)
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    anonymous = review(None)
+    platform_admin = review("admin")
+
+    # The queue is not hidden, only the names in it.
+    assert anonymous["review_queue_count"] >= 1
+    assert anonymous["review_queue_count"] == platform_admin["review_queue_count"]
+    assert anonymous["buyer_handoff_ready"] is False
+    assert anonymous["buyer_handoff_ready"] == platform_admin["buyer_handoff_ready"]
+
+    assert "zeta-review-secret" not in {item["id"] for item in anonymous["review_items"]}
+    assert "zeta-review-secret" in {item["id"] for item in platform_admin["review_items"]}
+
+    for body in (anonymous, platform_admin):
+        assert (
+            len(body["review_items"]) + body["withheld_review_item_count"]
+            == body["review_queue_count"]
+        )
+    assert anonymous["withheld_review_item_count"] >= 1
+    assert platform_admin["withheld_review_item_count"] == 0

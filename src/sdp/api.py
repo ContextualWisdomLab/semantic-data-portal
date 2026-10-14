@@ -225,8 +225,10 @@ def enterprise_shacl_validation(user: str = Query(default="anonymous")) -> dict[
 
 
 @app.get("/enterprise/steward-review")
-def enterprise_steward_review() -> dict[str, Any]:
-    return build_steward_review_summary()
+def enterprise_steward_review(user: str = Query(default="anonymous")) -> dict[str, Any]:
+    # Same split as /enterprise/shacl-validation: platform-wide counts and
+    # readiness, caller-scoped per-dataset identity.
+    return build_steward_review_summary(accessible_tenant_ids(user))
 
 
 @app.get("/enterprise/console", response_class=HTMLResponse)
