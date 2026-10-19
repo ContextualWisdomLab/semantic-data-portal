@@ -125,7 +125,7 @@ ROUTE_REFUSALS: dict[tuple[str, str], tuple[int, ...]] = {
     ("POST", "/enterprise/auth/oidc-verify"): (400,),
     ("GET", "/enterprise/connectors/{connector_id}/probe"): (400, 403, 404),
     ("GET", "/enterprise/demo-plan"): (400,),
-    ("POST", "/graph/edges"): (400, 403),
+    ("POST", "/graph/edges"): (400, 403, 409),
     ("POST", "/graph/nodes"): (403, 409),
     ("GET", "/graph/nodes/{node_id}"): (403, 404),
     ("POST", "/graph/query"): (400, 403, 404),

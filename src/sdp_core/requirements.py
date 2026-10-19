@@ -335,9 +335,20 @@ REQUIREMENT_COVERAGE: dict[str, RequirementCoverage] = {
         evidence=[
             "func:sdp.graph_store.GraphNode",
             "func:sdp.graph_store.GraphStore.assert_node_kind_is_stable",
+            "func:sdp.graph_store.GraphStore.assert_hierarchy_respects_class_separation",
+            "func:sdp.semantic_validation.hierarchy_class_separation",
+            "func:sdp.ontology.hierarchy_class_separation_report",
+            "route:POST /graph/edges",
+            "route:GET /enterprise/shacl-validation",
             "test:tests/test_graph_engine.py::test_semantic_search_kind_filter_only_returns_datasets",
             "test:tests/test_graph_node_kind_stability.py::test_a_concept_named_after_an_existing_dataset_is_refused",
             "test:tests/test_graph_node_kind_stability.py::test_a_column_node_cannot_be_reclassified_either",
+            "test:tests/test_graph_hierarchy_class_separation.py::test_a_hierarchy_edge_across_the_class_boundary_is_refused",
+            "test:tests/test_graph_hierarchy_class_separation.py::test_the_rule_refuses_nothing_legitimate",
+            "test:tests/test_graph_hierarchy_class_separation.py::test_a_concept_cannot_declare_a_data_asset_as_its_parent_or_child",
+            "test:tests/test_graph_hierarchy_class_separation.py::test_the_refused_publication_leaves_neither_store_written",
+            "test:tests/test_graph_hierarchy_class_separation.py::test_the_shipped_graph_conforms_and_its_warnings_are_counted_separately",
+            "test:tests/test_graph_hierarchy_class_separation.py::test_the_report_catches_the_ordering_the_gate_cannot",
         ],
         note=(
             "Concept, dataset and column are distinct node kinds "
@@ -375,13 +386,55 @@ REQUIREMENT_COVERAGE: dict[str, RequirementCoverage] = {
             "injection-regression tests that pass a hostile string as a kind "
             "still hold — what is refused is reclassifying an id that already "
             "exists as something else. "
-            "Still open: the edge half. No kind check guards POST /graph/edges, "
-            "so an authorized writer can still attach a `broader` edge from a "
-            "dataset node to a concept, which is the class-separation violation "
-            "the acceptance criterion is about and for which every fact needed "
-            "to refuse it is already present and unused. `kind` remains a "
-            "free-form string (graph_models.py), and the cited test exercises "
-            "the kind filter, not the separation."
+            "The edge half is now closed too, in both of the halves the "
+            "acceptance criterion names. **Refused**: `broader` and `narrower` "
+            "are the only relations in this graph that assert one thing is a "
+            "*kind of* another, and an endpoint that is a known data asset is "
+            "refused with 409 on both publication paths - `POST /graph/edges` "
+            "through `GraphStore.assert_hierarchy_respects_class_separation`, "
+            "and `POST /ontology/concepts` through the pre-write validator, "
+            "where it has to be: with the store's gate alone the same request "
+            "answered 500 with the vocabulary record published and the graph "
+            "node served, because the route's mirror write is inside neither "
+            "try block. Measured before the gate, each one authorized request "
+            "on the shipped seed: `broader` dataset->concept 200, "
+            "`broader` concept->dataset 200, `narrower` dataset->concept 200, "
+            "`POST /ontology/concepts {broader: crm-customer-master}` 200, and "
+            "the same with a *column* id as `narrower` 200. `related` and "
+            "`mapping` stay open by design - `related` is associative in SKOS "
+            "rather than subsumption, and `mapping` is how a dataset and a "
+            "concept are modelled as linked - so the rule refuses exactly the "
+            "subsumption claim and nothing a caller needs. **Verified**: "
+            "`ConceptHierarchyShape` is the first shape in this repository that "
+            "expresses a class hierarchy; it is a sh:class-shaped constraint on "
+            "both endpoints of a subsumption relation, published in the shape "
+            "catalog and evaluated over the graph the product actually holds on "
+            "`/enterprise/shacl-validation`. Both halves exist because neither "
+            "suffices: the gate can only read the kinds known at write time, "
+            "and an edge whose endpoints are both unknown must be permitted - "
+            "the shipped seed declares `narrower: 매출 -> 매출 성장` for a "
+            "concept the vocabulary never defines, and `upsert_concept` writes "
+            "a concept's hierarchy edges before its targets are registered, so "
+            "treating an unknown endpoint as a violation makes `seed_store` on "
+            "a fresh store raise outright (reverse-verified; 27 of the seed's "
+            "78 edges name a node that does not exist, 2 of them hierarchy "
+            "edges). So an edge written to an unknown target whose target is "
+            "*then* created as a dataset passes the gate twice, and the report "
+            "is what catches it: measured, `conforms` false and "
+            "`hierarchy_pass_rate` 0.875. The shipped graph conforms - all 7 "
+            "hierarchy edges touching the vocabulary run concept -> concept, "
+            "and the 2 that name a missing target are counted separately as "
+            "`unknown_endpoint_count`, which is why this constraint can be a "
+            "violation where ConceptShape's resolvable-target constraint has to "
+            "stay a warning. Still absent, and declared rather than implied: no "
+            "SHACL processor and no reasoner runs "
+            "(`shacl_engine_executed = false`, `validation_engine = "
+            "builtin_shape_checks`), `kind` remains a free-form string, and the "
+            "report's `conformance_scope` names its own blind spot - a "
+            "kind=\"concept\" node written straight through POST /graph/nodes "
+            "is not in the vocabulary, so a hierarchy edge between it and a "
+            "node that later becomes a dataset is counted by nothing "
+            "(measured)."
         ),
     ),
     "ONT-003": RequirementCoverage(

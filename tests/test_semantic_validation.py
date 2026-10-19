@@ -111,7 +111,12 @@ def test_every_published_required_property_is_evaluated() -> None:
     unevaluated: list[tuple[str, str]] = []
 
     for shape in sv._SHACL_COMPATIBLE_SHAPES:
-        for prop in shape["required_properties"]:
+        # ``.get``: a shape may declare no property-presence constraint at all -
+        # ConceptHierarchyShape (ONT-002) constrains the class of a relation's
+        # endpoints - and there is then nothing for this enumeration to check.
+        # Its own evaluation is pinned in
+        # tests/test_graph_hierarchy_class_separation.py.
+        for prop in shape.get("required_properties", ()):
             if shape["id"] == "DatasetShape":
                 report = _probe(f"shape-probe-ds-{prop}", **{prop: None})
                 paths = {item["path"] for item in report["violations"]}

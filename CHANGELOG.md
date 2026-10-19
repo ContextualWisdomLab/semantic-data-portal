@@ -2,8 +2,9 @@
 
 이 문서는 `claude/semantic-portal-pr-merge-e5a48k` 브랜치(PR
 [#102](https://github.com/ContextualWisdomLab/semantic-data-portal/pull/102))가
-베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **206개** 커밋 중 122개는
-gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 84개입니다. 측정 명령:
+베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **208개** 커밋 중 122개는
+gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 86개입니다. 이 숫자는 **이
+줄을 담은 커밋을 포함한** 값입니다 — 측정 시점의 207에 이 커밋을 더한 것. 측정 명령:
 
     git rev-list --count origin/docs/product-technical-gap-baseline..HEAD
     git log --format=%H origin/docs/product-technical-gap-baseline..HEAD \
@@ -12,7 +13,10 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 84
 앞서 적혀 있던 164/112, 186/113, 199/122/77, 203/122/81은 각각 그 시점의 값이고 이후
 커밋을 반영하지 않은 숫자였습니다 — 자기 문서의 수치도 측정해서 맞춰 둡니다. 199는 이
 줄을 쓴 뒤 3개 커밋이 더 쌓여 낡아 203으로, 203은 다음 커밋에서 낡아 204로, 204는 또
-두 커밋 뒤에 206으로 다시 측정해 고쳤습니다. 이 줄이 또 낡으면 그것도 같은 결함입니다.
+두 커밋 뒤에 206으로 다시 측정해 고쳤습니다. 206도 그 값을 담은 커밋 자신 때문에 도착
+즉시 낡았습니다 — 측정하고 쓴 뒤 커밋하는 순서상 피할 수 없는 off-by-one이라, 이제는
+**이 커밋을 포함한** 값을 적습니다. 그래도 다음 커밋이 쌓이면 또 낡고, 그때는 같은
+결함입니다.
 
 형식은 [Keep a Changelog](https://keepachangelog.com/)를 따릅니다.
 
@@ -26,16 +30,72 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 84
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                       1162 passed, 11 skipped
-    pytest (파일 순서 정/역/난수)  각 1151 passed, 11 skipped — 순서 무관
+    pytest                       1190 passed, 11 skipped
+    pytest (파일 순서 정/역/난수)  각 1179 passed, 11 skipped — 순서 무관
                                  (정순 · 역순 · seed 11/707/31337)
     pytest tests/fuzz            11 passed
     python -m sdp.demo_smoke     exit 0, "ready": true
 
-`tests/fuzz`는 파일 순서 측정 대상(`tests/test_*.py`)에 포함되지 않으므로 1162 - 1151
+`tests/fuzz`는 파일 순서 측정 대상(`tests/test_*.py`)에 포함되지 않으므로 1190 - 1179
 = 11건의 차이가 납니다. 트리를 **동결**한 상태에서만 측정합니다 — 이 세션에서 백그라운드
 측정 중에 트리를 고친 탓에 seed 11이 4건 실패로 나온 일이 있고, 그것은 결함이 아니라
 동시 편집이었습니다.
+
+### Fixed — data asset이 business class 계층에 들어갈 수 있던 두 경로 (ONT-002, high)
+
+`broader`/`narrower`는 이 그래프에서 "~의 한 종류"를 주장하는 유일한 관계인데,
+양 끝점의 `kind`를 **아무도 읽지 않았습니다**. 측정값(각 1회 인증 요청, 시드 그대로):
+
+    POST /graph/edges  broader  crm-customer-master -> 고객          -> 200
+    POST /graph/edges  broader  고객 -> crm-customer-master          -> 200
+    POST /graph/edges  narrower crm-customer-master -> 고객          -> 200
+    POST /ontology/concepts {"concept": "테스트개념하나",
+                             "broader": "crm-customer-master"}       -> 200
+    POST /ontology/concepts {... "narrower":
+                             ["crm-customer-master:customer_id"]}     -> 200
+
+즉 ONT-002의 수용 기준("table/dataset이 business class의 subclass가 되지 않도록")이
+글자 그대로 깨져 있었고, 거부에 필요한 사실(양 끝점의 kind)은 이미 저장되어 있었습니다.
+노드 id를 **재분류**하는 절반은 앞서 `assert_node_kind_is_stable`로 막혀 있었고, 이것은
+간선 절반입니다.
+
+**거부**(409 — 요청은 정상이고 충돌 대상은 저장된 kind라서, 재분류와 같은 읽기):
+
+- `GraphStore.assert_hierarchy_respects_class_separation` — 두 백엔드가 공유하는 순수
+  규칙(`hierarchy_class_separation_refusal`) 하나를 호출한다. 인메모리는 락 안에서,
+  Postgres는 같은 트랜잭션 안에서 kind를 읽으므로 검사와 쓰기 사이에 창이 없고, 두
+  백엔드가 거부 대상이나 메시지로 어긋날 수 없다.
+- `POST /ontology/concepts`는 **쓰기 전** 검증기에서 막는다. 스토어 게이트만 두고
+  역검증하면 같은 요청이 **500**이고 어휘 레코드와 그래프 노드가 이미 기록된다
+  (`upsert_concept`가 노드→어휘→간선 순서로 쓰고, 라우트의 미러 쓰기는 어느 `try`에도
+  들어 있지 않다). 남는 창은 kind 검사가 이미 갖고 있는 것과 같은 모양(검사와 미러
+  쓰기 사이의 동시 쓰기)이고, 닫으려면 두 쓰기가 한 트랜잭션이어야 하므로 상태 코드로
+  덮지 않았다.
+- `mapping`과 `related`는 그대로 허용한다 — `mapping`은 dataset↔concept를 잇는
+  모델링된 관계이고 `related`는 SKOS에서 연관 관계다. 규칙은 포섭 주장만 거부한다.
+
+**검증**(수용 기준의 "검증" 쪽) — `ConceptHierarchyShape`는 이 저장소에서 class 계층을
+표현하는 첫 shape이고, 계층 간선 양 끝점에 걸리는 `sh:class` 모양의 제약이다.
+`/enterprise/shacl-validation`의 `hierarchy_class_separation`이 그래프의 **현재 상태**를
+평가한다. 두 절반이 모두 필요한 이유는 측정으로 나온다:
+
+- 쓰기 게이트는 쓰는 시점에 알려진 kind만 읽으므로, 끝점이 없을 때 쓴 간선의 끝점이
+  나중에 dataset으로 생기면 두 쓰기 모두 200이다 — 그 뒤 리포트가 `conforms: false`,
+  `hierarchy_pass_rate` 0.875로 잡는다.
+- 끝점이 없는 간선을 violation으로 올리면 **시드 로드 자체가 실패한다**(역검증:
+  `seed_store`가 `narrower ... target '활성 고객'`에서 raise). 시드의 78개 간선 중
+  27개가 없는 노드를 가리키고 그중 2개가 계층 간선이다. 그래서 unknown은 violation이
+  아니라 `unknown_endpoint_count`로 따로 센다 — ConceptShape의 계층 target 제약이
+  warning에 머물러야 하는 것과 같은 판단이고, 이쪽은 violation으로 둘 수 있다
+  (시드의 계층 간선 7개가 모두 concept -> concept이기 때문).
+
+선언해 둔 미해결 경계: SHACL 프로세서도 reasoner도 실행되지 않고
+(`shacl_engine_executed: false`), `kind`는 여전히 자유 문자열이며, 리포트 범위는 어휘에
+걸린 간선뿐이다 — `kind="concept"` 노드를 `POST /graph/nodes`로 직접 쓰면 어휘에 없으므로
+그 노드와 나중에 dataset이 되는 노드 사이의 계층 간선은 아무도 세지 않는다(측정).
+`conformance_scope`가 그 사각을 직접 선언한다. ONT-002 상태는 `partial`로 둔다 —
+수용 기준이 이름을 부른 SHACL/OWL 엔진이 없기 때문이고, 거부와 검증이 생겼다는 것이
+기준 전부를 충족한다는 뜻은 아니다.
 
 ### Fixed — steward 신원이 인증 없이 공개되던 두 표면 (high)
 

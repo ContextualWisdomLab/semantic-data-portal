@@ -441,8 +441,23 @@ SDP_DATABASE_DSN='postgresql+psycopg://sdp_graph_app:<url-encoded-password>@loca
   **ConceptShape**를 평가하고(`definition` 필수) 결과를 `concept_validation`으로
   응답에 담는다. 비적합 개념은 게시되지 않는다(400). 계층 target이 등록된 개념으로
   해소되지 않는 제약은 **warning** — 시드 어휘가 10회 위반하므로 게시를 막지 않는다.
+- `POST /graph/edges` — `broader`/`narrower`는 "~의 한 종류"를 주장하는 유일한
+  관계이므로, 양 끝 중 하나가 이미 **dataset/column 노드**면 409로 거부된다
+  (ONT-002: data asset은 business class 계층에 들어갈 수 없다). `mapping`은
+  dataset↔concept를 잇는 모델링된 관계이고 `related`는 SKOS에서 연관 관계라서
+  둘 다 거부 대상이 아니다. 같은 규칙이 `POST /ontology/concepts`의 `broader`/
+  `narrower`에도 **쓰기 전에** 적용된다(어휘 레코드가 먼저 기록되기 때문).
+  아직 노드가 아닌 끝점은 거부하지 않는다 — 시드 자체가 정의되지 않은 계층
+  target을 선언하고 `upsert_concept`가 target 등록보다 먼저 간선을 쓰므로,
+  거부하면 시드 로드가 실패한다.
 - `GET /enterprise/shacl-validation` — 데이터셋 conformance에 더해
-  `concept_conformance`(어휘 전체의 ConceptShape 적합률 + warning 수)를 게시한다.
+  `concept_conformance`(어휘 전체의 ConceptShape 적합률 + warning 수)와
+  `hierarchy_class_separation`(**ConceptHierarchyShape** — 계층 간선 양 끝의
+  class 제약을 그래프 현재 상태에 평가; 끝점이 없는 간선은 violation이 아니라
+  `unknown_endpoint_count`로 따로 센다)을 게시한다. 쓰기 게이트가 볼 수 없는
+  순서 — 끝점이 없을 때 쓴 간선의 끝점이 나중에 dataset으로 생기는 경우 — 는
+  이 리포트가 잡는다. SHACL 프로세서나 reasoner는 여전히 실행되지 않는다
+  (`shacl_engine_executed: false`).
 - `GET /browse/{dataset_id}/schema`
 - `POST /browse/{dataset_id}/preview`
 - `POST /llm/search`

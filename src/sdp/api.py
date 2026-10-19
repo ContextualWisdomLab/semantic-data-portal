@@ -27,7 +27,7 @@ from .graph_models import (
     OntologyConceptRequest,
     SemanticSearchRequest,
 )
-from .graph_store import get_store
+from .graph_store import HierarchyClassSeparationConflict, get_store
 from .seed import seed_dataset, seed_store
 from .catalog import (
     deprecate_dataset,
@@ -1984,9 +1984,14 @@ def ingest_concept(payload: OntologyConceptRequest) -> dict[str, Any]:
             narrower=list(getattr(payload, "narrower", None) or []),
             related=list(getattr(payload, "related", None) or []),
         )
-    except ontology.ConceptKindConflict as conflict:
+    except (ontology.ConceptKindConflict, HierarchyClassSeparationConflict) as conflict:
         # 409, not 400: the request is well-formed and the conflict is with
         # state. Caught before the ValueError arm because it is a subclass.
+        # Both conflicts are "an id already exists as a different kind of thing,
+        # and that forbids what you asked" - the concept's own name for the
+        # first, a declared ``broader``/``narrower`` target for the second
+        # (ONT-002's edge half) - so they answer the same status and are audited
+        # the same way.
         _audit_refused_concept_upsert(payload.actor, payload.concept, decision, str(conflict))
         raise HTTPException(status_code=409, detail=str(conflict)) from conflict
     except ValueError as invalid:
@@ -2098,6 +2103,20 @@ def ingest_graph_edge(payload: GraphEdgeRequest) -> dict[str, Any]:
             payload.target_id,
             properties=payload.properties,
         )
+    except HierarchyClassSeparationConflict as conflict:
+        # 409, not 400: the request is well-formed and the conflict is with
+        # stored state - the named nodes' kinds - which is the same reading that
+        # makes a reclassification 409 on ``POST /graph/nodes``. Caught before
+        # the ValueError arm because it is a subclass, and the two publication
+        # paths for a hierarchy edge therefore answer one status for one rule.
+        #
+        # No second evidence row: ``_authorize_graph_write`` above has already
+        # evaluated the policy and recorded the decision (the *authorization* was
+        # granted - this refusal is an integrity refusal, not an authorization
+        # one), and the structurally identical kind conflict on
+        # ``POST /graph/nodes`` writes no refusal audit either. Deliberate, so
+        # the two 409s on this surface do not differ in what they leave behind.
+        raise HTTPException(status_code=409, detail=str(conflict)) from conflict
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return {"status": "upserted", "edge": edge.as_dict()}

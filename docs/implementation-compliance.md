@@ -135,6 +135,20 @@
   - 미해결 경계: reasoner 없음(ONT-007). 엔진은 `builtin_shape_checks`,
     `shacl_engine_executed: false`. 계층 target 제약은 warning(시드 어휘가 10회
     위반하므로 violation으로 올릴 수 없다).
+- ONT-002 concept/data asset class 분리 — **거부 + 검증** 두 축
+  - `POST /graph/edges`, `POST /ontology/concepts` — `broader`/`narrower`의 끝점이
+    이미 dataset/column 노드면 409. 개념 경로는 어휘 레코드가 먼저 기록되므로
+    pre-write 검증기에서 막는다(스토어 게이트만 두면 같은 요청이 **500**이고
+    어휘 레코드와 그래프 노드가 이미 기록된다 — 측정값).
+  - `GET /enterprise/shacl-validation` → `hierarchy_class_separation` —
+    `ConceptHierarchyShape`를 그래프 현재 상태에 평가한다. 쓰기 게이트는 쓰는
+    시점에 알려진 kind만 읽으므로, 끝점이 없을 때 쓴 간선의 끝점이 나중에
+    dataset으로 생기는 순서는 리포트만 잡는다(측정: `conforms` false,
+    `hierarchy_pass_rate` 0.875).
+  - 미해결 경계: SHACL 프로세서·reasoner 없음, `kind`는 자유 문자열,
+    끝점이 없는 간선은 violation이 아니라 `unknown_endpoint_count`(시드가 2회,
+    violation으로 올리면 시드 로드 자체가 실패한다 — 역검증). 리포트 범위는
+    어휘에 걸린 간선뿐이며 `conformance_scope`가 그 사각을 선언한다.
 - 증빙 테스트:
   - `tests/test_api.py::test_ontology_search`
   - `tests/test_api.py::test_ontology_concept_graph`
@@ -143,6 +157,8 @@
   - `tests/test_ontology_version_identity.py` (버전·변경 로그·심사자 기록·동시성)
   - `tests/test_ontology_vocabulary_export.py` (SKOS/RDFS export·IRI 단사성·pin)
   - `tests/test_concept_shape_gate.py` (ConceptShape 게이트·warning 경계·플랫폼 수치)
+  - `tests/test_graph_hierarchy_class_separation.py` (ONT-002 계층 간선 거부 +
+    ConceptHierarchyShape 평가·범위 선언)
 
 ## 3) Browse / Query
 

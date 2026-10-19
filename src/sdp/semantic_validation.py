@@ -8,6 +8,7 @@ from sdp_core import MappingStatus
 from sdp_core.contracts import REQUIRED_METADATA_FIELDS
 
 from .catalog import get_dataset, list_datasets, validate_metadata
+from .graph_store import CONCEPT_NODE_KIND, HIERARCHY_EDGE_TYPES
 
 
 # The shape catalog is published by ``/catalog/datasets/{id}/semantic-validation``
@@ -148,13 +149,52 @@ _SHACL_COMPATIBLE_SHAPES = [
         # published so the enforced rule and the declared one are the same rule.
         "required_property_basis": PRESENCE_BASIS,
     },
+    # ONT-002's acceptance criterion is "table/dataset이 business class의
+    # subclass가 되지 않도록 SHACL/OWL 검증", and no shape, axiom or reasoner
+    # expressed a class hierarchy anywhere in this repository - the kinds were
+    # modelled and nothing verified them. This is that constraint: a
+    # ``sh:class``-shaped rule on **both endpoints** of a subsumption relation.
+    #
+    # It is a *violation*, not a warning, and the difference from
+    # ConceptShape's ``resolvable_hierarchy_targets`` (which is a warning for the
+    # documented reason that the shipped vocabulary breaks it 10 times) is that
+    # these two constraints answer different questions about the same edge:
+    #
+    #   target does not exist                 -> unknown, warning
+    #   target exists and is a dataset/column -> a class-separation violation
+    #
+    # Nothing is unknown about the second one, and the shipped graph contains
+    # none: measured, all 7 hierarchy edges touching the vocabulary run
+    # concept -> concept, and the 2 that name a missing target are the warning
+    # case. So this constraint can be a violation without refusing the product's
+    # own seed, which is exactly the test the ConceptShape comment applies.
+    {
+        "id": "ConceptHierarchyShape",
+        "target": "ConceptHierarchyEdge",
+        # No ``required_properties`` key at all: this shape constrains the
+        # *class* of the nodes a relation connects, not the properties they
+        # carry, and each entry in this catalog declares only the constraints it
+        # has (DatasetShape declares no ``min_approved_count``; DistributionShape
+        # no ``recommended_properties``). Declaring an empty list instead would
+        # also have widened the derived response contract for every shape's
+        # ``required_properties`` from "array of string" to "array of anything".
+        "hierarchy_relations": list(HIERARCHY_EDGE_TYPES),
+        "required_endpoint_kind": CONCEPT_NODE_KIND,
+        "unknown_endpoint_severity": "warning",
+    },
 ]
 
 # Which shapes this validator actually evaluates. ``shacl_compatible`` was a
 # hardcoded ``True``; it is now derived from this set, so publishing a shape
 # without evaluating it makes the claim false instead of leaving it unchanged.
 _EVALUATED_SHAPE_IDS = frozenset(
-    {"DatasetShape", "BusinessMappingShape", "DistributionShape", "ConceptShape"}
+    {
+        "DatasetShape",
+        "BusinessMappingShape",
+        "DistributionShape",
+        "ConceptShape",
+        "ConceptHierarchyShape",
+    }
 )
 
 # Which shapes each report actually applies. ``shapes`` publishes the whole
@@ -165,6 +205,7 @@ _EVALUATED_SHAPE_IDS = frozenset(
 # ConceptShape. Each report now names the shapes it evaluated.
 _DATASET_REPORT_SHAPE_IDS = ("DatasetShape", "BusinessMappingShape", "DistributionShape")
 _CONCEPT_REPORT_SHAPE_IDS = ("ConceptShape",)
+_HIERARCHY_REPORT_SHAPE_IDS = ("ConceptHierarchyShape",)
 
 # No SHACL engine runs here. ``pyshacl`` is not a dependency of this repository
 # (it pulls an RDF stack, and CI installs from hash-pinned requirements), so the
@@ -435,6 +476,100 @@ def concept_vocabulary_conformance(
     }
 
 
+HIERARCHY_CLASS_SEPARATION_SCOPE = (
+    "broader/narrower edges with at least one endpoint in "
+    "ontology._CONCEPT_DEFINITIONS. An edge whose endpoints are both outside "
+    "the published vocabulary is not counted here: the write gate refuses it "
+    "when either endpoint is a known data asset, so what escapes both is an "
+    "edge written while one endpoint was unknown that later became a data "
+    "asset, whose other endpoint is a kind=\"concept\" graph node outside the "
+    "vocabulary (measured: POST /graph/nodes writes one, and this count stays 7)"
+)
+
+
+def hierarchy_class_separation(
+    edges: list[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Evaluate ConceptHierarchyShape over the hierarchy edges the graph holds.
+
+    Pure: each edge arrives as ``{edge_type, source_id, target_id, source_kind,
+    target_kind}`` with a ``None`` kind for an endpoint that is not a node, so
+    this module stays free of the store it validates - the same split as
+    ``validate_concept_semantics`` and its injected resolver. The assembly lives
+    in ``sdp.ontology.hierarchy_class_separation_report``.
+
+    This is the half of ONT-002 the write gate cannot cover. A gate reads the
+    kinds known at write time, so an edge written while both endpoints are
+    unknown is permitted (the seed's load order needs that) and an endpoint may
+    become a dataset afterwards; this report reads what the graph *now* holds, so
+    that ordering shows up here.
+
+    ``conforms`` counts violations only, exactly as the dataset and concept
+    reports do, and ``unknown_endpoint_count`` is published separately for the
+    reason the ConceptShape comment gives: the shipped graph carries warnings by
+    design, and one number would hide which kind of finding it counts.
+    """
+    shape = _shape("ConceptHierarchyShape")
+    required_kind = shape["required_endpoint_kind"]
+    violations: list[dict[str, str]] = []
+    conforming = 0
+    unknown_endpoints = 0
+
+    for edge in edges:
+        edge_findings: list[dict[str, str]] = []
+        relation = str(edge["edge_type"])
+        printable = f"{relation}: {edge['source_id']} -> {edge['target_id']}"
+        for role in ("source", "target"):
+            node_id = edge[f"{role}_id"]
+            kind = edge[f"{role}_kind"]
+            if kind == required_kind:
+                continue
+            if kind is None:
+                unknown_endpoints += 1
+                edge_findings.append(
+                    {
+                        "shape": "ConceptHierarchyShape",
+                        "path": f"{relation}.{role}",
+                        "severity": shape["unknown_endpoint_severity"],
+                        "message": (
+                            f"hierarchy {role} is not a graph node: "
+                            f"{printable} ({role}={node_id})"
+                        ),
+                    }
+                )
+                continue
+            edge_findings.append(
+                {
+                    "shape": "ConceptHierarchyShape",
+                    "path": f"{relation}.{role}",
+                    "severity": "violation",
+                    "message": (
+                        f"hierarchy {role} is a {kind!r} node rather than a "
+                        f"{required_kind!r}, so a data asset is placed in the "
+                        f"business-class hierarchy: {printable} "
+                        f"({role}={node_id})"
+                    ),
+                }
+            )
+        violations.extend(edge_findings)
+        if not any(finding["severity"] == "violation" for finding in edge_findings):
+            conforming += 1
+
+    total = len(edges)
+    return {
+        "hierarchy_relations": list(shape["hierarchy_relations"]),
+        "required_endpoint_kind": required_kind,
+        "evaluated_shapes": list(_HIERARCHY_REPORT_SHAPE_IDS),
+        "hierarchy_edge_count": total,
+        "conforming_edge_count": conforming,
+        "hierarchy_pass_rate": round(conforming / total, 3) if total else 0.0,
+        "unknown_endpoint_count": unknown_endpoints,
+        "conforms": not any(item["severity"] == "violation" for item in violations),
+        "violations": violations,
+        "conformance_scope": HIERARCHY_CLASS_SEPARATION_SCOPE,
+    }
+
+
 def enterprise_shacl_validation_summary(
     tenant_ids: list[str] | None = None,
 ) -> dict[str, Any]:
@@ -454,7 +589,11 @@ def enterprise_shacl_validation_summary(
     """
     # Imported here, not at module scope: ``sdp.ontology`` imports this module
     # for the publication-path gate, so a module-level import would be a cycle.
-    from .ontology import canonical_concept_or_none, concept_vocabulary_snapshot
+    from .ontology import (
+        canonical_concept_or_none,
+        concept_vocabulary_snapshot,
+        hierarchy_class_separation_report,
+    )
 
     concept_conformance = concept_vocabulary_conformance(
         concept_vocabulary_snapshot(), resolve_concept=canonical_concept_or_none
@@ -484,4 +623,10 @@ def enterprise_shacl_validation_summary(
         # platform-wide rather than only at the moment of a publication. The
         # vocabulary is shared rather than tenant-owned, so it is not scoped.
         "concept_conformance": concept_conformance,
+        # ONT-002's verification half. Also unscoped, and for the same reason:
+        # the hierarchy is the shared vocabulary's, and the edge identifiers it
+        # reports are concept names, which the ontology surface already serves
+        # to any caller - unlike the per-dataset ``reports`` array above, which
+        # carries tenant-owned dataset ids and is scoped.
+        "hierarchy_class_separation": hierarchy_class_separation_report(),
     }

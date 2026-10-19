@@ -75,7 +75,7 @@ def test_the_shape_is_evaluated_so_the_compatibility_claim_stays_true() -> None:
 
 
 def test_each_report_names_only_the_shapes_it_applied() -> None:
-    """``shapes`` publishes the whole catalog, which is now four shapes.
+    """``shapes`` publishes the whole catalog, which is now five shapes.
 
     A dataset report that published the catalog alone would read as having
     validated a dataset against ConceptShape - the exact misreading this
@@ -85,7 +85,11 @@ def test_each_report_names_only_the_shapes_it_applied() -> None:
         "/catalog/datasets/crm-customer-master/semantic-validation",
         params={"user": "admin"},
     ).json()
-    assert len(dataset["shapes"]) == 4
+    # A literal on purpose: it is the tripwire that brings whoever adds a
+    # shape to this test to say which reports apply it. ConceptHierarchyShape
+    # (ONT-002) was the fifth, and it applies to neither report below - it
+    # targets an edge, not a dataset and not a concept record.
+    assert len(dataset["shapes"]) == 5
     assert dataset["evaluated_shapes"] == [
         "DatasetShape",
         "BusinessMappingShape",
@@ -611,7 +615,7 @@ def test_a_non_string_definition_is_refused_with_value_error(value: object) -> N
 def test_the_enterprise_surface_publishes_vocabulary_conformance() -> None:
     """So the shape's effect is measurable, not only visible at a publication."""
     body = client.get("/enterprise/shacl-validation").json()
-    assert body["shape_count"] == 4
+    assert body["shape_count"] == 5
     assert body["evaluated_shapes"] == [
         "DatasetShape",
         "BusinessMappingShape",

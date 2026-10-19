@@ -13,6 +13,7 @@ from .semantic_validation import (
     MAX_PUBLISHED_FIELD_LENGTH,
     PRESENCE_BASIS,
     has_visible_character,
+    hierarchy_class_separation,
     validate_concept_semantics,
 )
 
@@ -227,6 +228,52 @@ def _assert_concept_kind_is_available(canonical: str) -> None:
         raise ConceptKindConflict(str(conflict)) from conflict
 
 
+def _assert_hierarchy_targets_respect_class_separation(
+    canonical: str, broader: str | None, narrower: List[str] | None
+) -> None:
+    """Refuse a concept whose declared parent or child is a data asset.
+
+    ONT-002's edge half reached the vocabulary through this route: measured,
+    ``POST /ontology/concepts {"concept": "테스트개념하나", "definition": "정의",
+    "broader": "crm-customer-master"}`` answered **200** and the graph then held
+    ``broader: 테스트개념하나 -> crm-customer-master``, a business class declared
+    a sub-class of a dataset; the same request with
+    ``"narrower": ["crm-customer-master:customer_id"]`` put a *column* node in
+    the hierarchy.
+
+    Asked **here**, in the designated pre-write validator, and not left to the
+    store's own gate, because ``upsert_concept`` writes the concept node and the
+    vocabulary record *before* its hierarchy edges. Measured with this call
+    removed and the store's gate left in place, the same request answered
+    **500** - the route's mirror write is not inside either ``try`` block - with
+    the vocabulary record published *and* the graph node served. That is the
+    partial-write failure ``validate_concept_registration`` exists to prevent.
+    The store's gate stays, because ``POST /graph/edges`` reaches it directly.
+
+    One window remains, and it is the window the kind check already has: a
+    concurrent writer that creates the target as a dataset node between this
+    check and the mirror write makes the unguarded ``upsert_concept`` raise, so
+    the route answers 500. The pre-existing ``assert_node_kind_is_stable`` pair
+    has exactly the same shape, so this adds no new class of failure; closing it
+    needs the two writes to be one transaction, not a status mapping, because a
+    409 there would claim nothing happened while the vocabulary had changed.
+
+    ``related`` is not checked: it is associative in SKOS, not subsumption, so a
+    concept related to a dataset asserts no class hierarchy. The rule refuses
+    exactly the subsumption claim.
+    """
+    from .graph_store import get_store
+
+    store = get_store()
+    for relation, target in [("broader", broader)] + [
+        ("narrower", narrow) for narrow in list(narrower or [])
+    ]:
+        if target:
+            store.assert_hierarchy_respects_class_separation(
+                relation, canonical, target
+            )
+
+
 def concept_shape_report(
     concept: str, record: Dict[str, Any], *, evaluated_record: str = "submitted"
 ) -> dict[str, Any]:
@@ -243,6 +290,62 @@ def concept_shape_report(
         record,
         resolve_concept=canonical_concept_or_none,
         evaluated_record=evaluated_record,
+    )
+
+
+def hierarchy_class_separation_report() -> dict[str, Any]:
+    """ConceptHierarchyShape conformance over the graph's hierarchy edges.
+
+    Published on ``/enterprise/shacl-validation`` so ONT-002's constraint is
+    measurable against the shipped graph and not only at the moment of a write -
+    which is what the acceptance criterion's 검증 asks for, and what the write
+    gate on its own cannot give: an edge written while both endpoints were
+    unknown is permitted, and an endpoint may be created as a dataset
+    afterwards.
+
+    Anchored on the **vocabulary**, enumerating each concept's hierarchy edges in
+    both directions through the ``edges_for`` primitive both backends already
+    implement, rather than on a new "list every edge" store method that would
+    need separate SQL only an integration run could exercise. Anchoring there is
+    also the honest scope: ONT-002 is about a data asset entering the *business
+    class* hierarchy, so every edge it is about has a business class at one end.
+    A ``kind="concept"`` node written straight through ``POST /graph/nodes`` is
+    not in the vocabulary - the boundary ``CONCEPT_CONFORMANCE_SCOPE`` already
+    declares for the concept pass rate - so ``conformance_scope`` says so here
+    too rather than letting the count read as covering every edge in the graph.
+    """
+    from .graph_store import HIERARCHY_EDGE_TYPES, get_store
+
+    store = get_store()
+    # Deduplicated: each edge is found twice, once from each endpoint that is in
+    # the vocabulary. Sorted so the published violation order is stable.
+    found: set[tuple[str, str, str]] = set()
+    for concept in concept_vocabulary_snapshot():
+        for relation in HIERARCHY_EDGE_TYPES:
+            for direction in ("out", "in"):
+                for edge in store.edges_for(concept, relation, direction=direction):
+                    found.add((edge.edge_type, edge.source_id, edge.target_id))
+
+    kinds: dict[str, str | None] = {}
+
+    def _kind_of(node_id: str) -> str | None:
+        """This node's kind, or ``None`` when no such node exists."""
+        if node_id not in kinds:
+            node = store.get_node(node_id)
+            kinds[node_id] = node.kind if node else None
+        return kinds[node_id]
+
+    return hierarchy_class_separation(
+        [
+            {
+                "edge_type": edge_type,
+                "source_id": source_id,
+                "target_id": target_id,
+                "source_kind": _kind_of(source_id),
+                "target_kind": _kind_of(target_id),
+            }
+            for edge_type, source_id, target_id in sorted(found)
+        ]
     )
 
 
@@ -311,6 +414,7 @@ def validate_concept_registration(
     # vocabulary and the open SKOS export. Here it covers both publication
     # paths, which is the same reason the ConceptShape gate lives here.
     _assert_concept_kind_is_available(canonical)
+    _assert_hierarchy_targets_respect_class_separation(canonical, broader, narrower)
     # ONT-005's acceptance criterion is "reasoner + SHACL + reviewer 승인 후
     # 병합" and reviewer approval was the whole gate. The shape is evaluated
     # here - the designated pre-write validator, whose ValueError the routes

@@ -110,6 +110,99 @@ def _relationship_label(edge_type: str) -> str:
         raise ValueError(f"invalid relationship type: {edge_type!r}") from exc
 
 
+# --- Class separation (ONT-002) -----------------------------------------------
+#
+# ONT-002: "domain concept와 data asset은 별도 class로 모델링되어야 한다", whose
+# acceptance criterion is that a table/dataset must not become a subclass of a
+# business class. The kinds are modelled - a dataset relates to a concept through
+# a ``mapping`` edge, never by subclassing - and ``assert_node_kind_is_stable``
+# closed the half where an id was *reclassified*. This is the edge half, and
+# nothing checked it. Measured at HEAD before this gate, each with one authorized
+# request on the shipped seed::
+#
+#     POST /graph/edges {"actor": "admin", "edge_type": "broader",
+#                        "source_id": "crm-customer-master", "target_id": "고객"}
+#         -> 200   (a dataset placed *under* a business class: the criterion verbatim)
+#     POST /graph/edges {... "source_id": "고객",
+#                        "target_id": "crm-customer-master"}
+#         -> 200   (the same boundary crossed the other way)
+#     POST /graph/edges {... "edge_type": "narrower", "source_id":
+#                        "crm-customer-master", "target_id": "고객"}
+#         -> 200
+#     POST /ontology/concepts {"actor": "admin", "concept": "테스트개념하나",
+#                              "definition": "정의",
+#                              "broader": "crm-customer-master"}
+#         -> 200, and the graph then held broader: 테스트개념하나 -> crm-customer-master
+#     POST /ontology/concepts {... "narrower": ["crm-customer-master:customer_id"]}
+#         -> 200, a column node made a sub-class of a business class
+#
+# so both publication paths merged the two class systems into one hierarchy, and
+# every fact needed to refuse it (both endpoints' ``kind``) was already stored
+# and unread.
+HIERARCHY_EDGE_TYPES = ("broader", "narrower")
+
+# The kind a business class has in this graph. ``related`` is deliberately **not**
+# in ``HIERARCHY_EDGE_TYPES``: in SKOS it is associative, not subsumption, so a
+# dataset and a concept may legitimately be related; and ``mapping`` is the
+# modelled dataset<->concept link, which is why refusing the hierarchy edge
+# removes nothing a caller needs.
+CONCEPT_NODE_KIND = "concept"
+
+
+class HierarchyClassSeparationConflict(ValueError):
+    """A hierarchy edge that would subclass across the concept/asset boundary.
+
+    A ``ValueError`` subclass for the same reason
+    :class:`sdp.ontology.ConceptKindConflict` is one: every existing handler that
+    catches ``ValueError`` still catches this, so no caller silently stops
+    refusing. The routes that want the precise status catch it first and answer
+    **409** - the request is well-formed and the conflict is with stored state
+    (the named nodes' kinds), exactly as it is for a reclassification - so both
+    publication paths answer one status for one rule.
+    """
+
+
+def hierarchy_class_separation_refusal(
+    edge_type: str,
+    source_id: str,
+    target_id: str,
+    *,
+    source_kind: Optional[str],
+    target_kind: Optional[str],
+) -> Optional[str]:
+    """The refusal message for a boundary-crossing hierarchy edge, else ``None``.
+
+    Pure, and takes the two kinds rather than reading them, so the one rule and
+    the one message serve three callers that each learn a node's kind
+    differently: the in-memory store (``get_node``), the Postgres store (a
+    transaction-local ``SELECT``) and the ontology pre-write validator.
+
+    An endpoint that is **not a node yet** is treated as unknown rather than as a
+    violation, and that is a decision this product cannot avoid: the shipped seed
+    declares ``narrower: 매출 -> 매출 성장`` and ``narrower: 매출 -> 매출 채널별 집계``
+    for concepts the vocabulary never defines, and ``upsert_concept`` writes a
+    concept's hierarchy edges before the targets are registered, so refusing an
+    unknown endpoint would refuse the seed's own load order. Measured on the
+    seed: 27 of 78 edges name a node that does not exist, 2 of them hierarchy
+    edges. The unknown endpoint is reported by ``ConceptHierarchyShape`` at
+    warning severity instead - see ``sdp.semantic_validation``.
+    """
+    for role, node_id, kind in (
+        ("source", source_id, source_kind),
+        ("target", target_id, target_kind),
+    ):
+        if kind is None or kind == CONCEPT_NODE_KIND:
+            continue
+        return (
+            f"{edge_type!r} asserts a class hierarchy, and its {role} "
+            f"{node_id!r} is a {kind!r} node rather than a "
+            f"{CONCEPT_NODE_KIND!r}: a data asset cannot be placed in the "
+            f"business-class hierarchy (relate them with a 'mapping' edge, "
+            f"which is how a dataset and a concept are modelled as linked)"
+        )
+    return None
+
+
 # --- Backend contract ---------------------------------------------------------
 
 
@@ -209,6 +302,41 @@ class GraphStore(ABC):
                 f"a node's kind cannot be changed to {kind!r} because the "
                 "governed properties it carries differ by kind"
             )
+
+    def assert_hierarchy_respects_class_separation(
+        self, edge_type: str, source_id: str, target_id: str
+    ) -> None:
+        """Refuse a ``broader``/``narrower`` edge that crosses the class boundary.
+
+        ONT-002's acceptance criterion is that a table/dataset must not become a
+        subclass of a business class. ``broader`` and ``narrower`` are the only
+        relations in this graph that assert one thing is a *kind of* another, so
+        they are the only ones gated; the evidence for what was accepted before
+        this gate is in the module comment above ``HIERARCHY_EDGE_TYPES``.
+
+        This gate reads the kinds that are **known when the edge is written**, so
+        it cannot be the whole answer: an edge written while both endpoints are
+        unknown is permitted (the seed's own load order needs that), and the
+        endpoint may be created as a dataset afterwards, which
+        ``assert_node_kind_is_stable`` does not refuse because a first create is
+        not a reclassification. That ordering is why the shape report exists
+        rather than only the gate - ``ConceptHierarchyShape`` evaluates the edges
+        the graph actually holds, which is also the half of ONT-002 the criterion
+        words as 검증.
+        """
+        if edge_type not in HIERARCHY_EDGE_TYPES:
+            return
+        source = self.get_node(source_id)
+        target = self.get_node(target_id)
+        refusal = hierarchy_class_separation_refusal(
+            edge_type,
+            source_id,
+            target_id,
+            source_kind=source.kind if source else None,
+            target_kind=target.kind if target else None,
+        )
+        if refusal is not None:
+            raise HierarchyClassSeparationConflict(refusal)
 
     @abstractmethod
     def concept_graph(self, term: str) -> Dict[str, Any]:
@@ -361,6 +489,15 @@ class InMemoryGraphStore(GraphStore):
             # Reject non-identifier relationship types for parity with the AGE
             # backend (where the type occupies a cypher identifier position).
             _relationship_label(edge_type)
+            # ONT-002's edge half, asked **inside** the lock so a concurrent
+            # writer cannot change a kind between the check and the append -
+            # ``_nodes`` is shared process state and FastAPI runs these ``def``
+            # handlers in a threadpool. ``self._lock`` is an ``RLock`` and
+            # ``get_node`` re-takes it, so the base-class helper is reentrant
+            # here and the rule stays in one place.
+            self.assert_hierarchy_respects_class_separation(
+                edge_type, source_id, target_id
+            )
             for existing in self._edges:
                 if (
                     existing.edge_type == edge_type
@@ -740,6 +877,32 @@ class PostgresGraphStore(GraphStore):
         rel = _relationship_label(edge_type)
         with self._engine.begin() as conn:
             self._prepare(conn)
+            if edge_type in HIERARCHY_EDGE_TYPES:
+                # ONT-002's edge half, read **inside** this transaction for the
+                # same reason ``upsert_node``'s kind check is: reading it through
+                # ``get_node`` would open its own connection and leave a window
+                # between the check and the write. One statement for both
+                # endpoints, and the shared pure rule decides, so the two
+                # backends cannot drift in what they refuse or in what they say.
+                kinds = {
+                    row[0]: row[1]
+                    for row in conn.execute(
+                        sql(
+                            "SELECT node_id, node_kind FROM graph_nodes "
+                            "WHERE node_id IN (:source_id, :target_id)"
+                        ),
+                        {"source_id": source_id, "target_id": target_id},
+                    ).fetchall()
+                }
+                refusal = hierarchy_class_separation_refusal(
+                    edge_type,
+                    source_id,
+                    target_id,
+                    source_kind=kinds.get(source_id),
+                    target_kind=kinds.get(target_id),
+                )
+                if refusal is not None:
+                    raise HierarchyClassSeparationConflict(refusal)
             self._cypher(
                 conn,
                 "MERGE (a:GraphNode {node_id: $source_id}) "
