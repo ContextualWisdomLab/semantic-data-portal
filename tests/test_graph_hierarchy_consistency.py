@@ -34,13 +34,13 @@ is refused by this one (measured below: 409). The report is for edges the gate
 never saw: a hierarchy written before the gate existed, a future bulk path that
 appends without going through ``upsert_edge``, and - on the Postgres backend only
 - two concurrent writers each adding one edge, because there the reachability
-walk runs outside the write transaction. It publishes ``cycle_count``, the number
-ONT-007 wants a release gate to read. It is published under its own engine declaration
+walk runs outside the write transaction. It publishes ``cyclic_group_count``,
+the number ONT-007 wants a release gate to read. It is published under its own engine declaration
 (``consistency_engine: builtin_graph_checks``, ``reasoner_executed: false``) and
 deliberately *not* added to the SHACL shape catalog: acyclicity is a property of
 the graph rather than of a node or an edge, so calling it a shape would make
 ``shacl_compatible`` cover a constraint that is not shape-shaped. It is named
-``cycle_count`` and not "unsatisfiable classes" because a cycle makes concepts
+``cyclic_group_count`` and not "unsatisfiable classes" because a cycle makes concepts
 mutually subsuming, and unsatisfiability needs a disjointness axiom this
 repository does not have.
 
@@ -138,7 +138,7 @@ def test_the_seed_states_two_of_its_subsumptions_from_both_ends() -> None:
     # 7 hierarchy edges, 5 distinct (child, parent) assertions.
     assert report["subsumption_pair_count"] == 5
     assert report["conforms"] is True
-    assert report["cycle_count"] == 0
+    assert report["cyclic_group_count"] == 0
 
 
 # ---------------------------------------------------------- the gate, writing --
@@ -213,18 +213,54 @@ def test_an_already_cyclic_store_still_refuses_rather_than_hangs() -> None:
         store.upsert_edge("broader", "순환하나", "순환둘")
 
 
+class _BoundedReadStore(InMemoryGraphStore):
+    """A store that refuses to answer more than ``read_budget`` ancestor reads.
+
+    Why a budget rather than just calling ``upsert_edge``: without the ``visited``
+    guard the walk does not raise, it *never returns*, and a test that hangs is
+    not a test that fails - pytest waits forever and a CI run is killed with no
+    verdict. Adversarial review pointed this out about the first version of the
+    test below, which asserted the return value and would have hung. Counting the
+    store reads turns the non-termination into an ordinary assertion failure.
+    """
+
+    read_budget = 64
+
+    def __init__(self) -> None:
+        """Start with an empty read counter."""
+        super().__init__()
+        self.ancestor_reads = 0
+
+    def subsumption_parents(self, node_id: str) -> list[str]:
+        """Count this read, then answer it, failing past the budget."""
+        self.ancestor_reads += 1
+        if self.ancestor_reads > self.read_budget:
+            raise AssertionError(
+                "the acyclicity walk read more than "
+                f"{self.read_budget} ancestors on a 3-node graph: it is not "
+                "terminating (the `visited` guard is what bounds it)"
+            )
+        return super().subsumption_parents(node_id)
+
+
 def test_a_write_whose_parent_sits_inside_a_planted_cycle_terminates() -> None:
     """This is the case ``visited`` exists for, and the first attempt to
     reverse-verify it chose a parent with no parents at all, so the walk ended
     before it reached the cycle and the guard looked unnecessary.
 
     Reverse-verified with the right case: with ``visited`` removed this write
-    does not return (killed at a 15s timeout); with it, the same write returns
-    normally, because 새로운하위 is not in the cycle and adding it closes nothing.
+    does not return at all (killed at a 15s timeout). The budget is what makes
+    that a failure here instead of a hang.
     """
-    store = _store_with_a_planted_cycle()
+    store = _BoundedReadStore()
+    for node in ("순환하나", "순환둘", "새로운하위"):
+        store.upsert_node(node, "concept")
+    store._edges.append(graph_store.GraphEdge("broader", "순환하나", "순환둘", {}))
+    store._edges.append(graph_store.GraphEdge("broader", "순환둘", "순환하나", {}))
     edge = store.upsert_edge("broader", "새로운하위", "순환하나")
     assert (edge.source_id, edge.target_id) == ("새로운하위", "순환하나")
+    # Three nodes, so a terminating walk reads a handful of times, not 64.
+    assert store.ancestor_reads <= 8
 
 
 # ----------------------------------------------------- the gate, publishing --
@@ -357,17 +393,129 @@ def test_a_cycle_the_gate_never_saw_is_reported_with_its_members() -> None:
         store.upsert_node("순환짝", "concept")
         report = _consistency()
     assert report["conforms"] is False
-    assert report["cycle_count"] == 1
+    assert report["cyclic_group_count"] == 1
     assert report["concepts_in_a_cycle"] == sorted([SEEDED_CONCEPT, "순환짝"])
-    assert report["cycles"] == [sorted([SEEDED_CONCEPT, "순환짝"])]
+    assert report["cyclic_groups"] == [sorted([SEEDED_CONCEPT, "순환짝"])]
 
 
-def test_one_cycle_found_from_several_entry_points_is_one_finding() -> None:
-    """Otherwise a three-concept cycle would be published as three."""
+def test_one_group_is_reported_however_many_cycles_run_through_it() -> None:
+    """Three mutually-subsuming concepts are one group, and the published name
+    says group rather than cycle.
+
+    The first version of this report canonicalized a cycle by its member set and
+    called the count ``cycle_count``, which under-reported: the six subsumptions
+    below hold five simple cycles over three concepts, and counting simple cycles
+    is exponential by nature. One strongly-connected component is the honest
+    linear answer, and it is what a release gate needs.
+    """
     report = sv.hierarchy_consistency([("가", "나"), ("나", "다"), ("다", "가")])
-    assert report["cycle_count"] == 1
-    assert report["cycles"] == [["가", "나", "다"]]
+    assert report["cyclic_group_count"] == 1
+    assert report["cyclic_groups"] == [["가", "나", "다"]]
     assert report["conforms"] is False
+    both_ways = sv.hierarchy_consistency(
+        [("x1", "x2"), ("x2", "x3"), ("x3", "x1"), ("x1", "x3"), ("x3", "x2"), ("x2", "x1")]
+    )
+    assert both_ways["cyclic_group_count"] == 1
+    assert both_ways["cyclic_groups"] == [["x1", "x2", "x3"]]
+    # Two disjoint groups stay two, and a tail hanging off one is not a member.
+    disjoint = sv.hierarchy_consistency(
+        [("c1", "c2"), ("c2", "c1"), ("d1", "d2"), ("d2", "d1"), ("tail", "c1")]
+    )
+    assert disjoint["cyclic_group_count"] == 2
+    assert disjoint["cyclic_groups"] == [["c1", "c2"], ["d1", "d2"]]
+    assert "tail" not in disjoint["concepts_in_a_cycle"]
+
+
+def test_a_submission_that_is_cyclic_within_itself_is_refused_before_any_write() -> None:
+    """Confirmed by adversarial review on the first version of this change.
+
+    ``broader: P`` and ``narrower: [P]`` in one request assert that each of two
+    terms is a kind of the other. Each declared relation alone closes no cycle
+    against stored state, so the pre-write validator passed and the store's gate
+    refused the *second* edge from inside the route's unguarded mirror write.
+    Measured then: **500**, with the vocabulary record published asserting the
+    contradiction, the graph node written, the first edge written, every read
+    surface serving it 200, the concept in the SKOS export, and
+    ``hierarchy_consistency`` still reporting conforms - the closing edge never
+    landed, so the report could not see it. A later ``seed_store`` on a fresh
+    store then raised on that stored record.
+    """
+    before_concepts = set(ontology.list_concepts())
+    response = client.post(
+        "/ontology/concepts",
+        json={
+            **ADMIN,
+            "concept": "자기모순개념",
+            "definition": "정의",
+            "broader": "상대개념하나",
+            "narrower": ["상대개념하나"],
+        },
+    )
+    assert response.status_code == 409
+    assert "broader than itself" in response.json()["detail"]
+    # Nothing written, in either store.
+    assert set(ontology.list_concepts()) == before_concepts
+    assert (
+        client.get("/graph/nodes/자기모순개념", params={"user": "admin"}).status_code == 404
+    )
+    store = graph_store.get_store()
+    assert [
+        edge
+        for edge in store._edges
+        if "자기모순개념" in (edge.source_id, edge.target_id)
+    ] == []
+    # ...and the vocabulary can still be replayed into a fresh store.
+    seed_store(InMemoryGraphStore())
+
+
+def test_the_longer_self_contradiction_is_refused_too() -> None:
+    """Not just the broader/narrower overlap: a declared parent and a declared
+    child joined by the *stored* hierarchy also close a cycle, and the pending
+    pairs are what let the second check see the first."""
+    assert _edge("broader", "중간개념하나", "중간개념둘").status_code == 200
+    response = client.post(
+        "/ontology/concepts",
+        json={
+            **ADMIN,
+            "concept": "사이개념",
+            "definition": "정의",
+            "broader": "중간개념하나",
+            "narrower": ["중간개념둘"],
+        },
+    )
+    assert response.status_code == 409
+    assert "사이개념" not in ontology.list_concepts()
+
+
+def test_the_report_is_linear_rather_than_exponential() -> None:
+    """A cost regression guard, because the first version was exponential.
+
+    It enumerated every simple upward path, so a legal SKOS poly-hierarchy - 67
+    concepts, 88 subsumptions, every write an authorized 200 - took **45.6
+    seconds**, and this report is served to an unauthenticated caller by
+    ``GET /enterprise/shacl-validation`` and twice by
+    ``GET /enterprise/steward-review``. An ordinary writer could make those
+    endpoints unresponsive without writing a single cycle. The replacement is
+    Tarjan's SCC algorithm, which is linear; the same graph now measures ~0.001s.
+
+    The assertion is deliberately loose (a second for a graph 30x larger than
+    the one that took 45s) so it fails on a reintroduced blow-up rather than on
+    a slow machine.
+    """
+    import time
+
+    pairs: list[tuple[str, str]] = []
+    for level in range(600):
+        pairs.append((f"n{level}", f"a{level}"))
+        pairs.append((f"n{level}", f"b{level}"))
+        pairs.append((f"a{level}", f"n{level + 1}"))
+        pairs.append((f"b{level}", f"n{level + 1}"))
+    started = time.monotonic()
+    report = sv.hierarchy_consistency(pairs)
+    elapsed = time.monotonic() - started
+    assert report["conforms"] is True
+    assert report["subsumption_pair_count"] == len(pairs)
+    assert elapsed < 1.0, f"the acyclicity report took {elapsed:.3f}s on {len(pairs)} pairs"
 
 
 def test_the_classifier_is_pure_and_deduplicates_its_pairs() -> None:
@@ -379,5 +527,5 @@ def test_the_classifier_is_pure_and_deduplicates_its_pairs() -> None:
     assert report["conforms"] is True
     empty = sv.hierarchy_consistency([])
     assert empty["subsumption_pair_count"] == 0
-    assert empty["cycle_count"] == 0
+    assert empty["cyclic_group_count"] == 0
     assert empty["conforms"] is True

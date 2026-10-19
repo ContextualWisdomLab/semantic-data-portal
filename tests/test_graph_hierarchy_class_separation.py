@@ -222,8 +222,30 @@ def test_the_conflict_is_a_value_error_so_no_existing_handler_stops_refusing() -
     assert issubclass(HierarchyClassSeparationConflict, ValueError)
 
 
-def test_the_refusal_rule_is_one_pure_function_both_backends_call() -> None:
-    """So the two backends cannot drift in what they refuse or in what they say."""
+def test_both_backends_reach_the_shared_hierarchy_rules() -> None:
+    """The claim the test below used to make in its name without checking it.
+
+    Nothing in this suite exercises the Postgres backend - it needs a live
+    Postgres with AGE and pgvector, and those tests are marked ``integration``
+    and skipped here - so "both backends call it" cannot be asserted by running
+    them. What *can* be asserted mechanically is that neither backend's
+    ``upsert_edge`` has lost the call, which is the drift the shared rule exists
+    to prevent. Source-level, because that is the honest level for it.
+    """
+    import inspect
+
+    for backend in (graph_store.InMemoryGraphStore, graph_store.PostgresGraphStore):
+        body = inspect.getsource(backend.upsert_edge)
+        assert "hierarchy_class_separation_refusal" in body or (
+            "assert_hierarchy_respects_class_separation" in body
+        ), f"{backend.__name__}.upsert_edge no longer applies the ONT-002 rule"
+        assert "assert_hierarchy_stays_acyclic" in body, (
+            f"{backend.__name__}.upsert_edge no longer applies the acyclicity rule"
+        )
+
+
+def test_the_refusal_rule_is_one_pure_function() -> None:
+    """One rule and one message, whichever caller learned the kinds."""
     refusal = graph_store.hierarchy_class_separation_refusal(
         "broader", "데이터셋하나", "개념하나", source_kind="dataset", target_kind="concept"
     )

@@ -288,21 +288,47 @@ def _assert_declared_hierarchy_stays_acyclic(
     because ``upsert_concept`` writes the concept node and the vocabulary record
     before its hierarchy edges.
 
-    The declared targets are checked **one at a time against the stored
-    hierarchy**, so a submission that would close a cycle only between two of
-    its own newly declared relations is not caught here - it is caught by the
-    store's gate as each edge is written, after the vocabulary record exists.
-    That residual is reported by ``hierarchy_consistency`` rather than claimed
-    closed.
+    The declared relations are checked against the stored hierarchy **and
+    against each other**, by carrying the pairs already accepted from this same
+    submission into each subsequent check. Checking them one at a time against
+    stored state alone was a defect, confirmed by adversarial review: a
+    submission that is cyclic within itself passed every individual check, and
+    the store's gate then refused the *second* edge from inside the route's
+    unguarded mirror write. Measured::
+
+        POST /ontology/concepts {"actor": "admin", "concept": "순환개념",
+                                 "definition": "정의", "broader": "상대개념",
+                                 "narrower": ["상대개념"]}
+            -> 500 (not 409), with the vocabulary record published asserting
+               that each term is a kind of the other, the graph node written,
+               one of the two edges written, every read surface serving it 200,
+               the concept in the SKOS export - and
+               ``hierarchy_consistency`` reporting conforms: true, because the
+               closing edge never landed. A later ``seed_store`` on a fresh
+               store raised on that stored record.
+
+    The docstring here previously claimed that residual "is reported by
+    ``hierarchy_consistency``". It was not: that report reads graph *edges*, and
+    the gate prevents the closing edge from ever being written, so the
+    contradiction lived only in the vocabulary record and was structurally
+    invisible to it. A disclosed limitation whose named compensating control
+    does not exist is still a defect.
     """
-    from .graph_store import get_store
+    from .graph_store import get_store, subsumption_pair
 
     store = get_store()
+    accepted: list[tuple[str, str]] = []
     for relation, target in [("broader", broader)] + [
         ("narrower", narrow) for narrow in list(narrower or [])
     ]:
-        if target:
-            store.assert_hierarchy_stays_acyclic(relation, canonical, target)
+        if not target:
+            continue
+        store.assert_hierarchy_stays_acyclic(
+            relation, canonical, target, pending_pairs=tuple(accepted)
+        )
+        pair = subsumption_pair(relation, canonical, target)
+        if pair is not None:
+            accepted.append(pair)
 
 
 def concept_shape_report(
@@ -356,7 +382,14 @@ def hierarchy_class_separation_report() -> dict[str, Any]:
     Anchored on the **vocabulary**, enumerating each concept's hierarchy edges in
     both directions through the ``edges_for`` primitive both backends already
     implement, rather than on a new "list every edge" store method that would
-    need separate SQL only an integration run could exercise. Anchoring there is
+    need separate SQL only an integration run could exercise. That costs
+    O(vocabulary x hierarchy edges), because each call scans the edges: measured
+    at the 500-concept vocabulary cap with 9,790 hierarchy edges, this report and
+    its class-separation sibling take 0.44s and 0.65s. A graph with far more
+    edges than that wants a single-pass primitive, which is a separate change
+    because the Postgres half needs its own statement. (The *classifier* is
+    linear - see ``hierarchy_consistency`` for the exponential version that
+    adversarial review found here, and the measurement that condemned it.) Anchoring there is
     also the honest scope: ONT-002 is about a data asset entering the *business
     class* hierarchy, so every edge it is about has a business class at one end.
     A ``kind="concept"`` node written straight through ``POST /graph/nodes`` is

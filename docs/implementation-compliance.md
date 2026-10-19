@@ -153,7 +153,8 @@
     미러는 제출된 broader/narrower를 쓰므로, 그 필드만 조기 반환 위로 올렸다
     (측정: 아래에 두면 같은 요청이 미게시 개념에는 409, 시드 개념에는 500).
   - `GET /enterprise/shacl-validation` → `hierarchy_consistency` —
-    `cycle_count`, 순환 구성 개념, `consistency_engine: builtin_graph_checks`,
+    `cyclic_group_count`(서로 포섭하는 개념 묶음 = 강결합 성분), 그 구성원,
+    `consistency_engine: builtin_graph_checks`,
     `reasoner_executed: false`.
   - 미해결 경계: reasoner·OWL axiom 없음, SKOS S27 미검사(시드는 측정상 깨끗),
     이 숫자를 묶을 릴리즈 게이트 자체가 저장소에 없음. 순환성은 그래프의 성질이라
@@ -174,8 +175,8 @@
   - `tests/test_concept_shape_gate.py` (ConceptShape 게이트·warning 경계·플랫폼 수치)
   - `tests/test_graph_hierarchy_class_separation.py` (ONT-002 계층 간선 거부 +
     ConceptHierarchyShape 평가·범위 선언)
-  - `tests/test_graph_hierarchy_consistency.py` (ONT-007 순환 거부 + cycle_count
-    공표·방향 정규화·종료성)
+  - `tests/test_graph_hierarchy_consistency.py` (ONT-007 순환 거부 +
+    cyclic_group_count 공표·방향 정규화·종료성·선형 비용)
 
 ## 3) Browse / Query
 

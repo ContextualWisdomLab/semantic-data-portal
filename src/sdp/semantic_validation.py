@@ -164,10 +164,14 @@ _SHACL_COMPATIBLE_SHAPES = [
     #   target exists and is a dataset/column -> a class-separation violation
     #
     # Nothing is unknown about the second one, and the shipped graph contains
-    # none: measured, all 7 hierarchy edges touching the vocabulary run
-    # concept -> concept, and the 2 that name a missing target are the warning
-    # case. So this constraint can be a violation without refusing the product's
-    # own seed, which is exactly the test the ConceptShape comment applies.
+    # none: measured, of the 7 hierarchy edges touching the vocabulary, 5 run
+    # concept -> concept and the other 2 name a target that is not a node at all,
+    # which is the warning case. (An earlier version of this comment said all 7
+    # ran concept -> concept, which is false: an endpoint that does not exist has
+    # no kind, so those 2 are not concept -> concept either. Adversarial review
+    # caught it.) So this constraint can be a violation without refusing the
+    # product's own seed, which is exactly the test the ConceptShape comment
+    # applies.
     {
         "id": "ConceptHierarchyShape",
         "target": "ConceptHierarchyEdge",
@@ -598,6 +602,70 @@ HIERARCHY_CONSISTENCY_SCOPE = (
 )
 
 
+def _cyclic_subsumption_groups(
+    parents: Mapping[str, list[str]],
+) -> list[list[str]]:
+    """The mutually-subsuming groups of a ``child -> parents`` relation.
+
+    Tarjan's strongly-connected-components algorithm, iterative so a deep
+    hierarchy cannot exhaust the interpreter's stack, and linear in the number of
+    concepts plus assertions. A returned group is either an SCC with more than
+    one member - every concept in it subsumes every other - or a single concept
+    that lists itself as its own parent. Both are "a concept is broader than
+    itself"; nothing else is.
+
+    Sorted, and each group's members sorted, so the published order is stable.
+    """
+    index_of: dict[str, int] = {}
+    low: dict[str, int] = {}
+    on_stack: set[str] = set()
+    stack: list[str] = []
+    groups: list[list[str]] = []
+    counter = 0
+
+    for root in sorted(parents):
+        if root in index_of:
+            continue
+        # (node, iterator over its parents) - an explicit frame stack, so the
+        # recursion depth of the original algorithm becomes heap space.
+        work: list[tuple[str, Any]] = [(root, iter(sorted(parents.get(root, ()))))]
+        index_of[root] = low[root] = counter
+        counter += 1
+        stack.append(root)
+        on_stack.add(root)
+        while work:
+            node, pending = work[-1]
+            advanced = False
+            for parent in pending:
+                if parent not in index_of:
+                    index_of[parent] = low[parent] = counter
+                    counter += 1
+                    stack.append(parent)
+                    on_stack.add(parent)
+                    work.append((parent, iter(sorted(parents.get(parent, ())))))
+                    advanced = True
+                    break
+                if parent in on_stack:
+                    low[node] = min(low[node], index_of[parent])
+            if advanced:
+                continue
+            work.pop()
+            if work:
+                caller = work[-1][0]
+                low[caller] = min(low[caller], low[node])
+            if low[node] == index_of[node]:
+                component: list[str] = []
+                while True:
+                    member = stack.pop()
+                    on_stack.discard(member)
+                    component.append(member)
+                    if member == node:
+                        break
+                if len(component) > 1 or node in parents.get(node, ()):
+                    groups.append(sorted(component))
+    return sorted(groups)
+
+
 def hierarchy_consistency(
     subsumption_pairs: list[tuple[str, str]],
 ) -> dict[str, Any]:
@@ -608,10 +676,29 @@ def hierarchy_consistency(
     scoped, so this module stays free of the store it validates. The assembly is
     ``sdp.ontology.hierarchy_consistency_report``.
 
-    Each cycle is reported once, as the sorted set of concepts it contains, so
-    the same cycle found from three different entry points is one finding rather
-    than three, and the pairs themselves are deduplicated because the seed
-    states two of its subsumptions from both ends. ``conforms`` is "no cycle": a concept that is broader than itself
+    What is reported is each **mutually-subsuming group** - a strongly connected
+    component of the subsumption relation with more than one member, or a single
+    concept that subsumes itself - not each simple cycle. That is a deliberate
+    correction of the first version of this function, which enumerated every
+    simple upward path and pruned only by the current path. Two defects, both
+    measured:
+
+    * the cost was exponential in the hierarchy's branching, on an **acyclic**
+      graph, while the write gate that produced the data is linear. A legal SKOS
+      poly-hierarchy of 67 concepts and 88 subsumptions - built entirely through
+      authorized 200 writes - took **45.6 seconds** here, and this report is
+      served to an unauthenticated caller by ``GET /enterprise/shacl-validation``
+      (and twice by ``GET /enterprise/steward-review``), so an ordinary writer
+      could make those endpoints unresponsive without writing a single cycle;
+    * and it canonicalized a cycle by its member *set*, so two distinct simple
+      cycles over the same concepts collapsed into one entry and the published
+      count under-reported.
+
+    Counting simple cycles is exponential by nature, so it is not what this
+    publishes. A group is the honest linear answer and is what a release gate
+    needs: zero groups means the hierarchy is acyclic, and a group names every
+    concept a reader has to look at. The pairs themselves are deduplicated
+    because the seed states two of its subsumptions from both ends. ``conforms`` is "no cycle": a concept that is broader than itself
     is not a hierarchy, and unlike the unknown-endpoint case there is nothing
     unknown about it - the shipped seed is acyclic (measured), so this can be a
     violation without refusing the product's own data.
@@ -622,32 +709,21 @@ def hierarchy_consistency(
     # carry 5 distinct ``(child, parent)`` assertions. Counting the edges under a
     # key named for pairs would have published 7 for a relation of size 5.
     distinct_pairs = sorted(set(subsumption_pairs))
-    parents: dict[str, set[str]] = {}
+    parents: dict[str, list[str]] = {}
     for child, parent in distinct_pairs:
-        parents.setdefault(child, set()).add(parent)
+        parents.setdefault(child, []).append(parent)
 
-    cycles: set[tuple[str, ...]] = set()
-    for start in sorted(parents):
-        # Walk up from ``start``; any path that returns to it is a cycle.
-        stack: list[tuple[str, tuple[str, ...]]] = [(start, (start,))]
-        while stack:
-            current, path = stack.pop()
-            for parent in sorted(parents.get(current, ())):
-                if parent == start:
-                    cycles.add(tuple(sorted(set(path))))
-                elif parent not in path:
-                    stack.append((parent, path + (parent,)))
-
-    members = sorted({concept for cycle in cycles for concept in cycle})
+    groups = _cyclic_subsumption_groups(parents)
+    members = sorted({concept for group in groups for concept in group})
     return {
         "checked_conditions": list(HIERARCHY_CONSISTENCY_CONDITIONS),
         "consistency_engine": CONSISTENCY_ENGINE,
         "reasoner_executed": REASONER_EXECUTED,
         "subsumption_pair_count": len(distinct_pairs),
-        "cycle_count": len(cycles),
-        "cycles": [list(cycle) for cycle in sorted(cycles)],
+        "cyclic_group_count": len(groups),
+        "cyclic_groups": [list(group) for group in groups],
         "concepts_in_a_cycle": members,
-        "conforms": not cycles,
+        "conforms": not groups,
         "conformance_scope": HIERARCHY_CONSISTENCY_SCOPE,
     }
 

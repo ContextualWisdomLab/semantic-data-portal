@@ -465,7 +465,7 @@ SDP_DATABASE_DSN='postgresql+psycopg://sdp_graph_app:<url-encoded-password>@loca
   순서 — 끝점이 없을 때 쓴 간선의 끝점이 나중에 dataset으로 생기는 경우 — 는
   이 리포트가 잡는다. SHACL 프로세서나 reasoner는 여전히 실행되지 않는다
   (`shacl_engine_executed: false`). 여기에 `hierarchy_consistency`가 더해진다 —
-  포섭 관계의 순환 수(`cycle_count`)와 순환에 포함된 개념들, 그리고
+  서로 포섭하는 개념 묶음 수(`cyclic_group_count`)와 그 구성원, 그리고
   `consistency_engine: builtin_graph_checks` / `reasoner_executed: false`.
   릴리즈 게이트가 읽을 수 있는 숫자이고, 수용 기준이 부르는 "unsatisfiable
   class"가 **아니라** 실제로 계산한 것(순환 수)으로 이름을 붙였다. 순환성은

@@ -404,17 +404,40 @@ class GraphStore(ABC):
         return parents
 
     def assert_hierarchy_stays_acyclic(
-        self, edge_type: str, source_id: str, target_id: str
+        self,
+        edge_type: str,
+        source_id: str,
+        target_id: str,
+        *,
+        pending_pairs: Iterable[Tuple[str, str]] = (),
     ) -> None:
         """Refuse a hierarchy edge that would make a concept broader than itself.
 
         Walks **up** from the proposed parent: if the proposed child is already
-        reachable through the stored subsumption relation, adding this edge
-        closes a cycle. A self-loop is the degenerate case of the same rule and
-        is refused by the same check. ``visited`` makes the walk terminate even
-        when the stored hierarchy is *already* cyclic - from an edge written
-        before this gate, or through the ordering the gate cannot see - so a
+        reachable through the subsumption relation, adding this edge closes a
+        cycle. A self-loop is the degenerate case of the same rule and is
+        refused by the same check. ``visited`` makes the walk terminate even
+        when the hierarchy is *already* cyclic - from an edge written before
+        this gate, or through the ordering the gate cannot see - so a
         pre-existing cycle cannot turn a refusal into a hang.
+
+        ``pending_pairs`` are ``(child, parent)`` assertions the caller is about
+        to write **alongside** this one and that are not stored yet. Without
+        them a caller writing several edges in one request has each edge checked
+        against stored state only, so a request that is cyclic *within itself*
+        passes every individual check. Measured before this parameter existed,
+        one authorized request::
+
+            POST /ontology/concepts {"actor": "admin", "concept": "순환개념",
+                                     "definition": "정의",
+                                     "broader": "상대개념",
+                                     "narrower": ["상대개념"]}
+                -> 500, with the vocabulary record published, the graph node
+                   written, the first of the two edges written, and
+                   ``hierarchy_consistency`` still reporting conforms: true,
+                   because the cycle's second edge never landed. A later
+                   ``seed_store`` on a fresh store then raised, because the
+                   stored vocabulary record replays its own contradiction.
 
         What this does **not** do is decide satisfiability: no reasoner runs
         here, there are no OWL axioms in this repository, and a cycle in SKOS
@@ -430,16 +453,19 @@ class GraphStore(ABC):
             raise HierarchyCycleConflict(
                 f"{edge_type!r} would make {child!r} a kind of itself"
             )
+        pending: Dict[str, List[str]] = {}
+        for pending_child, pending_parent in pending_pairs:
+            pending.setdefault(pending_child, []).append(pending_parent)
         visited = {parent}
         frontier = [parent]
         while frontier:
             current = frontier.pop()
-            for ancestor in self.subsumption_parents(current):
+            for ancestor in self.subsumption_parents(current) + pending.get(current, []):
                 if ancestor == child:
                     raise HierarchyCycleConflict(
                         f"{edge_type!r} would make {child!r} a kind of {parent!r}, "
-                        f"and {parent!r} is already a kind of {child!r} through the "
-                        "stored hierarchy: a concept cannot be broader than itself"
+                        f"and {parent!r} is already a kind of {child!r}: "
+                        "a concept cannot be broader than itself"
                     )
                 if ancestor not in visited:
                     visited.add(ancestor)
