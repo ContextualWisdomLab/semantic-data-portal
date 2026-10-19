@@ -7,6 +7,22 @@ from uuid import uuid4
 from pydantic import BaseModel, Field, HttpUrl
 
 
+# POL-003 (P0) names three classification bases for masking: "PII, sensitive,
+# confidential tag 기반 masking". Only ``pii`` existed, as a bool, so a column
+# classified sensitive or confidential had nowhere to say so and nothing masked
+# it - the policy obligation was literally
+# ``[col.name for col in dataset.schema if col.pii]``.
+MASKING_CLASSIFICATIONS = ("pii", "sensitive", "confidential")
+
+# A classification outside that vocabulary still masks. Masking is a withholding
+# control, so the fail-closed direction is to mask what is not understood: an
+# unrecognised label is a configuration error, and the alternative - releasing a
+# column because its label was misspelled - is the failure that matters. The rule
+# reports the basis as ``unrecognized_classification`` so the decision says why
+# rather than silently widening.
+UNRECOGNIZED_CLASSIFICATION_BASIS = "unrecognized_classification"
+
+
 class ColumnMetadata(BaseModel):
     name: str
     datatype: str
@@ -14,6 +30,43 @@ class ColumnMetadata(BaseModel):
     distinct_ratio: float = Field(ge=0, le=1)
     quality_issues: list[str] = Field(default_factory=list)
     pii: bool = False
+    # Declared classifications for this column. ``pii: true`` and
+    # ``classification: ["pii"]`` are the same statement; either one masks, so
+    # the two cannot disagree about the outcome.
+    classification: list[str] = Field(default_factory=list)
+
+
+def column_masking_bases(column: "ColumnMetadata") -> list[str]:
+    """Why this column must be masked, or ``[]`` when nothing requires it.
+
+    The bases are what POL-003's acceptance criterion needs the decision to
+    carry: "policy decision 결과에 masking rule 포함". A bare list of column
+    names says *which* columns and not *on what grounds*, so an auditor reading
+    a decision could not tell a PII mask from a confidentiality mask - or
+    notice that only one of the three declared bases was ever consulted.
+    """
+    bases: list[str] = []
+    if column.pii and "pii" not in column.classification:
+        bases.append("pii")
+    for label in column.classification:
+        normalized = label.strip().lower()
+        if not normalized:
+            continue
+        if normalized in MASKING_CLASSIFICATIONS:
+            if normalized not in bases:
+                bases.append(normalized)
+        elif UNRECOGNIZED_CLASSIFICATION_BASIS not in bases:
+            bases.append(UNRECOGNIZED_CLASSIFICATION_BASIS)
+    return bases
+
+
+def masked_column_rules(columns: list["ColumnMetadata"]) -> list[dict[str, Any]]:
+    """One masking rule per column that must be masked, in schema order."""
+    return [
+        {"column": column.name, "bases": bases, "action": "mask"}
+        for column in columns
+        if (bases := column_masking_bases(column))
+    ]
 
 
 class DatasetDistribution(BaseModel):
@@ -41,6 +94,25 @@ class DatasetProfile(BaseModel):
     freshness_ts: str | None = None
     minmax: Dict[str, Dict[str, float | int | str]] = Field(default_factory=dict)
     quality_issues: list[str] = Field(default_factory=list)
+
+
+# The metadata a dataset must carry to be considered complete. This is the one
+# list: ``Dataset.metadata_completeness`` scores it and ``catalog.validate_metadata``
+# requires it. They were two lists of different lengths, so the published
+# completeness number could read 1.0 for a dataset the validator calls critically
+# invalid.
+REQUIRED_METADATA_FIELDS = (
+    "owner",
+    "steward",
+    "title",
+    "description",
+    "domain",
+    "sensitivity",
+    "update_frequency",
+    "source_system",
+    "schema",
+    "distributions",
+)
 
 
 class Dataset(BaseModel):
@@ -76,17 +148,30 @@ class Dataset(BaseModel):
 
     @property
     def metadata_completeness(self) -> float:
-        required_fields = [
-            self.owner,
-            self.steward,
-            self.title,
-            self.description,
-            self.sensitivity,
-            self.update_frequency,
-            self.source_system,
-        ]
-        covered = sum(1 for value in required_fields if value)
-        return covered / len(required_fields)
+        """Share of the **required** metadata fields this dataset carries.
+
+        This scored seven fields while ``catalog.validate_metadata`` requires
+        ten (adding ``domain``, ``schema`` and ``distributions``), so a dataset
+        that fails validation critically still published ``1.0``. Measured on a
+        dataset registered with ``schema: []`` and ``distributions: []``::
+
+            GET /catalog/datasets/{id}/validate
+              -> is_valid: false, critical: true,
+                 missing: ["schema", "distributions"]
+            the same catalog payload
+              -> metadata_completeness: 1.0
+
+        The KPI named after this measure states its own guardrail as
+        "Completeness must not hide failed validation." - which is exactly what
+        the seven-field score did. One list, in
+        ``REQUIRED_METADATA_FIELDS`` below, is what keeps the number and the
+        validator from drifting again; ``catalog`` imports it rather than
+        keeping its own copy.
+        """
+        covered = sum(
+            1 for field in REQUIRED_METADATA_FIELDS if getattr(self, field, None)
+        )
+        return covered / len(REQUIRED_METADATA_FIELDS)
 
     @property
     def metadata_recommendation_score(self) -> float:
@@ -186,7 +271,12 @@ class QueryExecutionRequest(BaseModel):
     language: str = Field(default="SQL", min_length=1)
     user: str = Field(default="anonymous")
     purpose: str = Field(default="analysis")
-    dataset_ids: list[str] = Field(default_factory=list, min_length=1)
+    # Required, not defaulted. `default_factory=list` with `min_length=1`
+    # contradicted itself: pydantic does not validate a default, so omitting the
+    # field produced `[]`, passed validation, and then `req.dataset_ids[0]` raised
+    # IndexError - a 500 on a body any client can send. Supplying `[]` explicitly
+    # was correctly refused with 400, which is the tell.
+    dataset_ids: list[str] = Field(min_length=1)
     query: str = Field(min_length=1)
     dry_run: bool = False
 
@@ -227,6 +317,15 @@ class DatasetCreateRequest(BaseModel):
     source_system: str
     sensitivity: str
     update_frequency: str
+    # ``Dataset`` has carried a ``license`` all along and neither request model
+    # exposed it, so a supplied value was silently dropped:
+    # ``POST /catalog/datasets`` with ``license: "CC-BY-4.0"`` answered 200 and
+    # stored ``None``; ``PATCH`` with ``license: "MIT"`` answered 200 and left
+    # ``internal``; every seeded dataset reads ``internal``. A data catalog whose
+    # licence cannot be set is missing the field a diligence reader checks
+    # first - and the ``metadata_completeness`` KPI's own definition names
+    # ``license`` among the fields it counts.
+    license: str = "internal"
     quality_score: float = Field(ge=0, le=1)
     freshness_score: float = Field(ge=0, le=1)
     tags: list[str] = Field(default_factory=list)
@@ -246,6 +345,7 @@ class DatasetPatchRequest(BaseModel):
     source_system: Optional[str] = None
     sensitivity: Optional[str] = None
     update_frequency: Optional[str] = None
+    license: Optional[str] = None
     quality_score: Optional[float] = None
     freshness_score: Optional[float] = None
     tags: Optional[list[str]] = None

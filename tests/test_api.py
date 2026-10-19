@@ -9,10 +9,12 @@ from fastapi.testclient import TestClient
 from cryptography.hazmat.primitives.asymmetric import rsa
 from jwt.algorithms import RSAAlgorithm
 
+import sdp.authz as app_authz
 import sdp.catalog as app_catalog
 import sdp.domain as app_domain
 import sdp.evidence as app_evidence
 import sdp.observability as app_observability
+import sdp.ontology as app_ontology
 import sdp_core
 from sdp.api import app
 from sdp.connectors import get_source_connector
@@ -29,6 +31,12 @@ def isolate_in_memory_app_state():
     audit_log = list(app_catalog._AUDIT_LOG)
     schema_history = deepcopy(app_catalog._SCHEMA_HISTORY)
     policy_log = list(app_evidence._POLICY_DECISION_LOG)
+    audit_event_log = list(app_evidence._AUDIT_EVENT_LOG)
+    ontology_patches = [patch.model_copy(deep=True) for patch in app_ontology._ONTOLOGY_PATCHES]
+    # register_concept mutates these, so a test that publishes a concept
+    # would otherwise leak it into every later test.
+    concept_definitions = deepcopy(app_ontology._CONCEPT_DEFINITIONS)
+    alias_to_canonical = dict(app_ontology._ALIAS_TO_CANONICAL)
     request_observations = app_observability.list_request_observations()
     export_errors = app_observability.list_observability_export_errors()
     yield
@@ -38,6 +46,12 @@ def isolate_in_memory_app_state():
     app_catalog._SCHEMA_HISTORY.clear()
     app_catalog._SCHEMA_HISTORY.update(schema_history)
     app_evidence._POLICY_DECISION_LOG[:] = policy_log
+    app_evidence._AUDIT_EVENT_LOG[:] = audit_event_log
+    app_ontology._ONTOLOGY_PATCHES[:] = ontology_patches
+    app_ontology._CONCEPT_DEFINITIONS.clear()
+    app_ontology._CONCEPT_DEFINITIONS.update(concept_definitions)
+    app_ontology._ALIAS_TO_CANONICAL.clear()
+    app_ontology._ALIAS_TO_CANONICAL.update(alias_to_canonical)
     app_observability.reset_request_observability()
     for observation in request_observations:
         app_observability.record_request_observation(observation, export=False)
@@ -105,7 +119,7 @@ def test_enterprise_demo_plan_uses_core_buyer_demo_fixture():
     body = response.json()
     fixture_ids = {dataset.id for dataset in sdp_core.buyer_demo_datasets()}
     response_ids = {dataset["id"] for dataset in body["demo_datasets"]}
-    catalog_ids = {dataset["id"] for dataset in client.get("/catalog/datasets").json()}
+    catalog_ids = {dataset["id"] for dataset in client.get("/catalog/datasets", params={"user": "analyst"}).json()}
 
     assert body["domain_fixture_id"] == "customer_intelligence"
     assert fixture_ids == response_ids
@@ -131,7 +145,17 @@ def test_enterprise_kpis_expose_saleability_measurement_plan():
     all_kpis = body["primary_kpis"] + body["guardrail_kpis"]
     kpis = {item["id"]: item for item in all_kpis}
     assert kpis["discovery_time_reduction"]["target"] == ">=50 percent reduction"
-    assert kpis["metadata_completeness"]["target"] == ">=90 percent display coverage"
+    # The target text changed with the gate that now measures it. It said
+    # ">=90 percent display coverage" with ``status: implemented`` while nothing
+    # in the code compared anything to 0.90 - the only thresholds in the
+    # evidence path were 0.95 on ``metadata_validation_pass_rate`` (the share of
+    # datasets with no missing field, a different and stricter measure) and 0.7
+    # on ontology coverage. A target nothing compares to is not a gate, so the
+    # target now names the number ``/enterprise/evidence-pack`` publishes and
+    # gates: see ``test_the_metadata_completeness_target_is_compared``.
+    assert kpis["metadata_completeness"]["target"] == (
+        ">=90 percent mean metadata_completeness across datasets"
+    )
     assert kpis["policy_audit_coverage"]["target"] == "100 percent"
     assert kpis["nl_catalog_search_success"]["target"] == ">=80 percent"
     assert kpis["ontology_mapping_coverage"]["target"] == ">=70 percent"
@@ -143,7 +167,12 @@ def test_enterprise_kpis_expose_saleability_measurement_plan():
 
 
 def test_catalog_dataset_semantic_validation_exposes_shacl_report():
-    response = client.get("/catalog/datasets/crm-customer-master/semantic-validation")
+    # The per-dataset discovery surface is tenant scoped, so the SHACL report
+    # needs a resolvable actor; this call site pinned an anonymous read of it.
+    response = client.get(
+        "/catalog/datasets/crm-customer-master/semantic-validation",
+        params={"user": "analyst"},
+    )
     assert response.status_code == 200
 
     body = response.json()
@@ -169,12 +198,15 @@ def test_enterprise_shacl_validation_summary_tracks_saleability_target():
 
 
 def test_enterprise_steward_review_summarizes_governance_queue():
+    # `requestor` is now derived from the authorized actor: a proposal writes to a
+    # shared process-lifetime queue, so it is a governed write rather than an open
+    # endpoint. This call used to pass no actor at all.
     proposed = client.post(
         "/ontology/patches",
         json={
+            "actor": "analyst",
             "concept": "고객",
             "suggestion": "VIP 고객 세그먼트를 구매자 데모 glossary 후보로 추가",
-            "requestor": "governance-analyst",
         },
     )
     assert proposed.status_code == 200
@@ -226,10 +258,13 @@ def test_enterprise_controls_expose_feature_gate_manifest():
 
     assert body["feature_gate"] == "sdp_enterprise"
     assert body["implemented_controls"] >= 2
-    assert body["planned_controls"] >= 1
+    assert body["planned_controls"] == 0
+    assert body["status"] == "pilot_ready"
     assert controls["tenant_authorization"]["status"] == "implemented"
     assert controls["local_evidence_retention"]["status"] == "implemented"
-    assert controls["sso_oidc_adapter"]["status"] == "planned"
+    assert controls["sso_oidc_adapter"]["status"] == "implemented"
+    assert "SDP_OIDC_GROUP_ROLE_MAP" in controls["sso_oidc_adapter"]["evidence"]
+    assert "POST /enterprise/auth/oidc-verify" in controls["sso_oidc_adapter"]["evidence"]
     assert controls["rbac_matrix"]["feature_gate"] == "sdp_enterprise"
     assert controls["rbac_matrix"]["status"] == "implemented"
     assert "GET /enterprise/rbac-matrix" in controls["rbac_matrix"]["evidence"]
@@ -307,7 +342,12 @@ def test_request_observability_export_writes_bodyless_jsonl(tmp_path, monkeypatc
     assert manifest["structured_logs"]["status"] == "implemented"
     assert manifest["structured_logs"]["sink"]["scheme"] == "file"
     assert manifest["metrics"]["request_observations_total"] >= 1
-    assert any(item["request_id"] == "buyer-trace-001" for item in manifest["recent_requests"])
+    # The manifest no longer publishes a per-request feed: it is served with no
+    # actor, and each observation names the caller and the dataset route. The
+    # trace stays verifiable where it belongs - in the configured sink, read above
+    # from the log file - and the manifest reports the count.
+    assert manifest["recent_request_count"] >= 1
+    assert "recent_requests" not in manifest
 
     metrics = client.get("/metrics").text
     assert "sdp_request_observations_total" in metrics
@@ -321,7 +361,14 @@ def test_enterprise_production_readiness_tracks_paid_pilot_integrations():
     assert body["valuation_target_krw"] == 2_000_000_000
     assert body["current_stage"] == "pilot_candidate"
     assert body["demo_release_ready"] is True
-    assert body["paid_pilot_ready"] is True
+    # paid_pilot_ready is measured, not authored: it was derived from each
+    # integration's hardcoded status literal (all "implemented"), so no real
+    # change could make it false. With no SDP_* configuration in this test
+    # environment the honest answer is False, and the manifest names which
+    # variables are missing per integration. See
+    # tests/test_production_readiness_measurement.py.
+    assert body["paid_pilot_ready"] is False
+    assert body["paid_pilot_blockers"], "an unconfigured deployment must name its blockers"
 
     integrations = {item["id"]: item for item in body["integrations"]}
     assert integrations["postgres_evidence_store"]["status"] == "implemented"
@@ -330,7 +377,16 @@ def test_enterprise_production_readiness_tracks_paid_pilot_integrations():
     assert any("policy decisions and audit events" in item for item in integrations["postgres_evidence_store"]["acceptance_criteria"])
 
     assert integrations["oidc_jwks_verification"]["status"] == "implemented"
-    assert "SDP_OIDC_JWKS_URL" in integrations["oidc_jwks_verification"]["required_environment"]
+    # SDP_OIDC_JWKS and SDP_OIDC_JWKS_URL are **alternatives**, not both
+    # required: authz._load_configured_jwks reads the inline document first and
+    # falls back to the URL, so a deployment configures one. Listing both as
+    # required made the gate unsatisfiable by a correct deployment - a dummy
+    # inline value set to clear it is invalid JSON that makes that function
+    # raise.
+    assert integrations["oidc_jwks_verification"]["required_environment_alternatives"] == [
+        ["SDP_OIDC_JWKS", "SDP_OIDC_JWKS_URL"]
+    ]
+    assert "SDP_OIDC_ISSUER" in integrations["oidc_jwks_verification"]["required_environment"]
     assert any("direct role claims" in item for item in integrations["oidc_jwks_verification"]["acceptance_criteria"])
 
     assert integrations["connector_credential_vault"]["status"] == "implemented"
@@ -340,10 +396,23 @@ def test_enterprise_production_readiness_tracks_paid_pilot_integrations():
     assert integrations["request_observability_export"]["status"] == "implemented"
     assert "/enterprise/observability" in integrations["request_observability_export"]["current_evidence"]
 
-    assert body["paid_pilot_blockers"] == []
-    assert "oidc_jwks_verification" not in body["paid_pilot_blockers"]
-    assert "connector_credential_vault" not in body["paid_pilot_blockers"]
-    assert "request_observability_export" not in body["paid_pilot_blockers"]
+    assert sorted(body["paid_pilot_blockers"]) == sorted(body["unconfigured_integrations"]), (
+        "with every integration built, the only blockers are unconfigured ones"
+    )
+    # It blocks on configuration, not on being unbuilt: its status is
+    # "implemented" and only its SDP_OIDC_* variables are unset here.
+    assert integrations["oidc_jwks_verification"]["status"] == "implemented"
+    assert "oidc_jwks_verification" in body["unconfigured_integrations"]
+    assert body["missing_environment"]["oidc_jwks_verification"]
+    assert integrations["connector_credential_vault"]["status"] == "implemented"
+    assert "connector_credential_vault" in body["unconfigured_integrations"]
+    assert integrations["request_observability_export"]["status"] == "implemented"
+    assert "request_observability_export" in body["unconfigured_integrations"]
+    # Every integration is built; all four block only on configuration.
+    assert sorted(body["unconfigured_integrations"]) == sorted(body["paid_pilot_blockers"])
+    assert all(
+        item["status"] == "implemented" for item in body["integrations"]
+    ), "no integration should be unbuilt here; blockers must be configuration only"
     assert body["demo_blockers"] == []
 
 
@@ -404,34 +473,18 @@ def test_oidc_preview_ignores_direct_role_escalation_claims():
     assert body["ignored_role_claims"] == ["sdp-platform-admins"]
 
 
-def test_oidc_jwks_verification_maps_verified_token_without_token_leak():
-    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    jwk = json.loads(RSAAlgorithm.to_jwk(private_key.public_key()))
-    jwk.update({"kid": "buyer-key-1", "alg": "RS256", "use": "sig"})
-    token = jwt.encode(
-        {
-            "iss": "https://idp.example.com/",
-            "aud": "semantic-data-portal",
-            "email": "analyst@example.com",
-            "tenant_id": "buyer-demo",
-            "groups": ["sdp-analysts"],
-            "roles": ["sdp-platform-admins"],
-            "exp": int(time()) + 3600,
-        },
-        private_key,
-        algorithm="RS256",
-        headers={"kid": "buyer-key-1"},
+def test_oidc_jwks_verification_maps_verified_token_without_token_leak(monkeypatch):
+    token, jwks = _signed_identity_token(
+        issuer="https://idp.example.com/",
+        audience="semantic-data-portal",
+        kid="buyer-key-1",
+        claims_extra={"roles": ["sdp-platform-admins"]},
     )
+    monkeypatch.setenv("SDP_OIDC_ISSUER", "https://idp.example.com/")
+    monkeypatch.setenv("SDP_OIDC_AUDIENCE", "semantic-data-portal")
+    monkeypatch.setenv("SDP_OIDC_JWKS", json.dumps(jwks))
 
-    response = client.post(
-        "/enterprise/auth/oidc-verify",
-        json={
-            "token": token,
-            "issuer": "https://idp.example.com/",
-            "audience": "semantic-data-portal",
-            "jwks": {"keys": [jwk]},
-        },
-    )
+    response = client.post("/enterprise/auth/oidc-verify", json={"token": token})
 
     assert response.status_code == 200
     body = response.json()
@@ -444,33 +497,17 @@ def test_oidc_jwks_verification_maps_verified_token_without_token_leak():
     assert token not in json.dumps(body)
 
 
-def test_oidc_jwks_verification_rejects_wrong_audience():
-    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    jwk = json.loads(RSAAlgorithm.to_jwk(private_key.public_key()))
-    jwk.update({"kid": "buyer-key-1", "alg": "RS256", "use": "sig"})
-    token = jwt.encode(
-        {
-            "iss": "https://idp.example.com/",
-            "aud": "wrong-audience",
-            "email": "analyst@example.com",
-            "tenant_id": "buyer-demo",
-            "groups": ["sdp-analysts"],
-            "exp": int(time()) + 3600,
-        },
-        private_key,
-        algorithm="RS256",
-        headers={"kid": "buyer-key-1"},
+def test_oidc_jwks_verification_rejects_wrong_audience(monkeypatch):
+    token, jwks = _signed_identity_token(
+        issuer="https://idp.example.com/",
+        audience="wrong-audience",
+        kid="buyer-key-1",
     )
+    monkeypatch.setenv("SDP_OIDC_ISSUER", "https://idp.example.com/")
+    monkeypatch.setenv("SDP_OIDC_AUDIENCE", "semantic-data-portal")
+    monkeypatch.setenv("SDP_OIDC_JWKS", json.dumps(jwks))
 
-    response = client.post(
-        "/enterprise/auth/oidc-verify",
-        json={
-            "token": token,
-            "issuer": "https://idp.example.com/",
-            "audience": "semantic-data-portal",
-            "jwks": {"keys": [jwk]},
-        },
-    )
+    response = client.post("/enterprise/auth/oidc-verify", json={"token": token})
 
     assert response.status_code == 400
     assert "invalid token" in response.json()["detail"]
@@ -550,18 +587,34 @@ def test_enterprise_evidence_pack_summarizes_buyer_diligence():
     assert body["policy_decision_count"] >= 1
     assert body["audit_event_count"] >= 1
     assert body["production_demo_release_ready"] is True
-    assert body["production_paid_pilot_ready"] is True
-    assert body["production_paid_pilot_blockers"] == 0
+    # paid_pilot_ready is measured, not authored: it was derived from each
+    # integration's hardcoded status literal (all "implemented"), so no real
+    # change could make it false. With no SDP_* configuration in this test
+    # environment the honest answer is False, and the manifest names which
+    # variables are missing per integration. See
+    # tests/test_production_readiness_measurement.py.
+    assert body["production_paid_pilot_ready"] is False
+    assert body["production_paid_pilot_blockers"] > 0, (
+        "an unconfigured deployment must report its blockers"
+    )
     assert body["saleability_gates"]["metadata_validation_pass_rate"] == "pass"
     assert body["saleability_gates"]["shacl_validation_pass_rate"] == "pass"
     assert body["saleability_gates"]["steward_review_queue"] == "pass"
     assert body["saleability_gates"]["ontology_mapping_coverage"] == "pass"
     assert body["saleability_gates"]["production_demo_release"] == "pass"
-    assert body["saleability_gates"]["production_paid_pilot"] == "pass"
+    # "needs_integration", not "pass": the gate now reflects the measured
+    # configuration state, and this suite runs with no SDP_* variables set.
+    # That the evidence pack propagates it is the point of this assertion.
+    assert body["saleability_gates"]["production_paid_pilot"] == "needs_integration"
     assert "/enterprise/production-readiness" in body["proof_endpoints"]
     assert "/enterprise/shacl-validation" in body["proof_endpoints"]
     assert "/enterprise/steward-review" in body["proof_endpoints"]
-    assert "/policy/decisions" in body["proof_endpoints"]
+    # The governed links now carry their actor parameter, so the published
+    # string is "/policy/decisions?user=<actor>" rather than the bare path.
+    assert any(
+        endpoint.startswith("/policy/decisions")
+        for endpoint in body["actor_scoped_proof_endpoints"]
+    )
 
 
 def test_sdp_core_owns_stable_contracts_with_app_compatibility_exports():
@@ -767,7 +820,7 @@ def test_audit_events_endpoint_reads_configured_evidence_store_after_memory_clea
 
         app_catalog._AUDIT_LOG.clear()
 
-        events_response = client.get("/audit/events", params={"resource": "crm-customer-master", "limit": 10})
+        events_response = client.get("/audit/events", params={"resource": "crm-customer-master", "limit": 10, "user": "admin"})
         assert events_response.status_code == 200
         assert any(event["action"] == "browse.preview" for event in events_response.json())
     finally:
@@ -800,7 +853,7 @@ def test_policy_decisions_endpoint_exposes_decision_evidence():
     assert decision_response.status_code == 200
     decision_id = decision_response.json()["decision_id"]
 
-    response = client.get("/policy/decisions", params={"resource": "crm-customer-master", "limit": 10})
+    response = client.get("/policy/decisions", params={"resource": "crm-customer-master", "limit": 10, "user": "admin"})
     assert response.status_code == 200
 
     decisions = response.json()
@@ -831,15 +884,16 @@ def test_enterprise_demo_smoke_summary_is_ready():
     assert summary["rest_connector_adapter_status"] == "implemented"
     assert summary["production_current_stage"] == "pilot_candidate"
     assert summary["production_demo_release_ready"] is True
-    assert summary["production_paid_pilot_ready"] is True
-    assert summary["production_paid_pilot_blockers"] == 0
+    # Measured from the environment; this suite runs with no SDP_* set.
+    assert summary["production_paid_pilot_ready"] is False
+    assert summary["production_paid_pilot_blockers"] > 0
     assert summary["ready"] is True
 
 
 def test_enterprise_connector_probe_exposes_demo_evidence():
     response = client.get(
         "/enterprise/connectors/sql_connector/probe",
-        params={"dataset_id": "crm-customer-master"},
+        params={"dataset_id": "crm-customer-master", "user": "admin"},
     )
     assert response.status_code == 200
 
@@ -860,7 +914,7 @@ def test_enterprise_connector_probe_exposes_demo_evidence():
 def test_enterprise_rdf_connector_probe_exposes_semantic_store_evidence():
     response = client.get(
         "/enterprise/connectors/rdf_connector/probe",
-        params={"dataset_id": "semantic-glossary"},
+        params={"dataset_id": "semantic-glossary", "user": "admin"},
     )
     assert response.status_code == 200
 
@@ -880,7 +934,7 @@ def test_enterprise_rdf_connector_probe_exposes_semantic_store_evidence():
 def test_enterprise_file_lake_connector_probe_exposes_manifest_evidence():
     response = client.get(
         "/enterprise/connectors/file_lake_connector/probe",
-        params={"dataset_id": "crm-event"},
+        params={"dataset_id": "crm-event", "user": "admin"},
     )
     assert response.status_code == 200
 
@@ -900,7 +954,7 @@ def test_enterprise_file_lake_connector_probe_exposes_manifest_evidence():
 def test_enterprise_rest_connector_probe_exposes_api_contract_gap():
     response = client.get(
         "/enterprise/connectors/rest_connector/probe",
-        params={"dataset_id": "marketing-campaign"},
+        params={"dataset_id": "marketing-campaign", "user": "admin"},
     )
     assert response.status_code == 200
 
@@ -924,7 +978,7 @@ def test_enterprise_rest_connector_probe_uses_vault_reference_without_secret_lea
 
     response = client.get(
         "/enterprise/connectors/rest_connector/probe",
-        params={"dataset_id": "marketing-campaign"},
+        params={"dataset_id": "marketing-campaign", "user": "admin"},
     )
     assert response.status_code == 200
 
@@ -988,25 +1042,42 @@ def test_rest_connector_adapter_implements_source_connector_contract():
 def test_enterprise_connector_probe_fails_closed():
     unsupported = client.get(
         "/enterprise/connectors/admin_shell/probe",
-        params={"dataset_id": "crm-event"},
+        params={"dataset_id": "crm-event", "user": "admin"},
     )
     assert unsupported.status_code == 400
 
+    # An unauthorized caller is refused before it learns whether the connector id
+    # is supported: authorization runs ahead of connector resolution.
+    unauthorized = client.get(
+        "/enterprise/connectors/admin_shell/probe",
+        params={"dataset_id": "crm-event"},
+    )
+    # 404 rather than 403: the dataset arrives in a query parameter here, so the
+    # route now resolves it in the caller's tenant scope first and an actor-less
+    # caller has no scope. The property this test is about is unchanged - the
+    # caller is refused *before* learning whether "admin_shell" is a supported
+    # connector, and 404 is still not the 400 that an authorized caller gets for
+    # an unsupported connector id.
+    assert unauthorized.status_code == 404
+    assert "admin_shell" not in unauthorized.text
+
+    # A missing dataset stays 404 for everyone, matching the browse convention
+    # (test_preview_policy_denies_missing_dataset).
     missing_dataset = client.get(
         "/enterprise/connectors/sql_connector/probe",
-        params={"dataset_id": "unknown"},
+        params={"dataset_id": "unknown", "user": "admin"},
     )
     assert missing_dataset.status_code == 404
 
 
 def test_catalog_search_and_detail():
-    response = client.get("/catalog/search", params={"q": "활성 고객"})
+    response = client.get("/catalog/search", params={"q": "활성 고객", "user": "analyst"})
     assert response.status_code == 200
     body = response.json()
     assert body["count"] >= 1
     assert "id" in body["items"][0]
 
-    detail = client.get("/catalog/datasets/crm-customer-master")
+    detail = client.get("/catalog/datasets/crm-customer-master", params={"user": "analyst"})
     assert detail.status_code == 200
     detail_body = detail.json()
     assert detail_body["id"] == "crm-customer-master"
@@ -1014,13 +1085,13 @@ def test_catalog_search_and_detail():
 
 
 def test_catalog_search_filter_by_quality():
-    response = client.get("/catalog/search", params={"q": "고객", "min_quality": 0.9})
+    response = client.get("/catalog/search", params={"q": "고객", "min_quality": 0.9, "user": "analyst"})
     assert response.status_code == 200
     assert all(item["quality"] >= 0.9 for item in response.json()["items"])
 
 
 def test_catalog_dataset_detail_exposes_recommendation_score():
-    response = client.get("/catalog/datasets/crm-customer-master")
+    response = client.get("/catalog/datasets/crm-customer-master", params={"user": "analyst"})
     assert response.status_code == 200
     body = response.json()
     assert "metadata_recommendation_score" in body
@@ -1028,11 +1099,11 @@ def test_catalog_dataset_detail_exposes_recommendation_score():
 
 
 def test_catalog_facets_and_audit_events():
-    response = client.get("/catalog/facets", params={"field": "sensitivity"})
+    response = client.get("/catalog/facets", params={"field": "sensitivity", "user": "analyst"})
     assert response.status_code == 200
     assert response.json()["field"] == "sensitivity"
 
-    events = client.get("/audit/events")
+    events = client.get("/audit/events", params={"user": "admin"})
     assert events.status_code == 200
     assert isinstance(events.json(), list)
 
@@ -1075,7 +1146,7 @@ def test_ontology_search():
 
 
 def test_join_candidate_endpoint():
-    response = client.get("/catalog/datasets/crm-customer-master/join-candidates")
+    response = client.get("/catalog/datasets/crm-customer-master/join-candidates", params={"user": "analyst"})
     assert response.status_code == 200
     body = response.json()
     assert body["dataset_id"] == "crm-customer-master"
@@ -1084,7 +1155,12 @@ def test_join_candidate_endpoint():
 
 
 def test_dataset_profile_endpoint():
-    response = client.get("/catalog/datasets/crm-customer-master/profile")
+    # This test used to call the route with no actor at all, which is what pinned
+    # the ungated behaviour: the route published dataset `profile` and per-column
+    # `quality_issues` - both governed fields - to an anonymous caller.
+    response = client.get(
+        "/catalog/datasets/crm-customer-master/profile", params={"user": "analyst"}
+    )
     assert response.status_code == 200
     body = response.json()
     assert body["dataset_id"] == "crm-customer-master"
@@ -1096,7 +1172,7 @@ def test_preview_policy_denies_missing_dataset():
     response = client.post("/browse/unknown/preview", json={"user": "user1", "purpose": "analysis"})
     assert response.status_code == 404
 
-    events = client.get("/audit/events", params={"resource": "unknown"})
+    events = client.get("/audit/events", params={"resource": "unknown", "user": "admin"})
     assert events.status_code == 200
     assert any(
         event["action"] == "browse.preview"
@@ -1121,11 +1197,28 @@ def test_preview_pagination_and_decision_traceability():
 
 
 def test_preview_denies_low_privilege_actor():
+    """A caller with no resolvable tenant is refused, and learns nothing.
+
+    404, not 403: ``guest`` resolves to no tenant and no roles, so it cannot
+    reach this dataset's tenant, and 403-for-foreign plus 404-for-missing is an
+    existence oracle over an enumerable id space. The refusal is still recorded -
+    the audit row below carries the real reason - so denial remains evidence.
+
+    Note the fixture gap this exposes: no seeded subject is *inside* the tenant
+    and *lacking* read rights, so the "insufficient role" refusal (which does
+    stay a 403) has no representative actor here. See
+    ``tests/test_browse.py::test_a_denial_inside_the_tenant_still_raises_permission_error``
+    for that case, which uses sensitivity instead of role.
+    """
+    before = len(app_catalog._AUDIT_LOG)
     response = client.post(
         "/browse/crm-customer-master/preview",
         json={"user": "guest", "purpose": "analysis"},
     )
-    assert response.status_code == 403
+    assert response.status_code == 404, response.text
+    audited = app_catalog._AUDIT_LOG[before:]
+    assert [event.result for event in audited] == ["denied"]
+    assert audited[0].reason == "tenant boundary denied"
 
 
 def test_audit_event_includes_policy_decision_id_for_preview():
@@ -1137,7 +1230,7 @@ def test_audit_event_includes_policy_decision_id_for_preview():
     body = response.json()
     decision_id = body["policy_decision_id"]
 
-    events = client.get("/audit/events", params={"resource": "crm-event"})
+    events = client.get("/audit/events", params={"resource": "crm-event", "user": "admin"})
     assert events.status_code == 200
     matching = [event for event in events.json() if event["action"] == "browse.preview" and event["details"].get("policy_decision_id") == decision_id]
     assert matching, "preview audit event should record policy decision id"
@@ -1229,14 +1322,18 @@ def test_draft_query_sanitizes_group_by_identifier():
 def test_catalog_schema_history_and_diff():
     patch = client.patch("/catalog/datasets/crm-event", json={"actor": "admin", "schema": []})
     assert patch.status_code == 200
-    versions = client.get("/catalog/datasets/crm-event/schema-versions")
-    assert versions.status_code == 200
+    versions = client.get(
+        "/catalog/datasets/crm-event/schema-versions", params={"user": "analyst"}
+    )
+    assert versions.status_code == 200, versions.text
     payload = versions.json()
     assert "versions" in payload
     assert payload["versions"]
 
-    history = client.get("/catalog/datasets/crm-event/schema-history")
-    assert history.status_code == 200
+    history = client.get(
+        "/catalog/datasets/crm-event/schema-history", params={"user": "analyst"}
+    )
+    assert history.status_code == 200, history.text
     history_payload = history.json()
     assert history_payload["history"]
     first_version = history_payload["history"][0]["schema_version"]
@@ -1244,7 +1341,11 @@ def test_catalog_schema_history_and_diff():
 
     diff = client.get(
         "/catalog/datasets/crm-event/schema-diff",
-        params={"from_version": first_version, "to_version": last_version},
+        params={
+            "from_version": first_version,
+            "to_version": last_version,
+            "user": "analyst",
+        },
     )
     assert diff.status_code == 200
     diff_payload = diff.json()
@@ -1301,8 +1402,10 @@ def test_dataset_mutation_policy_and_lifecycle():
     assert patched.status_code == 200
     assert patched.json()["dataset"]["title"] == "테스트 데이터셋 v2"
 
-    lineage = client.get("/catalog/datasets/temp-dataset/lineage")
-    assert lineage.status_code == 200
+    lineage = client.get(
+        "/catalog/datasets/temp-dataset/lineage", params={"user": "analyst"}
+    )
+    assert lineage.status_code == 200, lineage.text
     assert lineage.json()["dataset_id"] == "temp-dataset"
 
     deprecated = client.post("/catalog/datasets/temp-dataset/deprecate", json={"actor": "admin", "reason": "e2e cleanup"})
@@ -1350,13 +1453,25 @@ def test_tenant_boundary_denies_cross_tenant_preview():
     created = client.post("/catalog/datasets", json=create_payload)
     assert created.status_code == 200
     assert created.json()["dataset"]["tenant_id"] == "external"
+    # The cross-tenant refusal below is a 404, not a 403: the two answers
+    # together would tell an outside caller which ids exist.
 
     denied = client.post(
         "/browse/external-tenant-dataset/preview",
         json={"user": "analyst", "purpose": "analysis", "limit": 1},
     )
-    assert denied.status_code == 403
-    assert "tenant boundary denied" in denied.json()["detail"]
+    assert denied.status_code == 404, denied.text
+    assert "tenant" not in denied.text, "the refusal must not explain itself to an outsider"
+    # The real reason moved from the response body to the ledger, where it
+    # belongs: the client learns nothing, the auditor learns everything.
+    decisions = app_evidence._POLICY_DECISION_LOG
+    boundary_denials = [
+        decision
+        for decision in decisions
+        if decision.resource == "external-tenant-dataset" and decision.effect == "deny"
+    ]
+    assert boundary_denials, "the denial must still be recorded as a policy decision"
+    assert boundary_denials[-1].reason == "tenant boundary denied"
 
     allowed = client.post(
         "/browse/external-tenant-dataset/preview",
@@ -1432,6 +1547,7 @@ def test_ontology_patch_workflow():
     propose = client.post(
         "/ontology/patches",
         json={
+            "actor": "analyst",
             "concept": "이탈",
             "suggestion": "탈퇴한 고객은 최근 30일 주문 비율이 감소하는 segment로 분류 제안",
             "requestor": "analyst",
@@ -1441,14 +1557,20 @@ def test_ontology_patch_workflow():
     patch = propose.json()
     assert patch["status"] == "proposed"
 
-    patches = client.get("/ontology/patches")
+    # The queue read carries an actor: every row names the proposer and, on an
+    # approval, the reviewer, so it is a governed read rather than an open one.
+    # It served those four fields to an anonymous caller until
+    # tests/test_steward_queue_identity_scope.py pinned it closed.
+    patches = client.get("/ontology/patches", params={"user": "analyst"})
     assert patches.status_code == 200
     patch_list = patches.json()["patches"]
     assert any(item["id"] == patch["id"] for item in patch_list)
 
+    # This call used to pass `reviewer` with no actor at all, which is what
+    # pinned the unauthenticated, body-supplied-reviewer behaviour.
     review = client.post(
         f"/ontology/patches/{patch['id']}/review",
-        json={"decision": "approve", "reviewer": "admin", "comment": "적절한 제안"},
+        json={"decision": "approve", "actor": "admin", "comment": "적절한 제안"},
     )
     assert review.status_code == 200
     assert review.json()["status"] == "approved"
@@ -1473,7 +1595,7 @@ def test_browse_query_success():
     assert body["policy_decision_id"] is not None
     assert "request_id" in body
 
-    events = client.get("/audit/events", params={"resource": "crm-event"})
+    events = client.get("/audit/events", params={"resource": "crm-event", "user": "admin"})
     assert events.status_code == 200
     assert any(
         event["action"] == "browse.query"
@@ -1498,7 +1620,7 @@ def test_browse_query_rejects_table_outside_dataset_binding():
     assert response.status_code == 400
     assert "unauthorized_table_reference" in response.json()["detail"]["warnings"]
 
-    events = client.get("/audit/events", params={"resource": "crm-event"})
+    events = client.get("/audit/events", params={"resource": "crm-event", "user": "admin"})
     assert events.status_code == 200
     assert any(
         event["action"] == "browse.query"
@@ -1527,6 +1649,16 @@ def test_browse_query_rejects_literal_tautology_injection():
 
 
 def test_browse_query_denied_without_user():
+    """An unresolvable actor is refused, and told nothing about the dataset.
+
+    ``guest`` resolves to no tenant, so it cannot reach this dataset's tenant and
+    the refusal collapses into the route's own "not found" answer - 400 REJECTED
+    ``dataset_not_found``, the same thing this route returns for a dataset that
+    is not there. Previously it was 403 ``tenant boundary denied`` for a dataset
+    that exists and 400 ``dataset_not_found`` for one that does not, which told
+    an outsider which ids exist. The real reason is in the ledger; the audit
+    assertion below is unchanged.
+    """
     response = client.post(
         "/browse/query",
         json={
@@ -1537,9 +1669,11 @@ def test_browse_query_denied_without_user():
             "query": "SELECT count(*) AS active_count FROM crm",
         },
     )
-    assert response.status_code == 403
+    assert response.status_code == 400, response.text
+    assert response.json()["detail"]["warnings"] == ["dataset_not_found"]
+    assert "tenant" not in response.text
 
-    events = client.get("/audit/events", params={"resource": "crm-event"})
+    events = client.get("/audit/events", params={"resource": "crm-event", "user": "admin"})
     assert events.status_code == 200
     assert any(
         event["action"] == "browse.query"
@@ -1547,3 +1681,920 @@ def test_browse_query_denied_without_user():
         and event["actor"] == "guest"
         for event in events.json()
     )
+
+
+def test_oidc_preview_scopes_group_roles_to_claimed_tenant():
+    """A group that grants roles under one tenant must grant nothing under
+    another, so a shared identity provider group cannot cross a tenant
+    boundary."""
+    role_map = {
+        "demo": {"sdp-analysts": ["data-analyst"]},
+        "external": {"sdp-analysts": []},
+    }
+    granted = client.post(
+        "/enterprise/auth/oidc-preview",
+        json={
+            "claims": {
+                "email": "analyst@example.com",
+                "tenant_id": "demo",
+                "groups": ["sdp-analysts"],
+                "exp": int(time()) + 3600,
+            },
+            "role_map": role_map,
+        },
+    )
+    revoked = client.post(
+        "/enterprise/auth/oidc-preview",
+        json={
+            "claims": {
+                "email": "analyst@example.com",
+                "tenant_id": "external",
+                "groups": ["sdp-analysts"],
+                "exp": int(time()) + 3600,
+            },
+            "role_map": role_map,
+        },
+    )
+    unscoped = client.post(
+        "/enterprise/auth/oidc-preview",
+        json={
+            "claims": {
+                "email": "analyst@example.com",
+                "tenant_id": "unscoped-tenant",
+                "groups": ["sdp-analysts"],
+                "exp": int(time()) + 3600,
+            },
+            "role_map": role_map,
+        },
+    )
+
+    assert granted.status_code == 200
+    assert granted.json()["actor_context"]["roles"] == ["data-analyst"]
+    assert revoked.status_code == 200
+    assert revoked.json()["actor_context"]["roles"] == []
+    assert unscoped.status_code == 200
+    assert unscoped.json()["actor_context"]["roles"] == []
+
+
+def test_oidc_preview_reports_group_role_bindings_with_granting_scope():
+    """The preview must explain which tenant scope granted each role and must
+    list groups that no scope maps, so the mapping is reviewable."""
+    response = client.post(
+        "/enterprise/auth/oidc-preview",
+        json={
+            "claims": {
+                "email": "analyst@example.com",
+                "tenant_id": "demo",
+                "groups": ["sdp-analysts", "unknown-group"],
+                "exp": int(time()) + 3600,
+            },
+            "role_map": {"demo": {"sdp-analysts": ["data-analyst"]}},
+            # An actor is required for the preview to record anything. The route
+            # is open, but an unauthenticated caller must not be able to write
+            # to the evidence ledger: it was recording on every call, filed
+            # under the tenant the *unverified claims* named, so an outsider
+            # could plant a row in any tenant's ledger (and 300 requests put
+            # 300 rows into the uncapped persisted store).
+            "actor": "admin",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["group_role_bindings"] == [
+        {"group_name": "sdp-analysts", "tenant_scope": "demo", "granted_roles": ["data-analyst"]},
+        {"group_name": "unknown-group", "tenant_scope": "", "granted_roles": []},
+    ]
+    assert body["audit_event_id"]
+    assert body["audit_recorded"] is True
+
+
+def test_oidc_preview_records_nothing_for_an_unauthenticated_caller() -> None:
+    """The open preview must not let an outsider write evidence.
+
+    Measured before the repair, with no actor and no credential::
+
+        POST /enterprise/auth/oidc-preview
+          {"claims": {"sub": "mallory@evil.example", "tenant_id": "external",
+                      "groups": ["sdp-platform-admins"], "exp": 9999999999}}
+          -> 200
+
+        GET /audit/events?user=external-analyst
+          -> one row: actor=mallory@evil.example, result=mapped,
+             details.granted_roles=[admin, data-analyst, platform-admin],
+             details.tenant_id=external, decision_id=null
+
+        GET /audit/events?user=analyst  (the caller's own tenant)  -> []
+
+    The victim tenant's auditor read a forged grant with nothing to cross-check
+    it against, and the persisted store has no cap.
+    """
+    forged = client.post(
+        "/enterprise/auth/oidc-preview",
+        json={
+            "claims": {
+                "sub": "mallory@evil.example",
+                "tenant_id": "external",
+                "groups": ["sdp-platform-admins"],
+                "exp": int(time()) + 3600,
+            }
+        },
+    )
+    assert forged.status_code == 200, forged.text
+    body = forged.json()
+    # The mapping is still computed - previewing a claim shape discloses nothing.
+    assert body["actor_context"]["tenant_id"] == "external"
+    # Nothing was written.
+    assert body["audit_recorded"] is False
+    assert body["audit_event_id"] is None
+    assert body["audit_note"]
+
+    victim = client.get("/audit/events", params={"user": "external-analyst", "limit": 20})
+    assert victim.status_code == 200, victim.text
+    planted = [
+        row
+        for row in victim.json()
+        if row.get("actor") == "mallory@evil.example"
+    ]
+    assert not planted, planted
+
+
+def test_a_recorded_preview_is_marked_unverified_rather_than_mapped() -> None:
+    """Even with an actor, this route checks no signature.
+
+    A row reading ``result: mapped`` with ``granted_roles: [admin, ...]`` is
+    indistinguishable from a real grant, and the preview's tenant comes from
+    claims nobody verified - so the row is filed under ``unresolved`` with the
+    claimed tenant kept beside it as a claim.
+    """
+    recorded = client.post(
+        "/enterprise/auth/oidc-preview",
+        json={
+            "actor": "admin",
+            "claims": {
+                "sub": "someone@example.com",
+                "tenant_id": "external",
+                "groups": ["sdp-platform-admins"],
+                "exp": int(time()) + 3600,
+            },
+        },
+    )
+    assert recorded.status_code == 200, recorded.text
+    assert recorded.json()["audit_recorded"] is True
+
+    events = client.get("/audit/events", params={"user": "admin", "limit": 50})
+    row = next(
+        item
+        for item in events.json()
+        if item["id"] == recorded.json()["audit_event_id"]
+    )
+    assert row["result"] == "previewed", row
+    assert row["details"]["tenant_verified"] is False
+    assert row["details"]["tenant_id"] == "unresolved"
+    assert row["details"]["claimed_tenant_id"] == "external"
+
+
+def test_oidc_preview_rejects_mixed_shape_role_map():
+    """A role map that mixes flat and tenant-scoped entries must fail the
+    request instead of silently reading a tenant identifier as a group."""
+    response = client.post(
+        "/enterprise/auth/oidc-preview",
+        json={
+            "claims": {
+                "email": "analyst@example.com",
+                "tenant_id": "demo",
+                "groups": ["sdp-analysts"],
+                "exp": int(time()) + 3600,
+            },
+            "role_map": {"demo": {"sdp-analysts": ["data-analyst"]}, "sdp-admins": ["admin"]},
+        },
+    )
+
+    assert response.status_code == 400
+    assert "must not mix flat and tenant-scoped" in response.json()["detail"]
+
+
+def test_oidc_mapping_audit_event_records_bindings_without_claim_leak(tmp_path):
+    """A recorded mapping carries the granting scope and resolved roles, and
+    never the claim payload or the token.
+
+    Two changes from the original form of this test, both because the preview
+    path records differently now:
+
+    * it sends an ``actor``. An unauthenticated caller must not be able to write
+      to the evidence ledger at all - this route was recording on every call,
+      filed under the tenant the *unverified claims* named, so an outsider
+      could plant a row in any tenant's ledger.
+    * it expects ``previewed`` / ``unresolved`` / ``claimed_tenant_id`` rather
+      than ``mapped`` / ``demo``. This route checks no signature, so the
+      claimed tenant is a claim, and a row reading ``mapped`` with real
+      ``granted_roles`` is indistinguishable from a verified grant.
+
+    The no-leak assertions - no claim payload, no token - are unchanged, and the
+    exact details key set is still pinned so a new key cannot appear unnoticed.
+    """
+    store = sdp_core.SQLiteEvidenceStore(tmp_path / "oidc-evidence.sqlite3")
+    previous = app_evidence.configure_evidence_store(store)
+    try:
+        response = client.post(
+            "/enterprise/auth/oidc-preview",
+            json={
+                "actor": "admin",
+                "claims": {
+                    "email": "analyst@example.com",
+                    "tenant_id": "demo",
+                    "groups": ["sdp-analysts"],
+                    "roles": ["sdp-platform-admins"],
+                    "exp": int(time()) + 3600,
+                },
+                "role_map": {"demo": {"sdp-analysts": ["data-analyst"]}},
+            },
+        )
+        assert response.status_code == 200
+    finally:
+        app_evidence.configure_evidence_store(previous)
+
+    reopened = sdp_core.SQLiteEvidenceStore(tmp_path / "oidc-evidence.sqlite3")
+    events = reopened.list_events(resource="enterprise/auth/oidc", limit=10)
+    assert len(events) == 1
+    event = events[0]
+    assert event.action == "oidc_group_role_mapping"
+    assert event.result == "previewed"
+    assert event.actor == "analyst@example.com"
+    assert event.details["mapping_mode"] == "claim_mapping_preview"
+    assert event.details["tenant_id"] == "unresolved"
+    assert event.details["claimed_tenant_id"] == "demo"
+    assert event.details["tenant_verified"] is False
+    assert event.details["granted_roles"] == ["data-analyst"]
+    assert event.details["ignored_role_claims"] == ["sdp-platform-admins"]
+    assert event.details["group_bindings"] == [
+        {"group_name": "sdp-analysts", "tenant_scope": "demo", "granted_roles": ["data-analyst"]}
+    ]
+    assert set(event.details) == {
+        "mapping_mode",
+        "tenant_id",
+        "claimed_tenant_id",
+        "tenant_verified",
+        "granted_roles",
+        "group_bindings",
+        "ignored_role_claims",
+    }
+
+
+def test_oidc_jwks_verification_records_group_role_bindings(tmp_path, monkeypatch):
+    """The signature-verified path must produce the same auditable binding
+    evidence as the preview path, labelled with its own mapping mode."""
+    token, jwks = _signed_identity_token(
+        issuer="https://idp.example.com/",
+        audience="semantic-data-portal",
+        kid="buyer-key-2",
+    )
+    monkeypatch.setenv("SDP_OIDC_ISSUER", "https://idp.example.com/")
+    monkeypatch.setenv("SDP_OIDC_AUDIENCE", "semantic-data-portal")
+    monkeypatch.setenv("SDP_OIDC_JWKS", json.dumps(jwks))
+    monkeypatch.setenv(
+        "SDP_OIDC_GROUP_ROLE_MAP",
+        json.dumps({"buyer-demo": {"sdp-analysts": ["data-analyst"]}}),
+    )
+
+    store = sdp_core.SQLiteEvidenceStore(tmp_path / "oidc-verify-evidence.sqlite3")
+    previous = app_evidence.configure_evidence_store(store)
+    try:
+        response = client.post("/enterprise/auth/oidc-verify", json={"token": token})
+        assert response.status_code == 200
+    finally:
+        app_evidence.configure_evidence_store(previous)
+
+    body = response.json()
+    assert body["group_role_bindings"] == [
+        {
+            "group_name": "sdp-analysts",
+            "tenant_scope": "buyer-demo",
+            "granted_roles": ["data-analyst"],
+        }
+    ]
+    assert token not in json.dumps(body)
+
+    reopened = sdp_core.SQLiteEvidenceStore(tmp_path / "oidc-verify-evidence.sqlite3")
+    events = reopened.list_events(resource="enterprise/auth/oidc", limit=10)
+    assert len(events) == 1
+    assert events[0].details["mapping_mode"] == "jwks_signature_verification"
+    assert token not in json.dumps(events[0].model_dump(), default=str)
+
+
+def test_oidc_preview_rejects_non_object_claims_and_role_map():
+    """Both preview payload shapes must fail as bad requests, so a malformed
+    integration cannot reach claim validation with an unusable payload."""
+    non_object_claims = client.post("/enterprise/auth/oidc-preview", json={"claims": "analyst"})
+    non_object_role_map = client.post(
+        "/enterprise/auth/oidc-preview",
+        json={
+            "claims": {
+                "email": "analyst@example.com",
+                "tenant_id": "demo",
+                "exp": int(time()) + 3600,
+            },
+            "role_map": [["sdp-analysts", "data-analyst"]],
+        },
+    )
+
+    assert non_object_claims.status_code == 400
+    assert non_object_claims.json()["detail"] == "claims must be an object"
+    assert non_object_role_map.status_code == 400
+    assert non_object_role_map.json()["detail"] == "role_map must be an object"
+
+
+def test_oidc_verify_rejects_malformed_payload_fields():
+    """A missing token fails before verification, and a body that carries the
+    operator-owned trust anchors is refused whatever shape they are in."""
+    missing_token = client.post("/enterprise/auth/oidc-verify", json={})
+    supplied_jwks = client.post(
+        "/enterprise/auth/oidc-verify",
+        json={"token": "header.payload.signature", "jwks": "keys"},
+    )
+    supplied_role_map = client.post(
+        "/enterprise/auth/oidc-verify",
+        json={"token": "header.payload.signature", "role_map": ["sdp-analysts"]},
+    )
+
+    assert missing_token.status_code == 400
+    assert missing_token.json()["detail"] == "token is required"
+    assert supplied_jwks.status_code == 400
+    assert supplied_jwks.json()["detail"].endswith("in the request body: jwks")
+    assert supplied_role_map.status_code == 400
+    assert supplied_role_map.json()["detail"].endswith("in the request body: role_map")
+
+
+def _signed_identity_token(*, issuer, audience, kid, claims_extra=None):
+    """Mint an RSA-signed identity token and return it with its public JWKS."""
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    jwk = json.loads(RSAAlgorithm.to_jwk(private_key.public_key()))
+    jwk.update({"kid": kid, "alg": "RS256", "use": "sig"})
+    claims = {
+        "iss": issuer,
+        "aud": audience,
+        "email": "analyst@example.com",
+        "tenant_id": "buyer-demo",
+        "groups": ["sdp-analysts"],
+        "exp": int(time()) + 3600,
+    }
+    claims.update(claims_extra or {})
+    token = jwt.encode(claims, private_key, algorithm="RS256", headers={"kid": kid})
+    return token, {"keys": [jwk]}
+
+
+def test_oidc_verify_refuses_request_supplied_trust_anchors(monkeypatch):
+    """A caller must not be able to name the issuer, audience, signing keys or
+    role map that its own token is verified against.
+
+    Without this guard any anonymous caller self-signs a token, posts its own
+    public JWKS alongside it, and receives a `jwks_signature_verified` verdict
+    plus whatever tenant and roles the token claims - the operator's configured
+    identity provider is never consulted.
+    """
+    monkeypatch.setenv("SDP_OIDC_ISSUER", "https://idp.example.com/")
+    monkeypatch.setenv("SDP_OIDC_AUDIENCE", "semantic-data-portal")
+    monkeypatch.setenv("SDP_OIDC_JWKS_URL", "https://idp.example.com/.well-known/jwks.json")
+
+    forged_token, forged_jwks = _signed_identity_token(
+        issuer="https://attacker.example/",
+        audience="anything",
+        kid="attacker-key",
+        claims_extra={"email": "attacker@evil.test", "tenant_id": "victim-tenant", "groups": ["made-up"]},
+    )
+
+    response = client.post(
+        "/enterprise/auth/oidc-verify",
+        json={
+            "token": forged_token,
+            "issuer": "https://attacker.example/",
+            "audience": "anything",
+            "jwks": forged_jwks,
+            "role_map": {"made-up": ["platform-admin"]},
+        },
+    )
+
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    for field in ("issuer", "audience", "jwks", "role_map"):
+        assert field in detail
+    assert "actor_context" not in response.json()
+
+
+def test_oidc_verify_trusts_only_operator_configured_jwks(monkeypatch):
+    """With the trust anchors configured by the operator, a token signed by the
+    configured key verifies from a body that carries the token alone."""
+    token, jwks = _signed_identity_token(
+        issuer="https://idp.example.com/",
+        audience="semantic-data-portal",
+        kid="operator-key-1",
+    )
+    monkeypatch.setenv("SDP_OIDC_ISSUER", "https://idp.example.com/")
+    monkeypatch.setenv("SDP_OIDC_AUDIENCE", "semantic-data-portal")
+    monkeypatch.setenv("SDP_OIDC_JWKS", json.dumps(jwks))
+
+    response = client.post("/enterprise/auth/oidc-verify", json={"token": token})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["token_verification"] == "jwks_signature_verified"
+    assert body["actor_context"]["subject"] == "analyst@example.com"
+    assert body["actor_context"]["tenant_id"] == "buyer-demo"
+    assert token not in json.dumps(body)
+
+
+def test_observability_manifest_does_not_publish_sink_credentials(monkeypatch):
+    """`GET /enterprise/observability` is unauthenticated, so the sink endpoint
+    it reports must never carry the sink credential."""
+    monkeypatch.setenv(
+        "SDP_LOG_SINK_URL",
+        "https://sdp-ingest:s3cr3t-token@logs.example.net/loki/api/v1/push",
+    )
+
+    response = client.get("/enterprise/observability")
+
+    assert response.status_code == 200
+    rendered = json.dumps(response.json())
+    assert "s3cr3t-token" not in rendered
+    assert "sdp-ingest" not in rendered
+    assert response.json()["structured_logs"]["sink"]["target"] == "logs.example.net"
+
+
+def test_catalog_discovery_routes_do_not_publish_governed_dataset_internals():
+    """``/browse/{id}/schema`` denies an out-of-tenant caller and audits the denial,
+    so the ungated catalog surface must not hand the same caller that dataset's
+    column schema with its ``pii`` flags, its source-system connection string, or
+    its row-count profile. Before this contract the detail payload was a full
+    ``Dataset.model_dump()`` and the browse denial protected nothing.
+    """
+    denied = client.get(
+        "/browse/crm-customer-master/schema",
+        params={"user": "nobody", "purpose": "analysis"},
+    )
+    # 404: an actor with no resolvable tenant must not be able to distinguish a
+    # dataset it may not see from one that is not there. The point of this test -
+    # that the ungated catalog surface may not hand over what browse refuses -
+    # is unchanged.
+    assert denied.status_code == 404, denied.text
+
+    detail = client.get("/catalog/datasets/crm-customer-master", params={"user": "analyst"})
+    assert detail.status_code == 200
+    body = detail.json()
+    for governed in ("schema", "source_system", "profile", "tenant_id"):
+        assert governed not in body, f"{governed} must stay behind the governed path"
+    assert "analytics.dw" not in json.dumps(body)
+    # Discovery still describes the shape, without the per-column PII flags.
+    assert body["schema_field_count"] == 3
+
+    listed = client.get("/catalog/datasets", params={"user": "analyst"})
+    assert listed.status_code == 200
+    for row in listed.json():
+        for governed in ("schema", "source_system", "profile", "tenant_id"):
+            assert governed not in row
+
+
+def test_catalog_discovery_payload_field_set_is_pinned():
+    """A new ``Dataset`` field must be an explicit publish-or-withhold decision,
+    not an automatic addition to an unauthenticated payload."""
+    body = client.get("/catalog/datasets/crm-customer-master", params={"user": "analyst"}).json()
+    assert set(body) == {
+        "id",
+        "title",
+        "description",
+        "owner",
+        "steward",
+        "domain",
+        "sensitivity",
+        "update_frequency",
+        "quality_score",
+        "freshness_score",
+        "tags",
+        "terms",
+        "license",
+        "related_datasets",
+        "distributions",
+        "mappings",
+        "lineage_inputs",
+        "lineage_outputs",
+        "completeness_score",
+        "recommended_score",
+        "version",
+        "schema_version",
+        "status",
+        "created_at",
+        "updated_at",
+        "schema_field_count",
+        "metadata_completeness",
+        "metadata_recommendation_score",
+        "completeness_badge",
+        # LIN-004's warning block. Dataset-scope warnings only, plus the count
+        # of the column-scope ones this surface withholds - see
+        # tests/test_quality_threshold_warnings.py for that boundary.
+        "quality_warnings",
+    }
+
+
+@pytest.mark.parametrize("actor", ["analyst", "guest", "anonymous", None])
+@pytest.mark.parametrize("verb", ["publish", "patch", "deprecate"])
+def test_catalog_mutation_guard_denies_non_admin_actors(verb: str, actor: str | None):
+    """``publish``/``patch``/``deprecate`` authorization was defended by no test.
+
+    ``test_create_requires_admin`` covers only ``create``, and
+    ``test_dataset_mutation_policy_and_lifecycle`` drives all three mutation
+    verbs as ``admin`` — the happy path only. The guard itself is correct (this
+    was verified against the running app before adding the test, for every verb
+    and actor class including a payload with no ``actor`` key), so this is
+    regression protection, not a fix for a live hole.
+    """
+    base = app_catalog._DATA["crm-customer-master"]
+    app_catalog._DATA["guard-probe"] = base.model_copy(
+        update={"id": "guard-probe", "status": "draft", "title": "원래 제목"}
+    )
+
+    payload: dict = {} if actor is None else {"actor": actor}
+    if verb == "publish":
+        response = client.post("/catalog/datasets/guard-probe/publish", json=payload)
+    elif verb == "patch":
+        response = client.patch("/catalog/datasets/guard-probe", json={**payload, "title": "탈취된 제목"})
+    else:
+        response = client.post("/catalog/datasets/guard-probe/deprecate", json={**payload, "reason": "probe"})
+
+    # The refusal status now depends on WHY the actor is refused, and that split
+    # is the point rather than an inconvenience:
+    #   - an actor inside the dataset's tenant but lacking the admin role gets
+    #     403 and the real reason, because it may legitimately know the dataset
+    #     exists and needs a diagnosable error;
+    #   - an actor with no resolvable tenant ("guest", "anonymous", no actor key)
+    #     gets 404, indistinguishable from a dataset that is not there, because
+    #     403-for-foreign plus 404-for-missing is an existence oracle over an
+    #     enumerable id space.
+    if actor in ("analyst",):
+        assert response.status_code == 403, response.text
+        assert "admin" in response.json()["detail"]
+    else:
+        assert response.status_code == 404, response.text
+        assert "tenant" not in response.text
+        assert "admin" not in response.text, "a scope refusal must not explain itself"
+    # A guard that denies *after* mutating would be worse than no guard.
+    unchanged = app_catalog._DATA["guard-probe"]
+    assert unchanged.status == "draft"
+    assert unchanged.title == "원래 제목"
+
+
+@pytest.mark.parametrize("verb", ["publish", "patch", "deprecate"])
+def test_catalog_mutation_denial_is_recorded_as_evidence(verb: str):
+    """A refused mutation is exactly the event an auditor looks for, so the
+    denial must leave a policy decision behind rather than only an HTTP 403."""
+    base = app_catalog._DATA["crm-customer-master"]
+    app_catalog._DATA["guard-probe"] = base.model_copy(update={"id": "guard-probe", "status": "draft"})
+
+    before = len(app_evidence._POLICY_DECISION_LOG)
+    if verb == "publish":
+        client.post("/catalog/datasets/guard-probe/publish", json={"actor": "analyst"})
+    elif verb == "patch":
+        client.patch("/catalog/datasets/guard-probe", json={"actor": "analyst", "title": "x"})
+    else:
+        client.post("/catalog/datasets/guard-probe/deprecate", json={"actor": "analyst", "reason": "x"})
+
+    recorded = app_evidence._POLICY_DECISION_LOG[before:]
+    denials = [d for d in recorded if d.effect != "allow" and d.resource == "guard-probe"]
+    assert denials, f"{verb} denial left no policy decision"
+    assert denials[-1].action.lower() == verb
+    assert denials[-1].subject == "analyst"
+
+
+def test_create_route_refuses_to_plant_a_dataset_in_another_tenant():
+    """End-to-end form of the create-branch tenant hole: a non-platform-admin
+    could write into another tenant's catalog namespace."""
+    payload = {
+        "actor": "data-admin",
+        "id": "planted-in-acme",
+        "tenant_id": "acme-bank",
+        "title": "planted",
+        "description": "cross-tenant create probe",
+        "owner": "x",
+        "steward": "y",
+        "domain": "t",
+        "source_system": "postgresql://analytics/tmp",
+        "sensitivity": "low",
+        "update_frequency": "daily",
+        "quality_score": 0.8,
+        "freshness_score": 0.8,
+        "tags": [],
+        "terms": [],
+        "related_datasets": [],
+        "schema": [],
+        "distributions": [],
+        "mappings": [],
+        "profile": {},
+    }
+    response = client.post("/catalog/datasets", json=payload)
+    assert response.status_code == 403, response.text
+    assert "planted-in-acme" not in app_catalog._DATA
+
+    # The actor's own tenant still works.
+    own = dict(payload, id="own-tenant-ds", tenant_id="demo")
+    assert client.post("/catalog/datasets", json=own).status_code == 200
+
+
+def test_profile_route_refuses_an_out_of_tenant_caller():
+    """End-to-end: the profile route no longer serves governed profiling data to a
+    caller the governed schema path refuses.
+
+    The refusal is 404, not 403: this is the discovery surface, where the defect
+    being fixed is existence disclosure. A 403 would answer "this dataset exists
+    and is not yours", which is the disclosure itself. ``/browse`` keeps 403
+    because reaching it already requires knowing the dataset.
+    """
+    base = app_catalog._DATA["crm-customer-master"]
+    app_catalog._DATA["external-profile-ds"] = base.model_copy(
+        update={"id": "external-profile-ds", "tenant_id": "external"}
+    )
+    denied = client.get(
+        "/catalog/datasets/external-profile-ds/profile", params={"user": "analyst"}
+    )
+    assert denied.status_code == 404, denied.text
+    assert "external-profile-ds" not in denied.text
+
+    allowed = client.get(
+        "/catalog/datasets/external-profile-ds/profile", params={"user": "external-analyst"}
+    )
+    assert allowed.status_code == 200
+    assert allowed.json()["row_count"] is not None
+
+
+def test_ontology_patch_review_requires_an_authorized_steward():
+    """A steward sign-off is a governance mutation on a platform sold on
+    "policy-before-data-access with auditable evidence", yet the review route
+    took the reviewer identity verbatim from the request body with no
+    authorization at all. Measured: an anonymous caller approved its own patch
+    and stamped ``reviewed_by: biz-admin`` — a record naming a steward who never
+    saw it, with zero evidence rows. The structurally identical write
+    ``POST /ontology/concepts`` already enforced admin.
+    """
+    proposal = client.post(
+        "/ontology/patches", json={"actor": "analyst", "concept": "고객", "suggestion": "redefine"}
+    )
+    assert proposal.status_code == 200
+    patch_id = proposal.json()["id"]
+
+    anonymous = client.post(
+        f"/ontology/patches/{patch_id}/review",
+        json={"decision": "approve", "reviewer": "biz-admin", "comment": "lgtm"},
+    )
+    assert anonymous.status_code == 403, anonymous.text
+
+    non_admin = client.post(
+        f"/ontology/patches/{patch_id}/review",
+        json={"decision": "approve", "actor": "analyst"},
+    )
+    assert non_admin.status_code == 403
+
+
+def test_ontology_patch_review_refuses_a_body_supplied_reviewer():
+    """The reviewer is the authorized actor. A caller-chosen ``reviewer`` would
+    name somebody who never reviewed it, so the field is refused outright rather
+    than silently ignored."""
+    proposal = client.post(
+        "/ontology/patches", json={"actor": "analyst", "concept": "고객", "suggestion": "redefine"}
+    )
+    patch_id = proposal.json()["id"]
+
+    spoofed = client.post(
+        f"/ontology/patches/{patch_id}/review",
+        json={"decision": "approve", "actor": "admin", "reviewer": "biz-admin"},
+    )
+    assert spoofed.status_code == 400
+    assert "reviewer" in spoofed.json()["detail"]
+
+    approved = client.post(
+        f"/ontology/patches/{patch_id}/review",
+        json={"decision": "approve", "actor": "admin", "comment": "ok"},
+    )
+    assert approved.status_code == 200
+    assert approved.json()["reviewed_by"] == "admin"
+
+
+def test_ontology_patch_review_records_evidence():
+    """A governance sign-off leaves an audit record, like every other mutation."""
+    proposal = client.post(
+        "/ontology/patches", json={"actor": "analyst", "concept": "고객", "suggestion": "redefine"}
+    )
+    patch_id = proposal.json()["id"]
+    before = len(app_catalog._AUDIT_LOG)
+    client.post(
+        f"/ontology/patches/{patch_id}/review",
+        json={"decision": "reject", "actor": "admin", "comment": "no"},
+    )
+    recorded = app_catalog._AUDIT_LOG[before:]
+    assert any(event.action == "ontology.patch_review" for event in recorded), recorded
+
+
+def test_rbac_matrix_publishes_the_seeded_subject_role_bundling():
+    """The matrix is per-*role* and internally correct: ``platform-admin`` is
+    honestly documented as ``all_tenants`` with every action. What it could not
+    show is that the demo seed *bundles* that role into two subjects whose names
+    imply a narrower purpose:
+
+        admin     roles=['admin', 'data-analyst', 'platform-admin']  crosses tenants
+        security  roles=['security', 'platform-admin']               crosses tenants
+
+    So a buyer reads ``security -> platform_evidence_only`` and then measures the
+    ``security`` subject previewing (200) and deprecating (200) another tenant's
+    ``critical`` dataset. Both are true at once — the subject holds a second role —
+    but nothing on the page said so. Publishing the bundling closes the gap
+    without deciding whether ``security`` *should* hold ``platform-admin``.
+    """
+    response = client.get("/enterprise/rbac-matrix")
+    assert response.status_code == 200
+    body = response.json()
+
+    bindings = {entry["subject"]: entry for entry in body["seeded_subject_bindings"]}
+    assert bindings["security"]["roles"] == ["security", "platform-admin"]
+    assert bindings["security"]["crosses_tenant_boundary"] is True
+    assert bindings["admin"]["crosses_tenant_boundary"] is True
+    assert bindings["analyst"]["crosses_tenant_boundary"] is False
+
+    # Every subject the manifest reports as crossing really does hold the role
+    # whose published row grants it.
+    crossing = {e["subject"] for e in body["seeded_subject_bindings"] if e["crosses_tenant_boundary"]}
+    for subject in crossing:
+        assert "platform-admin" in app_authz.resolve_actor_context(subject).roles
+
+
+def test_rbac_matrix_scope_claims_match_the_seeded_grants():
+    """A per-role scope claim must not be narrower than what a subject holding
+    that role actually gets. This is the mechanical guard: if a future seed gives
+    ``platform-admin`` to another subject, or a row's scope is tightened without
+    changing the grants, this fails rather than shipping a false claim.
+    """
+    body = client.get("/enterprise/rbac-matrix").json()
+    rows = {row["role"]: row for row in body["roles"]}
+    assert rows["platform-admin"]["tenant_scope"] == "all_tenants"
+
+    for entry in body["seeded_subject_bindings"]:
+        narrow = [
+            rows[role]["tenant_scope"]
+            for role in entry["roles"]
+            if role in rows and rows[role]["tenant_scope"] != "all_tenants"
+        ]
+        if entry["crosses_tenant_boundary"]:
+            # The subject crosses tenants, so at least one of its rows must say so.
+            assert any(
+                rows[role]["tenant_scope"] == "all_tenants"
+                for role in entry["roles"]
+                if role in rows
+            ), f"{entry['subject']} crosses tenants but no row claims all_tenants: {narrow}"
+
+
+def test_published_test_evidence_references_all_exist():
+    """Manifests cite ``tests/<file>.py::test_name`` strings as proof, and
+    ``GET /enterprise/rbac-matrix`` served ``tests/test_api.py::test_catalog_mutation_flow``
+    — a test that does not exist anywhere in the repository — under a control whose
+    release criterion is "Roles, actions, and denied cases are documented and
+    test-covered". A dangling proof reference is worse than none: it reads as
+    evidence.
+    """
+    import re
+
+    root = Path(__file__).resolve().parents[1]
+    defined = set()
+    for path in (root / "tests").rglob("*.py"):
+        for match in re.finditer(r"^def (test_\w+)", path.read_text(encoding="utf-8"), re.M):
+            defined.add(f"tests/{path.relative_to(root / 'tests')}::{match.group(1)}")
+            defined.add(match.group(1))
+
+    referenced = set()
+    for path in list((root / "src").rglob("*.py")):
+        for match in re.finditer(r"tests/[\w/]+\.py::(test_\w+)", path.read_text(encoding="utf-8")):
+            referenced.add((str(path.relative_to(root)), match.group(0), match.group(1)))
+
+    dangling = [(src, ref) for src, ref, name in referenced if name not in defined]
+    assert not dangling, f"published evidence references no such test: {dangling}"
+
+
+def test_a_half_applied_tenant_migration_is_still_backfilled(tmp_path) -> None:
+    """``_add_tenant_column`` returned before its own backfill once the column existed.
+
+    This method shipped in an ALTER-only form first, so every SQLite ledger
+    upgraded by that build already has the column and would never be
+    backfilled; a process killed between the ALTER and the UPDATE leaves the
+    same state. Measured on a ledger in exactly that shape, whose payloads carry
+    a recoverable tenant::
+
+        before opening with the current store -> ['unresolved']
+        after  opening with the current store -> ['unresolved']
+
+    So a half-applied migration stripped recoverable tenant attribution from the
+    whole ledger permanently: the owning tenant's auditor lost every historical
+    row to ``GET /audit/events`` and ``GET /policy/decisions``, and SQLite is the
+    documented demo/pilot deployment on a persistent volume - precisely the
+    upgrade-in-place case.
+    """
+    import json as json_module
+    import sqlite3
+
+    import sdp_core
+
+    path = tmp_path / "half-applied.sqlite3"
+    connection = sqlite3.connect(path)
+    connection.executescript(
+        """
+        CREATE TABLE policy_decisions (decision_id TEXT PRIMARY KEY, subject TEXT,
+          resource TEXT, action TEXT, effect TEXT, payload TEXT, recorded_at TEXT);
+        CREATE TABLE audit_events (id TEXT PRIMARY KEY, event_type TEXT, actor TEXT,
+          resource TEXT, decision TEXT, payload TEXT, created_at TEXT);
+        """
+    )
+    connection.execute(
+        "INSERT INTO policy_decisions VALUES (?,?,?,?,?,?,?)",
+        (
+            "d1",
+            "analyst",
+            "crm-event",
+            "preview",
+            "allow",
+            json_module.dumps({"obligations": {"tenant_id": "demo"}}),
+            "2026-01-01T00:00:00Z",
+        ),
+    )
+    # ``details.tenant`` is the other spelling the SQLite backfill honours and
+    # the Postgres one does not.
+    connection.execute(
+        "INSERT INTO audit_events VALUES (?,?,?,?,?,?,?)",
+        (
+            "a1",
+            "browse.preview",
+            "analyst",
+            "crm-event",
+            "allowed",
+            json_module.dumps({"details": {"tenant": "zeta"}}),
+            "2026-01-01T00:00:00Z",
+        ),
+    )
+    # The ALTER-only step: column present, UPDATE never run.
+    for table in ("policy_decisions", "audit_events"):
+        connection.execute(
+            f"ALTER TABLE {table} ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'unresolved'"
+        )
+    connection.commit()
+    connection.close()
+
+    sdp_core.SQLiteEvidenceStore(path)
+
+    connection = sqlite3.connect(path)
+    try:
+        decisions = [row[0] for row in connection.execute("SELECT tenant_id FROM policy_decisions")]
+        audits = [row[0] for row in connection.execute("SELECT tenant_id FROM audit_events")]
+    finally:
+        connection.close()
+    assert decisions == ["demo"], decisions
+    assert audits == ["zeta"], audits
+
+
+def test_the_tenant_backfill_is_idempotent_and_keeps_unrecoverable_rows(tmp_path) -> None:
+    """Re-running it must converge, and must not invent a tenant.
+
+    The backfill now runs on every open, so it has to be safe to re-run: it
+    touches only rows still at the unresolved default, and a row whose payload
+    carries no recoverable tenant stays unresolved.
+    """
+    import json as json_module
+    import sqlite3
+
+    import sdp_core
+
+    path = tmp_path / "idempotent.sqlite3"
+    connection = sqlite3.connect(path)
+    connection.executescript(
+        """
+        CREATE TABLE policy_decisions (decision_id TEXT PRIMARY KEY, subject TEXT,
+          resource TEXT, action TEXT, effect TEXT, payload TEXT, recorded_at TEXT,
+          tenant_id TEXT NOT NULL DEFAULT 'unresolved');
+        CREATE TABLE audit_events (id TEXT PRIMARY KEY, event_type TEXT, actor TEXT,
+          resource TEXT, decision TEXT, payload TEXT, created_at TEXT,
+          tenant_id TEXT NOT NULL DEFAULT 'unresolved');
+        """
+    )
+    connection.execute(
+        "INSERT INTO policy_decisions VALUES (?,?,?,?,?,?,?,?)",
+        ("recoverable", "a", "r", "preview", "allow",
+         json_module.dumps({"obligations": {"tenant_id": "demo"}}), "t", "unresolved"),
+    )
+    connection.execute(
+        "INSERT INTO policy_decisions VALUES (?,?,?,?,?,?,?,?)",
+        ("unrecoverable", "a", "r", "preview", "allow",
+         json_module.dumps({"obligations": {}}), "t", "unresolved"),
+    )
+    connection.commit()
+    connection.close()
+
+    for _ in range(3):
+        sdp_core.SQLiteEvidenceStore(path)
+
+    connection = sqlite3.connect(path)
+    try:
+        rows = dict(connection.execute("SELECT decision_id, tenant_id FROM policy_decisions"))
+    finally:
+        connection.close()
+    assert rows == {"recoverable": "demo", "unrecoverable": "unresolved"}, rows

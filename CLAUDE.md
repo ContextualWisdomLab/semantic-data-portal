@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 프로젝트 개요
 
-온톨로지 기반 데이터 카탈로그/브라우징 플랫폼 MVP. FastAPI 단일 앱(`sdp.api:app`)이 카탈로그 검색, 온톨로지 용어 해석, 정책 기반 브라우징(민감 컬럼 마스킹), SQL draft 오케스트레이션, enterprise 증빙(evidence) 엔드포인트를 제공한다. PRD/TRD 원문은 `docs/prd-trd.md`, 요구사항 대응 매트릭스는 `docs/implementation-compliance.md`에 있다.
+온톨로지 기반 데이터 카탈로그/브라우징 플랫폼 MVP. FastAPI 단일 앱(`sdp.api:app`)이 카탈로그 검색, 온톨로지 용어 해석, 정책 기반 브라우징(민감 컬럼 마스킹), SQL draft 오케스트레이션, enterprise 증빙(evidence) 엔드포인트를 제공한다. PRD/TRD 원문은 `docs/prd-trd.md`, 요구사항 전수 대응 매트릭스는 `docs/requirements-coverage.md`(생성 문서 — `src/sdp_core/requirements.py`가 PRD를 파싱해 만든다), 일부 요구사항의 서술형 증빙은 `docs/implementation-compliance.md`에 있다.
 
 ## 자주 쓰는 명령어
 
@@ -45,8 +45,16 @@ docker compose --profile postgres up --build
 
 ```bash
 uv pip compile pyproject.toml --generate-hashes -o requirements.txt
-uv pip compile pyproject.toml --extra dev --generate-hashes -o requirements-dev.txt
+uv pip compile pyproject.toml --extra dev --generate-hashes --universal \
+  --python-version 3.12 --constraint constraints-dev.txt -o requirements-dev.txt
 ```
+
+각 lock 파일의 헤더 주석이 자신을 재생성하는 정확한 명령이고,
+`tests/test_dependency_locks.py`가 그 헤더와 내용을 함께 강제한다.
+`constraints-dev.txt`는 dev lock을 **CI가 실제로 테스트하는 버전**에 묶는다 —
+dev extra를 자유 해석하면 `hypothesis`/`SQLAlchemy`가 CI pin보다 높은 minor로
+잡히고, SQLAlchemy는 `src/sdp/graph_store.py`와 `src/sdp/config.py`가 올라서는
+라이브러리이므로 로컬이 green인데 CI가 red인 상황이 만들어진다.
 
 supply-chain 하드닝 유지: base image는 digest-pinned(`python:3.12-slim@sha256:...`), 컨테이너는 non-root(uid 10001), GitHub Actions는 commit SHA로 pin. Dockerfile/requirements/workflow를 수정할 때 이 속성을 되돌리지 말 것.
 
@@ -78,7 +86,7 @@ supply-chain 하드닝 유지: base image는 digest-pinned(`python:3.12-slim@sha
 
 ### docker-compose 서비스 구성
 
-- `semantic-data-portal` (기본): 앱 단독, `SDP_SQLITE_PATH=/data/sdp-evidence.sqlite3` + `sdp-evidence` volume, 8000 포트, `/health` healthcheck.
+- `semantic-data-portal` (기본): 앱 단독, `SDP_SQLITE_PATH=/data/sdp-evidence.sqlite3` + `sdp-evidence` volume, 8000 포트, `/healthz` healthcheck (`Dockerfile`/`docker-compose.yml`가 조회하는 경로. 상수를 돌려주는 `/health`가 아니라 백엔드 준비 상태를 보고 503을 낼 수 있는 쪽이다).
 - `--profile postgres` 활성화 시: `postgres`(digest-pinned `postgres:16-alpine`, loopback host port 54329) + `semantic-data-portal-postgres`(필수 `POSTGRES_PASSWORD`/`SDP_DATABASE_URL`, `POSTGRES_USER` 기본값은 `sdp_app`, 호스트 8001) 추가. 두 앱 인스턴스로 SQLite/Postgres store protocol 동등성을 검증하는 구성이다.
 
 ### Fuzzing
@@ -88,8 +96,8 @@ supply-chain 하드닝 유지: base image는 digest-pinned(`python:3.12-slim@sha
 ## 주요 컨벤션
 
 - **에러 매핑**: 도메인 모듈은 `KeyError`(→404), `ValueError`(→400), `PermissionError`(→403)를 raise하고, `api.py` 라우트가 `HTTPException`으로 변환한다. 도메인 계층에서 HTTPException을 직접 raise하지 않는다.
-- **테스트 격리**: `tests/test_api.py`의 autouse fixture `isolate_in_memory_app_state`가 `catalog._DATA`, `_AUDIT_LOG`, `_SCHEMA_HISTORY`, `evidence._POLICY_DECISION_LOG`, observability buffer를 snapshot/restore한다. 모듈 레벨 mutable 상태를 새로 추가하면 이 fixture에도 반영해야 테스트 간 오염이 없다.
+- **테스트 격리**: `tests/conftest.py`의 autouse fixture `restore_in_memory_app_state`가 모든 테스트에 적용되어 `catalog._DATA`/`_AUDIT_LOG`/`_SCHEMA_HISTORY`, `evidence._POLICY_DECISION_LOG`/`_AUDIT_EVENT_LOG`, `ontology._CONCEPT_DEFINITIONS`/`_ALIAS_TO_CANONICAL`/`_ONTOLOGY_PATCHES`/`_INDEX`, observability buffer를 snapshot/restore한다. 모듈 레벨 mutable 상태를 새로 추가하면 이 fixture에 반영해야 하고, `tests/test_state_isolation.py`가 매 테스트 시작 시점의 baseline을 단언한다. (이전에는 `tests/test_api.py`에만 있었고 20여 개 파일에는 fixture가 없어서, 파일 순서를 뒤집으면 5건이 실패했다. 파일별로 하나씩 추가하는 방식은 이 저장소에서 반복적으로 실패한 패턴이다.) **그래프 스토어 싱글턴은 의도적으로 제외** — snapshot API가 없고, 테스트를 위해 제품 API를 만드는 것은 범위를 넘는다. 그래프 카운트에 의존하는 테스트는 자체 baseline을 잡아야 한다.
 - **디자인 토큰**: `/enterprise/console` CSS는 임의 hex/px 리터럴 대신 `design_tokens.py`의 `var(--sdp-*)` 변수만 참조한다. 토큰 3계층(primitive/semantic/component)과 Figma 매핑 규칙은 `docs/design-tokens.md` 참조, `tests/test_design_tokens.py`가 무회귀를 강제한다.
-- **환경 변수**: 모두 `SDP_` prefix — evidence store(`SDP_DATABASE_URL`, `SDP_DATABASE_SSLMODE`, `SDP_SQLITE_PATH`), observability(`SDP_LOG_SINK_URL`, `SDP_REQUEST_ID_HEADER`, `SDP_ALERT_WEBHOOK_URL`), OIDC(`SDP_OIDC_ISSUER`, `SDP_OIDC_AUDIENCE`, `SDP_OIDC_JWKS_URL`, `SDP_OIDC_GROUP_ROLE_MAP`), connector secret(`SDP_CONNECTOR_SECRET_REF_PREFIX` 기준 `SDP_CONNECTOR_SECRET_*` env reference — 값은 presence만 검증하고 API 응답에 노출 금지).
+- **환경 변수**: 모두 `SDP_` prefix — evidence store(`SDP_DATABASE_URL`, `SDP_DATABASE_SSLMODE`, `SDP_SQLITE_PATH`), observability(`SDP_LOG_SINK_URL` — `file:///absolute/path` 또는 http(s); URL의 credential은 `Authorization` 헤더로 분리, `SDP_REQUEST_ID_HEADER`, `SDP_LOG_SINK_TIMEOUT_MS`; `SDP_ALERT_WEBHOOK_URL`은 **선언만 되고 구현되지 않음** — 설정 여부만 보고하고 라우팅하지 않는다), OIDC(`SDP_OIDC_ISSUER`, `SDP_OIDC_AUDIENCE`, `SDP_OIDC_JWKS_URL`, `SDP_OIDC_GROUP_ROLE_MAP`), connector secret(`SDP_CONNECTOR_SECRET_REF_PREFIX` 기준 `SDP_CONNECTOR_SECRET_*` env reference — 값은 presence만 검증하고 API 응답에 노출 금지).
 - **문서/문자열 언어**: README·docs와 사용자 노출 메시지(정책 사유 등)는 한국어 + 영문 기술 용어 혼용이다. 기존 스타일을 유지한다.
-- 기능을 추가하면 README의 API 목록/구현 대응 표와 `docs/implementation-compliance.md`의 매트릭스를 함께 갱신한다.
+- 기능을 추가하면 README의 API 목록/구현 대응 표를 함께 갱신한다. 요구사항 상태가 바뀌면 `src/sdp_core/requirements.py`의 `REQUIREMENT_COVERAGE`를 고치고 `PYTHONPATH=src python -m sdp_core.requirements`로 `docs/requirements-coverage.md`를 재생성한다 (생성 문서를 직접 편집하면 `tests/test_requirements_coverage.py`가 실패한다). `docs/implementation-compliance.md`는 서술형 증빙이므로 해당 요구사항의 경계가 바뀔 때 갱신한다.

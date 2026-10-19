@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 from abc import ABC, abstractmethod
 from collections import deque
 from dataclasses import dataclass, field
@@ -77,7 +78,10 @@ _logger = logging.getLogger(__name__)
 # rejected outright otherwise, so an arbitrary string (e.g. one carrying cypher
 # or SQL breakout characters) can never reach the statement text. Both backends
 # enforce this identically for behaviour parity.
-_AGE_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# \Z, not $: with $ the pattern also matches before a single trailing newline, so
+# "broader\n" passed this guard and then failed the _AGE_LABEL_CHARS lookup with a
+# KeyError instead of the documented ValueError - a 500 on POST /graph/edges.
+_AGE_IDENTIFIER_RE = re.compile(r"\A[A-Za-z_][A-Za-z0-9_]*\Z")
 
 # Fixed identifier alphabet used to rebuild validated labels character by
 # character. Every returned label is provably composed of these constant
@@ -98,7 +102,168 @@ def _relationship_label(edge_type: str) -> str:
 
     if not _AGE_IDENTIFIER_RE.match(edge_type):
         raise ValueError(f"invalid relationship type: {edge_type!r}")
-    return "".join(_AGE_LABEL_CHARS[ch] for ch in edge_type.upper())
+    try:
+        return "".join(_AGE_LABEL_CHARS[ch] for ch in edge_type.upper())
+    except KeyError as exc:  # pragma: no cover - defence in depth behind the regex
+        # The regex and the alphabet must agree; if they ever diverge again, fail
+        # with the documented type rather than a 500.
+        raise ValueError(f"invalid relationship type: {edge_type!r}") from exc
+
+
+# --- Class separation (ONT-002) -----------------------------------------------
+#
+# ONT-002: "domain concept와 data asset은 별도 class로 모델링되어야 한다", whose
+# acceptance criterion is that a table/dataset must not become a subclass of a
+# business class. The kinds are modelled - a dataset relates to a concept through
+# a ``mapping`` edge, never by subclassing - and ``assert_node_kind_is_stable``
+# closed the half where an id was *reclassified*. This is the edge half, and
+# nothing checked it. Measured at HEAD before this gate, each with one authorized
+# request on the shipped seed::
+#
+#     POST /graph/edges {"actor": "admin", "edge_type": "broader",
+#                        "source_id": "crm-customer-master", "target_id": "고객"}
+#         -> 200   (a dataset placed *under* a business class: the criterion verbatim)
+#     POST /graph/edges {... "source_id": "고객",
+#                        "target_id": "crm-customer-master"}
+#         -> 200   (the same boundary crossed the other way)
+#     POST /graph/edges {... "edge_type": "narrower", "source_id":
+#                        "crm-customer-master", "target_id": "고객"}
+#         -> 200
+#     POST /ontology/concepts {"actor": "admin", "concept": "테스트개념하나",
+#                              "definition": "정의",
+#                              "broader": "crm-customer-master"}
+#         -> 200, and the graph then held broader: 테스트개념하나 -> crm-customer-master
+#     POST /ontology/concepts {... "narrower": ["crm-customer-master:customer_id"]}
+#         -> 200, a column node made a sub-class of a business class
+#
+# so both publication paths merged the two class systems into one hierarchy, and
+# every fact needed to refuse it (both endpoints' ``kind``) was already stored
+# and unread.
+HIERARCHY_EDGE_TYPES = ("broader", "narrower")
+
+# The kind a business class has in this graph. ``related`` is deliberately **not**
+# in ``HIERARCHY_EDGE_TYPES``: in SKOS it is associative, not subsumption, so a
+# dataset and a concept may legitimately be related; and ``mapping`` is the
+# modelled dataset<->concept link, which is why refusing the hierarchy edge
+# removes nothing a caller needs.
+CONCEPT_NODE_KIND = "concept"
+
+
+class GraphIntegrityConflict(ValueError):
+    """A well-formed graph write refused by what the store already holds.
+
+    A ``ValueError`` subclass for the same reason
+    :class:`sdp.ontology.ConceptKindConflict` is one: every existing handler that
+    catches ``ValueError`` still catches this, so no caller silently stops
+    refusing. The routes that want the precise status catch this base and answer
+    **409** - the request is well-formed and the conflict is with stored state,
+    exactly as it is for a reclassification - so every rule below answers one
+    status on every publication path, and the next one does too without a third
+    ``except`` arm to remember.
+    """
+
+
+class NodeKindConflict(GraphIntegrityConflict):
+    """A write that would change an existing node's ``kind``.
+
+    ``assert_node_kind_is_stable`` raised a bare ``ValueError``, which is also
+    what ``pydantic.ValidationError`` is: a route that mapped this conflict to
+    409 with ``except ValueError`` therefore turned a malformed request body into
+    a 409 as well (measured while adding exactly such an arm to
+    ``PATCH /catalog/datasets/{id}``: a non-numeric ``quality_score`` answered
+    409 instead of 400). A distinct type is what lets a handler be precise, and
+    it stays a ``GraphIntegrityConflict`` - so a ``ValueError`` - which keeps
+    every existing handler, including ``ontology.ConceptKindConflict``'s wrapper,
+    working unchanged.
+    """
+
+
+class HierarchyClassSeparationConflict(GraphIntegrityConflict):
+    """A hierarchy edge that would subclass across the concept/asset boundary.
+
+    ONT-002: the conflict is with the named nodes' stored ``kind``.
+    """
+
+
+class HierarchyCycleConflict(GraphIntegrityConflict):
+    """A hierarchy edge that would make a concept broader than itself.
+
+    The conflict is with the subsumption relation the stored hierarchy edges
+    already assert. Measured at HEAD before this gate, each one authorized
+    request on the shipped seed::
+
+        POST /graph/edges broader 고객 -> 주문        -> 200
+        POST /graph/edges broader 주문 -> 고객        -> 200   (고객 <= 주문 <= 고객)
+        POST /graph/edges broader 고객 -> 고객        -> 200   (a self-loop)
+        POST /ontology/concepts {"concept": "순환상위", "broader": "고객"}  -> 200
+        POST /ontology/concepts {"concept": "고객", "broader": "순환상위"}  -> 200
+
+    so the published glossary could assert that two distinct terms are each a
+    kind of the other, which collapses them in any OWL reading of SKOS and makes
+    "broader/narrower 조회" (ONT-003) answer with a hierarchy that has no top.
+    No read surface crashed on it - traversal is depth-bounded - so the damage
+    was silent and semantic rather than an availability failure.
+    """
+
+
+def subsumption_pair(
+    edge_type: str, source_id: str, target_id: str
+) -> Optional[Tuple[str, str]]:
+    """The ``(child, parent)`` a hierarchy edge asserts, or ``None``.
+
+    Direction matters and the seed depends on it: ``narrower: 고객 -> 활성 고객``
+    and ``broader: 활성 고객 -> 고객`` are the *same* assertion written from both
+    ends - 활성 고객 is a kind of 고객 - and the shipped vocabulary states both
+    for two of its pairs. Reading them as two opposed assertions would make the
+    seed cyclic, so the direction is normalized here once, in one place, rather
+    than at each caller.
+    """
+    if edge_type == "broader":
+        return (source_id, target_id)
+    if edge_type == "narrower":
+        return (target_id, source_id)
+    return None
+
+
+def hierarchy_class_separation_refusal(
+    edge_type: str,
+    source_id: str,
+    target_id: str,
+    *,
+    source_kind: Optional[str],
+    target_kind: Optional[str],
+) -> Optional[str]:
+    """The refusal message for a boundary-crossing hierarchy edge, else ``None``.
+
+    Pure, and takes the two kinds rather than reading them, so the one rule and
+    the one message serve three callers that each learn a node's kind
+    differently: the in-memory store (``get_node``), the Postgres store (a
+    transaction-local ``SELECT``) and the ontology pre-write validator.
+
+    An endpoint that is **not a node yet** is treated as unknown rather than as a
+    violation, and that is a decision this product cannot avoid: the shipped seed
+    declares ``narrower: 매출 -> 매출 성장`` and ``narrower: 매출 -> 매출 채널별 집계``
+    for concepts the vocabulary never defines, and ``upsert_concept`` writes a
+    concept's hierarchy edges before the targets are registered, so refusing an
+    unknown endpoint would refuse the seed's own load order. Measured on the
+    seed: 27 of 78 edges name a node that does not exist, 2 of them hierarchy
+    edges. The unknown endpoint is reported by ``ConceptHierarchyShape`` at
+    warning severity instead - see ``sdp.semantic_validation``.
+    """
+    for role, node_id, kind in (
+        ("source", source_id, source_kind),
+        ("target", target_id, target_kind),
+    ):
+        if kind is None or kind == CONCEPT_NODE_KIND:
+            continue
+        return (
+            f"{edge_type!r} asserts a class hierarchy, and its {role} "
+            f"{node_id!r} is a {kind!r} node rather than a "
+            f"{CONCEPT_NODE_KIND!r}: a data asset cannot be placed in the "
+            f"business-class hierarchy (relate them with a 'mapping' edge, "
+            f"which is how a dataset and a concept are modelled as linked)"
+        )
+    return None
 
 
 # --- Backend contract ---------------------------------------------------------
@@ -154,6 +319,173 @@ class GraphStore(ABC):
 
         raise NotImplementedError
 
+    def assert_node_kind_is_stable(self, node_id: str, kind: str) -> None:
+        """Refuse a write that would change an existing node's ``kind``.
+
+        A node's kind is its identity in this graph: ``/search/semantic`` filters
+        on it, ``/graph/query`` traverses by it, and the governed properties a
+        node carries differ entirely by kind. ``upsert_node`` built a fresh
+        ``GraphNode`` and replaced the stored one, so a write under an id another
+        kind already held **destroyed** it. Measured on the seed, with one
+        authorized request::
+
+            GET  /graph/nodes/crm-customer-master   kind=dataset
+                label='고객 마스터'
+                properties={domain, owner, steward, tags, terms,
+                            sensitivity: 'medium', status: 'published'}
+
+            POST /ontology/concepts {"actor": "admin",
+                                     "concept": "crm-customer-master",
+                                     "definition": "...", "broader": "고객"}
+                -> 200
+
+            GET  /graph/nodes/crm-customer-master   kind=concept
+                label='crm-customer-master'
+                properties={definition, aliases, multilingual}
+
+        So an ontology write silently erased a dataset's classification -
+        ``sensitivity``, ``owner``, ``steward``, ``status`` - which is the
+        metadata the tenant boundary and the masking obligations reason about.
+        The tenant half of this boundary was closed earlier
+        (``_authorize_graph_write`` resolves the target tenant); this is the kind
+        half, and it was open.
+
+        This is deliberately **not** a kind allow-list. ``kind`` stays free-form,
+        so a caller may still introduce a new kind and the injection-regression
+        tests that use a hostile string as a kind keep working; what is refused
+        is *reclassifying* an id that already exists as something else. The
+        narrower rule refuses exactly the destruction and nothing legitimate: a
+        same-kind upsert is how the catalog mirror, the seed and concept
+        re-registration all work.
+        """
+        existing = self.get_node(node_id)
+        if existing is not None and existing.kind != kind:
+            raise NodeKindConflict(
+                f"node {node_id!r} already exists with kind {existing.kind!r}; "
+                f"a node's kind cannot be changed to {kind!r} because the "
+                "governed properties it carries differ by kind"
+            )
+
+    def assert_hierarchy_respects_class_separation(
+        self, edge_type: str, source_id: str, target_id: str
+    ) -> None:
+        """Refuse a ``broader``/``narrower`` edge that crosses the class boundary.
+
+        ONT-002's acceptance criterion is that a table/dataset must not become a
+        subclass of a business class. ``broader`` and ``narrower`` are the only
+        relations in this graph that assert one thing is a *kind of* another, so
+        they are the only ones gated; the evidence for what was accepted before
+        this gate is in the module comment above ``HIERARCHY_EDGE_TYPES``.
+
+        This gate reads the kinds that are **known when the edge is written**, so
+        it cannot be the whole answer: an edge written while both endpoints are
+        unknown is permitted (the seed's own load order needs that), and the
+        endpoint may be created as a dataset afterwards, which
+        ``assert_node_kind_is_stable`` does not refuse because a first create is
+        not a reclassification. That ordering is why the shape report exists
+        rather than only the gate - ``ConceptHierarchyShape`` evaluates the edges
+        the graph actually holds, which is also the half of ONT-002 the criterion
+        words as 검증.
+        """
+        if edge_type not in HIERARCHY_EDGE_TYPES:
+            return
+        source = self.get_node(source_id)
+        target = self.get_node(target_id)
+        refusal = hierarchy_class_separation_refusal(
+            edge_type,
+            source_id,
+            target_id,
+            source_kind=source.kind if source else None,
+            target_kind=target.kind if target else None,
+        )
+        if refusal is not None:
+            raise HierarchyClassSeparationConflict(refusal)
+
+    def subsumption_parents(self, node_id: str) -> List[str]:
+        """The nodes this node is asserted to be a kind of.
+
+        Reads both spellings of the one assertion - an outgoing ``broader`` and
+        an incoming ``narrower`` - through the ``edges_for`` primitive both
+        backends already implement, so the rule below has one implementation
+        rather than one per backend plus recursive SQL that only an integration
+        run could exercise.
+        """
+        parents = [
+            edge.target_id for edge in self.edges_for(node_id, "broader", direction="out")
+        ]
+        parents.extend(
+            edge.source_id for edge in self.edges_for(node_id, "narrower", direction="in")
+        )
+        return parents
+
+    def assert_hierarchy_stays_acyclic(
+        self,
+        edge_type: str,
+        source_id: str,
+        target_id: str,
+        *,
+        pending_pairs: Iterable[Tuple[str, str]] = (),
+    ) -> None:
+        """Refuse a hierarchy edge that would make a concept broader than itself.
+
+        Walks **up** from the proposed parent: if the proposed child is already
+        reachable through the subsumption relation, adding this edge closes a
+        cycle. A self-loop is the degenerate case of the same rule and is
+        refused by the same check. ``visited`` makes the walk terminate even
+        when the hierarchy is *already* cyclic - from an edge written before
+        this gate, or through the ordering the gate cannot see - so a
+        pre-existing cycle cannot turn a refusal into a hang.
+
+        ``pending_pairs`` are ``(child, parent)`` assertions the caller is about
+        to write **alongside** this one and that are not stored yet. Without
+        them a caller writing several edges in one request has each edge checked
+        against stored state only, so a request that is cyclic *within itself*
+        passes every individual check. Measured before this parameter existed,
+        one authorized request::
+
+            POST /ontology/concepts {"actor": "admin", "concept": "순환개념",
+                                     "definition": "정의",
+                                     "broader": "상대개념",
+                                     "narrower": ["상대개념"]}
+                -> 500, with the vocabulary record published, the graph node
+                   written, the first of the two edges written, and
+                   ``hierarchy_consistency`` still reporting conforms: true,
+                   because the cycle's second edge never landed. A later
+                   ``seed_store`` on a fresh store then raised, because the
+                   stored vocabulary record replays its own contradiction.
+
+        What this does **not** do is decide satisfiability: no reasoner runs
+        here, there are no OWL axioms in this repository, and a cycle in SKOS
+        makes concepts mutually subsuming rather than unsatisfiable. The
+        published count and the engine declaration say so - see
+        ``sdp.semantic_validation.hierarchy_consistency``.
+        """
+        pair = subsumption_pair(edge_type, source_id, target_id)
+        if pair is None:
+            return
+        child, parent = pair
+        if child == parent:
+            raise HierarchyCycleConflict(
+                f"{edge_type!r} would make {child!r} a kind of itself"
+            )
+        pending: Dict[str, List[str]] = {}
+        for pending_child, pending_parent in pending_pairs:
+            pending.setdefault(pending_child, []).append(pending_parent)
+        visited = {parent}
+        frontier = [parent]
+        while frontier:
+            current = frontier.pop()
+            for ancestor in self.subsumption_parents(current) + pending.get(current, []):
+                if ancestor == child:
+                    raise HierarchyCycleConflict(
+                        f"{edge_type!r} would make {child!r} a kind of {parent!r}, "
+                        f"and {parent!r} is already a kind of {child!r}: "
+                        "a concept cannot be broader than itself"
+                    )
+                if ancestor not in visited:
+                    visited.add(ancestor)
+                    frontier.append(ancestor)
+
     @abstractmethod
     def concept_graph(self, term: str) -> Dict[str, Any]:
         """Return the concept-centered graph for ``term``."""
@@ -187,14 +519,79 @@ class GraphStore(ABC):
 
         raise NotImplementedError
 
+    # removal ------------------------------------------------------------------
+    #
+    # The store had no removal primitive at all, in either backend, so every
+    # mirror write was an append. A dataset whose column, term, mapping or
+    # lineage edge was removed kept it in the graph forever. Measured on the
+    # in-memory backend after ``PATCH /catalog/datasets/crm-customer-master``
+    # dropped the declared-PII column ``customer_email``:
+    #
+    #     catalog schema            -> customer_id, signup_at
+    #     GET /graph/nodes/...:customer_email -> 200, properties.pii = true
+    #     POST /search/semantic "customer_email" (actor analyst)
+    #                               -> top hit, score 0.673
+    #
+    # ``/browse`` masked that column while it was declared, so removing it made
+    # it *more* exposed than keeping it. Reconciling needs both a read of what
+    # the graph currently holds and a way to remove it.
+
+    @abstractmethod
+    def edges_for(
+        self, node_id: str, edge_type: str, *, direction: str = "out"
+    ) -> List[GraphEdge]:
+        """Return this node's edges of one type, outgoing or incoming.
+
+        ``direction`` is ``"out"`` or ``"in"``. Lineage inputs arrive as
+        incoming edges (upstream -> dataset), so reconciling a dataset's
+        declared lineage needs both.
+        """
+
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_edge(self, edge_type: str, source_id: str, target_id: str) -> bool:
+        """Remove one directed edge; ``True`` when something was removed."""
+
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_node(self, node_id: str) -> bool:
+        """Remove a node, its embedding and every edge touching it.
+
+        Returns ``True`` when the node existed. Used for the column nodes a
+        dataset no longer declares; concept and dataset nodes are never removed
+        this way, because they are not owned by the dataset being reconciled.
+        """
+
+        raise NotImplementedError
+
 
 # --- In-memory backend --------------------------------------------------------
 
 
 class InMemoryGraphStore(GraphStore):
+    # Every collection below is shared process state, and FastAPI runs this
+    # package's ``def`` handlers in a worker threadpool, so a reader genuinely
+    # interleaves with a writer. ``semantic_search`` iterated ``_embeddings``
+    # live, which is a hard error rather than a stale read:
+    #
+    #     POST /search/semantic, while datasets are being onboarded
+    #       -> 500 RuntimeError: dictionary changed size during iteration
+    #     measured at 17 of 42 searches (40%) with two readers and two writers
+    #
+    # A lock, rather than a snapshot at the one iteration that was reported:
+    # ``_edges`` is rebuilt wholesale by ``delete_edge``/``delete_node`` while
+    # ``edges_for``/``traverse`` iterate it, and ``delete_node`` mutates three
+    # collections in sequence - so a reader could see a node whose embedding
+    # was already gone. Fixing only the reported line would have left the rest.
+    #
+    # Reentrant because ``concept_graph`` and ``traverse`` call sibling methods
+    # that also take it.
     def __init__(self, config: Optional[AppConfig] = None) -> None:
         self._config = config or get_app_config()
         self.dimension = self._config.embedding_dimension
+        self._lock = threading.RLock()
         self._nodes: Dict[str, GraphNode] = {}
         self._edges: List[GraphEdge] = []
         self._embeddings: Dict[str, List[float]] = {}
@@ -212,16 +609,21 @@ class InMemoryGraphStore(GraphStore):
         properties: Optional[Dict[str, Any]] = None,
         text: Optional[str] = None,
     ) -> GraphNode:
-        node = GraphNode(
-            node_id=node_id,
-            kind=kind,
-            label=label or node_id,
-            properties=dict(properties or {}),
-        )
-        self._nodes[node_id] = node
-        embed_source = text or label or node_id
-        self._embeddings[node_id] = embed_text(embed_source, self.dimension)
-        return node
+        with self._lock:
+            # Inside the lock, so the check and the write are one step: checked
+            # outside it, a concurrent writer could create the node between the
+            # two and the reclassification would land anyway.
+            self.assert_node_kind_is_stable(node_id, kind)
+            node = GraphNode(
+                node_id=node_id,
+                kind=kind,
+                label=label or node_id,
+                properties=dict(properties or {}),
+            )
+            self._nodes[node_id] = node
+            embed_source = text or label or node_id
+            self._embeddings[node_id] = embed_text(embed_source, self.dimension)
+            return node
 
     def upsert_edge(
         self,
@@ -231,94 +633,113 @@ class InMemoryGraphStore(GraphStore):
         *,
         properties: Optional[Dict[str, Any]] = None,
     ) -> GraphEdge:
-        # Reject non-identifier relationship types for parity with the AGE
-        # backend (where the type occupies a cypher identifier position).
-        _relationship_label(edge_type)
-        for existing in self._edges:
-            if (
-                existing.edge_type == edge_type
-                and existing.source_id == source_id
-                and existing.target_id == target_id
-            ):
-                existing.properties.update(properties or {})
-                return existing
-        edge = GraphEdge(edge_type, source_id, target_id, dict(properties or {}))
-        self._edges.append(edge)
-        return edge
+        with self._lock:
+            # Reject non-identifier relationship types for parity with the AGE
+            # backend (where the type occupies a cypher identifier position).
+            _relationship_label(edge_type)
+            # ONT-002's edge half, asked **inside** the lock so a concurrent
+            # writer cannot change a kind between the check and the append -
+            # ``_nodes`` is shared process state and FastAPI runs these ``def``
+            # handlers in a threadpool. ``self._lock`` is an ``RLock`` and
+            # ``get_node`` re-takes it, so the base-class helper is reentrant
+            # here and the rule stays in one place.
+            self.assert_hierarchy_respects_class_separation(
+                edge_type, source_id, target_id
+            )
+            # And the hierarchy stays acyclic. Also inside the lock, and
+            # ``subsumption_parents`` reads through ``edges_for``, which re-takes
+            # the same ``RLock`` - so here the reachability read and the append
+            # are one atomic step.
+            self.assert_hierarchy_stays_acyclic(edge_type, source_id, target_id)
+            for existing in self._edges:
+                if (
+                    existing.edge_type == edge_type
+                    and existing.source_id == source_id
+                    and existing.target_id == target_id
+                ):
+                    existing.properties.update(properties or {})
+                    return existing
+            edge = GraphEdge(edge_type, source_id, target_id, dict(properties or {}))
+            self._edges.append(edge)
+            return edge
 
     def upsert_concept(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        concept = payload["concept"].strip()
-        record = {
-            "concept": concept,
-            "definition": payload.get("definition", ""),
-            "aliases": list(payload.get("aliases", [])),
-            "broader": payload.get("broader"),
-            "narrower": list(payload.get("narrower", [])),
-            "related": list(payload.get("related", [])),
-            "multilingual": list(payload.get("multilingual", [])),
-        }
-        self._concepts[concept] = record
+        with self._lock:
+            concept = payload["concept"].strip()
+            record = {
+                "concept": concept,
+                "definition": payload.get("definition", ""),
+                "aliases": list(payload.get("aliases", [])),
+                "broader": payload.get("broader"),
+                "narrower": list(payload.get("narrower", [])),
+                "related": list(payload.get("related", [])),
+                "multilingual": list(payload.get("multilingual", [])),
+            }
+            self._concepts[concept] = record
 
-        # alias index for canonicalisation
-        self._alias_to_concept[_normalize(concept)] = concept
-        for alias in record["aliases"] + record["multilingual"]:
-            self._alias_to_concept[_normalize(alias)] = concept
+            # alias index for canonicalisation
+            self._alias_to_concept[_normalize(concept)] = concept
+            for alias in record["aliases"] + record["multilingual"]:
+                self._alias_to_concept[_normalize(alias)] = concept
 
-        # mirror as a graph node with an embedding over concept + definition + aliases
-        embed_source = " ".join(
-            [concept, record["definition"]] + record["aliases"] + record["multilingual"]
-        )
-        self.upsert_node(
-            concept,
-            "concept",
-            label=concept,
-            properties={
-                "definition": record["definition"],
-                "aliases": record["aliases"],
-                "multilingual": record["multilingual"],
-            },
-            text=embed_source,
-        )
-        # edges to related/broader/narrower concepts
-        if record["broader"]:
-            self.upsert_edge("broader", concept, record["broader"])
-        for narrow in record["narrower"]:
-            self.upsert_edge("narrower", concept, narrow)
-        for related in record["related"]:
-            self.upsert_edge("related", concept, related)
-        return record
+            # mirror as a graph node with an embedding over concept + definition + aliases
+            embed_source = " ".join(
+                [concept, record["definition"]] + record["aliases"] + record["multilingual"]
+            )
+            self.upsert_node(
+                concept,
+                "concept",
+                label=concept,
+                properties={
+                    "definition": record["definition"],
+                    "aliases": record["aliases"],
+                    "multilingual": record["multilingual"],
+                },
+                text=embed_source,
+            )
+            # edges to related/broader/narrower concepts
+            if record["broader"]:
+                self.upsert_edge("broader", concept, record["broader"])
+            for narrow in record["narrower"]:
+                self.upsert_edge("narrower", concept, narrow)
+            for related in record["related"]:
+                self.upsert_edge("related", concept, related)
+            return record
 
-    # reads -------------------------------------------------------------------
+        # reads -------------------------------------------------------------------
 
     def get_node(self, node_id: str) -> Optional[GraphNode]:
-        return self._nodes.get(node_id)
+        with self._lock:
+            return self._nodes.get(node_id)
 
     def _canonical_concept(self, term: str) -> str:
-        return self._alias_to_concept.get(_normalize(term), term)
+        with self._lock:
+            return self._alias_to_concept.get(_normalize(term), term)
 
     def concept_graph(self, term: str) -> Dict[str, Any]:
-        canonical = self._canonical_concept(term)
-        record = self._concepts.get(canonical)
-        if not record:
-            return {"canonical": term, "not_found": True, "aliases": []}
-        dataset_ids = sorted(
-            {
-                edge.source_id
-                for edge in self._edges
-                if edge.edge_type == "mapping" and edge.target_id == canonical
+        with self._lock:
+            canonical = self._canonical_concept(term)
+            record = self._concepts.get(canonical)
+            if not record:
+                return {"canonical": term, "not_found": True, "aliases": []}
+            dataset_ids = sorted(
+                {
+                    edge.source_id
+                    for edge in self._edges
+                    if edge.edge_type == "mapping" and edge.target_id == canonical
+                }
+            )
+            return {
+                "canonical": canonical,
+                "concept": canonical,
+                "definition": record["definition"],
+                "aliases": [canonical] + record["aliases"],
+                "broader": record["broader"],
+                "narrower": record["narrower"],
+                "related": record["related"],
+                "multilingual": record["multilingual"],
+                "dataset_ids": dataset_ids,
             }
-        )
-        return {
-            "canonical": canonical,
-            "concept": canonical,
-            "definition": record["definition"],
-            "aliases": [canonical] + record["aliases"],
-            "broader": record["broader"],
-            "narrower": record["narrower"],
-            "related": record["related"],
-            "multilingual": record["multilingual"],
-            "dataset_ids": dataset_ids,
-        }
 
     def traverse(
         self,
@@ -328,69 +749,71 @@ class InMemoryGraphStore(GraphStore):
         direction: str = "both",
         max_depth: int = 2,
     ) -> Dict[str, Any]:
-        if start_id not in self._nodes:
-            raise KeyError(f"node not found: {start_id}")
-        if edge_types:
-            for etype in edge_types:
-                _relationship_label(etype)  # reject bad labels (AGE parity)
-        allowed = set(edge_types) if edge_types else None
-        visited_nodes: Dict[str, GraphNode] = {start_id: self._nodes[start_id]}
-        visited_edges: List[GraphEdge] = []
-        seen_edge_keys: set[Tuple[str, str, str]] = set()
-        frontier: deque[Tuple[str, int]] = deque([(start_id, 0)])
+        with self._lock:
+            if start_id not in self._nodes:
+                raise KeyError(f"node not found: {start_id}")
+            if edge_types:
+                for etype in edge_types:
+                    _relationship_label(etype)  # reject bad labels (AGE parity)
+            allowed = set(edge_types) if edge_types else None
+            visited_nodes: Dict[str, GraphNode] = {start_id: self._nodes[start_id]}
+            visited_edges: List[GraphEdge] = []
+            seen_edge_keys: set[Tuple[str, str, str]] = set()
+            frontier: deque[Tuple[str, int]] = deque([(start_id, 0)])
 
-        while frontier:
-            current, depth = frontier.popleft()
-            if depth >= max_depth:
-                continue
-            for edge in self._edges:
-                if allowed and edge.edge_type not in allowed:
+            while frontier:
+                current, depth = frontier.popleft()
+                if depth >= max_depth:
                     continue
-                neighbor: Optional[str] = None
-                if direction in {"out", "both"} and edge.source_id == current:
-                    neighbor = edge.target_id
-                elif direction in {"in", "both"} and edge.target_id == current:
-                    neighbor = edge.source_id
-                if neighbor is None:
-                    continue
-                key = (edge.edge_type, edge.source_id, edge.target_id)
-                if key not in seen_edge_keys:
-                    seen_edge_keys.add(key)
-                    visited_edges.append(edge)
-                if neighbor not in visited_nodes:
-                    node = self._nodes.get(neighbor)
-                    if node is None:
-                        node = GraphNode(neighbor, "unknown", neighbor)
-                    visited_nodes[neighbor] = node
-                    frontier.append((neighbor, depth + 1))
+                for edge in self._edges:
+                    if allowed and edge.edge_type not in allowed:
+                        continue
+                    neighbor: Optional[str] = None
+                    if direction in {"out", "both"} and edge.source_id == current:
+                        neighbor = edge.target_id
+                    elif direction in {"in", "both"} and edge.target_id == current:
+                        neighbor = edge.source_id
+                    if neighbor is None:
+                        continue
+                    key = (edge.edge_type, edge.source_id, edge.target_id)
+                    if key not in seen_edge_keys:
+                        seen_edge_keys.add(key)
+                        visited_edges.append(edge)
+                    if neighbor not in visited_nodes:
+                        node = self._nodes.get(neighbor)
+                        if node is None:
+                            node = GraphNode(neighbor, "unknown", neighbor)
+                        visited_nodes[neighbor] = node
+                        frontier.append((neighbor, depth + 1))
 
-        return {
-            "start_id": start_id,
-            "backend": "in_memory",
-            "nodes": [node.as_dict() for node in visited_nodes.values()],
-            "edges": [edge.as_dict() for edge in visited_edges],
-        }
+            return {
+                "start_id": start_id,
+                "backend": "in_memory",
+                "nodes": [node.as_dict() for node in visited_nodes.values()],
+                "edges": [edge.as_dict() for edge in visited_edges],
+            }
 
     def semantic_search(
         self, query: str, *, kind: Optional[str] = None, limit: int = 5
     ) -> List[Dict[str, Any]]:
-        query_vec = embed_text(query, self.dimension)
-        scored: List[Dict[str, Any]] = []
-        for node_id, vector in self._embeddings.items():
-            node = self._nodes[node_id]
-            if kind and node.kind != kind:
-                continue
-            score = cosine_similarity(query_vec, vector)
-            scored.append(
-                {
-                    "node_id": node_id,
-                    "kind": node.kind,
-                    "label": node.label,
-                    "score": round(score, 6),
-                }
-            )
-        scored.sort(key=lambda row: row["score"], reverse=True)
-        return scored[:limit]
+        with self._lock:
+            query_vec = embed_text(query, self.dimension)
+            scored: List[Dict[str, Any]] = []
+            for node_id, vector in self._embeddings.items():
+                node = self._nodes[node_id]
+                if kind and node.kind != kind:
+                    continue
+                score = cosine_similarity(query_vec, vector)
+                scored.append(
+                    {
+                        "node_id": node_id,
+                        "kind": node.kind,
+                        "label": node.label,
+                        "score": round(score, 6),
+                    }
+                )
+            scored.sort(key=lambda row: row["score"], reverse=True)
+            return scored[:limit]
 
     def readiness(self) -> Dict[str, Any]:
         return {
@@ -403,12 +826,61 @@ class InMemoryGraphStore(GraphStore):
         }
 
     def stats(self) -> Dict[str, int]:
-        return {
-            "nodes": len(self._nodes),
-            "edges": len(self._edges),
-            "concepts": len(self._concepts),
-            "embeddings": len(self._embeddings),
-        }
+        with self._lock:
+            return {
+                "nodes": len(self._nodes),
+                "edges": len(self._edges),
+                "concepts": len(self._concepts),
+                "embeddings": len(self._embeddings),
+            }
+
+        # removal ------------------------------------------------------------------
+
+    def edges_for(
+        self, node_id: str, edge_type: str, *, direction: str = "out"
+    ) -> List[GraphEdge]:
+        """Return this node's edges of one type, outgoing or incoming."""
+        with self._lock:
+            if direction not in {"out", "in"}:
+                raise ValueError("direction must be 'out' or 'in'")
+            if direction == "out":
+                return [
+                    edge
+                    for edge in self._edges
+                    if edge.edge_type == edge_type and edge.source_id == node_id
+                ]
+            return [
+                edge
+                for edge in self._edges
+                if edge.edge_type == edge_type and edge.target_id == node_id
+            ]
+
+    def delete_edge(self, edge_type: str, source_id: str, target_id: str) -> bool:
+        """Remove one directed edge; ``True`` when something was removed."""
+        with self._lock:
+            before = len(self._edges)
+            self._edges = [
+                edge
+                for edge in self._edges
+                if not (
+                    edge.edge_type == edge_type
+                    and edge.source_id == source_id
+                    and edge.target_id == target_id
+                )
+            ]
+            return len(self._edges) != before
+
+    def delete_node(self, node_id: str) -> bool:
+        """Remove a node, its embedding and every edge touching it."""
+        with self._lock:
+            existed = self._nodes.pop(node_id, None) is not None
+            self._embeddings.pop(node_id, None)
+            self._edges = [
+                edge
+                for edge in self._edges
+                if edge.source_id != node_id and edge.target_id != node_id
+            ]
+            return existed
 
 
 # --- Postgres + Apache AGE + pgvector backend --------------------------------
@@ -496,6 +968,27 @@ class PostgresGraphStore(GraphStore):
         vector = embed_text(embed_source, self.dimension)
         with self._engine.begin() as conn:
             self._prepare(conn)
+            # The same invariant as the in-memory store, read **inside** this
+            # transaction and with the row locked, so the check cannot be
+            # overtaken by a concurrent writer between the read and the upsert.
+            # Reading it through ``get_node`` would open its own connection and
+            # leave exactly that window.
+            # ``fetchone`` rather than ``scalar_one_or_none``: it is the accessor
+            # ``get_node`` and ``_cypher`` already use in this class, so the one
+            # shape of result handling holds throughout.
+            stored_row = conn.execute(
+                sql(
+                    "SELECT node_kind FROM graph_nodes WHERE node_id = :id FOR UPDATE"
+                ),
+                {"id": node_id},
+            ).fetchone()
+            stored_kind = stored_row[0] if stored_row else None
+            if stored_kind is not None and stored_kind != kind:
+                raise NodeKindConflict(
+                    f"node {node_id!r} already exists with kind {stored_kind!r}; "
+                    f"a node's kind cannot be changed to {kind!r} because the "
+                    "governed properties it carries differ by kind"
+                )
             self._cypher(
                 conn,
                 "MERGE (n:GraphNode {node_id: $node_id}) "
@@ -535,8 +1028,42 @@ class PostgresGraphStore(GraphStore):
 
         props = dict(properties or {})
         rel = _relationship_label(edge_type)
+        # Before the write transaction, not inside it: the reachability walk
+        # reads through ``edges_for``, which opens its own connection, so running
+        # it inside ``begin()`` would read on a second connection anyway. The
+        # in-memory backend holds its lock across check and append and is
+        # therefore atomic; here two concurrent writers could each add one edge
+        # of a cycle, which is the same window the ordering hole has and which
+        # ``hierarchy_consistency`` reports rather than the gate closing.
+        self.assert_hierarchy_stays_acyclic(edge_type, source_id, target_id)
         with self._engine.begin() as conn:
             self._prepare(conn)
+            if edge_type in HIERARCHY_EDGE_TYPES:
+                # ONT-002's edge half, read **inside** this transaction for the
+                # same reason ``upsert_node``'s kind check is: reading it through
+                # ``get_node`` would open its own connection and leave a window
+                # between the check and the write. One statement for both
+                # endpoints, and the shared pure rule decides, so the two
+                # backends cannot drift in what they refuse or in what they say.
+                kinds = {
+                    row[0]: row[1]
+                    for row in conn.execute(
+                        sql(
+                            "SELECT node_id, node_kind FROM graph_nodes "
+                            "WHERE node_id IN (:source_id, :target_id)"
+                        ),
+                        {"source_id": source_id, "target_id": target_id},
+                    ).fetchall()
+                }
+                refusal = hierarchy_class_separation_refusal(
+                    edge_type,
+                    source_id,
+                    target_id,
+                    source_kind=kinds.get(source_id),
+                    target_kind=kinds.get(target_id),
+                )
+                if refusal is not None:
+                    raise HierarchyClassSeparationConflict(refusal)
             self._cypher(
                 conn,
                 "MERGE (a:GraphNode {node_id: $source_id}) "
@@ -819,6 +1346,94 @@ class PostgresGraphStore(GraphStore):
             "concepts": int(concepts),
             "embeddings": int(embeddings),
         }
+
+    # removal ------------------------------------------------------------------
+    #
+    # Verification boundary, stated rather than implied: these three methods are
+    # written to the same pattern as the upserts above - the AGE graph and the
+    # two relational mirrors (``graph_edges``/``graph_nodes`` plus
+    # ``embedding_vectors``) are changed in one transaction - but **they have not
+    # been run against a live Postgres+AGE+pgvector instance**, because this
+    # environment has none. The in-memory backend's equivalents are covered by
+    # ``tests/test_graph_mirroring.py``; the assertions that need a real
+    # database live in ``tests/test_integration_age.py``, which skips unless
+    # ``SDP_DATABASE_DSN`` is reachable. Implementing only the in-memory half
+    # would have left the Postgres deployment with the stale-data defect, which
+    # is worse than an unverified-but-reviewed implementation.
+
+    def edges_for(
+        self, node_id: str, edge_type: str, *, direction: str = "out"
+    ) -> List[GraphEdge]:
+        """Return this node's edges of one type, outgoing or incoming."""
+        from sqlalchemy import text as sql
+
+        if direction not in {"out", "in"}:
+            raise ValueError("direction must be 'out' or 'in'")
+        column = "source_id" if direction == "out" else "target_id"
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                sql(
+                    "SELECT edge_type, source_id, target_id, edge_properties "
+                    f"FROM graph_edges WHERE edge_type = :etype AND {column} = :node"
+                ),
+                {"etype": edge_type, "node": node_id},
+            ).fetchall()
+        return [
+            GraphEdge(row[0], row[1], row[2], dict(row[3] or {})) for row in rows
+        ]
+
+    def delete_edge(self, edge_type: str, source_id: str, target_id: str) -> bool:
+        """Remove one directed edge; ``True`` when something was removed."""
+        from sqlalchemy import text as sql
+
+        rel = _relationship_label(edge_type)
+        with self._engine.begin() as conn:
+            self._prepare(conn)
+            self._cypher(
+                conn,
+                "MATCH (a:GraphNode {node_id: $source_id})"
+                f"-[r:{rel}]->"
+                "(b:GraphNode {node_id: $target_id}) DELETE r RETURN 1 AS v",
+                "v agtype",
+                params={"source_id": source_id, "target_id": target_id},
+            )
+            removed = conn.execute(
+                sql(
+                    "DELETE FROM graph_edges WHERE edge_type = :etype "
+                    "AND source_id = :src AND target_id = :tgt"
+                ),
+                {"etype": edge_type, "src": source_id, "tgt": target_id},
+            ).rowcount
+        return bool(removed)
+
+    def delete_node(self, node_id: str) -> bool:
+        """Remove a node, its embedding and every edge touching it."""
+        from sqlalchemy import text as sql
+
+        with self._engine.begin() as conn:
+            self._prepare(conn)
+            self._cypher(
+                conn,
+                "MATCH (n:GraphNode {node_id: $node_id}) DETACH DELETE n RETURN 1 AS v",
+                "v agtype",
+                params={"node_id": node_id},
+            )
+            conn.execute(
+                sql(
+                    "DELETE FROM graph_edges "
+                    "WHERE source_id = :node OR target_id = :node"
+                ),
+                {"node": node_id},
+            )
+            conn.execute(
+                sql("DELETE FROM embedding_vectors WHERE node_id = :node"),
+                {"node": node_id},
+            )
+            removed = conn.execute(
+                sql("DELETE FROM graph_nodes WHERE node_id = :node"),
+                {"node": node_id},
+            ).rowcount
+        return bool(removed)
 
 
 # --- Backend selection --------------------------------------------------------

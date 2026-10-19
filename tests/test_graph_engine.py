@@ -73,7 +73,9 @@ def test_ingest_node_edge_and_fetch():
     assert node.status_code == 200
     assert node.json()["node"]["node_id"] == "svc-A"
 
-    fetched = client.get("/graph/nodes/svc-A")
+    # /graph/nodes/{id} is now gated: this call used to pass no actor at all,
+    # which is what pinned the ungated read.
+    fetched = client.get("/graph/nodes/svc-A", params={"actor": "admin"})
     assert fetched.status_code == 200
     assert fetched.json()["kind"] == "service"
 
@@ -105,7 +107,10 @@ def test_ingest_concept_creates_traversable_node():
 
 
 def test_missing_node_returns_404():
-    assert client.get("/graph/nodes/does-not-exist").status_code == 404
+    # Authorization runs before the lookup, so an unauthorized caller cannot use
+    # 403-vs-404 as an existence oracle; 404 is reserved for a caller allowed to ask.
+    assert client.get("/graph/nodes/does-not-exist", params={"actor": "admin"}).status_code == 404
+    assert client.get("/graph/nodes/does-not-exist").status_code == 403
 
 
 # --- traversal ---------------------------------------------------------------

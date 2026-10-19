@@ -47,9 +47,21 @@ def enterprise_kpi_framework() -> KPIFramework:
                 label="Metadata completeness",
                 decision_question="Are buyer priority datasets complete enough for diligence and analyst use?",
                 definition="Share of priority datasets with owner, steward, schema, lineage, quality, freshness, license, and sensitivity present.",
-                target=">=90 percent display coverage",
+                # This target was published with ``status: implemented`` while
+                # nothing in the code compared anything to 0.90 - the only
+                # thresholds in the evidence path were 0.95 on
+                # ``metadata_validation_pass_rate`` (a different, stricter
+                # measure: the share of datasets with *no* missing field) and
+                # 0.7 on ontology coverage. A target nothing compares to is not
+                # a gate. ``/enterprise/evidence-pack`` now measures and gates
+                # this one, so the number and the target meet.
+                target=">=90 percent mean metadata_completeness across datasets",
                 cadence="dataset onboarding review",
-                source_endpoints=["/catalog/datasets/{dataset_id}/validate", "/catalog/datasets/{dataset_id}/lineage"],
+                source_endpoints=[
+                    "/catalog/datasets/{dataset_id}/validate",
+                    "/catalog/datasets/{dataset_id}",
+                    "/enterprise/evidence-pack",
+                ],
                 owner="data steward",
                 guardrails=["Completeness must not hide failed validation.", "Deprecated datasets stay visible with status."],
                 status="implemented",
@@ -96,10 +108,29 @@ def enterprise_kpi_framework() -> KPIFramework:
                 id="ontology_mapping_coverage",
                 label="Ontology mapping coverage",
                 decision_question="Are enough critical buyer terms mapped for a credible pilot?",
-                definition="Share of buyer critical glossary terms mapped to approved concepts or active steward patch proposals.",
+                # The "or active steward patch proposals" clause contradicted
+                # this KPI's own guardrail below, and the implementation
+                # honoured the guardrail. The definition is corrected to the
+                # stricter reading rather than the number loosened to match the
+                # looser one. The denominator is the glossary, which is what
+                # "share of ... terms" means; it used to be "mappings that
+                # happen to exist", so the metric rose when mappings were
+                # deleted.
+                definition="Share of registered glossary concepts with at least one approved business mapping. Mappings naming a concept the ontology does not define are excluded from both numerator and denominator and reported as unregistered_mapping_concept_count.",
                 target=">=70 percent",
                 cadence="domain onboarding review",
-                source_endpoints=["/ontology/search", "/ontology/resolve", "/ontology/patches"],
+                # The endpoints that actually produce this number, not the ones
+                # a reader might associate with the topic. ``/ontology/patches``
+                # was listed and the measurement never reads the patch queue -
+                # a diligence reader following the published evidence fetched a
+                # queue that contributes nothing. The inputs are the glossary
+                # (the denominator) and each dataset's mappings (the numerator);
+                # the evidence pack is where the computed figure is published.
+                source_endpoints=[
+                    "/ontology/concepts",
+                    "/catalog/datasets/{dataset_id}",
+                    "/enterprise/evidence-pack",
+                ],
                 owner="ontology engineer",
                 guardrails=["Proposed mappings are not treated as approved mappings."],
                 status="implemented",

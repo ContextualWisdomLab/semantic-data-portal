@@ -355,8 +355,16 @@ def enterprise_readiness_manifest() -> EnterpriseReadinessManifest:
             EnterpriseGate(
                 id="ontology_mapping_coverage",
                 label="Semantic coverage",
-                target="70 percent or higher mapping coverage for critical business glossary terms before paid pilot conversion.",
-                evidence=["/ontology/search", "/ontology/resolve", "/ontology/patches"],
+                target="70 percent or higher of registered glossary concepts carrying at least one approved business mapping, before paid pilot conversion.",
+                # Same correction as the KPI of this id: name the surfaces the
+                # measurement consults. ``/ontology/patches`` is real evidence
+                # for the steward-review surface, which does read the queue -
+                # it is not evidence for this number.
+                evidence=[
+                    "/ontology/concepts",
+                    "/catalog/datasets/{dataset_id}",
+                    "/enterprise/evidence-pack",
+                ],
                 status="implemented",
             ),
             EnterpriseGate(

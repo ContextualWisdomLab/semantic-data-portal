@@ -56,7 +56,9 @@ class GraphTraversalRequest(BaseModel):
 
 
 class SemanticSearchRequest(BaseModel):
-    query: str = Field(min_length=1)
+    # embed_text builds one string and one MD5 digest per character position, so
+    # an unbounded query is unbounded CPU: a 2 MiB query measured 2.87s.
+    query: str = Field(min_length=1, max_length=2000)
     kind: Optional[str] = Field(default=None, description="restrict to a node kind")
     limit: int = Field(default=5, ge=1, le=50)
     actor: str = Field(default="anonymous", description="authenticated subject for authz")

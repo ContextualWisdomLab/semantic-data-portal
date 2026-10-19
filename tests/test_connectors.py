@@ -16,7 +16,14 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+import json  # noqa: E402
+
+from fastapi.testclient import TestClient  # noqa: E402
+
 from sdp import catalog, connectors, evidence  # noqa: E402
+from sdp.api import app  # noqa: E402
+
+client = TestClient(app)
 
 # connector id -> a source_system scheme it accepts
 _ACCEPTS = {
@@ -34,6 +41,7 @@ def _isolate_state():
     data = {k: v.model_copy(deep=True) for k, v in catalog._DATA.items()}
     audit = list(catalog._AUDIT_LOG)
     decisions = list(evidence._POLICY_DECISION_LOG)
+    audit_events = list(evidence._AUDIT_EVENT_LOG)
     try:
         yield
     finally:
@@ -43,6 +51,8 @@ def _isolate_state():
         catalog._AUDIT_LOG.extend(audit)
         evidence._POLICY_DECISION_LOG.clear()
         evidence._POLICY_DECISION_LOG.extend(decisions)
+        evidence._AUDIT_EVENT_LOG.clear()
+        evidence._AUDIT_EVENT_LOG.extend(audit_events)
 
 
 def _seed(ds_id: str, *, source_system: str, sensitivity: str = "medium"):
@@ -106,3 +116,98 @@ def test_preview_wrong_scheme_raises_valueerror(connector_id: str) -> None:
     conn = connectors.get_source_connector(connector_id)
     with pytest.raises(ValueError):
         conn.preview("wrong-scheme-preview", limit=10, offset=0)
+
+
+def test_connector_probe_never_publishes_source_credentials():
+    """``connector_probe`` returned ``dataset.source_system`` verbatim on a route
+    with no actor, so a credentialed DSN reached an unauthenticated caller:
+
+        source_system: postgresql://svc_user:S3cr3t-Pa55@payroll.acme.internal:5432/payroll
+
+    ``source_system`` is a ``_GOVERNED_DATASET_FIELDS`` member that
+    ``catalog.discovery_view`` withholds; the probe re-published it.
+    """
+    _seed(
+        "acme-payroll",
+        source_system="postgresql://svc_user:S3cr3t-Pa55@payroll.acme.internal:5432/payroll",
+    )
+    probe = connectors.connector_probe("sql_connector", "acme-payroll")
+    body = json.dumps(probe)
+    assert "S3cr3t-Pa55" not in body
+    assert "svc_user" not in body
+    # The non-secret locator survives, so the evidence stays useful.
+    assert probe["source_system"] == "postgresql://payroll.acme.internal:5432/payroll"
+
+
+def test_connector_probe_route_is_gated_like_the_dataset_it_describes():
+    """The route releases one dataset's source system, schema-field count and
+    sensitivity, so it is gated and audited like the other governed reads."""
+    _seed("acme-payroll", source_system="postgresql://u:p@payroll.acme.internal/payroll")
+    catalog._DATA["acme-payroll"] = catalog._DATA["acme-payroll"].model_copy(
+        update={"tenant_id": "acme-bank"}
+    )
+
+    # 404, not 403: this route names its dataset in a QUERY parameter, which the
+    # earlier oracle sweep did not enumerate, so it answered 403 for a foreign
+    # dataset and 404 for an absent one - telling an outsider which ids exist.
+    # Both now answer alike. The gate is unchanged; only the status is uniform.
+    anonymous = client.get(
+        "/enterprise/connectors/sql_connector/probe", params={"dataset_id": "acme-payroll"}
+    )
+    assert anonymous.status_code == 404, anonymous.text
+    assert "tenant" not in anonymous.text
+
+    cross_tenant = client.get(
+        "/enterprise/connectors/sql_connector/probe",
+        params={"dataset_id": "acme-payroll", "user": "analyst"},
+    )
+    assert cross_tenant.status_code == 404
+    missing = client.get(
+        "/enterprise/connectors/sql_connector/probe",
+        params={"dataset_id": "no-such-dataset", "user": "analyst"},
+    )
+    assert (cross_tenant.status_code, cross_tenant.text) == (
+        missing.status_code,
+        missing.text,
+    ), "foreign and absent must be indistinguishable"
+
+    allowed = client.get(
+        "/enterprise/connectors/sql_connector/probe",
+        params={"dataset_id": "acme-payroll", "user": "admin"},
+    )
+    assert allowed.status_code == 200
+    assert "p@payroll" not in allowed.text
+
+
+def test_credential_vault_acceptance_criterion_names_the_connectors_it_covers():
+    """The ``connector_credential_vault`` integration is published as
+    ``implemented`` with the criterion "Connector probes use secret references and
+    fail closed when a secret reference is missing." Measured with every
+    ``SDP_CONNECTOR_SECRET*`` variable removed, only one of the four connectors
+    behaves that way:
+
+        sql_connector        secret_present=False  -> status=ready_for_demo
+        rdf_connector        secret_present=False  -> status=ready_for_demo
+        file_lake_connector  secret_present=False  -> status=ready_for_demo
+        rest_connector       secret_present=False  -> status=contract_only
+
+    ``credential_vault`` is in ``required_controls`` for ``rest_connector`` alone
+    (``sdp_core/readiness.py``), so ``connector_probe`` never checks the vault for
+    the other three. The criterion is corrected to state the scope that actually
+    holds; extending the control to all four connectors would require operators to
+    configure three more secret references to reach ``ready_for_demo``, which is a
+    product decision and is deliberately left to the owner.
+    """
+    from sdp_core import production, readiness
+
+    vault = [i for i in production.production_integration_registry()
+             if i.id == "connector_credential_vault"][0]
+    criteria = " ".join(vault.acceptance_criteria)
+    assert "rest_connector" in criteria, criteria
+
+    enforcing = [
+        connector.id
+        for connector in readiness.connector_registry_manifest()
+        if "credential_vault" in connector.required_controls
+    ]
+    assert enforcing == ["rest_connector"], enforcing
