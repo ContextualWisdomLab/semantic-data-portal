@@ -149,17 +149,65 @@ HIERARCHY_EDGE_TYPES = ("broader", "narrower")
 CONCEPT_NODE_KIND = "concept"
 
 
-class HierarchyClassSeparationConflict(ValueError):
-    """A hierarchy edge that would subclass across the concept/asset boundary.
+class GraphIntegrityConflict(ValueError):
+    """A well-formed graph write refused by what the store already holds.
 
     A ``ValueError`` subclass for the same reason
     :class:`sdp.ontology.ConceptKindConflict` is one: every existing handler that
     catches ``ValueError`` still catches this, so no caller silently stops
-    refusing. The routes that want the precise status catch it first and answer
-    **409** - the request is well-formed and the conflict is with stored state
-    (the named nodes' kinds), exactly as it is for a reclassification - so both
-    publication paths answer one status for one rule.
+    refusing. The routes that want the precise status catch this base and answer
+    **409** - the request is well-formed and the conflict is with stored state,
+    exactly as it is for a reclassification - so every rule below answers one
+    status on every publication path, and the next one does too without a third
+    ``except`` arm to remember.
     """
+
+
+class HierarchyClassSeparationConflict(GraphIntegrityConflict):
+    """A hierarchy edge that would subclass across the concept/asset boundary.
+
+    ONT-002: the conflict is with the named nodes' stored ``kind``.
+    """
+
+
+class HierarchyCycleConflict(GraphIntegrityConflict):
+    """A hierarchy edge that would make a concept broader than itself.
+
+    The conflict is with the subsumption relation the stored hierarchy edges
+    already assert. Measured at HEAD before this gate, each one authorized
+    request on the shipped seed::
+
+        POST /graph/edges broader 고객 -> 주문        -> 200
+        POST /graph/edges broader 주문 -> 고객        -> 200   (고객 <= 주문 <= 고객)
+        POST /graph/edges broader 고객 -> 고객        -> 200   (a self-loop)
+        POST /ontology/concepts {"concept": "순환상위", "broader": "고객"}  -> 200
+        POST /ontology/concepts {"concept": "고객", "broader": "순환상위"}  -> 200
+
+    so the published glossary could assert that two distinct terms are each a
+    kind of the other, which collapses them in any OWL reading of SKOS and makes
+    "broader/narrower 조회" (ONT-003) answer with a hierarchy that has no top.
+    No read surface crashed on it - traversal is depth-bounded - so the damage
+    was silent and semantic rather than an availability failure.
+    """
+
+
+def subsumption_pair(
+    edge_type: str, source_id: str, target_id: str
+) -> Optional[Tuple[str, str]]:
+    """The ``(child, parent)`` a hierarchy edge asserts, or ``None``.
+
+    Direction matters and the seed depends on it: ``narrower: 고객 -> 활성 고객``
+    and ``broader: 활성 고객 -> 고객`` are the *same* assertion written from both
+    ends - 활성 고객 is a kind of 고객 - and the shipped vocabulary states both
+    for two of its pairs. Reading them as two opposed assertions would make the
+    seed cyclic, so the direction is normalized here once, in one place, rather
+    than at each caller.
+    """
+    if edge_type == "broader":
+        return (source_id, target_id)
+    if edge_type == "narrower":
+        return (target_id, source_id)
+    return None
 
 
 def hierarchy_class_separation_refusal(
@@ -338,6 +386,65 @@ class GraphStore(ABC):
         if refusal is not None:
             raise HierarchyClassSeparationConflict(refusal)
 
+    def subsumption_parents(self, node_id: str) -> List[str]:
+        """The nodes this node is asserted to be a kind of.
+
+        Reads both spellings of the one assertion - an outgoing ``broader`` and
+        an incoming ``narrower`` - through the ``edges_for`` primitive both
+        backends already implement, so the rule below has one implementation
+        rather than one per backend plus recursive SQL that only an integration
+        run could exercise.
+        """
+        parents = [
+            edge.target_id for edge in self.edges_for(node_id, "broader", direction="out")
+        ]
+        parents.extend(
+            edge.source_id for edge in self.edges_for(node_id, "narrower", direction="in")
+        )
+        return parents
+
+    def assert_hierarchy_stays_acyclic(
+        self, edge_type: str, source_id: str, target_id: str
+    ) -> None:
+        """Refuse a hierarchy edge that would make a concept broader than itself.
+
+        Walks **up** from the proposed parent: if the proposed child is already
+        reachable through the stored subsumption relation, adding this edge
+        closes a cycle. A self-loop is the degenerate case of the same rule and
+        is refused by the same check. ``visited`` makes the walk terminate even
+        when the stored hierarchy is *already* cyclic - from an edge written
+        before this gate, or through the ordering the gate cannot see - so a
+        pre-existing cycle cannot turn a refusal into a hang.
+
+        What this does **not** do is decide satisfiability: no reasoner runs
+        here, there are no OWL axioms in this repository, and a cycle in SKOS
+        makes concepts mutually subsuming rather than unsatisfiable. The
+        published count and the engine declaration say so - see
+        ``sdp.semantic_validation.hierarchy_consistency``.
+        """
+        pair = subsumption_pair(edge_type, source_id, target_id)
+        if pair is None:
+            return
+        child, parent = pair
+        if child == parent:
+            raise HierarchyCycleConflict(
+                f"{edge_type!r} would make {child!r} a kind of itself"
+            )
+        visited = {parent}
+        frontier = [parent]
+        while frontier:
+            current = frontier.pop()
+            for ancestor in self.subsumption_parents(current):
+                if ancestor == child:
+                    raise HierarchyCycleConflict(
+                        f"{edge_type!r} would make {child!r} a kind of {parent!r}, "
+                        f"and {parent!r} is already a kind of {child!r} through the "
+                        "stored hierarchy: a concept cannot be broader than itself"
+                    )
+                if ancestor not in visited:
+                    visited.add(ancestor)
+                    frontier.append(ancestor)
+
     @abstractmethod
     def concept_graph(self, term: str) -> Dict[str, Any]:
         """Return the concept-centered graph for ``term``."""
@@ -498,6 +605,11 @@ class InMemoryGraphStore(GraphStore):
             self.assert_hierarchy_respects_class_separation(
                 edge_type, source_id, target_id
             )
+            # And the hierarchy stays acyclic. Also inside the lock, and
+            # ``subsumption_parents`` reads through ``edges_for``, which re-takes
+            # the same ``RLock`` - so here the reachability read and the append
+            # are one atomic step.
+            self.assert_hierarchy_stays_acyclic(edge_type, source_id, target_id)
             for existing in self._edges:
                 if (
                     existing.edge_type == edge_type
@@ -875,6 +987,14 @@ class PostgresGraphStore(GraphStore):
 
         props = dict(properties or {})
         rel = _relationship_label(edge_type)
+        # Before the write transaction, not inside it: the reachability walk
+        # reads through ``edges_for``, which opens its own connection, so running
+        # it inside ``begin()`` would read on a second connection anyway. The
+        # in-memory backend holds its lock across check and append and is
+        # therefore atomic; here two concurrent writers could each add one edge
+        # of a cycle, which is the same window the ordering hole has and which
+        # ``hierarchy_consistency`` reports rather than the gate closing.
+        self.assert_hierarchy_stays_acyclic(edge_type, source_id, target_id)
         with self._engine.begin() as conn:
             self._prepare(conn)
             if edge_type in HIERARCHY_EDGE_TYPES:

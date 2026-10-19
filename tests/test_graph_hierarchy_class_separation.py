@@ -161,9 +161,14 @@ def test_a_hierarchy_edge_across_the_class_boundary_is_refused(
         ("mapping", SEEDED_DATASET, SEEDED_CONCEPT),
         ("related", SEEDED_DATASET, SEEDED_CONCEPT),
         ("has_column", SEEDED_DATASET, SEEDED_COLUMN),
-        # Legitimate SKOS subsumption.
+        # Legitimate SKOS subsumption. The two spellings name the *same*
+        # assertion (고객 is a kind of 주문), deliberately: with the narrower
+        # case written the other way round, whichever of the two ran second
+        # closed a cycle on what the first wrote and was refused by the
+        # acyclicity gate - correctly, which made this "nothing legitimate"
+        # case depend on parametrize order.
         ("broader", SEEDED_CONCEPT, OTHER_SEEDED_CONCEPT),
-        ("narrower", SEEDED_CONCEPT, OTHER_SEEDED_CONCEPT),
+        ("narrower", OTHER_SEEDED_CONCEPT, SEEDED_CONCEPT),
     ],
 )
 def test_the_rule_refuses_nothing_legitimate(
@@ -280,6 +285,27 @@ def test_the_refused_publication_leaves_neither_store_written() -> None:
     assert (
         client.get("/graph/nodes/부분쓰기검사", params={"user": "admin"}).status_code == 404
     )
+
+
+def test_an_already_published_concept_is_gated_on_the_same_rule() -> None:
+    """The case this file first missed, and the defect it hid.
+
+    Every case above names a concept that is not in the vocabulary yet.
+    ``validate_concept_registration`` returns early for an already-published
+    one, on the ground that the stored record was validated when it was
+    published - true for ``definition``, false for the hierarchy fields, because
+    the route mirrors the *submitted* ``broader``/``narrower`` into the graph.
+    So this request reached the store's gate through the unguarded mirror write
+    and answered **500** where the unpublished case answered 409. The two
+    hierarchy rules are now asked above that branch.
+    """
+    assert SEEDED_CONCEPT in ontology.list_concepts()
+    response = client.post(
+        "/ontology/concepts",
+        json={**ADMIN, "concept": SEEDED_CONCEPT, "definition": "정의", "broader": SEEDED_DATASET},
+    )
+    assert response.status_code == 409
+    assert "mapping" in response.json()["detail"]
 
 
 def test_the_publication_path_still_accepts_a_concept_hierarchy() -> None:

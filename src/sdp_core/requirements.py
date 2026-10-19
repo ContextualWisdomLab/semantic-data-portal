@@ -444,6 +444,8 @@ REQUIREMENT_COVERAGE: dict[str, RequirementCoverage] = {
             "route:POST /graph/query",
             "test:tests/test_graph_engine.py::test_graph_query_traverses_concept_hierarchy",
             "test:tests/test_api.py::test_ontology_concept_graph",
+            "test:tests/test_graph_hierarchy_consistency.py::test_the_edge_that_closes_a_two_concept_cycle_is_refused",
+            "test:tests/test_graph_hierarchy_consistency.py::test_the_two_spellings_of_one_assertion_are_one_pair",
         ],
         note=(
             "broader/narrower/related are carried per concept, are readable "
@@ -465,7 +467,17 @@ REQUIREMENT_COVERAGE: dict[str, RequirementCoverage] = {
             "an IRI for a concept that does not exist, so the defect is now "
             "visible to a reader; it is not fixed in the graph. the currently "
             "cited test_the_shared_vocabulary_itself_stays_open asserts only "
-            "definition/aliases/canonical and proves nothing about the hierarchy."
+            "definition/aliases/canonical and proves nothing about the hierarchy. "
+            "A second defect in the same read path is now closed: the hierarchy "
+            "could be made **cyclic**, so \"broader/narrower 관계 조회\" answered "
+            "200 with a hierarchy that has no top. Measured: `broader 고객 -> "
+            "주문` then `broader 주문 -> 고객`, both 200, after which "
+            "`GET /ontology/term/고객/graph`, `GET /ontology/concept/고객`, "
+            "`GET /ontology/search` and `POST /graph/query` all still answered "
+            "200 - traversal is depth-bounded, so nothing crashed and the "
+            "glossary was simply wrong. The closing edge is now refused with 409 "
+            "on both publication paths and the cycle count is published; see "
+            "ONT-007 for the gate, the report, and what remains absent."
         ),
     ),
     "ONT-004": RequirementCoverage(
@@ -624,8 +636,61 @@ REQUIREMENT_COVERAGE: dict[str, RequirementCoverage] = {
         ),
     ),
     "ONT-007": RequirementCoverage(
-        status="not_implemented",
-        note="No reasoner is integrated and no consistency check runs.",
+        status="partial",
+        evidence=[
+            "func:sdp.graph_store.GraphStore.assert_hierarchy_stays_acyclic",
+            "func:sdp.semantic_validation.hierarchy_consistency",
+            "func:sdp.ontology.hierarchy_consistency_report",
+            "route:GET /enterprise/shacl-validation",
+            "test:tests/test_graph_hierarchy_consistency.py::test_the_edge_that_closes_a_two_concept_cycle_is_refused",
+            "test:tests/test_graph_hierarchy_consistency.py::test_a_self_loop_is_the_same_rule",
+            "test:tests/test_graph_hierarchy_consistency.py::test_a_concept_cannot_be_published_under_its_own_descendant",
+            "test:tests/test_graph_hierarchy_consistency.py::test_a_cycle_the_gate_never_saw_is_reported_with_its_members",
+            "test:tests/test_graph_hierarchy_consistency.py::test_the_report_is_honest_about_what_ran",
+        ],
+        note=(
+            "One consistency condition is now checked, and the number a release "
+            "gate would read is published - but **no reasoner is integrated**, "
+            "and this note previously said no check ran at all. What runs is an "
+            "acyclicity check over the subsumption relation `broader`/`narrower` "
+            "assert: the edge that would close a cycle is refused with 409 on "
+            "both publication paths (`POST /graph/edges` and "
+            "`POST /ontology/concepts`), and "
+            "`/enterprise/shacl-validation` publishes "
+            "`hierarchy_consistency` with `cycle_count`, the cycles' members, "
+            "`consistency_engine: builtin_graph_checks` and "
+            "`reasoner_executed: false`. Measured before the gate, each one "
+            "authorized request on the shipped seed: `broader 고객 -> 주문` 200 "
+            "then `broader 주문 -> 고객` 200 (each term a kind of the other), a "
+            "self-loop `broader 고객 -> 고객` 200, and the same cycle through "
+            "`POST /ontology/concepts` 200/200. No read surface crashed on it - "
+            "traversal is depth-bounded - so a glossary with no top answered 200 "
+            "everywhere, which is ONT-003's read path as much as this "
+            "requirement's. Direction is normalized once in "
+            "`graph_store.subsumption_pair`, because `narrower: A -> B` and "
+            "`broader: B -> A` are the same assertion and the seed states two of "
+            "its five subsumptions from both ends; reading them as opposed would "
+            "have made the seed itself cyclic. "
+            "The criterion asks for `unsatisfiable class 0개` as a release gate, "
+            "and the published number is deliberately **not** called that: a "
+            "cycle makes concepts mutually subsuming, and unsatisfiability needs "
+            "a disjointness axiom this repository does not have, so the number is "
+            "`cycle_count` - what is computed. Still absent: any reasoner, any "
+            "OWL axiom, SKOS S27 (`skos:related` disjoint from "
+            "`skos:broaderTransitive`, measured clean on the seed but ungated), "
+            "and any wiring of this number into a release gate - nothing blocks a "
+            "release on it, because this repository has no release gate to wire "
+            "it into. Acyclicity is a graph property rather than a shape, so it "
+            "is deliberately outside `_SHACL_COMPATIBLE_SHAPES`: putting it there "
+            "would make `shacl_compatible` cover a constraint that is not "
+            "shape-shaped. The gate reads edges rather than node kinds, so no "
+            "single write through `upsert_edge` closes a cycle unseen; what the "
+            "report is for is edges the gate never saw - a hierarchy written "
+            "before it existed, a bulk path that bypasses `upsert_edge`, and on "
+            "the Postgres backend two concurrent writers each adding one edge, "
+            "because there the reachability walk runs outside the write "
+            "transaction."
+        ),
     ),
     "ONT-008": RequirementCoverage(
         status="not_implemented",

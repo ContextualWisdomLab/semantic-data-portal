@@ -2,9 +2,9 @@
 
 이 문서는 `claude/semantic-portal-pr-merge-e5a48k` 브랜치(PR
 [#102](https://github.com/ContextualWisdomLab/semantic-data-portal/pull/102))가
-베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **208개** 커밋 중 122개는
-gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 86개입니다. 이 숫자는 **이
-줄을 담은 커밋을 포함한** 값입니다 — 측정 시점의 207에 이 커밋을 더한 것. 측정 명령:
+베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **209개** 커밋 중 122개는
+gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 87개입니다. 이 숫자는 **이
+줄을 담은 커밋을 포함한** 값입니다 — 측정 시점의 208에 이 커밋을 더한 것. 측정 명령:
 
     git rev-list --count origin/docs/product-technical-gap-baseline..HEAD
     git log --format=%H origin/docs/product-technical-gap-baseline..HEAD \
@@ -30,16 +30,75 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 86
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                       1190 passed, 11 skipped
-    pytest (파일 순서 정/역/난수)  각 1179 passed, 11 skipped — 순서 무관
+    pytest                       1209 passed, 11 skipped
+    pytest (파일 순서 정/역/난수)  각 1198 passed, 11 skipped — 순서 무관
                                  (정순 · 역순 · seed 11/707/31337)
     pytest tests/fuzz            11 passed
     python -m sdp.demo_smoke     exit 0, "ready": true
 
-`tests/fuzz`는 파일 순서 측정 대상(`tests/test_*.py`)에 포함되지 않으므로 1190 - 1179
+`tests/fuzz`는 파일 순서 측정 대상(`tests/test_*.py`)에 포함되지 않으므로 1209 - 1198
 = 11건의 차이가 납니다. 트리를 **동결**한 상태에서만 측정합니다 — 이 세션에서 백그라운드
 측정 중에 트리를 고친 탓에 seed 11이 4건 실패로 나온 일이 있고, 그것은 결함이 아니라
 동시 편집이었습니다.
+
+### Fixed — 개념이 자기 자신보다 상위가 될 수 있던 두 경로 (ONT-007/ONT-003, high)
+
+`broader`/`narrower`는 포섭을 주장하는데, **저장된 계층이 이미 뭐라고 말하는지 아무도
+읽지 않았습니다**. 측정값(각 1회 인증 요청, 시드 그대로):
+
+    POST /graph/edges  broader  고객 -> 주문   -> 200
+    POST /graph/edges  broader  주문 -> 고객   -> 200   (서로가 서로의 한 종류)
+    POST /graph/edges  broader  고객 -> 고객   -> 200   (자기 순환)
+    POST /ontology/concepts {"concept": "순환상위", "broader": "고객"}  -> 200
+    POST /ontology/concepts {"concept": "고객", "broader": "순환상위"}  -> 200
+
+순환이 있는 상태에서도 `GET /ontology/term/고객/graph`,
+`GET /ontology/concept/고객`, `GET /ontology/search`, `POST /graph/query`가 모두
+200이었습니다 — 순회에 깊이 상한이 있어서 아무것도 터지지 않고, 그래서 **조용히** 틀린
+용어집이 서비스되고 있었습니다. 이것이 ONT-003의 "broader/narrower 관계 조회"이자
+ONT-007의 "unsatisfiable class 0개" 양쪽에 걸린 결함입니다.
+
+방향이 전부입니다. `narrower: 고객 -> 활성 고객`과 `broader: 활성 고객 -> 고객`은
+**같은 주장**이고 시드가 다섯 개 포섭 중 둘을 그렇게 양쪽에서 선언합니다. 반대 주장으로
+읽으면 시드 자체가 순환이 되므로, 방향은 `graph_store.subsumption_pair` 한 곳에서만
+정규화합니다. 시드의 계층 간선 7개 = 서로 다른 `(child, parent)` 주장 5개.
+
+**거부**: 순환을 닫는 간선은 두 게시 경로 모두에서 409. 상위로 거슬러 올라가는 탐색이라
+2단 순환뿐 아니라 긴 사슬도 잡고, 자기 순환은 같은 규칙의 퇴화 사례입니다. `visited`
+가드가 **이미** 순환인 계층에서도 탐색이 끝나게 합니다 — 역검증으로 확인: 순환 안에 있는
+노드를 부모로 제안하면 가드 없이는 15초 타임아웃까지 반환하지 않고, 가드가 있으면 정상
+반환합니다(그 간선은 순환을 닫지 않으므로). 첫 역검증 시도는 부모가 아무 부모도 없는
+노드여서 탐색이 순환에 닿기 전에 끝났고, 그래서 가드가 불필요한 것처럼 보였습니다 —
+그 사례를 테스트로 박아 두었습니다.
+
+**이번에 같이 고친 선행 커밋의 결함**: 두 계층 규칙(ONT-002의 class 분리와 이 순환
+규칙)은 이제 `validate_concept_registration`의 **이미 게시된 개념 조기 반환보다 위에서**
+검사합니다. 그 조기 반환의 근거("저장된 레코드는 게시 때 검증되었다")는 `definition`에는
+맞지만 계층 필드에는 틀립니다 — 라우트가 **제출된** broader/narrower를 그래프에
+미러링하므로 버려지지 않습니다. 측정: 아래에 두면 시드 개념 다섯 개 중 하나(`고객`)에
+대한 동일 요청이 **500**(미러 쓰기가 어느 try에도 없음), 미게시 개념에는 409였습니다.
+이름 검사(`_assert_concept_kind_is_available`)가 그 둘보다 앞에 섭니다 — 데이터셋 id를
+이름으로 쓴 개념은 "이름 충돌"이 더 정확한 진단이기 때문입니다.
+
+**공표**: `/enterprise/shacl-validation`의 `hierarchy_consistency`가 `cycle_count`,
+순환 구성 개념, `consistency_engine: builtin_graph_checks`,
+`reasoner_executed: false`를 게시합니다. 릴리즈 게이트가 읽을 숫자이고, 수용 기준이
+부르는 "unsatisfiable class"로 이름 붙이지 않았습니다 — 순환은 개념들을 서로 포섭하게
+만들 뿐이고 불충족성에는 이 저장소에 없는 disjointness axiom이 필요하므로, 계산한 것의
+이름(순환 수)을 씁니다. 순환성은 노드나 간선의 성질이 아니라 **그래프**의 성질이라
+SHACL shape 목록에는 넣지 않았습니다 — 넣으면 `shacl_compatible`이 shape이 아닌 제약을
+담게 됩니다.
+
+ONT-002의 class 분리와 달리, 이 게이트는 kind가 아니라 **간선**을 읽으므로 단일 쓰기로
+순환이 생기는 구멍은 없습니다(그쪽 게이트를 뚫는 순서를 이 게이트는 409로 막습니다 —
+측정). 리포트는 게이트가 본 적 없는 간선을 위한 것입니다: 게이트 이전에 쓰인 계층,
+`upsert_edge`를 우회하는 향후 일괄 경로, 그리고 Postgres 백엔드에서 도달 가능성 탐색이
+쓰기 트랜잭션 **밖에서** 돌기 때문에 생기는 동시 쓰기 창.
+
+미해결로 선언해 둔 것: reasoner도 OWL axiom도 없고, SKOS S27(`skos:related`와
+`skos:broaderTransitive`의 disjointness — 시드는 측정상 깨끗하지만 게이트 없음)은
+검사하지 않으며, 이 숫자를 묶을 릴리즈 게이트 자체가 저장소에 없습니다. ONT-007은
+`not_implemented`에서 `partial`로만 올립니다.
 
 ### Fixed — data asset이 business class 계층에 들어갈 수 있던 두 경로 (ONT-002, high)
 

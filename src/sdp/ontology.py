@@ -14,6 +14,7 @@ from .semantic_validation import (
     PRESENCE_BASIS,
     has_visible_character,
     hierarchy_class_separation,
+    hierarchy_consistency,
     validate_concept_semantics,
 )
 
@@ -274,6 +275,36 @@ def _assert_hierarchy_targets_respect_class_separation(
             )
 
 
+def _assert_declared_hierarchy_stays_acyclic(
+    canonical: str, broader: str | None, narrower: List[str] | None
+) -> None:
+    """Refuse a concept whose declared parent or child closes a hierarchy cycle.
+
+    The companion to ``_assert_hierarchy_targets_respect_class_separation``, and
+    here for the same reason: measured, ``POST /ontology/concepts`` published
+    ``순환상위`` with ``broader: 고객`` and then ``고객`` with
+    ``broader: 순환상위``, both **200**, leaving the glossary asserting that each
+    of two distinct terms is a kind of the other. Asked before the first write,
+    because ``upsert_concept`` writes the concept node and the vocabulary record
+    before its hierarchy edges.
+
+    The declared targets are checked **one at a time against the stored
+    hierarchy**, so a submission that would close a cycle only between two of
+    its own newly declared relations is not caught here - it is caught by the
+    store's gate as each edge is written, after the vocabulary record exists.
+    That residual is reported by ``hierarchy_consistency`` rather than claimed
+    closed.
+    """
+    from .graph_store import get_store
+
+    store = get_store()
+    for relation, target in [("broader", broader)] + [
+        ("narrower", narrow) for narrow in list(narrower or [])
+    ]:
+        if target:
+            store.assert_hierarchy_stays_acyclic(relation, canonical, target)
+
+
 def concept_shape_report(
     concept: str, record: Dict[str, Any], *, evaluated_record: str = "submitted"
 ) -> dict[str, Any]:
@@ -291,6 +322,25 @@ def concept_shape_report(
         resolve_concept=canonical_concept_or_none,
         evaluated_record=evaluated_record,
     )
+
+
+def _vocabulary_hierarchy_edges() -> list[tuple[str, str, str]]:
+    """Every hierarchy edge with at least one endpoint in the vocabulary.
+
+    Deduplicated - each edge is found once from each endpoint that is in the
+    vocabulary - and sorted, so both reports below publish a stable order and
+    read the same set of edges.
+    """
+    from .graph_store import HIERARCHY_EDGE_TYPES, get_store
+
+    store = get_store()
+    found: set[tuple[str, str, str]] = set()
+    for concept in concept_vocabulary_snapshot():
+        for relation in HIERARCHY_EDGE_TYPES:
+            for direction in ("out", "in"):
+                for edge in store.edges_for(concept, relation, direction=direction):
+                    found.add((edge.edge_type, edge.source_id, edge.target_id))
+    return sorted(found)
 
 
 def hierarchy_class_separation_report() -> dict[str, Any]:
@@ -314,18 +364,10 @@ def hierarchy_class_separation_report() -> dict[str, Any]:
     declares for the concept pass rate - so ``conformance_scope`` says so here
     too rather than letting the count read as covering every edge in the graph.
     """
-    from .graph_store import HIERARCHY_EDGE_TYPES, get_store
+    from .graph_store import get_store
 
     store = get_store()
-    # Deduplicated: each edge is found twice, once from each endpoint that is in
-    # the vocabulary. Sorted so the published violation order is stable.
-    found: set[tuple[str, str, str]] = set()
-    for concept in concept_vocabulary_snapshot():
-        for relation in HIERARCHY_EDGE_TYPES:
-            for direction in ("out", "in"):
-                for edge in store.edges_for(concept, relation, direction=direction):
-                    found.add((edge.edge_type, edge.source_id, edge.target_id))
-
+    found = _vocabulary_hierarchy_edges()
     kinds: dict[str, str | None] = {}
 
     def _kind_of(node_id: str) -> str | None:
@@ -344,7 +386,43 @@ def hierarchy_class_separation_report() -> dict[str, Any]:
                 "source_kind": _kind_of(source_id),
                 "target_kind": _kind_of(target_id),
             }
-            for edge_type, source_id, target_id in sorted(found)
+            for edge_type, source_id, target_id in found
+        ]
+    )
+
+
+def hierarchy_consistency_report() -> dict[str, Any]:
+    """Whether the published hierarchy is acyclic, over the graph's current state.
+
+    The companion to ``hierarchy_class_separation_report``, but **not** for the
+    same reason, and the difference is measured rather than assumed. The
+    class-separation gate reads node *kinds*, so an edge written while an
+    endpoint is not a node yet escapes it. This gate reads *edges*, and
+    ``subsumption_parents`` sees both spellings of every stored subsumption, so
+    no single write through ``upsert_edge`` can close a cycle unseen - the
+    ordering that defeats the other gate is refused by this one (measured: 409).
+
+    What this report is for is edges the gate never saw: a hierarchy written
+    before the gate existed (a long-lived process, or a Postgres database that
+    predates the deploy), a future bulk path that appends without going through
+    ``upsert_edge``, and - on the Postgres backend only - two concurrent writers
+    each adding one edge of the same cycle, because there the reachability walk
+    runs outside the write transaction.
+
+    ONT-007 asks for a consistency check whose result a release gate can read.
+    This is not a reasoner and the report says so: no OWL axioms exist in this
+    repository, and a subsumption cycle makes concepts mutually subsuming rather
+    than unsatisfiable, so what is published is the cycle count rather than a
+    number called "unsatisfiable classes".
+    """
+    from .graph_store import subsumption_pair
+
+    return hierarchy_consistency(
+        [
+            pair
+            for edge_type, source_id, target_id in _vocabulary_hierarchy_edges()
+            for pair in (subsumption_pair(edge_type, source_id, target_id),)
+            if pair is not None
         ]
     )
 
@@ -381,6 +459,30 @@ def validate_concept_registration(
         raise ValueError(f"concept must contain {PRESENCE_BASIS}")
     if len(canonical) > MAX_ONTOLOGY_PATCH_FIELD:
         raise ValueError(f"concept must be at most {MAX_ONTOLOGY_PATCH_FIELD} characters")
+    # Above the already-published branch, and deliberately not inside it. The
+    # exemption that branch rests on - "the stored record was validated when it
+    # was published" - holds for ``definition`` and ``aliases``, which the
+    # registrar discards from a re-submission. It does **not** hold for the
+    # hierarchy fields: the route mirrors the *submitted* ``broader``,
+    # ``narrower`` and ``related`` into the graph store (it is the only way to
+    # update a concept's edges), so those are not discarded and must be gated on
+    # both paths. Measured with these two calls below the branch instead:
+    # ``POST /ontology/concepts {"concept": "고객", "broader":
+    # "crm-customer-master"}`` - 고객 being one of the five seeded concepts -
+    # answered **500**, because the mirror write is inside neither ``try``
+    # block, where the identical request for an unpublished concept answered
+    # 409. One rule, one status, both paths.
+    #
+    # The name check leads, because it is the more precise diagnosis of the same
+    # request: a concept named after an existing dataset is refused for its
+    # *name*, and letting the hierarchy rules answer first turned that into "its
+    # source is a dataset node" - true, but it describes the hierarchy edge the
+    # publication would have written rather than the collision the caller made.
+    # It is also safe above the branch: for an already-published concept it asks
+    # whether that concept's own id is still a concept node, which it is.
+    _assert_concept_kind_is_available(canonical)
+    _assert_hierarchy_targets_respect_class_separation(canonical, broader, narrower)
+    _assert_declared_hierarchy_stays_acyclic(canonical, broader, narrower)
     if canonical not in _CONCEPT_DEFINITIONS:
         _assert_no_alias_conflict(
             canonical, list(aliases or []) + list(multilingual or [])
@@ -413,8 +515,6 @@ def validate_concept_registration(
     # ``crm-customer-master`` answered 200 and put a dataset id into the
     # vocabulary and the open SKOS export. Here it covers both publication
     # paths, which is the same reason the ConceptShape gate lives here.
-    _assert_concept_kind_is_available(canonical)
-    _assert_hierarchy_targets_respect_class_separation(canonical, broader, narrower)
     # ONT-005's acceptance criterion is "reasoner + SHACL + reviewer 승인 후
     # 병합" and reviewer approval was the whole gate. The shape is evaluated
     # here - the designated pre-write validator, whose ValueError the routes

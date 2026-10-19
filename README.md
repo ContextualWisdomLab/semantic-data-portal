@@ -450,6 +450,13 @@ SDP_DATABASE_DSN='postgresql+psycopg://sdp_graph_app:<url-encoded-password>@loca
   아직 노드가 아닌 끝점은 거부하지 않는다 — 시드 자체가 정의되지 않은 계층
   target을 선언하고 `upsert_concept`가 target 등록보다 먼저 간선을 쓰므로,
   거부하면 시드 로드가 실패한다.
+- `POST /graph/edges`·`POST /ontology/concepts` — 계층이 **순환**하면 409.
+  `broader`/`narrower`가 주장하는 포섭 관계에서 순환(자기 자신을 포함)을 닫는
+  간선은 거부된다 (ONT-007). 방향은 한 번만 정규화한다 — `narrower: A -> B`와
+  `broader: B -> A`는 같은 주장이고 시드가 다섯 개 포섭 중 둘을 양쪽에서
+  선언하므로, 반대 주장으로 읽으면 시드 자체가 순환이 된다. 이미 게시된 개념도
+  같은 규칙을 받는다: 등록기가 재제출을 버리더라도 **그래프 미러는 제출된
+  broader/narrower를 쓰기 때문**이다.
 - `GET /enterprise/shacl-validation` — 데이터셋 conformance에 더해
   `concept_conformance`(어휘 전체의 ConceptShape 적합률 + warning 수)와
   `hierarchy_class_separation`(**ConceptHierarchyShape** — 계층 간선 양 끝의
@@ -457,7 +464,12 @@ SDP_DATABASE_DSN='postgresql+psycopg://sdp_graph_app:<url-encoded-password>@loca
   `unknown_endpoint_count`로 따로 센다)을 게시한다. 쓰기 게이트가 볼 수 없는
   순서 — 끝점이 없을 때 쓴 간선의 끝점이 나중에 dataset으로 생기는 경우 — 는
   이 리포트가 잡는다. SHACL 프로세서나 reasoner는 여전히 실행되지 않는다
-  (`shacl_engine_executed: false`).
+  (`shacl_engine_executed: false`). 여기에 `hierarchy_consistency`가 더해진다 —
+  포섭 관계의 순환 수(`cycle_count`)와 순환에 포함된 개념들, 그리고
+  `consistency_engine: builtin_graph_checks` / `reasoner_executed: false`.
+  릴리즈 게이트가 읽을 수 있는 숫자이고, 수용 기준이 부르는 "unsatisfiable
+  class"가 **아니라** 실제로 계산한 것(순환 수)으로 이름을 붙였다. 순환성은
+  노드나 간선이 아니라 그래프의 성질이므로 SHACL shape 목록에는 넣지 않는다.
 - `GET /browse/{dataset_id}/schema`
 - `POST /browse/{dataset_id}/preview`
 - `POST /llm/search`

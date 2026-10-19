@@ -27,7 +27,7 @@ from .graph_models import (
     OntologyConceptRequest,
     SemanticSearchRequest,
 )
-from .graph_store import HierarchyClassSeparationConflict, get_store
+from .graph_store import GraphIntegrityConflict, get_store
 from .seed import seed_dataset, seed_store
 from .catalog import (
     deprecate_dataset,
@@ -1984,14 +1984,15 @@ def ingest_concept(payload: OntologyConceptRequest) -> dict[str, Any]:
             narrower=list(getattr(payload, "narrower", None) or []),
             related=list(getattr(payload, "related", None) or []),
         )
-    except (ontology.ConceptKindConflict, HierarchyClassSeparationConflict) as conflict:
+    except (ontology.ConceptKindConflict, GraphIntegrityConflict) as conflict:
         # 409, not 400: the request is well-formed and the conflict is with
         # state. Caught before the ValueError arm because it is a subclass.
-        # Both conflicts are "an id already exists as a different kind of thing,
-        # and that forbids what you asked" - the concept's own name for the
-        # first, a declared ``broader``/``narrower`` target for the second
-        # (ONT-002's edge half) - so they answer the same status and are audited
-        # the same way.
+        # Every conflict here is "what the store already holds forbids what you
+        # asked" - the concept's own name (ConceptKindConflict), a declared
+        # ``broader``/``narrower`` target that is a data asset (ONT-002), or one
+        # that would make the concept broader than itself - so they answer the
+        # same status and are audited the same way, and a further integrity rule
+        # joins them without a third arm to remember.
         _audit_refused_concept_upsert(payload.actor, payload.concept, decision, str(conflict))
         raise HTTPException(status_code=409, detail=str(conflict)) from conflict
     except ValueError as invalid:
@@ -2103,9 +2104,10 @@ def ingest_graph_edge(payload: GraphEdgeRequest) -> dict[str, Any]:
             payload.target_id,
             properties=payload.properties,
         )
-    except HierarchyClassSeparationConflict as conflict:
+    except GraphIntegrityConflict as conflict:
         # 409, not 400: the request is well-formed and the conflict is with
-        # stored state - the named nodes' kinds - which is the same reading that
+        # stored state - the named nodes' kinds, or the subsumption relation the
+        # stored hierarchy already asserts - which is the same reading that
         # makes a reclassification 409 on ``POST /graph/nodes``. Caught before
         # the ValueError arm because it is a subclass, and the two publication
         # paths for a hierarchy edge therefore answer one status for one rule.

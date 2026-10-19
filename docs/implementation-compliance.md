@@ -145,6 +145,21 @@
     시점에 알려진 kind만 읽으므로, 끝점이 없을 때 쓴 간선의 끝점이 나중에
     dataset으로 생기는 순서는 리포트만 잡는다(측정: `conforms` false,
     `hierarchy_pass_rate` 0.875).
+- ONT-007 consistency check — **거부 + 공표**, reasoner는 없음
+  - `POST /graph/edges`, `POST /ontology/concepts` — 포섭 순환(자기 자신 포함)을
+    닫는 간선은 409. 방향은 `graph_store.subsumption_pair`가 한 번 정규화한다
+    (`narrower: A -> B` == `broader: B -> A`; 시드가 둘을 양쪽에서 선언한다).
+    이미 게시된 개념도 같은 규칙을 받는다 — 등록기는 재제출을 버리지만 그래프
+    미러는 제출된 broader/narrower를 쓰므로, 그 필드만 조기 반환 위로 올렸다
+    (측정: 아래에 두면 같은 요청이 미게시 개념에는 409, 시드 개념에는 500).
+  - `GET /enterprise/shacl-validation` → `hierarchy_consistency` —
+    `cycle_count`, 순환 구성 개념, `consistency_engine: builtin_graph_checks`,
+    `reasoner_executed: false`.
+  - 미해결 경계: reasoner·OWL axiom 없음, SKOS S27 미검사(시드는 측정상 깨끗),
+    이 숫자를 묶을 릴리즈 게이트 자체가 저장소에 없음. 순환성은 그래프의 성질이라
+    SHACL shape 목록에 넣지 않았다. 게이트는 kind가 아니라 간선을 읽으므로 단일
+    쓰기로는 순환이 생기지 않고, 리포트는 게이트가 본 적 없는 간선(게이트 이전
+    데이터, `upsert_edge`를 우회하는 경로, Postgres의 동시 쓰기 창)을 위한 것이다.
   - 미해결 경계: SHACL 프로세서·reasoner 없음, `kind`는 자유 문자열,
     끝점이 없는 간선은 violation이 아니라 `unknown_endpoint_count`(시드가 2회,
     violation으로 올리면 시드 로드 자체가 실패한다 — 역검증). 리포트 범위는
@@ -159,6 +174,8 @@
   - `tests/test_concept_shape_gate.py` (ConceptShape 게이트·warning 경계·플랫폼 수치)
   - `tests/test_graph_hierarchy_class_separation.py` (ONT-002 계층 간선 거부 +
     ConceptHierarchyShape 평가·범위 선언)
+  - `tests/test_graph_hierarchy_consistency.py` (ONT-007 순환 거부 + cycle_count
+    공표·방향 정규화·종료성)
 
 ## 3) Browse / Query
 

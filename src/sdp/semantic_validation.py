@@ -570,6 +570,88 @@ def hierarchy_class_separation(
     }
 
 
+# The hierarchy's acyclicity is a property of the **graph**, not of one node or
+# one edge, and SHACL expresses that only through a SPARQL-based constraint. So
+# it is deliberately **not** in ``_SHACL_COMPATIBLE_SHAPES``: adding it there
+# would make ``shacl_compatible`` - which claims every published shape is one
+# this validator evaluates - cover a constraint that is not shape-shaped. It is
+# published as its own report, with its own engine declaration, for the same
+# reason ``shacl_engine_executed`` exists: "consistency check" alone reads as a
+# reasoner having run.
+CONSISTENCY_ENGINE = "builtin_graph_checks"
+REASONER_EXECUTED = False
+
+# ONT-007's acceptance criterion is "unsatisfiable class 0개가 release gate".
+# What is published is the **cycle** count, because that is what is computed and
+# what a SKOS-only vocabulary can actually have: a cycle makes concepts mutually
+# subsuming, and unsatisfiability needs a disjointness axiom this repository does
+# not have. Naming the number after the criterion rather than after the
+# computation is the mistake ``shacl_compatible`` already taught here.
+HIERARCHY_CONSISTENCY_CONDITIONS = ("acyclic_subsumption",)
+
+HIERARCHY_CONSISTENCY_SCOPE = (
+    "the subsumption relation asserted by broader/narrower edges with at least "
+    "one endpoint in ontology._CONCEPT_DEFINITIONS, read in one direction "
+    "(narrower: A -> B and broader: B -> A are the same assertion). Not "
+    "checked: SKOS S27 (skos:related disjoint from skos:broaderTransitive), any "
+    "OWL axiom, and any condition needing a reasoner - none runs here"
+)
+
+
+def hierarchy_consistency(
+    subsumption_pairs: list[tuple[str, str]],
+) -> dict[str, Any]:
+    """Whether the subsumption relation these ``(child, parent)`` pairs form is acyclic.
+
+    Pure, like ``hierarchy_class_separation``: the pairs arrive already
+    normalized for direction (``sdp.graph_store.subsumption_pair``) and already
+    scoped, so this module stays free of the store it validates. The assembly is
+    ``sdp.ontology.hierarchy_consistency_report``.
+
+    Each cycle is reported once, as the sorted set of concepts it contains, so
+    the same cycle found from three different entry points is one finding rather
+    than three, and the pairs themselves are deduplicated because the seed
+    states two of its subsumptions from both ends. ``conforms`` is "no cycle": a concept that is broader than itself
+    is not a hierarchy, and unlike the unknown-endpoint case there is nothing
+    unknown about it - the shipped seed is acyclic (measured), so this can be a
+    violation without refusing the product's own data.
+    """
+    # Deduplicated, because one assertion can arrive twice: the shipped seed
+    # states two of its five subsumptions from both ends (``narrower: 고객 ->
+    # 활성 고객`` and ``broader: 활성 고객 -> 고객``), so the 7 hierarchy edges
+    # carry 5 distinct ``(child, parent)`` assertions. Counting the edges under a
+    # key named for pairs would have published 7 for a relation of size 5.
+    distinct_pairs = sorted(set(subsumption_pairs))
+    parents: dict[str, set[str]] = {}
+    for child, parent in distinct_pairs:
+        parents.setdefault(child, set()).add(parent)
+
+    cycles: set[tuple[str, ...]] = set()
+    for start in sorted(parents):
+        # Walk up from ``start``; any path that returns to it is a cycle.
+        stack: list[tuple[str, tuple[str, ...]]] = [(start, (start,))]
+        while stack:
+            current, path = stack.pop()
+            for parent in sorted(parents.get(current, ())):
+                if parent == start:
+                    cycles.add(tuple(sorted(set(path))))
+                elif parent not in path:
+                    stack.append((parent, path + (parent,)))
+
+    members = sorted({concept for cycle in cycles for concept in cycle})
+    return {
+        "checked_conditions": list(HIERARCHY_CONSISTENCY_CONDITIONS),
+        "consistency_engine": CONSISTENCY_ENGINE,
+        "reasoner_executed": REASONER_EXECUTED,
+        "subsumption_pair_count": len(distinct_pairs),
+        "cycle_count": len(cycles),
+        "cycles": [list(cycle) for cycle in sorted(cycles)],
+        "concepts_in_a_cycle": members,
+        "conforms": not cycles,
+        "conformance_scope": HIERARCHY_CONSISTENCY_SCOPE,
+    }
+
+
 def enterprise_shacl_validation_summary(
     tenant_ids: list[str] | None = None,
 ) -> dict[str, Any]:
@@ -593,6 +675,7 @@ def enterprise_shacl_validation_summary(
         canonical_concept_or_none,
         concept_vocabulary_snapshot,
         hierarchy_class_separation_report,
+        hierarchy_consistency_report,
     )
 
     concept_conformance = concept_vocabulary_conformance(
@@ -629,4 +712,9 @@ def enterprise_shacl_validation_summary(
         # to any caller - unlike the per-dataset ``reports`` array above, which
         # carries tenant-owned dataset ids and is scoped.
         "hierarchy_class_separation": hierarchy_class_separation_report(),
+        # ONT-007's half: a consistency result a release gate can read. Separate
+        # from the SHACL block above and carrying its own engine declaration,
+        # because acyclicity is a graph property rather than a shape and because
+        # no reasoner runs - see ``hierarchy_consistency``.
+        "hierarchy_consistency": hierarchy_consistency_report(),
     }
