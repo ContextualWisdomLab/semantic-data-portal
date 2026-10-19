@@ -12,7 +12,7 @@ Edges:  broader / narrower / related (ontology), mapping (dataset->concept),
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
 from . import catalog, ontology
 from .graph_store import GraphStore, get_store
@@ -42,6 +42,46 @@ def seed_store(store: Optional[GraphStore] = None) -> dict:
         seed_dataset(dataset, store=store)
 
     return store.stats()
+
+
+def assert_dataset_mirror_kinds_are_available(
+    dataset_id: str, column_names: Iterable[str], store: Optional[GraphStore] = None
+) -> None:
+    """Refuse a catalog write whose graph mirror would reclassify a node.
+
+    ``seed_dataset`` writes exactly two kinds of node - ``dataset_id`` as a
+    ``dataset`` and ``f"{dataset_id}:{column}"`` as a ``column`` - and
+    ``assert_node_kind_is_stable`` refuses either if that id already exists as
+    something else. Both catalog routes mirrored **after** writing the catalog
+    row, so that refusal arrived too late. Measured before this check, each one
+    authorized request:
+
+        POST /catalog/datasets {"id": "고객", ...}        (고객 is a seeded concept)
+            -> 500, the catalog row created and served 200 by
+               GET /catalog/datasets/고객, no graph node, and every later
+               ``seed_store`` in the process raising on that row - so one
+               request permanently broke seeding.
+
+        PATCH /catalog/datasets/{id} adding a column whose node id a concept
+        holds
+            -> 400 "request body is not valid", with the title *and* the schema
+               change kept by the catalog and the graph half-mirrored. The
+               caller is told the request was rejected while it was applied.
+
+    So the question is asked here, before the catalog row is touched, and the
+    routes map the refusal to 409 - the same status the structurally identical
+    conflict already answers on ``POST /graph/nodes`` and
+    ``POST /ontology/concepts``. The 500 and the mislabelled 400 were both
+    introduced with the kind rule itself; this closes the two paths that rule
+    left unguarded.
+
+    Kept next to ``seed_dataset`` on purpose: it enumerates the same node ids
+    that function writes, so a change to one is visible beside the other.
+    """
+    store = store or get_store()
+    store.assert_node_kind_is_stable(dataset_id, "dataset")
+    for column_name in column_names:
+        store.assert_node_kind_is_stable(f"{dataset_id}:{column_name}", "column")
 
 
 def seed_dataset(dataset: Any, store: Optional[GraphStore] = None) -> None:

@@ -343,6 +343,12 @@ REQUIREMENT_COVERAGE: dict[str, RequirementCoverage] = {
             "test:tests/test_graph_engine.py::test_semantic_search_kind_filter_only_returns_datasets",
             "test:tests/test_graph_node_kind_stability.py::test_a_concept_named_after_an_existing_dataset_is_refused",
             "test:tests/test_graph_node_kind_stability.py::test_a_column_node_cannot_be_reclassified_either",
+            "func:sdp.seed.assert_dataset_mirror_kinds_are_available",
+            "route:POST /catalog/datasets",
+            "route:PATCH /catalog/datasets/{dataset_id}",
+            "test:tests/test_catalog_mirror_kind_conflict.py::test_a_dataset_id_a_concept_node_holds_is_refused_with_nothing_written",
+            "test:tests/test_catalog_mirror_kind_conflict.py::test_a_patch_whose_column_collides_is_refused_before_the_mutation",
+            "test:tests/test_catalog_mirror_kind_conflict.py::test_a_malformed_patch_body_is_still_400_not_409",
             "test:tests/test_graph_hierarchy_class_separation.py::test_a_hierarchy_edge_across_the_class_boundary_is_refused",
             "test:tests/test_graph_hierarchy_class_separation.py::test_the_rule_refuses_nothing_legitimate",
             "test:tests/test_graph_hierarchy_class_separation.py::test_a_concept_cannot_declare_a_data_asset_as_its_parent_or_child",
@@ -371,7 +377,26 @@ REQUIREMENT_COVERAGE: dict[str, RequirementCoverage] = {
             "only the vocabulary, so a store-side guard missed it entirely and "
             "approving a patch named `crm-customer-master` answered 200 and put "
             "a dataset id into the vocabulary and the open SKOS export "
-            "(measured). `ConceptKindConflict` is a `ValueError` subclass, so "
+            "(measured). The two **catalog** write paths were unguarded in the "
+            "same way, which adversarial review found while enumerating every "
+            "path that can change a node's kind: both mirrored into the graph "
+            "*after* writing the catalog row, so the kind refusal arrived too "
+            "late. Measured, each one authorized request: "
+            "`POST /catalog/datasets {\"id\": \"고객\"}` (a seeded concept) "
+            "answered **500** with the catalog row created and served 200, no "
+            "graph node, and every later `seed_store` in the process raising "
+            "on that row - one request left the service unable to seed a graph "
+            "store again; and a `PATCH` declaring a column whose node id a "
+            "concept holds answered **400 \"request body is not valid\"** with "
+            "the title *and* the schema change already applied. Both now ask "
+            "`seed.assert_dataset_mirror_kinds_are_available` before the "
+            "catalog row is touched and answer 409 with nothing written, and "
+            "the refusal is audited with its own reason rather than the "
+            "allow-reason of the decision that permitted it. The conflict is "
+            "now its own type, `NodeKindConflict`: a bare `except ValueError` "
+            "arm for it turned a non-numeric `quality_score` into a 409, "
+            "because `pydantic.ValidationError` is a `ValueError` too "
+            "(measured while adding that arm). `ConceptKindConflict` is a `ValueError` subclass, so "
             "every existing handler still catches it while the routes that want "
             "the precise status answer 409 rather than 400. This note previously recorded that 200 as a modelling "
             "violation; measured, it was worse — `upsert_node` built a fresh node "

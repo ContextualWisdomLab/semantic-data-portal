@@ -163,6 +163,21 @@ class GraphIntegrityConflict(ValueError):
     """
 
 
+class NodeKindConflict(GraphIntegrityConflict):
+    """A write that would change an existing node's ``kind``.
+
+    ``assert_node_kind_is_stable`` raised a bare ``ValueError``, which is also
+    what ``pydantic.ValidationError`` is: a route that mapped this conflict to
+    409 with ``except ValueError`` therefore turned a malformed request body into
+    a 409 as well (measured while adding exactly such an arm to
+    ``PATCH /catalog/datasets/{id}``: a non-numeric ``quality_score`` answered
+    409 instead of 400). A distinct type is what lets a handler be precise, and
+    it stays a ``GraphIntegrityConflict`` - so a ``ValueError`` - which keeps
+    every existing handler, including ``ontology.ConceptKindConflict``'s wrapper,
+    working unchanged.
+    """
+
+
 class HierarchyClassSeparationConflict(GraphIntegrityConflict):
     """A hierarchy edge that would subclass across the concept/asset boundary.
 
@@ -345,7 +360,7 @@ class GraphStore(ABC):
         """
         existing = self.get_node(node_id)
         if existing is not None and existing.kind != kind:
-            raise ValueError(
+            raise NodeKindConflict(
                 f"node {node_id!r} already exists with kind {existing.kind!r}; "
                 f"a node's kind cannot be changed to {kind!r} because the "
                 "governed properties it carries differ by kind"
@@ -969,7 +984,7 @@ class PostgresGraphStore(GraphStore):
             ).fetchone()
             stored_kind = stored_row[0] if stored_row else None
             if stored_kind is not None and stored_kind != kind:
-                raise ValueError(
+                raise NodeKindConflict(
                     f"node {node_id!r} already exists with kind {stored_kind!r}; "
                     f"a node's kind cannot be changed to {kind!r} because the "
                     "governed properties it carries differ by kind"

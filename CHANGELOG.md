@@ -2,9 +2,9 @@
 
 이 문서는 `claude/semantic-portal-pr-merge-e5a48k` 브랜치(PR
 [#102](https://github.com/ContextualWisdomLab/semantic-data-portal/pull/102))가
-베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **210개** 커밋 중 122개는
-gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 88개입니다. 이 숫자는 **이
-줄을 담은 커밋을 포함한** 값입니다 — 측정 시점의 209에 이 커밋을 더한 것. 측정 명령:
+베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **211개** 커밋 중 122개는
+gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 89개입니다. 이 숫자는 **이
+줄을 담은 커밋을 포함한** 값입니다 — 측정 시점의 210에 이 커밋을 더한 것. 측정 명령:
 
     git rev-list --count origin/docs/product-technical-gap-baseline..HEAD
     git log --format=%H origin/docs/product-technical-gap-baseline..HEAD \
@@ -30,16 +30,52 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 88
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                       1213 passed, 11 skipped
-    pytest (파일 순서 정/역/난수)  각 1202 passed, 11 skipped — 순서 무관
+    pytest                       1221 passed, 11 skipped
+    pytest (파일 순서 정/역/난수)  각 1210 passed, 11 skipped — 순서 무관
                                  (정순 · 역순 · seed 11/707/31337)
     pytest tests/fuzz            11 passed
     python -m sdp.demo_smoke     exit 0, "ready": true
 
-`tests/fuzz`는 파일 순서 측정 대상(`tests/test_*.py`)에 포함되지 않으므로 1213 - 1202
+`tests/fuzz`는 파일 순서 측정 대상(`tests/test_*.py`)에 포함되지 않으므로 1221 - 1210
 = 11건의 차이가 납니다. 트리를 **동결**한 상태에서만 측정합니다 — 이 세션에서 백그라운드
 측정 중에 트리를 고친 탓에 seed 11이 4건 실패로 나온 일이 있고, 그것은 결함이 아니라
 동시 편집이었습니다.
+
+### Fixed — 카탈로그 쓰기가 그래프 미러의 kind 충돌로 반쯤 적용되던 두 경로 (high)
+
+적대적 검증이 "노드의 kind를 바꿀 수 있는 경로"를 전수 열거하다 찾은 두 구멍입니다. kind
+규칙(`assert_node_kind_is_stable`)을 넣은 커밋 자체에서 생긴 것이고, 직전 계층 작업과는
+무관합니다. 두 라우트 모두 **카탈로그 행을 먼저 쓰고 그 다음에** 그래프로 미러링하므로,
+kind 거부가 너무 늦게 도착했습니다. 측정값(각 1회 인증 요청):
+
+    POST /catalog/datasets {"id": "고객", ...}        (고객은 시드 개념)
+      -> 500
+         카탈로그 행 생성:               True
+         GET /catalog/datasets/고객:      200
+         그래프 노드 kind:               concept  (dataset 노드는 영원히 없음)
+         이후 seed_store(새 스토어):      ValueError
+
+    PATCH /catalog/datasets/{id} — 선언한 컬럼의 노드 id를 개념이 이미 점유
+      -> 400 {"error": "invalid_request", "reason": "request body is not valid"}
+         카탈로그 title:  '충돌검사셋 제목' -> '바뀐 제목'   (적용됨)
+         카탈로그 schema: []              -> ['컬럼']       (적용됨)
+
+첫 번째가 더 나쁩니다: 요청 한 번으로 그 프로세스가 **다시는 그래프를 시딩할 수
+없게** 됩니다 — `seed_store`가 모든 카탈로그 행을 돌면서 그 행에서 raise하기 때문입니다.
+두 번째는 본문이 잘못됐다고 답하면서 카탈로그는 두 변경을 모두 유지합니다.
+
+이제 `seed.assert_dataset_mirror_kinds_are_available`를 **카탈로그 행을 건드리기 전에**
+묻고 둘 다 409로 답하며 아무것도 쓰지 않습니다 — `POST /graph/nodes`와
+`POST /ontology/concepts`가 같은 충돌에 이미 주는 상태입니다. 검사는 `seed_dataset` 옆에
+둡니다: 그 함수가 쓰는 노드 id(데이터셋 id = kind `dataset`, `{id}:{컬럼}` = kind
+`column`)를 그대로 열거하므로 한쪽을 바꾸면 다른 쪽이 옆에 보입니다. 거부는 **자기 사유로**
+감사 기록됩니다 — 허용한 결정의 사유로 적으면 일어난 일의 반대로 읽힙니다.
+
+충돌은 이제 전용 타입 `NodeKindConflict`입니다. 처음에는 `except ValueError`로 잡았는데,
+`pydantic.ValidationError`도 `ValueError`이므로 숫자가 아닌 `quality_score`가 400 대신
+409가 되었습니다(측정 — 제 테스트가 잡았습니다). `GraphIntegrityConflict`의 하위 타입이고
+따라서 여전히 `ValueError`이므로, 기존에 `ValueError`를 잡던 핸들러는 모두 그대로
+동작합니다.
 
 ### Fixed — 직전 두 커밋의 결함 세 건 (적대적 검증으로 발견, high)
 

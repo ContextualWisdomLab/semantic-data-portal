@@ -27,8 +27,8 @@ from .graph_models import (
     OntologyConceptRequest,
     SemanticSearchRequest,
 )
-from .graph_store import GraphIntegrityConflict, get_store
-from .seed import seed_dataset, seed_store
+from .graph_store import GraphIntegrityConflict, NodeKindConflict, get_store
+from .seed import assert_dataset_mirror_kinds_are_available, seed_dataset, seed_store
 from .catalog import (
     deprecate_dataset,
     get_dataset,
@@ -182,7 +182,7 @@ def _change_reason(payload: dict[str, Any] | None) -> str | None:
 
 
 def _audit_refused_catalog_mutation(
-    *, event_type: str, actor: str, dataset_id: str, decision: Any
+    *, event_type: str, actor: str, dataset_id: str, decision: Any, reason: str = ""
 ) -> None:
     """Record the audit half of a *refused* catalog mutation.
 
@@ -218,7 +218,15 @@ def _audit_refused_catalog_mutation(
         actor=actor,
         dataset_id=dataset_id,
         decision="denied",
-        reason=decision.reason,
+        # ``reason`` overrides the decision's own only where the refusal is not
+        # the decision's: a mutation the policy *allowed* and an integrity rule
+        # then refused (a node-kind conflict, 409) would otherwise be recorded
+        # under the allow-reason, which reads as the opposite of what happened.
+        # The governance invariant is a decision **and** an audit row for every
+        # catalog mutation, including a refused one, so these are audited rather
+        # than silently 409'd - the same choice the concept-upsert route makes
+        # for the structurally identical conflict.
+        reason=reason or decision.reason,
         decision_id=decision.decision_id,
         details={"purpose": "catalog", "policy_decision_id": decision.decision_id},
     )
@@ -1090,6 +1098,24 @@ def create_dataset(payload: dict[str, Any]) -> dict[str, Any]:
     # uses. That path ran only at startup, so an onboarded dataset was invisible
     # to graph traversal and semantic search - two capabilities README names -
     # and a status change left a stale node.
+    # Before the catalog row, because the mirror below cannot be undone from
+    # inside this lock: an id (or a column id) that already exists as another
+    # kind of graph node made this route answer 500 with the row created and
+    # every later ``seed_store`` raising. See
+    # ``assert_dataset_mirror_kinds_are_available``.
+    try:
+        assert_dataset_mirror_kinds_are_available(
+            request.id, [column.name for column in request.schema or []]
+        )
+    except NodeKindConflict as conflict:
+        _audit_refused_catalog_mutation(
+            event_type="dataset.create",
+            actor=actor_id,
+            dataset_id=request.id,
+            decision=decision,
+            reason=str(conflict),
+        )
+        raise HTTPException(status_code=409, detail=str(conflict)) from conflict
     with catalog.catalog_mutation_lock():
         dataset = register_dataset(
             request,
@@ -1164,6 +1190,16 @@ def patch_catalog_dataset(dataset_id: str, payload: dict[str, Any]) -> dict[str,
 
     try:
         request = DatasetPatchRequest(**payload)
+        # Before the mutation, for the reason the create route gives: a declared
+        # column whose node id a concept already holds made this route answer
+        # **400 "request body is not valid"** *after* the catalog had applied
+        # both the title and the schema change, so the caller was told the
+        # request was rejected while it was kept. A conflict is now 409 and
+        # nothing is written.
+        if request.schema is not None:
+            assert_dataset_mirror_kinds_are_available(
+                dataset_id, [column.name for column in request.schema]
+            )
         # Mutation and mirror in one critical section; see the create route.
         with catalog.catalog_mutation_lock():
             dataset = patch_dataset(
@@ -1176,6 +1212,20 @@ def patch_catalog_dataset(dataset_id: str, payload: dict[str, Any]) -> dict[str,
             seed_dataset(dataset)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+    except NodeKindConflict as conflict:
+        # Before the blanket arm, so a kind conflict is not reported as a
+        # malformed body - and catching the *precise* type rather than
+        # ``ValueError``, because ``pydantic.ValidationError`` is a ``ValueError``
+        # too: with a bare ``ValueError`` arm here a non-numeric
+        # ``quality_score`` answered 409 instead of 400 (measured).
+        _audit_refused_catalog_mutation(
+            event_type="dataset.patch",
+            actor=actor_id,
+            dataset_id=dataset_id,
+            decision=decision,
+            reason=str(conflict),
+        )
+        raise HTTPException(status_code=409, detail=str(conflict)) from conflict
     except Exception as exc:
         raise HTTPException(status_code=400, detail=_invalid_request_detail(exc))
     return {"status": "updated", "dataset": catalog.mutation_response_view(dataset)}

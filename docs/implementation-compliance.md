@@ -136,6 +136,16 @@
     `shacl_engine_executed: false`. 계층 target 제약은 warning(시드 어휘가 10회
     위반하므로 violation으로 올릴 수 없다).
 - ONT-002 concept/data asset class 분리 — **거부 + 검증** 두 축
+  - `POST /catalog/datasets`, `PATCH /catalog/datasets/{id}` — 그래프 미러가 쓸
+    노드 id(데이터셋 id = kind `dataset`, `{id}:{컬럼}` = kind `column`)가 이미
+    다른 kind로 존재하면 **카탈로그 행을 건드리기 전에** 409. 적대적 검증이
+    kind 변경 경로를 전수 열거하면서 찾은 두 구멍이고, kind 규칙을 넣은 커밋
+    자체에서 생긴 것이다 — 측정: create는 **500**에 카탈로그 행이 생성·제공되고
+    이후 모든 `seed_store`가 raise(한 번의 요청으로 시딩이 영구 불능),
+    patch는 **400 "request body is not valid"**인데 제목과 schema 변경이 이미
+    적용된 상태. 거부는 자기 사유로 감사 기록된다(허용 결정의 사유가 아니라).
+    충돌은 `NodeKindConflict` 전용 타입이다 — `except ValueError`로 잡으면
+    `pydantic.ValidationError`도 `ValueError`이므로 잘못된 본문이 409가 된다(측정).
   - `POST /graph/edges`, `POST /ontology/concepts` — `broader`/`narrower`의 끝점이
     이미 dataset/column 노드면 409. 개념 경로는 어휘 레코드가 먼저 기록되므로
     pre-write 검증기에서 막는다(스토어 게이트만 두면 같은 요청이 **500**이고
@@ -175,6 +185,8 @@
   - `tests/test_concept_shape_gate.py` (ConceptShape 게이트·warning 경계·플랫폼 수치)
   - `tests/test_graph_hierarchy_class_separation.py` (ONT-002 계층 간선 거부 +
     ConceptHierarchyShape 평가·범위 선언)
+  - `tests/test_catalog_mirror_kind_conflict.py` (카탈로그 미러 kind 충돌 409·
+    무기록·감사 사유·잘못된 본문은 400 유지)
   - `tests/test_graph_hierarchy_consistency.py` (ONT-007 순환 거부 +
     cyclic_group_count 공표·방향 정규화·종료성·선형 비용)
 
