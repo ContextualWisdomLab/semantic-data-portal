@@ -1595,7 +1595,7 @@ REQUIREMENT_COVERAGE: dict[str, RequirementCoverage] = {
             "probe, which reports the active store's readiness and answers 503 "
             "when the backend is unreachable; the compose healthcheck polls it "
             "every 30s. Nothing here measures or publishes availability: "
-            "`/metrics` exports seven gauges and no request-outcome counters, so "
+            "`/metrics` exports only gauges and no request-outcome counters, so "
             "no SLI can be computed from it; per-request status codes exist only "
             "in a bounded in-process ring buffer that is withheld from the "
             "published manifest and empties on restart; and there is no SLO or "

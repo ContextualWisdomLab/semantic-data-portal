@@ -385,8 +385,10 @@ seed의 `security` subject는 `platform-admin`도 들고 있어 여전히 previe
   - 같은 이유로 `SDP_ALERT_WEBHOOK_URL`도 `required_environment`에서
     `declared_unimplemented_environment`로 옮겼습니다. 이 변수를 읽는 코드는
     `observability._sink_status`가 **설정 여부**(`alert_webhook_configured`)를 보고하는
-    한 곳뿐이고, 이 URL로 POST하는 코드도 `GET /enterprise/observability`가 게시하는 alert
-    조건을 평가하는 코드도 없습니다. 이 사례는
+    한 곳뿐이고, 이 URL로 POST하는 코드는 없습니다. `GET /enterprise/observability`가
+    게시하는 alert 조건 중 `policy_audit_gap`은 **이 서비스가 직접 계산합니다**
+    (`evaluated: true`, `evaluation: measured_in_process`) — 평가는 들어왔고
+    전달만 없습니다. 이 사례는
     `test_every_required_variable_has_a_consumer`의 한계를 드러냅니다 — 소비자가
     **존재**했고(자기 자신의 존재 여부만 읽는 소비자) 검사를 통과했습니다. 능력에 대한
     증빙은 이름 검색이 아니라

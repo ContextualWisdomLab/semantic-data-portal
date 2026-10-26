@@ -2,15 +2,15 @@
 
 이 문서는 `claude/semantic-portal-pr-merge-e5a48k` 브랜치(PR
 [#102](https://github.com/ContextualWisdomLab/semantic-data-portal/pull/102))가
-베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **219개** 커밋 중 122개는
-gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 97개입니다. 이 숫자는 **이
-줄을 담은 커밋을 포함한** 값입니다 — 측정 시점의 218에 이 커밋을 더한 것. 측정 명령:
+베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **220개** 커밋 중 122개는
+gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 98개입니다. 이 숫자는 **이
+줄을 담은 커밋을 포함한** 값입니다 — 측정 시점의 219에 이 커밋을 더한 것. 측정 명령:
 
     git rev-list --count origin/docs/product-technical-gap-baseline..HEAD
     git log --format=%H origin/docs/product-technical-gap-baseline..HEAD \
       --name-only -- docs/product-technical-gap-baseline.md | grep -c '^[0-9a-f]\{40\}$'
 
-앞서 적혀 있던 164/112, 186/113, 199/122/77, 203/122/81, 211/122/89, 212/122/90, 213/122/91, 214/122/92, 215/122/93, 216/122/94, 218/122/96은 각각 그 시점의 값이고 이후
+앞서 적혀 있던 164/112, 186/113, 199/122/77, 203/122/81, 211/122/89, 212/122/90, 213/122/91, 214/122/92, 215/122/93, 216/122/94, 218/122/96, 219/122/97은 각각 그 시점의 값이고 이후
 커밋을 반영하지 않은 숫자였습니다 — 자기 문서의 수치도 측정해서 맞춰 둡니다. 199는 이
 줄을 쓴 뒤 3개 커밋이 더 쌓여 낡아 203으로, 203은 다음 커밋에서 낡아 204로, 204는 또
 두 커밋 뒤에 206으로 다시 측정해 고쳤습니다. 206도 그 값을 담은 커밋 자신 때문에 도착
@@ -30,8 +30,8 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 97
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                       1259 passed, 15 skipped
-    pytest (파일 순서 정/역/난수)  각 1259 passed, 15 skipped — 순서 무관
+    pytest                       1262 passed, 15 skipped
+    pytest (파일 순서 정/역/난수)  각 1262 passed, 15 skipped — 순서 무관
                                  (정순 · 역순 · seed 11/707/31337)
     pytest tests/fuzz            11 passed
     python -m sdp.demo_smoke     exit 0, "ready": true
@@ -46,6 +46,62 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 백그라운드 측정 중에 트리를 고친 탓에 seed 11이 4건 실패로 나온 일이 있고, 그것은 결함이
 아니라 동시 편집이었습니다. Atheris(`fuzz/fuzz_query_safety.py`)는 로컬에 wheel이 없어
 실행하지 않았습니다 — 같은 invariant의 Hypothesis 미러가 `tests/fuzz`에서 돕니다.
+
+### Fixed — alert routing 설계 조사가 기존 코드에서 찾아낸 결함 셋 (medium)
+
+다음 개발 항목(`SDP_ALERT_WEBHOOK_URL` 라우팅 + connector-probe 규칙)을 설계하려고 읽기 전용
+조사를 돌렸고, **기능을 만들기 전에 기존 코드의 결함 세 건**이 나왔습니다. 둘은 제가 앞선
+라운드에서 넣은 것입니다.
+
+**1. IPv6 sink 주소의 대괄호가 사라집니다 (medium).** `urlparse().hostname`은 IPv6 리터럴의
+RFC 3986 대괄호를 벗기고, `_http_sink_request_parts`와 `_redacted_sink_target`은 둘 다
+`f"{host}:{port}"`로 authority를 **보간해서** 다시 만들었습니다. IPv6 주소에서는 주소 안의
+콜론과 포트 구분자가 구별되지 않습니다. 측정:
+
+    SDP_LOG_SINK_URL=http://[::1]:8000/x
+      재조립된 URL        http://::1:8000/x
+      urlopen            URLError: [Errno 97] Address family not supported
+      _sink_status()     {"configured": true, "target": "::1:8000"}
+
+    SDP_LOG_SINK_URL=http://[2001:db8::1]:9000/push
+      재조립된 URL        http://2001:db8::1:9000/push
+      _sink_status()     {"configured": true, "target": "2001:db8::1:9000"}
+
+즉 **모든 export가 실패하는 동안 manifest는 sink가 설정되어 있다고 보고하고**, 공표되는
+`target`은 authority도 아닙니다 — `_http_sink_request_parts`의 docstring이 userinfo 형태에
+대해 기록하고 제거한 바로 그 결함 쌍이, IPv6 형태로 살아 있었습니다. 그 수리가 authority를
+한 함수에 맡기지 않고 보간으로 다시 만들었기 때문입니다. 지금은 `_authority(host, port)`
+하나가 양쪽에 쓰이고, 호스트에 콜론이 있으면 대괄호를 씌웁니다. 세 번째 복사가 생기면
+AST 가드가 실패합니다 — grep이 아니라 파싱인 이유는 `_authority`의 docstring이 자신이
+대체한 보간을 **인용**하고 있어서, 문자열 검색으로 쓴 첫 버전이 그 설명 문구에 걸렸기
+때문입니다.
+
+**2. `/metrics`가 내보내는 gauge 개수를 두 곳이 틀리게 공표했습니다 (low).**
+`requirements.py`와 거기서 **생성되는** `docs/requirements-coverage.md`가 "`/metrics` exports
+seven gauges"라고 적었는데, 실제로는 여덟입니다 — `sdp_governed_requests_without_evidence_total`을
+추가한 커밋(`e475384`, 제 것)이 그 문장을 다시 보지 않았습니다. 고친 방식이 중요합니다:
+**숫자를 여덟으로 바꾸지 않았습니다.** 그러면 아홉 번째 gauge를 위해 같은 함정을 다시
+장전하는 것이고, 이 사이클에서 409 개수 단어로 똑같이 당했습니다. 문장이 개수를 말하지
+않게 바꾸고(요구사항의 논점은 "gauge만 있고 request-outcome counter가 없다"였으므로 개수는
+애초에 주장이 아니었습니다), 어느 공표 문서든 gauge 개수를 적으면 실패하는 테스트를
+넣었습니다 — **맞는 개수를 적어도 실패합니다.**
+
+**3. 금지된 문장 하나가 줄바꿈으로 가드를 통과해 `main`에 살아 있었습니다 (medium).**
+4라운드가 "alert 조건을 평가하는 코드가 없다"는 낡은 주장을 기계적으로 금지했는데, 그
+가드는 **정확한 부분문자열**로 비교했고 `docs/implementation-compliance.md`에는 그 문장이
+약 90열에서 줄바꿈된 사본이 있었습니다. 측정:
+
+    phrase "alert 조건을 평가하는 코드도 없"
+      exact match:      없음
+      normalised match: docs/implementation-compliance.md
+
+즉 **가드가 녹색인 채로 낡은 주장이 공표되고 있었습니다.** 문서를 고치고, 가드를 공백
+정규화로 올렸습니다. 같은 사이클에 제가 추가한 그래프 스토어 가드는 처음부터 정규화되어
+있었으므로, 둘 중 약한 쪽을 같은 기준으로 끌어올린 것입니다.
+
+역검증 3건: IPv6 수리를 URL 쪽에만 되돌리면(한쪽만 고치는 실패 모양) 왕복 테스트와 AST
+가드가 함께 실패하고 · 금지 문장을 줄바꿈된 원래 형태로 되돌리면 정규화된 가드가 그 파일을
+이름으로 말하며 실패하고 · gauge 개수를 **맞게**("eight") 적어 넣어도 개수 가드가 실패합니다.
 
 ### Fixed — 5라운드: 4라운드가 남긴 결함 (high)
 

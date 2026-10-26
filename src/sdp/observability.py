@@ -174,8 +174,9 @@ def _http_sink_request_parts(sink_url: str, parsed: Any) -> tuple[str, dict[str,
     elif username:
         headers["Authorization"] = f"Bearer {username}"
 
-    netloc = f"{host}:{port}" if port is not None else host
-    url = urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, ""))
+    url = urlunsplit(
+        (parsed.scheme, _authority(host, port), parsed.path, parsed.query, "")
+    )
     return url, headers
 
 
@@ -330,6 +331,39 @@ def governed_evidence_gap_report() -> dict[str, Any]:
     }
 
 
+def _authority(host: str, port: int | None) -> str:
+    """Reassemble ``host[:port]`` as a URL authority, bracketing IPv6 literals.
+
+    ``urlparse().hostname`` **strips the RFC 3986 brackets** from an IPv6
+    literal, and both callers used to rebuild the authority as ``f"{host}:{port}"``
+    - which for an IPv6 host produces a string that is not a URL authority at
+    all, because the colons in the address are indistinguishable from the port
+    separator. Measured before this repair::
+
+        SDP_LOG_SINK_URL=http://[::1]:8000/x
+          rebuilt URL           http://::1:8000/x
+          urlopen               URLError: [Errno 97] Address family not supported
+          _sink_status()        {"configured": true, "target": "::1:8000"}
+
+        SDP_LOG_SINK_URL=http://[2001:db8::1]:9000/push
+          rebuilt URL           http://2001:db8::1:9000/push
+          _sink_status()        {"configured": true, "target": "2001:db8::1:9000"}
+
+    So every export failed while the manifest reported a configured sink, and
+    the published ``target`` was a malformed authority - the exact pair of
+    defects ``_http_sink_request_parts``'s own docstring records for the
+    userinfo form and was written to eliminate. It survived for the IPv6 form
+    because the repair rebuilt the authority by interpolation instead of asking
+    one function to do it.
+
+    One function now, used by both, so the next caller cannot get it wrong. A
+    bracketed host is detected by the colon an IPv6 literal must contain and a
+    registered name must not.
+    """
+    bracketed = f"[{host}]" if ":" in host else host
+    return f"{bracketed}:{port}" if port is not None else bracketed
+
+
 def _redacted_sink_target(parsed: Any) -> str:
     """Describe a sink endpoint without the credentials its URL may carry.
 
@@ -350,7 +384,7 @@ def _redacted_sink_target(parsed: Any) -> str:
         port = parsed.port
     except ValueError:
         port = None
-    return f"{host}:{port}" if port else host
+    return _authority(host, port)
 
 
 def _sink_status() -> dict[str, Any]:

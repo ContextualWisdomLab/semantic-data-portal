@@ -791,6 +791,55 @@ def test_the_log_correlation_key_is_not_read_from_a_request_header() -> None:
     assert reads == [], f"the log's evidence ids are named in src as a literal: {reads}"
 
 
+def test_no_published_text_states_a_gauge_count() -> None:
+    """A gauge count written in prose goes stale the next time one is added.
+
+    ``src/sdp_core/requirements.py`` published "``/metrics`` exports seven
+    gauges", and the generated ``docs/requirements-coverage.md`` carried it.
+    Measured, ``/metrics`` emits **eight**: the seventh claim was written before
+    ``sdp_governed_requests_without_evidence_total`` was added and the commit
+    that added it did not revisit the sentence. The requirement that carries it
+    is about availability measurement, where the point is "only gauges, no
+    request-outcome counters" - the number was never the claim, so the sentence
+    no longer states one.
+
+    This bans the shape rather than correcting the number, because correcting it
+    leaves the same trap armed for the ninth gauge.
+    """
+    import pathlib
+    import re
+
+    from sdp.observability import prometheus_metrics_text
+
+    emitted = [
+        line.split()[0]
+        for line in prometheus_metrics_text().splitlines()
+        if line and not line.startswith("#")
+    ]
+    assert len(emitted) >= 8, emitted
+
+    repo_root = pathlib.Path(obs.__file__).resolve().parents[2]
+    counted = re.compile(
+        r"(exports|publishes)\s+(one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+gauges"
+    )
+    offenders = []
+    searched = [repo_root / "README.md"]
+    searched += sorted((repo_root / "docs").rglob("*.md"))
+    searched += sorted((repo_root / "src").rglob("*.py"))
+    for candidate in searched:
+        if not candidate.is_file():
+            continue
+        flat = re.sub(r"\s+", " ", candidate.read_text(encoding="utf-8"))
+        for match in counted.finditer(flat):
+            offenders.append(
+                f"{candidate.relative_to(repo_root).as_posix()}: {match.group(0)!r}"
+            )
+    assert offenders == [], (
+        f"these texts state a gauge count, and /metrics emits {len(emitted)}: "
+        f"{offenders}. Say what kind of metrics are exported, not how many."
+    )
+
+
 def test_no_published_text_still_says_the_alert_conditions_are_unevaluated() -> None:
     """The recurrence guard for a claim that has now gone stale three times.
 
@@ -808,8 +857,28 @@ def test_no_published_text_still_says_the_alert_conditions_are_unevaluated() -> 
     Prose, so this matches the exact recurring sentences rather than trying to
     parse meaning. It is scoped to the claim about *evaluation*: "nothing is
     routed" remains true and is deliberately still published in all three places.
+
+    **Whitespace-normalised**, because the first version was not and a
+    line-wrapped copy of one banned sentence was live on ``main`` while this
+    test was green. Measured, with the exact-substring form::
+
+        docs/implementation-compliance.md
+            "...이 URL로 POST하는 코드도 `GET /enterprise/observability`가 게시하는 alert
+             조건을 평가하는 코드도 없습니다."
+
+        phrase "alert 조건을 평가하는 코드도 없"
+            exact match:      no file
+            normalised match: docs/implementation-compliance.md
+
+    A markdown re-wrap defeats an exact substring, and this document is wrapped
+    at about 90 columns, so any banned sentence longer than a line was always
+    going to be split eventually. The sibling guard in
+    ``tests/test_state_isolation.py`` was written normalised for this reason;
+    this one is brought to the same standard rather than left as the weaker of
+    the pair.
     """
     import pathlib
+    import re
 
     repo_root = pathlib.Path(obs.__file__).resolve().parents[2]
     evaluated = [
@@ -832,7 +901,11 @@ def test_no_published_text_still_says_the_alert_conditions_are_unevaluated() -> 
     for candidate in searched:
         if not candidate.is_file():
             continue
-        text = candidate.read_text(encoding="utf-8")
+        # Collapse runs of whitespace so a sentence split across lines is still
+        # one string. Not stripping "#" here, unlike the sibling guard: these
+        # phrases occur in Python comments on purpose and the surrounding
+        # sentence is what makes them claims.
+        text = re.sub(r"\s+", " ", candidate.read_text(encoding="utf-8"))
         for phrase in stale:
             if phrase in text:
                 offenders.append(f"{candidate.relative_to(repo_root).as_posix()}: {phrase!r}")

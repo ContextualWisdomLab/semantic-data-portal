@@ -143,6 +143,87 @@ def test_sink_status_keeps_port_and_survives_a_malformed_authority(
     assert obs._sink_status()["target"] == "redacted"
 
 
+def test_an_ipv6_sink_round_trips_through_both_authority_consumers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``urlparse().hostname`` drops the brackets; both consumers must restore them.
+
+    Two functions reassembled the authority by interpolating ``f"{host}:{port}"``,
+    and for an IPv6 literal that produces a string whose colons no longer
+    separate host from port. Measured before the repair::
+
+        http://[::1]:8000/x
+            _http_sink_request_parts -> http://::1:8000/x
+            urlopen                  -> URLError: Address family not supported
+            _sink_status().target    -> "::1:8000"
+
+    So the export failed on every request while the manifest reported a
+    configured sink, and the published target was not a valid authority - the
+    same pair of defects ``_http_sink_request_parts`` was written to remove for
+    the userinfo form, surviving in the IPv6 form because the repair rebuilt the
+    authority inline instead of through one function.
+
+    Both consumers are asserted here, because fixing one and not the other is
+    how this reappears: the connectable URL and the published target are
+    produced by different functions from the same parse.
+    """
+    for configured, authority in (
+        ("http://[::1]:8000/x", "[::1]:8000"),
+        ("http://[2001:db8::1]:9000/push", "[2001:db8::1]:9000"),
+        # No port: the brackets are still required, since the host itself has
+        # colons in it.
+        ("https://[fe80::1]/ingest", "[fe80::1]"),
+    ):
+        parsed = urlparse(configured)
+        url, _ = obs._http_sink_request_parts(configured, parsed)
+        assert url == configured, (configured, url)
+        monkeypatch.setenv("SDP_LOG_SINK_URL", configured)
+        assert obs._sink_status()["target"] == authority, configured
+
+    # A registered name has no colon in the host, so it is never bracketed.
+    monkeypatch.setenv("SDP_LOG_SINK_URL", "https://logs.example.net:8443/push")
+    assert obs._sink_status()["target"] == "logs.example.net:8443"
+
+
+def test_the_authority_builder_is_the_only_place_that_assembles_host_and_port() -> None:
+    """The drift guard for the repair above.
+
+    The IPv6 defect existed because two functions each did the assembly, and a
+    repair to one would not have reached the other. This fails if a third copy
+    appears.
+
+    Parsed, not grepped: ``_authority``'s own docstring quotes the interpolation
+    it replaced, and a substring search cannot tell that quotation from live
+    code - written as a grep, this test failed on the docstring explaining the
+    fix. The AST holds f-string *expressions*, and a docstring is a plain
+    ``Constant``, so looking at joined-string nodes sees only the real thing.
+    This is the same decision ``test_the_log_correlation_key_is_not_read_from_a_request_header``
+    makes about banned string literals.
+    """
+    import ast
+    import pathlib
+
+    source = pathlib.Path(obs.__file__).read_text(encoding="utf-8")
+    assert source.count("def _authority(") == 1
+
+    offenders = []
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.JoinedStr):
+            continue
+        names = [
+            part.value.id
+            for part in node.values
+            if isinstance(part, ast.FormattedValue) and isinstance(part.value, ast.Name)
+        ]
+        if "host" in names and "port" in names:
+            offenders.append(ast.unparse(node))
+    assert offenders == [], (
+        "host and port are assembled into an authority by interpolation again: "
+        f"{offenders}. Call _authority(host, port) so the IPv6 bracketing is "
+        "not re-derived."
+    )
+
+
 # --- _export_to_sink -----------------------------------------------------
 
 

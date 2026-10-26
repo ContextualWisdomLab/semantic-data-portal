@@ -578,7 +578,7 @@ PYTHONPATH=src python -m sdp_core.requirements
 
 - **요구사항**: catalog API availability
 - **수락 기준**: 99.9% monthly
-- **비고**: Availability is a property of the deployment - replica count, restart policy, the load balancer in front - and this codebase cannot establish a monthly figure for it. What it ships is what a platform gates on: `GET /health`, and the `GET /healthz` readiness probe, which reports the active store's readiness and answers 503 when the backend is unreachable; the compose healthcheck polls it every 30s. Nothing here measures or publishes availability: `/metrics` exports seven gauges and no request-outcome counters, so no SLI can be computed from it; per-request status codes exist only in a bounded in-process ring buffer that is withheld from the published manifest and empties on restart; and there is no SLO or error-budget surface.
+- **비고**: Availability is a property of the deployment - replica count, restart policy, the load balancer in front - and this codebase cannot establish a monthly figure for it. What it ships is what a platform gates on: `GET /health`, and the `GET /healthz` readiness probe, which reports the active store's readiness and answers 503 when the backend is unreachable; the compose healthcheck polls it every 30s. Nothing here measures or publishes availability: `/metrics` exports only gauges and no request-outcome counters, so no SLI can be computed from it; per-request status codes exist only in a bounded in-process ring buffer that is withheld from the published manifest and empties on restart; and there is no SLO or error-budget surface.
 
 #### NFR-REL-002 · NFR · `external`
 
