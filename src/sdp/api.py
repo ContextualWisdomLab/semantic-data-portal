@@ -55,11 +55,13 @@ from .domain import (
     QueryExecutionRequest,
 )
 from .enterprise_evidence import build_enterprise_evidence_pack
+from .api_error_contract import policy_gated_route_paths
 from .evidence import collect_request_evidence_ids, list_policy_decisions
 from .latency_budgets import latency_budget_report
 from .observability import (
     build_observability_manifest,
     build_request_observation,
+    note_governed_request_without_evidence,
     prometheus_metrics_text,
     record_request_observation_async,
     request_id_from_headers,
@@ -122,6 +124,12 @@ except Exception:  # pragma: no cover
     pass
 
 
+# Computed once: the derivation reads two static maps. Held in a module global
+# rather than inlined so a test can narrow or widen the governed surface without
+# editing the refusal contract.
+_POLICY_GATED_ROUTES = policy_gated_route_paths()
+
+
 @app.middleware("http")
 async def record_request_observability(request: Request, call_next):
     started = monotonic()
@@ -154,6 +162,24 @@ async def record_request_observability(request: Request, call_next):
                 evidence_ids=collected.ids,
                 withheld_evidence_id_count=collected.withheld,
             )
+            # The ``policy_audit_gap`` alert, evaluated. A route the published
+            # refusal contract says can answer 403 is a route that asks
+            # ``policy.evaluate``; if one of those answered 2xx and recorded no
+            # evidence at all, the governance invariant this product sells -
+            # a decision *and* an audit row on every governed path - did not
+            # hold for that request. Counted here because this is the only
+            # place that knows the matched template, the status and the
+            # evidence in one scope. Measured across the 18 policy-gated GET
+            # routes that could be probed, the count is 0 today, so it is a
+            # regression detector rather than a standing complaint.
+            matched = request.scope.get("route")
+            route_template = getattr(matched, "path", None)
+            if (
+                200 <= status_code < 300
+                and not collected.ids
+                and route_template in _POLICY_GATED_ROUTES
+            ):
+                note_governed_request_without_evidence(route_template)
             if response is not None:
                 response.headers[request_id_header()] = request_id
             # The sink write is blocking, so it is awaited off the event loop;

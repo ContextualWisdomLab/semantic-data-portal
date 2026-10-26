@@ -47,6 +47,7 @@ RESTORED_BY_FIXTURE = frozenset(
         "sdp.evidence._AUDIT_EVENT_LOG",
         "sdp.evidence._POLICY_DECISION_LOG",
         "sdp.observability._EXPORT_ERRORS",
+        "sdp.observability._GOVERNED_EVIDENCE_GAPS",
         "sdp.observability._REQUEST_OBSERVATIONS",
         "sdp.observability._SINK_BREAKER",
         "sdp.ontology._ALIAS_TO_CANONICAL",

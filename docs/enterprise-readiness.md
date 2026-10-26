@@ -96,7 +96,14 @@ PYTHONPATH=src SDP_SQLITE_PATH=.local/sdp-evidence.sqlite3 uvicorn sdp.api:app -
 8. 완료: buyer demo seed를 도메인별 fixture로 분리하고, `GET /enterprise/demo-plan` 및 connector probe와 연결한다.
 9. 완료: retention policy, SSO/RBAC, deployment template를 `sdp_enterprise` feature gate manifest로 묶고 RBAC matrix와 Dockerfile/Compose deployment template를 추가한다.
 10. 완료: buyer evidence pack endpoint로 metadata, ontology, policy, audit, controls 증빙을 한 번에 요약한다.
-11. 완료: health, metrics, evidence count, alert condition을 `/enterprise/observability`와 `/metrics`로 노출한다.
+11. 완료: health, metrics, evidence count, alert condition을 `/enterprise/observability`와 `/metrics`로 노출한다. 게시되는 alert 규칙 2건 중
+    `policy_audit_gap`은 **평가된다** — policy-gated 라우트가 2xx인데 policy decision도
+    audit event도 기록하지 않은 횟수를 미들웨어가 세고, manifest가 `observed_total`과
+    `firing`을, `/metrics`가 `sdp_governed_requests_without_evidence_total`을 공표한다.
+    선언된 조건보다 **좁다**(요청 시점에 세므로 사후에 원장에서 지워진 행은 보이지
+    않는다)는 사실은 규칙 자체가 `not_covered`로 공표한다. 전달(routing)은 여전히
+    미구현이고 `central_workflow_backlog`은 이 서비스가 볼 수 없는 GitHub Actions
+    상태라 선언 상태로 남으며 그 이유를 함께 공표한다.
 12. 완료: `/catalog/datasets/{dataset_id}/semantic-validation`과 `/enterprise/shacl-validation`으로 SHACL 호환 validation report와 95% pass rate 증빙을 노출한다.
 13. 완료: `/enterprise/steward-review`로 validation failure와 ontology patch proposal 검토 대기열, 2영업일 SLA, buyer handoff readiness를 노출한다.
 14. 완료: `/enterprise/auth/oidc-preview` claim-shape 검증과 직접 role-claim 무시 동작을 추가한다. `/enterprise/auth/oidc-verify`는 issuer/audience/expiry/JWKS 서명 검증 후 같은 group allow-list mapping을 적용한다.

@@ -378,8 +378,25 @@ seed의 `security` subject는 `platform-admin`도 들고 있어 여전히 previe
     **존재**했고(자기 자신의 존재 여부만 읽는 소비자) 검사를 통과했습니다. 능력에 대한
     증빙은 이름 검색이 아니라
     `tests/test_honest_metrics.py::test_nothing_posts_to_the_alert_webhook`이 담당합니다.
-    게시되는 alert 규칙은 삭제하지 않고 `alert_evaluation: declared_not_evaluated`,
-    규칙별 `evaluated: false`, `alert_webhook_routing: declared_unimplemented`로 표시합니다.
+    게시되는 alert 규칙은 삭제하지 않고 규칙별 `evaluated` 플래그로 표시하며,
+    `alert_webhook_routing: declared_unimplemented`는 그대로입니다. 2건 중
+    `policy_audit_gap`은 이제 **평가됩니다** — 이 조건은 제품의 중심 주장(모든
+    governed 경로에 decision과 audit 행)에 대한 자기검사인데, `evidence_ids`가 caller
+    헤더에서 오는 동안에는 "이 요청이 증빙을 남겼는가"에 서버가 답할 수 없어
+    평가가 불가능했습니다. 지금은 미들웨어가 policy-gated 라우트의 2xx 중 수집된
+    증빙 id가 하나도 없는 경우를 세고, manifest가 `observed_total`/`firing`/`routes`를,
+    `/metrics`가 `sdp_governed_requests_without_evidence_total`을 공표합니다.
+    governed 경계는 **공표된 거부 계약에서 파생**합니다 — 403을 답할 수 있는
+    라우트는 `policy.evaluate`를 물은 라우트이므로, 새 governed 라우트는 자기 403을
+    선언하는 것으로 자기검사에 포함됩니다(같은 것을 두 목록으로 두면 드리프트합니다).
+    측정: 시드 데이터로 호출 가능한 policy-gated GET 라우트 18건 전부가 2xx에서
+    증빙 id를 담으므로 현재 값은 0이고, 이 규칙은 상시 경고가 아니라 회귀 탐지기입니다.
+    선언된 조건("preview/query 수가 decision/audit 수를 초과")보다 좁다는 점 —
+    요청 시점에 세므로 사후에 원장에서 제거된 행은 보이지 않습니다 — 은 규칙이
+    `declared_condition`/`not_covered`로 함께 공표합니다. `central_workflow_backlog`은
+    GitHub Actions 상태가 필요하므로 선언 상태로 남고 `not_evaluated_because`를 답니다.
+    acceptance criterion이 이름을 올린 세 번째 조건(connector-probe 실패)은 애초에
+    규칙으로 **게시된 적이 없다**는 사실도 criterion 본문에 적었습니다.
   - 같은 integration의 **첫 번째** acceptance criterion(`request id, tenant, actor,
     route, status, latency, and evidence ids`)은 문구만 만족하고 있었습니다.
     `evidence_ids`를 caller가 보낸 `X-SDP-Evidence-Ids` 헤더에서 읽었기 때문입니다 —

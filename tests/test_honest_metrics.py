@@ -373,23 +373,41 @@ def test_setting_the_alert_webhook_cannot_clear_the_readiness_gate() -> None:
         assert with_variable.missing_environment == without.missing_environment
 
 
-def test_the_published_alert_rules_say_they_are_not_evaluated(
+def test_each_published_alert_rule_says_whether_it_is_evaluated(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A list named "alerts" beside ``alert_webhook_configured: true`` read as monitoring.
 
-    The conditions are kept - they are the right ones and an operator can wire
-    them into their own stack - but every surface now says so.
+    The conditions are kept - they are the right ones - and every surface says
+    which of them this service actually computes. ``policy_audit_gap`` is
+    measured in process now; ``central_workflow_backlog`` is about GitHub
+    Actions run state this service does not observe, so it stays declared and
+    says why. The top-level key points at the per-rule flag rather than making
+    one claim for both, which is the thing that would be false either way it
+    was written.
     """
     monkeypatch.setenv("SDP_ALERT_WEBHOOK_URL", "https://alerts.example/hook")
     manifest = obs.build_observability_manifest()
 
-    assert manifest["alert_evaluation"] == "declared_not_evaluated"
+    assert manifest["alert_evaluation"] == "per_rule"
     assert manifest["alert_routing"] == "declared_unimplemented"
     assert manifest["alerts"], "the declared conditions must stay published"
-    for alert in manifest["alerts"]:
-        assert alert["evaluated"] is False, alert
-        assert alert["evaluation"] == "declared_not_evaluated", alert
+    by_id = {alert["id"]: alert for alert in manifest["alerts"]}
+
+    gap = by_id["policy_audit_gap"]
+    assert gap["evaluated"] is True
+    assert gap["evaluation"] == "measured_in_process"
+    assert isinstance(gap["observed_total"], int)
+    assert gap["firing"] is (gap["observed_total"] > 0)
+    # Narrower than the condition the rule was declared with, and it says so
+    # rather than letting the id imply coverage it does not have.
+    assert gap["declared_condition"]
+    assert gap["not_covered"]
+
+    backlog = by_id["central_workflow_backlog"]
+    assert backlog["evaluated"] is False
+    assert backlog["evaluation"] == "declared_not_evaluated"
+    assert "GitHub Actions" in backlog["not_evaluated_because"]
 
     sink = manifest["structured_logs"]["sink"]
     assert sink["alert_webhook_configured"] is True

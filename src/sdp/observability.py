@@ -273,6 +273,57 @@ def build_request_observation(
 ALERT_ROUTING_STATUS = "declared_unimplemented"
 ALERT_EVALUATION_STATUS = "declared_not_evaluated"
 
+# One of the two rules is evaluated now, so a single blanket status at the top
+# of the manifest would be wrong either way it was written. The per-rule
+# ``evaluated`` flag is the truth; this says to read it.
+ALERT_EVALUATION_SCOPE = "per_rule"
+
+# ``policy_audit_gap`` evaluated. The declared condition is "preview/query count
+# exceeds policy decision or audit event count"; what is computed is its
+# per-request form - a policy-gated route answered 2xx while recording no
+# evidence at all - which is the same violation seen at the moment it happens
+# and names the route it happened on. It is **narrower** than the declared
+# comparison: evidence rows removed out of band after the fact are not visible
+# here, and the published rule says so rather than letting the id imply
+# coverage it does not have.
+#
+# This could not be evaluated before the request log's ``evidence_ids`` became a
+# server fact: the field was read from a caller-supplied header, so "did this
+# request record evidence" had no honest answer in process.
+MAX_TRACKED_EVIDENCE_GAP_ROUTES = 32
+_OTHER_GAP_ROUTES = "...[other routes]"
+_GOVERNED_EVIDENCE_GAPS: dict[str, int] = {}
+
+
+def note_governed_request_without_evidence(route: str) -> None:
+    """Count one policy-gated 2xx that recorded no correlatable evidence.
+
+    Bounded by route, like every other map this module publishes: past the cap
+    the counts collapse into one declared bucket rather than letting a caller
+    that can reach many templates grow the manifest without limit.
+    """
+    if route in _GOVERNED_EVIDENCE_GAPS:
+        _GOVERNED_EVIDENCE_GAPS[route] += 1
+        return
+    if len(_GOVERNED_EVIDENCE_GAPS) < MAX_TRACKED_EVIDENCE_GAP_ROUTES:
+        _GOVERNED_EVIDENCE_GAPS[route] = 1
+        return
+    _GOVERNED_EVIDENCE_GAPS[_OTHER_GAP_ROUTES] = (
+        _GOVERNED_EVIDENCE_GAPS.get(_OTHER_GAP_ROUTES, 0) + 1
+    )
+
+
+def governed_evidence_gap_report() -> dict[str, Any]:
+    """What this worker observed for the ``policy_audit_gap`` condition."""
+    routes = dict(sorted(_GOVERNED_EVIDENCE_GAPS.items()))
+    total = sum(routes.values())
+    return {
+        "observed_total": total,
+        "firing": total > 0,
+        "routes": routes,
+        "measurement_window": "this worker, since start",
+    }
+
 
 def _redacted_sink_target(parsed: Any) -> str:
     """Describe a sink endpoint without the credentials its URL may carry.
@@ -620,6 +671,7 @@ def count_observability_export_errors() -> int:
 def reset_request_observability() -> None:
     _REQUEST_OBSERVATIONS.clear()
     _EXPORT_ERRORS.clear()
+    _GOVERNED_EVIDENCE_GAPS.clear()
     reset_sink_breaker()
 
 
@@ -691,6 +743,11 @@ def build_observability_manifest() -> dict[str, Any]:
             # Real buffer occupancy, not the size of the page rendered below.
             "request_observations_total": count_request_observations(),
             "observability_export_errors_total": count_observability_export_errors(),
+            # The ``policy_audit_gap`` condition as a number, so an operator's
+            # own monitoring can alert on it without parsing the manifest.
+            "governed_requests_without_evidence_total": governed_evidence_gap_report()[
+                "observed_total"
+            ],
         },
         # No per-request feed on an unauthenticated manifest. Each observation
         # carries the caller's actor and tenant plus the route - which embeds the
@@ -708,17 +765,29 @@ def build_observability_manifest() -> dict[str, Any]:
         },
         # The PRD's six p95 budgets, compared to what this worker observed.
         "latency_budgets": _latency_budget_report(),
-        # Declared conditions an operator can implement in their own monitoring
-        # stack, not rules this service evaluates. See ALERT_EVALUATION_STATUS.
-        "alert_evaluation": ALERT_EVALUATION_STATUS,
+        # One rule is measured in process, one is still a declared condition an
+        # operator implements in their own stack. Read the per-rule flag; the
+        # top-level key says so rather than making one claim for both.
+        "alert_evaluation": ALERT_EVALUATION_SCOPE,
         "alert_routing": ALERT_ROUTING_STATUS,
         "alerts": [
             {
                 "id": "policy_audit_gap",
-                "condition": "preview/query count exceeds policy decision or audit event count",
+                "condition": (
+                    "a policy-gated route answered 2xx while recording no policy "
+                    "decision and no audit event"
+                ),
+                "declared_condition": (
+                    "preview/query count exceeds policy decision or audit event count"
+                ),
+                "not_covered": (
+                    "evidence rows removed out of band after the request; this counts "
+                    "at request time, on the governed surface the refusal contract declares"
+                ),
                 "severity": "critical",
-                "evaluated": False,
-                "evaluation": ALERT_EVALUATION_STATUS,
+                "evaluated": True,
+                "evaluation": "measured_in_process",
+                **governed_evidence_gap_report(),
             },
             {
                 "id": "central_workflow_backlog",
@@ -726,6 +795,10 @@ def build_observability_manifest() -> dict[str, Any]:
                 "severity": "warning",
                 "evaluated": False,
                 "evaluation": ALERT_EVALUATION_STATUS,
+                "not_evaluated_because": (
+                    "the condition is about GitHub Actions run state, which this service "
+                    "does not observe"
+                ),
             },
         ],
     }
@@ -756,6 +829,9 @@ def prometheus_metrics_text() -> str:
         "# HELP sdp_observability_export_errors_total Number of request observation export errors.",
         "# TYPE sdp_observability_export_errors_total gauge",
         f"sdp_observability_export_errors_total {metrics['observability_export_errors_total']}",
+        "# HELP sdp_governed_requests_without_evidence_total Policy-gated 2xx responses that recorded no policy decision and no audit event.",
+        "# TYPE sdp_governed_requests_without_evidence_total gauge",
+        f"sdp_governed_requests_without_evidence_total {metrics['governed_requests_without_evidence_total']}",
         "",
     ]
     return "\n".join(lines)

@@ -161,8 +161,9 @@ def production_integration_registry() -> list[ProductionIntegration]:
                 "tenant-scoped logs and external alert routing. Alert routing is NOT "
                 "implemented: SDP_ALERT_WEBHOOK_URL is read only to report whether it "
                 "is set, nothing posts to it, and the alert rules published by "
-                "GET /enterprise/observability are declared conditions that no code "
-                "evaluates. Log export to a file or http(s) sink IS implemented, and "
+                "GET /enterprise/observability are not routed anywhere - one of the two "
+                "published rules is evaluated in process and neither is delivered. "
+                "Log export to a file or http(s) sink IS implemented, and "
                 "a row's evidence_ids now names the policy decisions and audit events "
                 "the server recorded while serving that request - it was read from the "
                 "caller-supplied X-SDP-Evidence-Ids header, so the correlation key was "
@@ -181,6 +182,9 @@ def production_integration_registry() -> list[ProductionIntegration]:
                 "tests/test_api.py::test_request_observability_export_writes_bodyless_jsonl",
                 "tests/test_request_evidence_correlation.py::test_the_exported_log_carries_the_decision_the_server_recorded",
                 "tests/test_request_evidence_correlation.py::test_a_caller_cannot_assert_its_own_evidence_ids",
+                "sdp.observability.governed_evidence_gap_report",
+                "tests/test_request_evidence_correlation.py::test_a_governed_two_hundred_without_evidence_is_counted",
+                "tests/test_request_evidence_correlation.py::test_the_gap_condition_is_zero_on_ordinary_governed_traffic",
             ],
             required_environment=[
                 "SDP_LOG_SINK_URL",
@@ -200,10 +204,17 @@ def production_integration_registry() -> list[ProductionIntegration]:
                 "the request in flight. Reading them from the X-SDP-Evidence-Ids header satisfied the wording and not the "
                 "criterion - measured, a governed preview exported two forged ids and not its real decision. tenant_id and actor "
                 "remain caller-asserted and are declared as such by GET /enterprise/observability.",
-                "Policy/audit gap, connector-probe failure and queue-drift conditions are DECLARED by "
-                "GET /enterprise/observability and are not evaluated: no code computes them and no code "
-                "routes them to SDP_ALERT_WEBHOOK_URL. Implementing this criterion means evaluating the "
-                "conditions and moving the variable back into required_environment.",
+                "The policy/audit gap condition IS evaluated: the middleware counts a policy-gated 2xx "
+                "that recorded no policy decision and no audit event, GET /enterprise/observability "
+                "publishes the count and whether the rule is firing, and /metrics exports "
+                "sdp_governed_requests_without_evidence_total. It is narrower than the condition as "
+                "declared - it counts at request time and does not see evidence removed out of band - "
+                "and the published rule says so. Nothing is routed anywhere: no code posts to "
+                "SDP_ALERT_WEBHOOK_URL, so the variable stays declared-unimplemented. The queue-drift "
+                "condition (central_workflow_backlog) is about GitHub Actions run state this service "
+                "does not observe and stays declared with that reason. A connector-probe-failure rule "
+                "is named by this criterion and has never been published at all. Clearing this "
+                "criterion means routing, plus a published rule for the third condition.",
                 "Operators can correlate health, metrics, audit events, and policy decisions for a buyer pilot.",
             ],
         ),

@@ -2,15 +2,15 @@
 
 이 문서는 `claude/semantic-portal-pr-merge-e5a48k` 브랜치(PR
 [#102](https://github.com/ContextualWisdomLab/semantic-data-portal/pull/102))가
-베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **213개** 커밋 중 122개는
-gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 91개입니다. 이 숫자는 **이
+베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **214개** 커밋 중 122개는
+gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 92개입니다. 이 숫자는 **이
 줄을 담은 커밋을 포함한** 값입니다 — 측정 시점의 210에 이 커밋을 더한 것. 측정 명령:
 
     git rev-list --count origin/docs/product-technical-gap-baseline..HEAD
     git log --format=%H origin/docs/product-technical-gap-baseline..HEAD \
       --name-only -- docs/product-technical-gap-baseline.md | grep -c '^[0-9a-f]\{40\}$'
 
-앞서 적혀 있던 164/112, 186/113, 199/122/77, 203/122/81, 211/122/89, 212/122/90은 각각 그 시점의 값이고 이후
+앞서 적혀 있던 164/112, 186/113, 199/122/77, 203/122/81, 211/122/89, 212/122/90, 213/122/91은 각각 그 시점의 값이고 이후
 커밋을 반영하지 않은 숫자였습니다 — 자기 문서의 수치도 측정해서 맞춰 둡니다. 199는 이
 줄을 쓴 뒤 3개 커밋이 더 쌓여 낡아 203으로, 203은 다음 커밋에서 낡아 204로, 204는 또
 두 커밋 뒤에 206으로 다시 측정해 고쳤습니다. 206도 그 값을 담은 커밋 자신 때문에 도착
@@ -30,8 +30,8 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 91
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                       1235 passed, 15 skipped
-    pytest (파일 순서 정/역/난수)  각 1235 passed, 15 skipped — 순서 무관
+    pytest                       1241 passed, 15 skipped
+    pytest (파일 순서 정/역/난수)  각 1241 passed, 15 skipped — 순서 무관
                                  (정순 · 역순 · seed 11/707/31337)
     pytest tests/fuzz            11 passed
     python -m sdp.demo_smoke     exit 0, "ready": true
@@ -46,6 +46,59 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 백그라운드 측정 중에 트리를 고친 탓에 seed 11이 4건 실패로 나온 일이 있고, 그것은 결함이
 아니라 동시 편집이었습니다. Atheris(`fuzz/fuzz_query_safety.py`)는 로컬에 wheel이 없어
 실행하지 않았습니다 — 같은 invariant의 Hypothesis 미러가 `tests/fuzz`에서 돕니다.
+
+### Added — `policy_audit_gap` alert를 선언에서 **평가**로 (medium)
+
+`GET /enterprise/observability`는 alert 규칙 2건을 `evaluated: false`,
+`alert_evaluation: declared_not_evaluated`로 게시했습니다. 정직한 선언이지만, 그중
+critical 등급인 `policy_audit_gap`은 이 제품의 중심 주장에 대한 **자기검사**입니다 —
+모든 governed 경로에 policy decision과 audit 행이 남는다는 주장. 그리고 바로 위 항목
+전까지는 평가할 수 없었습니다: `evidence_ids`가 caller 헤더에서 왔으므로 "이 요청이
+증빙을 남겼는가"에 서버가 답할 수 있는 값이 없었습니다.
+
+지금은 미들웨어가 셉니다 — policy-gated 라우트가 2xx인데 수집된 증빙 id가 **하나도**
+없는 경우. 미들웨어만이 매칭된 라우트 템플릿·상태코드·수집된 증빙을 한 스코프에서
+알기 때문입니다.
+
+    GET /enterprise/observability  alerts[policy_audit_gap]
+      evaluated: true,  evaluation: "measured_in_process"
+      observed_total: 0,  firing: false,  routes: {}
+      measurement_window: "this worker, since start"
+    GET /metrics
+      sdp_governed_requests_without_evidence_total 0
+
+**governed 경계는 공표된 거부 계약에서 파생합니다.** 403을 답할 수 있는 라우트는
+`policy.evaluate`를 물은 라우트이므로, `api_error_contract`가 이미 governed 표면을
+이름 짓고 있습니다. 같은 것을 두 목록으로 두면 드리프트하므로 두 번째 목록을 만들지
+않았습니다 — 새 governed 라우트는 자기 403을 선언하는 것으로 자기검사에 들어옵니다.
+반대 방향 드리프트(앱에서 사라진 라우트가 계약에 남는 것)는 테스트가 막습니다.
+
+**측정값 0입니다.** 시드 데이터로 호출 가능한 policy-gated GET 라우트 18건 전부가
+2xx에서 증빙 id를 담습니다. 그래서 이 규칙은 상시 경고가 아니라 **회귀 탐지기**입니다 —
+정책 평가를 빠뜨린 라우트가 추가되면 `firing: true`가 됩니다.
+
+**좁다는 사실을 함께 공표합니다.** 선언된 조건은 "preview/query 수가 decision 또는
+audit 수를 초과"인데, 계산하는 것은 그 조건의 요청 단위 형태입니다. 요청 시점에 세므로
+사후에 원장에서 제거된 행은 보이지 않습니다 — 규칙이 `declared_condition`과
+`not_covered`를 같이 담아서, id가 가지지 않은 커버리지를 암시하지 않게 합니다. 계산한
+것의 이름을 쓰는 규칙(`shacl_compatible`, `cycle_count`가 가르친 것)의 세 번째 적용입니다.
+
+**남은 경계.** 전달은 여전히 미구현입니다 — `SDP_ALERT_WEBHOOK_URL`로 POST하는 코드는
+없고 변수는 `declared_unimplemented_environment`에 그대로입니다. `central_workflow_backlog`은
+GitHub Actions run 상태가 필요하므로 이 서비스가 평가할 수 있는 조건이 아니며,
+`not_evaluated_because`로 그 이유를 공표합니다. 최상위 `alert_evaluation`은 두 규칙에
+하나의 주장을 하지 않도록 `per_rule`로 바뀌었습니다 — 어느 쪽 문자열을 써도 절반은
+거짓이기 때문입니다. acceptance criterion이 이름을 올린 세 번째 조건(connector-probe
+실패)은 애초에 규칙으로 게시된 적이 없다는 사실도 criterion 본문에 적었습니다.
+
+라우트별 카운트는 상한(32)이 있고 초과분은 선언된 한 버킷으로 접힙니다(총합은 보존).
+새 모듈 레벨 가변 상태이므로 `tests/conftest.py`의 복원 fixture와
+`tests/test_module_state_coverage.py`의 분류에 함께 등록했습니다 — 한 테스트가 일부러
+만든 gap이 다른 테스트의 측정값이 되지 않도록.
+
+역검증: 카운트 호출을 지우면 firing 테스트가 실패하고, governed 집합에 `/health`를
+끼우면 "governed 밖은 세지 않는다" 테스트가 실패하며, 상한을 지우면 경계 테스트가,
+거부 계약 파생을 끊으면 파생 테스트가 실패합니다.
 
 ### Fixed — 요청 로그의 증빙 상관 키를 caller가 정하고 있었습니다 (high)
 

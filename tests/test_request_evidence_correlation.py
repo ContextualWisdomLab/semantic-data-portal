@@ -40,10 +40,12 @@ from __future__ import annotations
 
 import json
 
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
-from sdp import evidence, observability as obs
+from sdp import api, evidence, observability as obs
 from sdp.api import app
+from sdp.api_error_contract import policy_gated_route_paths
 
 
 client = TestClient(app, raise_server_exceptions=False)
@@ -182,3 +184,102 @@ def test_noting_an_id_outside_a_request_is_a_no_op() -> None:
     with evidence.collect_request_evidence_ids() as collected:
         pass
     assert collected.ids == []
+
+
+# ---------------------------------------------------------------------------- #
+# The ``policy_audit_gap`` alert, which this key made evaluable.
+#
+# ``GET /enterprise/observability`` published two alert rules with
+# ``evaluated: false`` and ``alert_evaluation: declared_not_evaluated`` - honest,
+# but the critical one is a self-check on the product's central claim: a
+# governed path records a policy decision *and* an audit row. It could not be
+# evaluated while ``evidence_ids`` came from a request header, because "did this
+# request record evidence" had no answer the server owned.
+#
+# Measured across the 18 policy-gated GET routes that could be probed with seed
+# data, every 2xx carries at least one evidence id, so the count is 0 today and
+# the rule is a regression detector rather than a standing complaint.
+# ---------------------------------------------------------------------------- #
+
+
+def test_the_gap_condition_is_zero_on_ordinary_governed_traffic() -> None:
+    """The measured state, asserted so a regression has somewhere to show up."""
+    assert (
+        client.post(
+            "/browse/crm-customer-master/preview", headers=PREVIEW_HEADERS, json=PREVIEW_BODY
+        ).status_code
+        == 200
+    )
+    report = obs.governed_evidence_gap_report()
+    assert report["observed_total"] == 0, report
+    assert report["firing"] is False
+    assert report["routes"] == {}
+
+
+def test_a_governed_two_hundred_without_evidence_is_counted(monkeypatch) -> None:
+    """The alert firing, driven through the real middleware.
+
+    ``/health`` evaluates no policy and writes no audit row, so widening the
+    governed surface to include it is the smallest honest way to produce the
+    condition: a route the refusal contract would call governed answering 200
+    with nothing to correlate.
+    """
+    monkeypatch.setattr(api, "_POLICY_GATED_ROUTES", frozenset({"/health"}))
+    assert client.get("/health").status_code == 200
+    report = obs.governed_evidence_gap_report()
+    assert report["observed_total"] == 1, report
+    assert report["firing"] is True
+    assert report["routes"] == {"/health": 1}
+    # And the manifest says it, rather than only the helper.
+    gap = next(
+        alert
+        for alert in obs.build_observability_manifest()["alerts"]
+        if alert["id"] == "policy_audit_gap"
+    )
+    assert gap["evaluated"] is True and gap["firing"] is True
+    assert gap["observed_total"] == 1
+
+
+def test_a_route_outside_the_governed_surface_is_not_counted() -> None:
+    """``/health`` is not policy-gated, so its empty evidence list is not a gap."""
+    assert client.get("/health").status_code == 200
+    assert obs.governed_evidence_gap_report()["observed_total"] == 0
+
+
+def test_a_refusal_is_not_counted_as_a_gap() -> None:
+    """Only a 2xx can be a gap: a refusal recorded its decision and said no."""
+    response = client.post(
+        "/browse/crm-customer-master/preview",
+        headers={"X-SDP-Actor": "nobody@example.com", "X-SDP-Tenant": "demo"},
+        json={"user": "nobody", "purpose": "analysis", "limit": 1},
+    )
+    assert response.status_code == 404
+    assert obs.governed_evidence_gap_report()["observed_total"] == 0
+
+
+def test_the_counted_routes_are_bounded_without_losing_the_total() -> None:
+    """A caller that can reach many templates must not grow the manifest."""
+    overflow = obs.MAX_TRACKED_EVIDENCE_GAP_ROUTES + 5
+    for index in range(overflow):
+        obs.note_governed_request_without_evidence(f"/route-{index:03d}")
+    report = obs.governed_evidence_gap_report()
+    assert len(report["routes"]) == obs.MAX_TRACKED_EVIDENCE_GAP_ROUTES + 1
+    assert report["routes"][obs._OTHER_GAP_ROUTES] == 5
+    assert report["observed_total"] == overflow
+
+
+def test_the_governed_surface_is_derived_from_the_published_refusal_contract() -> None:
+    """One source of truth, and no stale entries in it.
+
+    The set is derived from the routes the refusal contract says can answer 403 -
+    a route that can be refused is a route that asked ``policy.evaluate`` - so a
+    new governed route joins the self-check by declaring its own 403 rather than
+    by being added to a second list. The second assertion is the drift guard the
+    derivation still needs: a path removed from the app but left in the contract
+    would silently never be counted.
+    """
+    gated = policy_gated_route_paths()
+    assert "/browse/{dataset_id}/preview" in gated
+    assert "/health" not in gated
+    templates = {route.path for route in app.routes if isinstance(route, APIRoute)}
+    assert gated <= templates, f"declared governed routes the app does not serve: {gated - templates}"

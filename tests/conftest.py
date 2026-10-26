@@ -32,6 +32,7 @@ The state covered here was enumerated from the modules, not listed from memory::
                          _INDEX
     sdp.ontology_version _CHANGE_LOG, _REVISION_STATE
     sdp.observability    request-observation ring buffer, export-error buffer,
+                         governed-evidence gap counter,
                          _SINK_BREAKER
     sdp.authz            _JWKS_CACHE
 
@@ -85,6 +86,7 @@ def restore_in_memory_app_state():
     revision_state = dict(ontology_version._REVISION_STATE)
     jwks_cache = dict(authz._JWKS_CACHE)
     sink_breaker = dict(observability._SINK_BREAKER)
+    governed_evidence_gaps = dict(observability._GOVERNED_EVIDENCE_GAPS)
     request_observations = observability.list_request_observations()
     export_errors = observability.list_observability_export_errors()
     try:
@@ -116,4 +118,9 @@ def restore_in_memory_app_state():
             observability.record_request_observation(observation, export=False)
         for error in export_errors:
             observability.record_observability_export_error(error)
+        # After the reset above, which clears it: the governed-evidence gap
+        # counter is published by GET /enterprise/observability and /metrics, so
+        # one test's deliberate gap must not be another test's reading.
+        observability._GOVERNED_EVIDENCE_GAPS.clear()
+        observability._GOVERNED_EVIDENCE_GAPS.update(governed_evidence_gaps)
 

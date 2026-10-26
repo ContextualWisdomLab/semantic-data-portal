@@ -175,3 +175,24 @@ def document_refusals(app: FastAPI) -> dict[tuple[str, str], tuple[int, ...]]:
     # Regenerating is required: FastAPI caches the document on first request.
     app.openapi_schema = None
     return applied
+
+
+def policy_gated_route_paths() -> frozenset[str]:
+    """The route templates this contract says evaluate policy.
+
+    A route that can answer **403** is a route that asked ``policy.evaluate``
+    and was refused, so the published refusal contract already names the
+    governed surface. Derived from it rather than listed again, because two
+    lists of the same thing drift: declaring a new governed route's 403 here is
+    what puts it under the policy/audit self-check, and forgetting the
+    declaration is already a contract-test failure.
+
+    Both maps are read, because a 403 declared in either one is a 403 the route
+    can answer.
+    """
+    gated: set[str] = set()
+    for refusals in (ROUTE_REFUSALS, DYNAMIC_REFUSALS):
+        for (_method, path), codes in refusals.items():
+            if 403 in codes:
+                gated.add(path)
+    return frozenset(gated)
