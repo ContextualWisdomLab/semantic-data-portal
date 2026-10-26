@@ -76,11 +76,12 @@ REFUSAL_DESCRIPTIONS: dict[int, str] = {
         "호출자가 읽을 수 없는 증빙 원장에만 남는다."
     ),
     409: (
-        "충돌. 세 가지 경우다 — (1) 상한이 있는 리소스가 가득 찼고 비울 수 있는 "
+        "충돌. 네 가지 경우다 — (1) 상한이 있는 리소스가 가득 찼고 비울 수 있는 "
         "항목이 없다 (시드 개념 어휘는 eviction 대상이 아니다), (2) 요청이 고정한 "
         "온톨로지 content digest가 현재 어휘의 digest와 다르다, (3) 이미 다른 "
         "kind로 존재하는 node id에 쓰려 했다 — node의 kind는 바뀌지 않는다 "
         "(kind마다 담는 거버닝 속성이 다르고, 덮어쓰면 그 속성이 파괴된다). "
+        "(4) 등록하려는 dataset id를 카탈로그가 이미 들고 있다. "
         "(2)에서 형식이 잘못된 digest는 409가 아니라 400이다 — 오타를 \"서버가 "
         "다른 어휘를 들고 있다\"로 보고하면 클라이언트가 잘못된 조치를 하게 된다."
     ),
@@ -177,8 +178,8 @@ def document_refusals(app: FastAPI) -> dict[tuple[str, str], tuple[int, ...]]:
     return applied
 
 
-def policy_gated_route_paths() -> frozenset[str]:
-    """The route templates this contract says evaluate policy.
+def policy_gated_route_methods() -> frozenset[tuple[str, str]]:
+    """The ``(method, path)`` pairs this contract says evaluate policy.
 
     A route that can answer **403** is a route that asked ``policy.evaluate``
     and was refused, so the published refusal contract already names the
@@ -187,12 +188,26 @@ def policy_gated_route_paths() -> frozenset[str]:
     what puts it under the policy/audit self-check, and forgetting the
     declaration is already a contract-test failure.
 
+    The **method is part of the answer**, and dropping it was a live defect in
+    the first version of this function: it returned bare paths, the middleware
+    compared bare paths, and one path serves both a governed and an open
+    method. ``POST /ontology/concepts`` declares 403, so ``/ontology/concepts``
+    entered the governed set and took ``GET /ontology/concepts`` with it - a
+    deliberately open, actor-less vocabulary read that evaluates no policy and
+    records nothing. One anonymous ``GET`` then scored as a governed 2xx with no
+    evidence and made the *critical* ``policy_audit_gap`` rule publish
+    ``firing: true`` on the first ordinary request (measured). The published
+    "measured 0, a regression detector rather than a standing complaint" was
+    taken over 403-capable **GET** templates only, so the measurement and the
+    membership test disagreed about what "governed" meant and the measurement
+    was the one that looked right.
+
     Both maps are read, because a 403 declared in either one is a 403 the route
     can answer.
     """
-    gated: set[str] = set()
+    gated: set[tuple[str, str]] = set()
     for refusals in (ROUTE_REFUSALS, DYNAMIC_REFUSALS):
-        for (_method, path), codes in refusals.items():
+        for (method, path), codes in refusals.items():
             if 403 in codes:
-                gated.add(path)
+                gated.add((method, path))
     return frozenset(gated)

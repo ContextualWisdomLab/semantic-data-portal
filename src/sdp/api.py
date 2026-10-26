@@ -55,7 +55,7 @@ from .domain import (
     QueryExecutionRequest,
 )
 from .enterprise_evidence import build_enterprise_evidence_pack
-from .api_error_contract import policy_gated_route_paths
+from .api_error_contract import policy_gated_route_methods
 from .evidence import collect_request_evidence_ids, list_policy_decisions
 from .latency_budgets import latency_budget_report
 from .observability import (
@@ -126,8 +126,9 @@ except Exception:  # pragma: no cover
 
 # Computed once: the derivation reads two static maps. Held in a module global
 # rather than inlined so a test can narrow or widen the governed surface without
-# editing the refusal contract.
-_POLICY_GATED_ROUTES = policy_gated_route_paths()
+# editing the refusal contract. ``(method, path)`` pairs, not bare paths - see
+# ``policy_gated_route_methods`` for the defect that taught that.
+_POLICY_GATED_ROUTES = policy_gated_route_methods()
 
 
 @app.middleware("http")
@@ -169,17 +170,27 @@ async def record_request_observability(request: Request, call_next):
             # a decision *and* an audit row on every governed path - did not
             # hold for that request. Counted here because this is the only
             # place that knows the matched template, the status and the
-            # evidence in one scope. Measured across the 18 policy-gated GET
-            # routes that could be probed, the count is 0 today, so it is a
-            # regression detector rather than a standing complaint.
+            # evidence in one scope.
+            #
+            # Matched on ``(method, path)``. Matching the path alone counted
+            # ``GET /ontology/concepts`` - open, actor-less, policy-free - as
+            # governed, because ``POST`` on the same path declares 403: one
+            # anonymous GET published ``firing: true`` on the critical rule
+            # (measured). The method is the half that says whether this request
+            # was governed, and the first version of this block threw it away on
+            # both sides of the comparison - while the measurement that produced
+            # the published "0" was method-aware, so the two disagreed about
+            # what "governed" meant and the measurement looked right.
             matched = request.scope.get("route")
             route_template = getattr(matched, "path", None)
             if (
                 200 <= status_code < 300
                 and not collected.ids
-                and route_template in _POLICY_GATED_ROUTES
+                and (request.method, route_template) in _POLICY_GATED_ROUTES
             ):
-                note_governed_request_without_evidence(route_template)
+                note_governed_request_without_evidence(
+                    f"{request.method} {route_template}"
+                )
             if response is not None:
                 response.headers[request_id_header()] = request_id
             # The sink write is blocking, so it is awaited off the event loop;
@@ -1099,6 +1110,23 @@ def dataset_audit_events(
     ]
 
 
+def _columns_the_mirror_will_write(dataset_id: str, declared: Any = None) -> list[str]:
+    """The column names ``seed_dataset`` will mirror after this mutation.
+
+    A declared schema replaces the stored one, so it is what the mirror writes;
+    no declared schema means the stored schema survives the mutation and is what
+    the mirror writes. Checking the *declared* list in both cases is what let a
+    schema-less patch through: it checks an empty list, and the mirror then
+    writes the stored columns nobody asked about.
+    """
+    if declared is not None:
+        return [column.name for column in declared]
+    dataset = catalog.get_dataset(dataset_id)
+    if dataset is None:
+        return []
+    return [column.name for column in dataset.schema or []]
+
+
 def _assert_mirror_kinds_for_existing_dataset(dataset_id: str) -> None:
     """Refuse a status change whose graph mirror would reclassify a node.
 
@@ -1107,11 +1135,10 @@ def _assert_mirror_kinds_for_existing_dataset(dataset_id: str) -> None:
     dataset is left to the mutation itself, which raises ``KeyError`` and
     answers 404; this guard only refuses a conflict it can see.
     """
-    dataset = catalog.get_dataset(dataset_id)
-    if dataset is None:
+    if catalog.get_dataset(dataset_id) is None:
         return
     assert_dataset_mirror_kinds_are_available(
-        dataset_id, [column.name for column in dataset.schema or []]
+        dataset_id, _columns_the_mirror_will_write(dataset_id)
     )
 
 
@@ -1281,11 +1308,19 @@ def patch_catalog_dataset(dataset_id: str, payload: dict[str, Any]) -> dict[str,
         # Unconditional, not ``if request.schema is not None``: the dataset's
         # *own* node is rewritten by every mirror, so a patch declaring no
         # schema at all still had to reclassify a colliding node - and answered
-        # 400 with the title change kept (measured). The columns are only the
-        # second half of what the mirror writes.
+        # 400 with the title change kept (measured).
+        #
+        # The columns are the ones the mirror will actually write, which is not
+        # the same as the ones this request declares: ``patch_dataset`` keeps the
+        # stored schema when the body carries none. Passing ``[]`` in that case
+        # checked the dataset's own node and nothing else, so a stored column
+        # whose node id a concept holds still answered **409 with the title
+        # applied, ``updated_at`` moved, a schema-history snapshot appended and
+        # two audit rows reading ``success`` then ``denied`` for one request**
+        # (measured) - the same mutation-then-refuse defect this guard exists to
+        # prevent, surviving in the route it was added to.
         assert_dataset_mirror_kinds_are_available(
-            dataset_id,
-            [column.name for column in request.schema] if request.schema is not None else [],
+            dataset_id, _columns_the_mirror_will_write(dataset_id, request.schema)
         )
         # Mutation and mirror in one critical section; see the create route.
         with catalog.catalog_mutation_lock():

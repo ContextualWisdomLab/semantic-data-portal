@@ -101,7 +101,10 @@ PYTHONPATH=src SDP_SQLITE_PATH=.local/sdp-evidence.sqlite3 uvicorn sdp.api:app -
     audit event도 기록하지 않은 횟수를 미들웨어가 세고, manifest가 `observed_total`과
     `firing`을, `/metrics`가 `sdp_governed_requests_without_evidence_total`을 공표한다.
     선언된 조건보다 **좁다**(요청 시점에 세므로 사후에 원장에서 지워진 행은 보이지
-    않는다)는 사실은 규칙 자체가 `not_covered`로 공표한다. 전달(routing)은 여전히
+    않고, decision은 있고 audit 행만 없는 경우도 세지 않는다)는 사실은 규칙 자체가
+    `not_covered`로 공표한다. governed 경계는 `(method, path)` 쌍이다 — path만으로
+    파생했을 때 열린 `GET /ontology/concepts`가 `POST`의 403을 물려받아 미인증 요청
+    한 번에 critical 규칙이 발화했다(측정). 전달(routing)은 여전히
     미구현이고 `central_workflow_backlog`은 이 서비스가 볼 수 없는 GitHub Actions
     상태라 선언 상태로 남으며 그 이유를 함께 공표한다.
 12. 완료: `/catalog/datasets/{dataset_id}/semantic-validation`과 `/enterprise/shacl-validation`으로 SHACL 호환 validation report와 95% pass rate 증빙을 노출한다.

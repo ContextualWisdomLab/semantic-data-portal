@@ -732,28 +732,51 @@ def test_the_log_correlation_key_is_not_read_from_a_request_header() -> None:
 
     Parsed rather than searched, for the reason the backend-rule contract test
     gives: a substring check over the source would also fire on the comments
-    that explain why the header is gone, and those are worth keeping. What is
-    banned is *passing that header name to a call* - which is what reading it
-    requires - anywhere under ``src``.
+    that explain why the header is gone, and those are worth keeping. Comments
+    are not in the AST at all, so parsing keeps them for free.
+
+    What is banned is the header name appearing as a **string literal anywhere
+    in ``src``**, docstrings excepted. The first version of this guard banned
+    only passing it to a call, and justified that with "which is what reading it
+    requires" - which is false. Two ordinary shapes evade it: hoisting the name
+    to a module constant (``_HEADER = "X-SDP-Evidence-Ids"`` then
+    ``_header_value(headers, _HEADER, "")``, whose call argument is an
+    ``ast.Name``), and a mapping read (``headers["X-SDP-Evidence-Ids"]``, an
+    ``ast.Subscript``). Either one fully restores the caller-controlled
+    correlation key while this guard stays green. Banning the literal covers
+    every way of naming it, and the header cannot be read without naming it.
     """
     import ast
     import pathlib
 
     source_root = pathlib.Path(obs.__file__).resolve().parents[1]
     reads: list[str] = []
-    for path in sorted(source_root.rglob("*.py")):
-        text = path.read_text()
+    for source_path in sorted(source_root.rglob("*.py")):
+        text = source_path.read_text()
         if "X-SDP-Evidence-Ids" not in text:
             continue
-        for node in ast.walk(ast.parse(text)):
-            if not isinstance(node, ast.Call):
+        tree = ast.parse(text)
+        docstrings = set()
+        for node in ast.walk(tree):
+            if not isinstance(
+                node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+            ):
                 continue
-            literals = [
-                argument
-                for argument in list(node.args) + [kw.value for kw in node.keywords]
-                if isinstance(argument, ast.Constant) and argument.value == "X-SDP-Evidence-Ids"
-            ]
-            if literals:
-                where = f"{path.relative_to(source_root).as_posix()}:{node.lineno}"
-                reads.append(where)
-    assert reads == [], f"the log's evidence ids are read from a request header: {reads}"
+            body = getattr(node, "body", None) or []
+            first = body[0] if body else None
+            if (
+                isinstance(first, ast.Expr)
+                and isinstance(first.value, ast.Constant)
+                and isinstance(first.value.value, str)
+            ):
+                docstrings.add(id(first.value))
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Constant)
+                and node.value == "X-SDP-Evidence-Ids"
+                and id(node) not in docstrings
+            ):
+                reads.append(
+                    f"{source_path.relative_to(source_root).as_posix()}:{node.lineno}"
+                )
+    assert reads == [], f"the log's evidence ids are named in src as a literal: {reads}"

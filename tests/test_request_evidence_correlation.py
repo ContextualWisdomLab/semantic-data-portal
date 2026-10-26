@@ -40,12 +40,15 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
+from sdp_core.contracts import PolicyDecision
+
 from sdp import api, evidence, observability as obs
 from sdp.api import app
-from sdp.api_error_contract import policy_gated_route_paths
+from sdp.api_error_contract import policy_gated_route_methods
 
 
 client = TestClient(app, raise_server_exceptions=False)
@@ -167,6 +170,26 @@ def test_the_collected_list_is_bounded_and_declares_what_it_withheld() -> None:
     assert observation["withheld_evidence_id_count"] == overflow - obs.MAX_OBSERVATION_EVIDENCE_IDS
 
 
+def test_the_withheld_count_counts_distinct_ids_not_attempts() -> None:
+    """The field is named for a count of ids, so it must count ids.
+
+    ``withheld`` was an ``int`` incremented per call, and the dedupe that
+    collapses a repeat only looks at the ids that fit - so one withheld id
+    offered five times published 5. Not reachable over HTTP today (no route
+    writes more than two ledger rows for one request), which is why this is a
+    set rather than a redesign, and why the test says so.
+    """
+    with evidence.collect_request_evidence_ids() as collected:
+        for index in range(evidence.MAX_REQUEST_EVIDENCE_IDS):
+            evidence.note_request_evidence_id(f"kept-{index:04d}")
+        for _ in range(5):
+            evidence.note_request_evidence_id("overflowing-but-one-id")
+        evidence.note_request_evidence_id("a-second-overflowing-id")
+    assert len(collected.ids) == evidence.MAX_REQUEST_EVIDENCE_IDS
+    assert collected.withheld == 2
+    assert collected.withheld_ids == {"overflowing-but-one-id", "a-second-overflowing-id"}
+
+
 def test_the_collector_records_each_id_once() -> None:
     """Two rows naming one decision id are one correlation key, not two."""
     with evidence.collect_request_evidence_ids() as collected:
@@ -224,12 +247,12 @@ def test_a_governed_two_hundred_without_evidence_is_counted(monkeypatch) -> None
     condition: a route the refusal contract would call governed answering 200
     with nothing to correlate.
     """
-    monkeypatch.setattr(api, "_POLICY_GATED_ROUTES", frozenset({"/health"}))
+    monkeypatch.setattr(api, "_POLICY_GATED_ROUTES", frozenset({("GET", "/health")}))
     assert client.get("/health").status_code == 200
     report = obs.governed_evidence_gap_report()
     assert report["observed_total"] == 1, report
     assert report["firing"] is True
-    assert report["routes"] == {"/health": 1}
+    assert report["routes"] == {"GET /health": 1}
     # And the manifest says it, rather than only the helper.
     gap = next(
         alert
@@ -246,14 +269,44 @@ def test_a_route_outside_the_governed_surface_is_not_counted() -> None:
     assert obs.governed_evidence_gap_report()["observed_total"] == 0
 
 
-def test_a_refusal_is_not_counted_as_a_gap() -> None:
-    """Only a 2xx can be a gap: a refusal recorded its decision and said no."""
+def test_a_refusal_that_recorded_nothing_is_still_not_counted_as_a_gap() -> None:
+    """The status guard, exercised by the only refusal that needs it.
+
+    This test used to drive a 404 - which records a policy decision, so
+    ``not collected.ids`` was already false and the ``200 <= status_code < 300``
+    clause never decided the outcome. Deleting that clause left the whole suite
+    green (measured: 1241 passed), and the clause is load-bearing: a governed
+    route that refuses *before* reaching ``policy.evaluate`` records nothing at
+    all. A malformed body is exactly that - pydantic rejects it and the handler
+    never runs - so without the guard an ordinary 400 would make the critical
+    rule fire.
+    """
+    response = client.post(
+        "/browse/crm-customer-master/preview",
+        headers=PREVIEW_HEADERS,
+        json={"user": "analyst", "purpose": "analysis", "limit": "not-an-int"},
+    )
+    assert response.status_code == 400
+    observation = _last_observation("/browse/crm-customer-master/preview")
+    assert observation["status_code"] == 400
+    # The precondition that makes this test about the status guard: nothing was
+    # recorded, so only the status can be the reason it is not counted.
+    assert observation["evidence_ids"] == []
+    report = obs.governed_evidence_gap_report()
+    assert report["observed_total"] == 0, report
+    assert report["firing"] is False
+
+
+def test_a_refused_governed_request_that_did_record_evidence_is_not_counted() -> None:
+    """The other refusal shape: it recorded its decision, so it is correlatable
+    and is not a gap either."""
     response = client.post(
         "/browse/crm-customer-master/preview",
         headers={"X-SDP-Actor": "nobody@example.com", "X-SDP-Tenant": "demo"},
         json={"user": "nobody", "purpose": "analysis", "limit": 1},
     )
     assert response.status_code == 404
+    assert _last_observation("/browse/crm-customer-master/preview")["evidence_ids"]
     assert obs.governed_evidence_gap_report()["observed_total"] == 0
 
 
@@ -278,8 +331,129 @@ def test_the_governed_surface_is_derived_from_the_published_refusal_contract() -
     derivation still needs: a path removed from the app but left in the contract
     would silently never be counted.
     """
-    gated = policy_gated_route_paths()
-    assert "/browse/{dataset_id}/preview" in gated
-    assert "/health" not in gated
-    templates = {route.path for route in app.routes if isinstance(route, APIRoute)}
-    assert gated <= templates, f"declared governed routes the app does not serve: {gated - templates}"
+    gated = policy_gated_route_methods()
+    assert ("POST", "/browse/{dataset_id}/preview") in gated
+    assert ("GET", "/health") not in gated
+    # The method is part of the answer. ``POST /ontology/concepts`` is governed
+    # and ``GET /ontology/concepts`` is deliberately open; a set of bare paths
+    # cannot say that, and when it could not, one anonymous GET made the
+    # critical rule fire (measured).
+    assert ("POST", "/ontology/concepts") in gated
+    assert ("GET", "/ontology/concepts") not in gated
+    served = set()
+    for route in app.routes:
+        if isinstance(route, APIRoute):
+            for method in route.methods:
+                served.add((method, route.path))
+    assert gated <= served, f"declared governed routes the app does not serve: {gated - served}"
+
+
+def test_the_middleware_consumes_the_derived_surface_unchanged() -> None:
+    """The wiring, which no test checked while it was wrong.
+
+    ``test_a_governed_two_hundred_without_evidence_is_counted`` replaces
+    ``api._POLICY_GATED_ROUTES`` to drive the counter, so it proves the counting
+    mechanism and says nothing about the value the middleware really uses - and
+    the value really used was method-blind. Every other gap test asserts zero,
+    which a detector wired to nothing also satisfies. This is the assertion that
+    fails if the two ever diverge again.
+    """
+    assert api._POLICY_GATED_ROUTES == policy_gated_route_methods()
+
+
+def test_an_open_method_on_a_governed_path_is_not_counted() -> None:
+    """The shipped defect, pinned.
+
+    ``POST /ontology/concepts`` declares 403, so the *path* was governed and the
+    membership test took ``GET /ontology/concepts`` with it: an actor-less,
+    policy-free vocabulary read that records nothing. Measured against the first
+    version, one anonymous GET published
+    ``policy_audit_gap: {firing: true, observed_total: 1,
+    routes: {'/ontology/concepts': 1}}`` on a rule whose severity is critical -
+    while the CHANGELOG, production.py and both docs published "measured 0, a
+    regression detector rather than a standing complaint".
+    """
+    response = client.get("/ontology/concepts")
+    assert response.status_code == 200
+    observation = _last_observation("/ontology/concepts")
+    assert observation["evidence_ids"] == [], "this route is open; it records nothing"
+    report = obs.governed_evidence_gap_report()
+    assert report["observed_total"] == 0, report
+    assert report["firing"] is False
+
+
+def test_no_governed_get_route_reports_a_gap_on_seed_data() -> None:
+    """The measurement that justified publishing "0", as a standing test.
+
+    It was taken once, by hand, over the 403-capable GET templates - the
+    method-aware view - while the middleware matched paths. The two disagreed and
+    the hand measurement was the one that looked right, so the published "0"
+    survived a rule that fires on the first anonymous request. Run as a test over
+    the surface the middleware itself uses, that cannot happen twice.
+    """
+    substitutions = {
+        "{dataset_id}": "crm-customer-master",
+        "{term}": "고객",
+        "{concept}": "고객",
+    }
+    probed = 0
+    for method, template in sorted(api._POLICY_GATED_ROUTES):
+        if method != "GET":
+            continue
+        url = template
+        for token, value in substitutions.items():
+            url = url.replace(token, value)
+        if "{" in url:
+            continue
+        response = client.get(url, params={"user": "admin", "actor": "admin"})
+        if not (200 <= response.status_code < 300):
+            continue
+        probed += 1
+    report = obs.governed_evidence_gap_report()
+    assert probed >= 15, f"only {probed} governed GET routes were probed"
+    assert report["observed_total"] == 0, report
+    assert report["routes"] == {}
+
+
+def test_an_id_is_published_only_after_the_store_accepted_the_row() -> None:
+    """The log row's correlation key must name a row that exists.
+
+    ``note_request_evidence_id`` ran *before* the configured store's write, so a
+    write that raises - the deployed Postgres/SQLite configuration can - still
+    published the id in the request log while the ledger never got the row.
+    ``GET /enterprise/observability`` publishes ``evidence_id_source:
+    server_recorded`` beside it, and the readiness manifest's criterion says the
+    ids name what the server recorded, so the row became the one thing an
+    auditor cannot check: a key with nothing behind it.
+    """
+
+    class _RefusingStore:
+        """An evidence store whose writes fail, like an outage."""
+
+        def record_decision(self, decision) -> None:
+            """Fail the way a store outage fails."""
+            raise RuntimeError("evidence store unavailable")
+
+        def append_event(self, event) -> None:
+            """Fail the way a store outage fails."""
+            raise RuntimeError("evidence store unavailable")
+
+    previous = evidence._STORE
+    evidence.configure_evidence_store(_RefusingStore())
+    try:
+        with evidence.collect_request_evidence_ids() as collected:
+            with pytest.raises(RuntimeError):
+                evidence.record_policy_decision(
+                    PolicyDecision(
+                        decision_id="never-persisted",
+                        subject="analyst",
+                        resource="x",
+                        action="read",
+                        purpose="analysis",
+                        effect="allow",
+                        reason="r",
+                    )
+                )
+        assert collected.ids == [], collected.ids
+    finally:
+        evidence.configure_evidence_store(previous)

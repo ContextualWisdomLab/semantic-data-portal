@@ -215,22 +215,53 @@ def _lineage_edge_is_declared(dataset: Any, source_id: str, target_id: str) -> b
     return False
 
 
-def _owns_column_node(dataset_id: str, node_id: str) -> bool:
-    """Whether ``node_id`` is a column node this dataset generated.
+def _owns_column_node(dataset_id: str, node_id: str, store: GraphStore) -> bool:
+    """Whether this dataset is the sole owner of ``node_id`` as a column node.
 
-    ``seed_dataset`` writes column nodes under exactly one shape -
-    ``f"{dataset_id}:{column.name}"`` - so anything else reached through a
-    ``has_column`` edge was put there by some other writer (``POST
-    /graph/edges`` accepts a ``has_column`` edge to any node) and is not this
-    reconciliation's to destroy. Before this guard, an undeclared
-    ``has_column`` edge took its target node with it: pointing one at the
+    Reconciliation used to delete **any** undeclared ``has_column`` target.
+    ``POST /graph/edges`` accepts that edge to any node, so two authorized
+    requests destroyed a node this dataset does not own: pointing one at the
     seeded ``고객`` concept and then patching the dataset's schema deleted
-    ``고객`` itself, together with every edge touching it, and the ontology
-    routes that resolve that term answered as if the concept had never been
-    defined. The edge is still removed in that case - it is this dataset's
-    edge - only the node someone else owns survives.
+    ``고객`` itself with every edge touching it, and the routes that resolve
+    that term answered as if the concept had never been defined.
+
+    The first repair asked only for the **shape** ``seed_dataset`` writes,
+    ``f"{dataset_id}:{column.name}"``, and a shape is not ownership. Measured
+    against that version, both of these still destroyed someone else's node:
+
+        POST /ontology/concepts {"concept": "g1:개념"}
+        POST /graph/edges  has_column  g1 -> g1:개념
+        PATCH /catalog/datasets/g1 {"title": "바꿈"}      -> 200
+          -> the concept node is gone and GET /ontology/terms/g1:개념 -> 404
+
+        POST /catalog/datasets {"id": "f2:child", ...}     (a *dataset*)
+        POST /graph/edges  has_column  f2 -> f2:child
+        PATCH /catalog/datasets/f2 {"title": "x"}          -> 200
+          -> dataset f2:child's own node is gone while
+             GET /catalog/datasets/f2:child still answers 200 - the exact
+             catalog/graph drift the kind guard exists to refuse, now reachable
+
+    So ownership is asked three ways, and all three are needed:
+
+    * the shape ``seed_dataset`` writes - a node outside it was never this
+      function's to write, so it is not its to delete;
+    * the node is a ``column`` node - ``seed_dataset`` writes column nodes with
+      that kind, so a ``concept`` or ``dataset`` sitting at that id belongs to
+      another writer (this is what saves ``g1:개념`` and ``f2:child``);
+    * no other ``has_column`` edge still points at it - dataset ``f2:child``
+      owns the column node ``f2:child:c``, whose id also starts with ``f2:``
+      and whose kind *is* ``column``, and its owner's edge is what says so.
+
+    Called after this dataset's own edge is removed, so the incoming-edge
+    question sees only other owners. The edge is still removed in every case -
+    it is this dataset's edge - only the node someone else owns survives.
     """
-    return node_id.startswith(f"{dataset_id}:") and len(node_id) > len(dataset_id) + 1
+    if not (node_id.startswith(f"{dataset_id}:") and len(node_id) > len(dataset_id) + 1):
+        return False
+    node = store.get_node(node_id)
+    if node is None or node.kind != "column":
+        return False
+    return not store.edges_for(node_id, "has_column", direction="in")
 
 
 def _reconcile_removed(
@@ -253,7 +284,7 @@ def _reconcile_removed(
         if edge.target_id in declared_columns:
             continue
         store.delete_edge("has_column", dataset.id, edge.target_id)
-        if _owns_column_node(dataset.id, edge.target_id):
+        if _owns_column_node(dataset.id, edge.target_id, store):
             store.delete_node(edge.target_id)
 
     for edge in store.edges_for(dataset.id, "mapping"):

@@ -380,10 +380,15 @@ seed의 `security` subject는 `platform-admin`도 들고 있어 여전히 previe
     `tests/test_honest_metrics.py::test_nothing_posts_to_the_alert_webhook`이 담당합니다.
     게시되는 alert 규칙은 삭제하지 않고 규칙별 `evaluated` 플래그로 표시하며,
     `alert_webhook_routing: declared_unimplemented`는 그대로입니다. 2건 중
-    `policy_audit_gap`은 이제 **평가됩니다** — 이 조건은 제품의 중심 주장(모든
-    governed 경로에 decision과 audit 행)에 대한 자기검사인데, `evidence_ids`가 caller
-    헤더에서 오는 동안에는 "이 요청이 증빙을 남겼는가"에 서버가 답할 수 없어
-    평가가 불가능했습니다. 지금은 미들웨어가 policy-gated 라우트의 2xx 중 수집된
+    `policy_audit_gap`은 이제 **평가됩니다** — `evidence_ids`가 caller 헤더에서
+    오는 동안에는 "이 요청이 증빙을 남겼는가"에 서버가 답할 수 없어 평가가
+    불가능했습니다. 무엇을 탐지하는지는 정확히 적습니다: governed 2xx가 policy
+    decision도 audit 행도 **둘 다** 남기지 않은 경우입니다. 처음 적었던 "모든
+    governed 경로에 decision과 audit 행이 남는다는 주장에 대한 자기검사"는 구현보다
+    넓은 주장이었습니다 — 측정하면 시드 데이터로 호출 가능한 governed GET 라우트 18건
+    중 16건이 decision만 남기고 audit 행은 남기지 않으며, 그 상태에서 규칙은 정상적으로
+    `observed_total: 0`입니다. "decision은 있고 audit 행은 없음"은 이 규칙이 덮지
+    않습니다. 지금은 미들웨어가 policy-gated 라우트의 2xx 중 수집된
     증빙 id가 하나도 없는 경우를 세고, manifest가 `observed_total`/`firing`/`routes`를,
     `/metrics`가 `sdp_governed_requests_without_evidence_total`을 공표합니다.
     governed 경계는 **공표된 거부 계약에서 파생**합니다 — 403을 답할 수 있는
@@ -391,6 +396,19 @@ seed의 `security` subject는 `platform-admin`도 들고 있어 여전히 previe
     선언하는 것으로 자기검사에 포함됩니다(같은 것을 두 목록으로 두면 드리프트합니다).
     측정: 시드 데이터로 호출 가능한 policy-gated GET 라우트 18건 전부가 2xx에서
     증빙 id를 담으므로 현재 값은 0이고, 이 규칙은 상시 경고가 아니라 회귀 탐지기입니다.
+  - **그 파생이 method를 버리고 있었습니다(2라운드 적대적 검증, high).** 거부 계약은
+    `(method, path)`로 키가 잡히는데 파생은 path만 모으고 미들웨어도 path만 비교해서,
+    `POST /ontology/concepts`가 403을 선언한다는 이유로 **열려 있는**
+    `GET /ontology/concepts`(actor 없음·정책 평가 없음·기록 없음)까지 governed로
+    집계됐습니다. 측정: 미인증 `GET /ontology/concepts` 한 번으로 critical 등급 규칙이
+    `firing: true, observed_total: 1`을 공표합니다. 위에 적힌 "측정값 0"은
+    403을 선언한 **GET 템플릿**만 재어 method를 고려한 값이었으므로, 측정과 판정이
+    서로 다른 "governed"를 쓰고 있었고 맞아 보이는 쪽이 측정이었습니다. 지금은
+    `(method, path)` 쌍으로 파생·비교하며(governed 쌍 39건 = GET 22 + POST 16 +
+    PATCH 1, 전부 앱이 실제로 서빙), 열린 method가 governed path에 얹혀 있던 경우는
+    `GET /ontology/concepts` 1건이고 정확히 그것만 제외됩니다. 미들웨어가 쓰는 값이
+    파생 결과와 같은지는 테스트가 단언합니다 — 이전에는 유일한 발화 테스트가 그 값을
+    monkeypatch로 **대체**하고 있었으므로 배선이 죽어 있어도 전 스위트가 녹색이었습니다.
     선언된 조건("preview/query 수가 decision/audit 수를 초과")보다 좁다는 점 —
     요청 시점에 세므로 사후에 원장에서 제거된 행은 보이지 않습니다 — 은 규칙이
     `declared_condition`/`not_covered`로 함께 공표합니다. `central_workflow_backlog`은

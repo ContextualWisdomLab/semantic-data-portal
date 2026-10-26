@@ -41,10 +41,13 @@ mutation applied.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+
 import pytest
 from fastapi.testclient import TestClient
 
-from sdp import catalog, graph_store
+from sdp import api, catalog, graph_store
 from sdp.api import app
 from sdp.graph_store import InMemoryGraphStore, NodeKindConflict
 from sdp.seed import assert_dataset_mirror_kinds_are_available, seed_dataset, seed_store
@@ -387,8 +390,9 @@ def test_a_duplicate_dataset_id_is_a_conflict_not_a_crash() -> None:
 # ------------------------------- the two status verbs, which carry no schema --
 
 
-def _drift_the_dataset_node_into_a_concept(dataset_id: str) -> None:
-    """Put the store in the state the four mutations have to survive.
+@contextmanager
+def _drifted_dataset_node(dataset_id: str) -> Iterator[None]:
+    """Put the store in the state the four mutations have to survive, then undo it.
 
     The catalog holds the row; the graph holds a ``concept`` at that id, so the
     next mirror would have to reclassify it. Written through the store rather
@@ -398,10 +402,22 @@ def _drift_the_dataset_node_into_a_concept(dataset_id: str) -> None:
     node**, and ``POST /ontology/concepts`` could then take the freed id. That
     chain is pinned by
     ``test_reconciliation_drops_a_foreign_has_column_edge_without_its_node``.
+
+    The node is removed again afterwards. ``conftest`` rolls the catalog row
+    back but deliberately does not restore the graph store (it has no snapshot
+    API), so the first version of this helper left a ``concept`` node at each
+    caller's dataset id for the rest of the process - and the next test in that
+    process to register a dataset at that id would be refused 409 by the very
+    guard these tests are about. Leaving the id empty is the honest end state:
+    nothing in the catalog claims it either.
     """
     store = graph_store.get_store()
     store.delete_node(dataset_id)
     store.upsert_node(dataset_id, "concept", label=dataset_id)
+    try:
+        yield
+    finally:
+        store.delete_node(dataset_id)
 
 
 def test_a_patch_that_declares_no_schema_is_checked_too() -> None:
@@ -409,12 +425,12 @@ def test_a_patch_that_declares_no_schema_is_checked_too() -> None:
     patch skipped it - and the dataset's *own* node is rewritten by every
     mirror. Measured: 400 "request body is not valid" with the new title kept."""
     assert client.post("/catalog/datasets", json=_payload("제목만패치셋")).status_code == 200
-    _drift_the_dataset_node_into_a_concept("제목만패치셋")
-    response = client.patch(
-        "/catalog/datasets/제목만패치셋", json={**ADMIN, "title": "바뀐 제목"}
-    )
-    assert response.status_code == 409
-    assert catalog.get_dataset("제목만패치셋").title == "제목만패치셋 제목"
+    with _drifted_dataset_node("제목만패치셋"):
+        response = client.patch(
+            "/catalog/datasets/제목만패치셋", json={**ADMIN, "title": "바뀐 제목"}
+        )
+        assert response.status_code == 409
+        assert catalog.get_dataset("제목만패치셋").title == "제목만패치셋 제목"
 
 
 def test_publish_refuses_the_conflict_instead_of_applying_it() -> None:
@@ -423,44 +439,55 @@ def test_publish_refuses_the_conflict_instead_of_applying_it() -> None:
     and an audit row reading ``result='success'`` for a request the caller saw
     fail."""
     assert client.post("/catalog/datasets", json=_payload("발행충돌셋")).status_code == 200
-    _drift_the_dataset_node_into_a_concept("발행충돌셋")
-    before = catalog.get_dataset("발행충돌셋")
-    before_status, before_updated = before.status, before.updated_at
-    response = client.post("/catalog/datasets/발행충돌셋/publish", json=ADMIN)
-    assert response.status_code == 409
-    after = catalog.get_dataset("발행충돌셋")
-    assert after.status == before_status == "registered"
-    assert after.updated_at == before_updated
-    rows = catalog.list_audit_events(resource="발행충돌셋")
-    assert rows[0].action == "dataset.publish"
-    assert rows[0].result == "denied"
-    assert "kind" in rows[0].reason
+    with _drifted_dataset_node("발행충돌셋"):
+        before = catalog.get_dataset("발행충돌셋")
+        before_status, before_updated = before.status, before.updated_at
+        response = client.post("/catalog/datasets/발행충돌셋/publish", json=ADMIN)
+        assert response.status_code == 409
+        after = catalog.get_dataset("발행충돌셋")
+        assert after.status == before_status == "registered"
+        assert after.updated_at == before_updated
+        rows = catalog.list_audit_events(resource="발행충돌셋")
+        assert rows[0].action == "dataset.publish"
+        assert rows[0].result == "denied"
+        assert "kind" in rows[0].reason
 
 
 def test_deprecate_refuses_the_conflict_instead_of_applying_it() -> None:
     """The same hole on the fourth verb, which answered **500** - its route has
     no ``ValueError`` arm at all - with the status change already applied."""
     assert client.post("/catalog/datasets", json=_payload("폐기충돌셋")).status_code == 200
-    _drift_the_dataset_node_into_a_concept("폐기충돌셋")
-    before = catalog.get_dataset("폐기충돌셋")
-    before_status, before_updated = before.status, before.updated_at
-    response = client.post("/catalog/datasets/폐기충돌셋/deprecate", json=ADMIN)
-    assert response.status_code == 409
-    after = catalog.get_dataset("폐기충돌셋")
-    assert after.status == before_status == "registered"
-    assert after.updated_at == before_updated
-    rows = catalog.list_audit_events(resource="폐기충돌셋")
-    assert rows[0].action == "dataset.deprecate"
-    assert rows[0].result == "denied"
+    with _drifted_dataset_node("폐기충돌셋"):
+        before = catalog.get_dataset("폐기충돌셋")
+        before_status, before_updated = before.status, before.updated_at
+        response = client.post("/catalog/datasets/폐기충돌셋/deprecate", json=ADMIN)
+        assert response.status_code == 409
+        after = catalog.get_dataset("폐기충돌셋")
+        assert after.status == before_status == "registered"
+        assert after.updated_at == before_updated
+        rows = catalog.list_audit_events(resource="폐기충돌셋")
+        assert rows[0].action == "dataset.deprecate"
+        assert rows[0].result == "denied"
 
 
 def test_an_absent_dataset_is_still_404_on_both_status_verbs() -> None:
-    """The pre-check must not turn "no such dataset" into something else: it
-    returns without asking when the row is absent, leaving the mutation to raise
-    ``KeyError``."""
+    """The pre-check must not turn "no such dataset" into something else.
+
+    Both halves, because the route-level half does not exercise the guard: for
+    an absent dataset the authorization branch answers 404 before the ``try:``
+    block is entered, so ``_assert_mirror_kinds_for_existing_dataset`` is never
+    called and ``publish_dataset`` never raises. This test asserted only the 404
+    and so could not fail on the behaviour its own docstring describes -
+    replacing the guard's early ``return`` with a raise left it green. The
+    guard's no-op on an absent id is therefore asserted directly.
+    """
     for verb in ("publish", "deprecate"):
         response = client.post(f"/catalog/datasets/없는데이터셋/{verb}", json=ADMIN)
         assert response.status_code == 404, verb
+    # The guard itself, on an id the catalog does not hold: it asks nothing and
+    # raises nothing, leaving "no such dataset" to the mutation.
+    assert api._columns_the_mirror_will_write("없는데이터셋") == []
+    api._assert_mirror_kinds_for_existing_dataset("없는데이터셋")
 
 
 # ---------------------- reconciliation destroys only its own column nodes --
@@ -522,3 +549,182 @@ def test_reconciliation_drops_a_foreign_has_column_edge_without_its_node() -> No
         == 200
     )
     assert store.get_node("회수검사셋:자기컬럼") is None
+
+
+# ------------------- ownership, which a shape alone does not establish --------
+
+
+def test_a_concept_whose_id_has_the_column_shape_survives_reconciliation() -> None:
+    """The first repair asked only for the shape, and a shape is not ownership.
+
+    Measured against it: ``POST /ontology/concepts {"concept": "g1:개념"}``, a
+    ``has_column`` edge from dataset ``g1`` to it, then a title-only patch of
+    ``g1`` answered 200 and the concept node was gone - ``GET
+    /ontology/terms/g1:개념`` 404. The id starts with ``g1:``, so the shape test
+    called it this dataset's column node. Its **kind** says otherwise.
+    """
+    assert client.post("/catalog/datasets", json=_payload("모양만같은셋")).status_code == 200
+    assert (
+        client.post(
+            "/ontology/concepts",
+            json={**ADMIN, "concept": "모양만같은셋:개념", "definition": "정의"},
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            "/graph/edges",
+            json={
+                **ADMIN,
+                "edge_type": "has_column",
+                "source_id": "모양만같은셋",
+                "target_id": "모양만같은셋:개념",
+            },
+        ).status_code
+        == 200
+    )
+    assert (
+        client.patch("/catalog/datasets/모양만같은셋", json={**ADMIN, "title": "바꿈"}).status_code
+        == 200
+    )
+    store = graph_store.get_store()
+    survivor = store.get_node("모양만같은셋:개념")
+    assert survivor is not None and survivor.kind == "concept"
+    # The edge is still this dataset's, so it is still removed.
+    assert not [
+        edge
+        for edge in store.edges_for("모양만같은셋", "has_column")
+        if edge.target_id == "모양만같은셋:개념"
+    ]
+
+
+def test_another_dataset_whose_id_starts_with_this_one_survives() -> None:
+    """The worse half of the same defect, and the one that produces drift.
+
+    Measured against the shape-only version: datasets ``f2`` and ``f2:child``,
+    a ``has_column`` edge ``f2 -> f2:child``, then a title-only patch of ``f2``
+    answered 200 and **dataset f2:child's own node was deleted while
+    GET /catalog/datasets/f2:child still answered 200** - exactly the
+    catalog/graph drift the kind guard exists to refuse, reachable from two
+    authorized requests.
+    """
+    assert client.post("/catalog/datasets", json=_payload("부모셋")).status_code == 200
+    assert client.post("/catalog/datasets", json=_payload("부모셋:자식셋")).status_code == 200
+    assert (
+        client.post(
+            "/graph/edges",
+            json={
+                **ADMIN,
+                "edge_type": "has_column",
+                "source_id": "부모셋",
+                "target_id": "부모셋:자식셋",
+            },
+        ).status_code
+        == 200
+    )
+    assert client.patch("/catalog/datasets/부모셋", json={**ADMIN, "title": "바꿈"}).status_code == 200
+    store = graph_store.get_store()
+    child = store.get_node("부모셋:자식셋")
+    assert child is not None and child.kind == "dataset"
+    assert client.get("/catalog/datasets/부모셋:자식셋", params={"user": "admin"}).status_code == 200
+    seed_store(InMemoryGraphStore())
+
+
+def test_another_datasets_column_node_survives_even_with_the_right_kind() -> None:
+    """Shape and kind both match here, and ownership still says no.
+
+    Dataset ``부모셋:자식셋`` owns the column node ``부모셋:자식셋:컬럼``, whose id
+    starts with ``부모셋:`` and whose kind *is* ``column``. Only the owner's own
+    ``has_column`` edge distinguishes it, which is the third question the guard
+    asks.
+    """
+    assert client.post("/catalog/datasets", json=_payload("소유자셋")).status_code == 200
+    assert (
+        client.post(
+            "/catalog/datasets", json=_payload("소유자셋:자식", ("컬럼",))
+        ).status_code
+        == 200
+    )
+    store = graph_store.get_store()
+    owned = "소유자셋:자식:컬럼"
+    node = store.get_node(owned)
+    assert node is not None and node.kind == "column"
+    assert (
+        client.post(
+            "/graph/edges",
+            json={
+                **ADMIN,
+                "edge_type": "has_column",
+                "source_id": "소유자셋",
+                "target_id": owned,
+            },
+        ).status_code
+        == 200
+    )
+    assert client.patch("/catalog/datasets/소유자셋", json={**ADMIN, "title": "바꿈"}).status_code == 200
+    survivor = store.get_node(owned)
+    assert survivor is not None and survivor.kind == "column"
+    # Its real owner still points at it; the borrowed edge is gone.
+    assert [edge.source_id for edge in store.edges_for(owned, "has_column", direction="in")] == [
+        "소유자셋:자식"
+    ]
+
+
+# ------------- the columns the mirror writes, not the ones declared ----------
+
+
+def test_a_schema_less_patch_checks_the_stored_columns() -> None:
+    """The defect the "unconditional" patch guard still had.
+
+    ``patch_dataset`` keeps the stored schema when the body carries none, and
+    ``seed_dataset`` then mirrors those stored columns - but the guard was passed
+    ``[]`` for a schema-less patch, so it checked the dataset's own node and
+    nothing else. Measured: with the stored column ``c:x``'s node id held by a
+    concept, ``PATCH {"title": ...}`` answered **409 with the title applied,
+    ``updated_at`` moved, and two audit rows for one request reading
+    ``dataset.patch success`` then ``dataset.patch denied``** - the ledger
+    contradicting itself about a request the caller saw fail.
+    """
+    assert (
+        client.post("/catalog/datasets", json=_payload("저장컬럼셋", ("c:x",))).status_code == 200
+    )
+    store = graph_store.get_store()
+    store.delete_node("저장컬럼셋:c:x")
+    assert (
+        client.post(
+            "/ontology/concepts",
+            json={**ADMIN, "concept": "저장컬럼셋:c:x", "definition": "정의"},
+        ).status_code
+        == 200
+    )
+    before = catalog.get_dataset("저장컬럼셋")
+    before_title, before_updated = before.title, before.updated_at
+    response = client.patch("/catalog/datasets/저장컬럼셋", json={**ADMIN, "title": "바뀐 제목"})
+    assert response.status_code == 409
+    after = catalog.get_dataset("저장컬럼셋")
+    assert after.title == before_title
+    assert after.updated_at == before_updated
+    actions = [(row.action, row.result) for row in catalog.list_audit_events(resource="저장컬럼셋")]
+    assert ("dataset.patch", "success") not in actions, actions
+    assert ("dataset.patch", "denied") in actions, actions
+
+
+def test_the_published_409_description_names_the_duplicate_id_cause() -> None:
+    """``GET /openapi.json`` serves this string on every route declaring 409.
+
+    The duplicate-dataset-id refusal was added as a fourth 409 cause while the
+    description still opened "충돌. 세 가지 경우다" and enumerated three - so a
+    client generated from the document saw an exhaustive enumeration that
+    excluded the refusal the same change introduced. The enumeration is only
+    honest if every cause the code can raise appears in it; this pins the one
+    that was missing, and the opening count that has to agree with it.
+    """
+    from sdp.api_error_contract import REFUSAL_DESCRIPTIONS
+
+    description = REFUSAL_DESCRIPTIONS[409]
+    assert "네 가지" in description, description
+    assert "dataset id" in description, description
+    # And the refusal is really reachable, so the document is not describing a
+    # cause that cannot happen.
+    assert client.post("/catalog/datasets", json=_payload("문서용중복셋")).status_code == 200
+    assert client.post("/catalog/datasets", json=_payload("문서용중복셋")).status_code == 409

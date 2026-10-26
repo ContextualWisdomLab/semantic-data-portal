@@ -2,15 +2,15 @@
 
 이 문서는 `claude/semantic-portal-pr-merge-e5a48k` 브랜치(PR
 [#102](https://github.com/ContextualWisdomLab/semantic-data-portal/pull/102))가
-베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **214개** 커밋 중 122개는
-gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 92개입니다. 이 숫자는 **이
+베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **215개** 커밋 중 122개는
+gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 93개입니다. 이 숫자는 **이
 줄을 담은 커밋을 포함한** 값입니다 — 측정 시점의 210에 이 커밋을 더한 것. 측정 명령:
 
     git rev-list --count origin/docs/product-technical-gap-baseline..HEAD
     git log --format=%H origin/docs/product-technical-gap-baseline..HEAD \
       --name-only -- docs/product-technical-gap-baseline.md | grep -c '^[0-9a-f]\{40\}$'
 
-앞서 적혀 있던 164/112, 186/113, 199/122/77, 203/122/81, 211/122/89, 212/122/90, 213/122/91은 각각 그 시점의 값이고 이후
+앞서 적혀 있던 164/112, 186/113, 199/122/77, 203/122/81, 211/122/89, 212/122/90, 213/122/91, 214/122/92는 각각 그 시점의 값이고 이후
 커밋을 반영하지 않은 숫자였습니다 — 자기 문서의 수치도 측정해서 맞춰 둡니다. 199는 이
 줄을 쓴 뒤 3개 커밋이 더 쌓여 낡아 203으로, 203은 다음 커밋에서 낡아 204로, 204는 또
 두 커밋 뒤에 206으로 다시 측정해 고쳤습니다. 206도 그 값을 담은 커밋 자신 때문에 도착
@@ -30,8 +30,8 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 92
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                       1241 passed, 15 skipped
-    pytest (파일 순서 정/역/난수)  각 1241 passed, 15 skipped — 순서 무관
+    pytest                       1252 passed, 15 skipped
+    pytest (파일 순서 정/역/난수)  각 1252 passed, 15 skipped — 순서 무관
                                  (정순 · 역순 · seed 11/707/31337)
     pytest tests/fuzz            11 passed
     python -m sdp.demo_smoke     exit 0, "ready": true
@@ -46,6 +46,104 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 백그라운드 측정 중에 트리를 고친 탓에 seed 11이 4건 실패로 나온 일이 있고, 그것은 결함이
 아니라 동시 편집이었습니다. Atheris(`fuzz/fuzz_query_safety.py`)는 로컬에 wheel이 없어
 실행하지 않았습니다 — 같은 invariant의 Hypothesis 미러가 `tests/fuzz`에서 돕니다.
+
+### Fixed — 3라운드 적대적 검증: 직전 세 커밋에서 찾은 결함 (high)
+
+직전 세 커밋(`70d19fa`, `4c8a9b9`, `e475384`)을 5개 축으로 다시 공격했습니다. 각 결함은
+코드를 실행해 재현했고, 독립적으로 재측정한 뒤 고쳤습니다. **세 축이 같은 결함 하나로
+수렴했고, 그것이 제일 심각했습니다.**
+
+**1. governed 경계 파생이 HTTP method를 버렸습니다 (high).** 거부 계약은 `(method, path)`로
+키가 잡히는데 `policy_gated_route_paths()`는 path만 모으고, 미들웨어도 path만 비교했습니다.
+`POST /ontology/concepts`가 403을 선언하므로 path `/ontology/concepts`가 governed 집합에
+들어가고, **열려 있는** `GET /ontology/concepts`까지 함께 끌려들어갔습니다 — actor도 없고
+정책 평가도 없고 아무것도 기록하지 않는, 코드가 스스로 "open"이라고 적어 둔 어휘 읽기입니다.
+
+    GET /ontology/concepts  (미인증, 1회)        -> 200
+      policy_audit_gap: firing: true, observed_total: 1,
+                        routes: {'/ontology/concepts': 1}   severity: critical
+
+바로 앞 항목이 공표한 "측정값 0 · 상시 경고가 아니라 회귀 탐지기"가 **첫 평범한 요청에
+깨집니다.** 그 측정은 403을 선언한 GET 템플릿만 재어 method를 고려했고 판정은 하지
+않았으니, 둘이 서로 다른 "governed"를 쓰고 있었습니다 — 그리고 맞아 보이는 쪽이
+측정이었습니다. 지금은 `policy_gated_route_methods()`가 `(method, path)` 쌍을 돌려주고
+미들웨어가 `(request.method, route_template)`로 비교합니다. 재측정: governed 쌍 39건
+(GET 22 · POST 16 · PATCH 1), 전부 앱이 실제로 서빙, 열린 method가 governed path에 얹혀
+있던 경우는 `GET /ontology/concepts` 1건이고 정확히 그것만 빠집니다. 집계 키도
+`"GET /catalog/datasets"` 형태로 method를 담습니다.
+
+**2. schema를 선언하지 않는 patch가 저장된 컬럼을 검사하지 않았습니다 (high).**
+직전 커밋에서 "무조건 검사"로 고쳤다고 적었지만, schema가 없으면 컬럼 목록으로 `[]`를
+넘겼습니다. `patch_dataset`은 schema가 없을 때 **저장된 schema를 유지**하고
+`seed_dataset`은 그 저장된 컬럼을 미러하므로, 아무도 묻지 않은 컬럼 노드가 쓰입니다.
+
+    저장 컬럼 'c:x'의 노드 id를 개념이 점유한 상태에서
+    PATCH /catalog/datasets/own {"title": "제목만 바꿈"}  -> 409
+      title 적용됨 · updated_at 이동 · schema-history 스냅샷 추가
+      감사 행: ('dataset.patch','success') 다음 ('dataset.patch','denied')  — 한 요청에 둘
+
+장부가 한 요청에 대해 성공과 거부를 동시에 기록합니다. 이 가드가 막으려던 바로 그
+결함이 가드를 추가한 라우트에 남아 있었습니다. 지금은 `_columns_the_mirror_will_write`가
+"선언된 schema가 있으면 그것, 없으면 저장된 schema"를 돌려주고, 그것을 검사합니다.
+
+**3. reconciliation의 소유권 판정이 모양만 봤습니다 (high).** 직전 커밋의
+`_owns_column_node`는 `{dataset_id}:` 접두사만 확인했고, **모양은 소유권이 아닙니다.**
+
+    POST /ontology/concepts {"concept": "g1:개념"} + has_column g1 -> g1:개념
+    PATCH /catalog/datasets/g1 {"title": "바꿈"}        -> 200
+      -> 개념 노드 삭제, GET /ontology/terms/g1:개념 -> 404
+
+    데이터셋 "f2"와 "f2:child" + has_column f2 -> f2:child
+    PATCH /catalog/datasets/f2 {"title": "x"}           -> 200
+      -> 데이터셋 f2:child의 **자기 노드**가 삭제되는데
+         GET /catalog/datasets/f2:child는 여전히 200 — 카탈로그/그래프 드리프트
+
+지금은 세 가지를 모두 묻습니다: 모양, 노드의 **kind가 `column`**, 그리고 (이 데이터셋의
+간선을 지운 뒤) **다른 `has_column` 간선이 더 이상 가리키지 않음**. 세 번째가 필요한
+이유는 `부모셋:자식셋`이 소유한 컬럼 노드 `부모셋:자식셋:컬럼`도 `부모셋:`으로 시작하고
+kind가 `column`이기 때문입니다 — 소유자의 간선만이 그것을 구별합니다.
+
+**4. 증빙 id를 스토어 쓰기 **전에** 기록했습니다 (low).** 쓰기가 실패하면 로그 행이
+원장에 없는 행을 가리키는 상관 키를 공표합니다(`evidence_id_source: server_recorded`를
+같이 공표하면서). 쓰기 뒤로 옮겼습니다.
+
+**5. `withheld_evidence_id_count`가 id 수가 아니라 시도 수를 셌습니다 (low).** 상한을
+넘긴 id 하나를 다섯 번 기록하면 5를 공표했습니다. 집합으로 바꿨습니다. HTTP 표면으로는
+도달 불가(한 요청이 쓰는 원장 행은 최대 2개)라는 점도 테스트가 함께 적습니다.
+
+**6. 409 열거가 세 가지로 남아 있었습니다 (medium).** 직전 커밋이 네 번째 사유(중복
+dataset id)를 추가했는데 `REFUSAL_DESCRIPTIONS[409]` — `GET /openapi.json`이 서빙하는
+문장 — 은 "세 가지 경우다"로 셋만 열거했습니다. README 행도 "세 가지"라 적고 넷을
+나열했습니다. 둘 다 고쳤습니다.
+
+**7. 공표 문구가 구현보다 넓었습니다 (medium).** CHANGELOG·compliance 문서가
+`policy_audit_gap`을 "모든 governed 경로에 decision과 audit 행"에 대한 자기검사라고
+적었지만, 구현은 **둘 다 없을 때만** 셉니다. 측정: 호출 가능한 governed GET 18건 중
+**16건이 decision만 남기고 audit 행은 남기지 않으며**, 그 상태에서 규칙은 정상적으로 0입니다.
+"decision은 있고 audit 행은 없음"은 덮지 않는다는 사실을 문서에 적었습니다.
+
+**8. 드리프트 가드의 선언이 실제 범위보다 넓었습니다 (low).** AST 가드가 "호출 인자로
+넘기는 것"만 금지했는데, 헤더 이름을 모듈 상수로 올리거나(`_HEADER = "X-SDP-..."`)
+mapping으로 읽으면(`headers["X-SDP-..."]`) 가드를 그대로 통과하면서 caller 제어 상관 키가
+복구됩니다. 지금은 docstring을 제외한 **문자열 리터럴 자체**를 금지합니다 — 주석은 AST에
+없으므로 설명은 그대로 남습니다.
+
+**9. 알림 블록 주석이 "어떤 조건도 계산하지 않는다"고 남아 있었습니다 (low)** — 그것을
+계산하는 함수 다섯 줄 위에서. 고쳤습니다.
+
+**테스트 결함도 같이 고쳤습니다.** 탐지기가 발화하는 것을 보이는 **유일한** 테스트가
+`api._POLICY_GATED_ROUTES`를 monkeypatch로 **대체**하고 있었습니다 — 정확히 그 값이
+틀렸는데도 전 스위트가 녹색이던 이유입니다. 미들웨어가 쓰는 값이 파생 결과와 같은지
+단언하는 테스트와, 미인증 `GET /ontology/concepts`가 세어지지 않는지 보는 테스트,
+그리고 **governed GET 라우트를 전부 훑어 gap이 0인지 보는** 테스트(손으로 한 번 한
+측정을 상시 테스트로)를 넣었습니다. `..._is_not_counted_as_a_gap`은 404를 몰고 있어서
+이름이 주장하는 2xx 가드를 검사하지 못했고(가드를 지워도 1241건 전부 녹색), 증빙을
+하나도 남기지 않는 400으로 바꿨습니다. 절대 경로 테스트는 자기 docstring이 말하는
+경로(사전 검사)를 전혀 거치지 않았으므로 가드의 no-op을 직접 단언합니다. drift 헬퍼
+세 곳은 재설정되지 않는 그래프 스토어 싱글턴에 `concept` 노드를 남겨 같은 프로세스의
+이후 테스트를 깨뜨릴 수 있었으므로 context manager로 바꿔 치웁니다.
+
+역검증: 9건 각각 되돌리면 자기 테스트만 실패합니다.
 
 ### Added — `policy_audit_gap` alert를 선언에서 **평가**로 (medium)
 
@@ -76,6 +174,11 @@ critical 등급인 `policy_audit_gap`은 이 제품의 중심 주장에 대한 *
 **측정값 0입니다.** 시드 데이터로 호출 가능한 policy-gated GET 라우트 18건 전부가
 2xx에서 증빙 id를 담습니다. 그래서 이 규칙은 상시 경고가 아니라 **회귀 탐지기**입니다 —
 정책 평가를 빠뜨린 라우트가 추가되면 `firing: true`가 됩니다.
+
+> **이 측정은 맞았고, 판정이 틀렸습니다.** 바로 아래 항목을 보세요 — 이 18건은 403을
+> 선언한 **GET 템플릿**을 센 값(method를 고려한 값)인데, 미들웨어는 path만 비교하고
+> 있었으므로 측정과 판정이 서로 다른 "governed"를 썼습니다. 그래서 이 "0"은 참이면서도
+> 규칙이 미인증 요청 한 번에 발화하는 것을 막지 못했습니다.
 
 **좁다는 사실을 함께 공표합니다.** 선언된 조건은 "preview/query 수가 decision 또는
 audit 수를 초과"인데, 계산하는 것은 그 조건의 요청 단위 형태입니다. 요청 시점에 세므로

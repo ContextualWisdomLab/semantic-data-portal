@@ -357,6 +357,10 @@ REQUIREMENT_COVERAGE: dict[str, RequirementCoverage] = {
             "test:tests/test_catalog_mirror_kind_conflict.py::test_deprecate_refuses_the_conflict_instead_of_applying_it",
             "test:tests/test_catalog_mirror_kind_conflict.py::test_reconciliation_drops_a_foreign_has_column_edge_without_its_node",
             "test:tests/test_catalog_mirror_kind_conflict.py::test_the_check_asks_about_every_node_the_mirror_actually_writes",
+            "test:tests/test_catalog_mirror_kind_conflict.py::test_a_schema_less_patch_checks_the_stored_columns",
+            "test:tests/test_catalog_mirror_kind_conflict.py::test_a_concept_whose_id_has_the_column_shape_survives_reconciliation",
+            "test:tests/test_catalog_mirror_kind_conflict.py::test_another_dataset_whose_id_starts_with_this_one_survives",
+            "test:tests/test_catalog_mirror_kind_conflict.py::test_another_datasets_column_node_survives_even_with_the_right_kind",
             "test:tests/test_graph_hierarchy_class_separation.py::test_a_hierarchy_edge_across_the_class_boundary_is_refused",
             "test:tests/test_graph_hierarchy_class_separation.py::test_the_rule_refuses_nothing_legitimate",
             "test:tests/test_graph_hierarchy_class_separation.py::test_a_concept_cannot_declare_a_data_asset_as_its_parent_or_child",
@@ -425,6 +429,19 @@ REQUIREMENT_COVERAGE: dict[str, RequirementCoverage] = {
             "`{dataset_id}:` nodes `seed_dataset` itself writes. A duplicate "
             "dataset id, which answered **500** from an uncaught bare "
             "`ValueError`, is the same refusal and now the same 409. "
+            "Adversarial review of that repair found two of its own paths still "
+            "open, both measured: a patch carrying **no schema** was checked "
+            "against an empty column list while `patch_dataset` keeps the "
+            "stored schema and the mirror then writes it, so a stored column "
+            "whose node id a concept held answered 409 with the title applied, "
+            "`updated_at` moved and two audit rows reading `success` then "
+            "`denied` for one request; and the reconciliation guard asked only "
+            "for the **shape** `{dataset_id}:{column}`, which is not ownership "
+            "- a `concept` at that id was still destroyed, and so was another "
+            "dataset's own node when its id began with the reconciling "
+            "dataset's id and a colon, leaving a catalog row whose graph node "
+            "was gone. Ownership is now shape **and** `column` kind **and** no "
+            "other `has_column` edge still pointing at the node. "
             "`ConceptKindConflict` is a `ValueError` subclass, so "
             "every existing handler still catches it while the routes that want "
             "the precise status answer 409 rather than 400. This note previously recorded that 200 as a modelling "

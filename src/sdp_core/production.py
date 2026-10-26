@@ -205,7 +205,10 @@ def production_integration_registry() -> list[ProductionIntegration]:
                 "criterion - measured, a governed preview exported two forged ids and not its real decision. tenant_id and actor "
                 "remain caller-asserted and are declared as such by GET /enterprise/observability.",
                 "The policy/audit gap condition IS evaluated: the middleware counts a policy-gated 2xx "
-                "that recorded no policy decision and no audit event, GET /enterprise/observability "
+                "- matched on (method, path), because matching the path alone counted the open "
+                "GET /ontology/concepts as governed and fired the critical rule on one anonymous "
+                "request (measured) - that recorded no policy decision and no audit event, "
+                "GET /enterprise/observability "
                 "publishes the count and whether the rule is firing, and /metrics exports "
                 "sdp_governed_requests_without_evidence_total. It is narrower than the condition as "
                 "declared - it counts at request time and does not see evidence removed out of band - "

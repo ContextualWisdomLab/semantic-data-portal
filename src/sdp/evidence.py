@@ -83,7 +83,19 @@ class CollectedRequestEvidenceIds:
     """The evidence ids one request recorded, and how many did not fit."""
 
     ids: list[str] = field(default_factory=list)
-    withheld: int = 0
+    # The *distinct* ids that did not fit, not the number of times one was
+    # offered. ``withheld`` was an ``int`` incremented per call, so 32 distinct
+    # ids plus one further id noted five times published
+    # ``withheld_evidence_id_count: 5`` for one withheld id - a field named for a
+    # count of ids reporting a count of attempts. Not reachable over HTTP today
+    # (no route writes more than two ledger rows for one request), which is why
+    # it is a set rather than a redesign.
+    withheld_ids: set[str] = field(default_factory=set)
+
+    @property
+    def withheld(self) -> int:
+        """How many distinct evidence ids did not fit."""
+        return len(self.withheld_ids)
 
 
 # Set per request by the observability middleware. The value is the *same list
@@ -134,7 +146,7 @@ def note_request_evidence_id(evidence_id: str) -> None:
     if evidence_id in collected.ids:
         return
     if len(collected.ids) >= MAX_REQUEST_EVIDENCE_IDS:
-        collected.withheld += 1
+        collected.withheld_ids.add(evidence_id)
         return
     collected.ids.append(evidence_id)
 
@@ -142,26 +154,33 @@ def note_request_evidence_id(evidence_id: str) -> None:
 def record_policy_decision(decision: PolicyDecision) -> PolicyDecision:
     global _RECORDED_POLICY_DECISION_COUNT
     _RECORDED_POLICY_DECISION_COUNT += 1
-    note_request_evidence_id(decision.decision_id)
     if _STORE:
         _STORE.record_decision(decision)
     else:
         _POLICY_DECISION_LOG.append(decision)
         if len(_POLICY_DECISION_LOG) > MAX_IN_MEMORY_POLICY_DECISIONS:
             del _POLICY_DECISION_LOG[:-MAX_IN_MEMORY_POLICY_DECISIONS]
+    # After the write, not before. The log row's ``evidence_ids`` is published as
+    # the key that finds this decision in the ledger, and
+    # ``evidence_id_source: server_recorded`` says the server recorded it - so on
+    # a store write that raises (the deployed Postgres/SQLite configuration can),
+    # noting the id first published a key naming a row that does not exist. The
+    # request fails in that case, but its log row had already been built.
+    note_request_evidence_id(decision.decision_id)
     return decision
 
 
 def append_audit_event(event: AuditEvent) -> AuditEvent:
     global _RECORDED_AUDIT_EVENT_COUNT
     _RECORDED_AUDIT_EVENT_COUNT += 1
-    note_request_evidence_id(event.id)
     if _STORE:
         _STORE.append_event(event)
     else:
         _AUDIT_EVENT_LOG.append(event)
         if len(_AUDIT_EVENT_LOG) > MAX_IN_MEMORY_AUDIT_EVENTS:
             del _AUDIT_EVENT_LOG[:-MAX_IN_MEMORY_AUDIT_EVENTS]
+    # After the write; see ``record_policy_decision``.
+    note_request_evidence_id(event.id)
     return event
 
 

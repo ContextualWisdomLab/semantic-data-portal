@@ -263,13 +263,18 @@ def build_request_observation(
     return observation
 
 
-# The alert conditions below are authored rules, not evaluated ones. No code
-# computes any of them and no code posts to ``SDP_ALERT_WEBHOOK_URL`` - its only
+# The alert conditions below were authored rules, not evaluated ones: no code
+# computed any of them and no code posts to ``SDP_ALERT_WEBHOOK_URL`` - its only
 # read in the whole package is ``bool()`` of it for ``alert_webhook_configured``.
 # Published as a list named "alerts" next to ``alert_webhook_configured: true``,
-# they read as monitoring that exists. The rules are kept because the conditions
-# are the right ones and an operator can wire them up in their own stack; what
-# changes is that every surface now says they are declared rather than live.
+# they read as monitoring that exists, so every surface says which of them this
+# service computes.
+#
+# ``policy_audit_gap`` IS computed now (see ``governed_evidence_gap_report``);
+# ``central_workflow_backlog`` is not and says why. Nothing is routed anywhere
+# either way. This comment claimed "no code computes any of them" five lines
+# above the function that computes one - the commit that added the computation
+# updated the published fields and left the prose asserting the opposite.
 ALERT_ROUTING_STATUS = "declared_unimplemented"
 ALERT_EVALUATION_STATUS = "declared_not_evaluated"
 
