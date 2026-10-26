@@ -90,15 +90,27 @@ def _verify_ontology_version_pin(connector_id: str, dataset_id: str) -> tuple[bo
     return enforced, verdict, gap
 
 
-# control -> its runtime check. ``_RUNTIME_VERIFIED_CONTROLS`` is derived from
-# this mapping rather than written beside it: two hand-written collections of
-# the same set drift, and the one that decides the published verdict would win
-# silently.
+# Who owns a runtime check's outcome. ``build`` means the predicate either holds
+# or does not hold in this source tree, whatever the deployment does;
+# ``deployment`` means an operator's configuration decides it. The distinction
+# is what makes one of these two safe to page on and the other not.
+OWNER_BUILD = "build"
+OWNER_DEPLOYMENT = "deployment"
+
+# control -> (its runtime check, who owns the outcome). One collection, because
+# two hand-written collections of the same set drift and the one that decides
+# the published verdict would win silently. ``_RUNTIME_VERIFIED_CONTROLS`` and
+# ``BUILD_OWNED_RUNTIME_CONTROLS`` are both derived from it.
 _RUNTIME_CONTROL_CHECKS = {
-    "credential_vault": _verify_credential_vault,
-    "ontology_version_pin": _verify_ontology_version_pin,
+    "credential_vault": (_verify_credential_vault, OWNER_DEPLOYMENT),
+    "ontology_version_pin": (_verify_ontology_version_pin, OWNER_BUILD),
 }
 _RUNTIME_VERIFIED_CONTROLS = frozenset(_RUNTIME_CONTROL_CHECKS)
+BUILD_OWNED_RUNTIME_CONTROLS = frozenset(
+    control
+    for control, (_check, owner) in _RUNTIME_CONTROL_CHECKS.items()
+    if owner == OWNER_BUILD
+)
 
 # How strong the evidence behind one control row is. Published, because
 # "implemented" alone cannot distinguish these and a diligence reader assumes
@@ -450,8 +462,10 @@ def connector_probe(connector_id: str, dataset_id: str) -> dict[str, Any]:
                 "this build does not serve every declared proof endpoint: "
                 + ", ".join(missing_routes)
             )
-        runtime_check = _RUNTIME_CONTROL_CHECKS.get(control)
-        if runtime_check is not None:
+        runtime_entry = _RUNTIME_CONTROL_CHECKS.get(control)
+        if runtime_entry is not None:
+            runtime_check, owner = runtime_entry
+            evidence_payload["runtime_check_owner"] = owner
             observed, observation, gap_reason = runtime_check(connector_id, dataset_id)
             evidence_payload.update(observation)
             satisfied = implemented and observed
@@ -530,14 +544,38 @@ def connector_probe_failure_reason(probe: dict[str, Any]) -> str:
     """The ``connector_probe_failure`` alert condition, as a function of one probe.
 
     Returns the reason an operator should be paged, or ``""`` when this outcome
-    is not one. The two reasons are the halves of the probe's own
-    ``verdict_basis`` that the **build** owns, and neither is caller-controlled
-    or configuration:
+    is not one. The three reasons are the parts of the probe's own
+    ``verdict_basis`` that the **build** owns, and none is caller-controlled or
+    configuration:
 
     * the connector registry declares an adapter this build does not implement
       (``adapter_status`` is not ``implemented``);
     * a required control's declared proof endpoint is not served by this build,
-      which is what leaves its row at ``VERIFICATION_DECLARED``.
+      which is what leaves its row at ``VERIFICATION_DECLARED``;
+    * a **build-owned** runtime-verified control's own effect stopped holding,
+      which leaves its row short of ``VERIFICATION_RUNTIME``.
+
+    The third was missing, and it was the one that matters most: it is the only
+    conjunct of ``verdict_basis`` whose *effect* is measured rather than
+    inferred from a route existing. ``verdict_basis`` has three conjuncts and
+    this function keyed on two. Measured with the pin comparison broken at
+    source - which ``_verify_ontology_version_pin``'s own docstring says stops
+    the control claiming to be implemented - the ``rdf_connector`` probe
+    degraded to ``contract_only`` and carried a ``gap_reason``, while the row's
+    ``verification`` stayed ``proof_route_served`` (the route *is* served), so
+    this function returned ``""``, the critical rule reported
+    ``observed_total: 0, firing: False`` and ``sdp_connector_probe_failures_total``
+    stayed 0 on a genuine build defect. Three published surfaces asserted the
+    opposite coverage. ``python -m sdp.demo_smoke`` did fail, because its ready
+    gate asserts ``status == "ready_for_demo"`` for that pair - so the blast
+    radius was reduced, not removed, and the runtime alert and the gauge were
+    still wrong.
+
+    ``credential_vault`` is the other runtime-verified control and stays
+    excluded: its outcome is an operator's ``SDP_CONNECTOR_SECRET_*``
+    configuration, so paging on it would page on the demo image as shipped. The
+    ownership is declared once, in ``_RUNTIME_CONTROL_CHECKS``, and both the
+    exclusion and this clause are derived from it.
 
     Deliberately **not** keyed on ``probe["status"]`` or on the presence of a
     ``gap_reason``. Measured over the seed catalogue, the one ``contract_only``
@@ -569,5 +607,16 @@ def connector_probe_failure_reason(probe: dict[str, Any]) -> str:
         return (
             "this build does not serve the declared proof endpoint of: "
             + ", ".join(sorted(unserved))
+        )
+    unverified = [
+        row["control"]
+        for row in probe["control_evidence"]
+        if row["control"] in BUILD_OWNED_RUNTIME_CONTROLS
+        and row["verification"] != VERIFICATION_RUNTIME
+    ]
+    if unverified:
+        return (
+            "a build-owned control's own effect did not hold at runtime: "
+            + ", ".join(sorted(unverified))
         )
     return ""

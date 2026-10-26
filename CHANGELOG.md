@@ -62,6 +62,56 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 아니라 동시 편집이었습니다. Atheris(`fuzz/fuzz_query_safety.py`)는 로컬에 wheel이 없어
 실행하지 않았습니다 — 같은 invariant의 Hypothesis 미러가 `tests/fuzz`에서 돕니다.
 
+### Fixed — probe 규칙이 읽지 않은 conjunct. 효과가 측정되는 유일한 control이 빠져 있었습니다 (high)
+
+`verdict_basis`의 conjunct는 셋입니다: adapter 구현 + required control의 선언된 proof
+endpoint가 서비스됨 + runtime 검증 control이 통과. `connector_probe_failure_reason`은
+**둘만** 읽었습니다. 빠진 세 번째는 route가 존재한다는 사실에서 추론하는 것이 아니라
+control의 **효과를 실제로 측정하는** 유일한 conjunct이고, 그 절반은 빌드 소유입니다 —
+runtime 검증 control 둘 중 `credential_vault`의 결과는 운영자의 `SDP_CONNECTOR_SECRET_*`
+설정이지만, `ontology_version_pin`의 결과는 이 소스 트리의 술어입니다.
+
+핀 비교를 깨고 측정했습니다(`_verify_ontology_version_pin`의 docstring이 "비교를 깨면 이
+control은 구현됐다고 주장하지 않는다"고 적어 둔 바로 그 상태):
+
+    probe status       contract_only
+    row verification   proof_route_served      ← route는 여전히 서비스됨
+    row gap_reason     the version pin predicate did not hold in both directions
+    failure_reason     ''
+    rule report        observed_total 0, firing False
+    gauge              sdp_connector_probe_failures_total 0
+
+`declared_only`에 키를 물렸기 때문에 놓쳤습니다 — route는 서비스되므로 행은
+`proof_route_served`에 머무릅니다. 진짜 빌드 결함에 critical 규칙이 0을 보고하는 동안,
+세 개의 게시 표면이 이 규칙이 "`verdict_basis` 중 빌드가 소유하는 절반"을 덮는다고
+주장했습니다(함수 docstring, `GET /enterprise/production-readiness`의 acceptance
+criterion, 그리고 이 CHANGELOG). `python -m sdp.demo_smoke`는 그 쌍에 대해
+`status == "ready_for_demo"`를 단언하므로 **실패했습니다** — 피해 범위가 줄어든 것이고
+없어진 것이 아닙니다. runtime alert와 gauge와 게시된 주장은 그대로 틀렸습니다.
+
+세 번째 사유를 더했습니다. 소유권은 한 곳에만 씁니다 — `_RUNTIME_CONTROL_CHECKS`가
+`control -> (검사, 소유자)`를 담고, `BUILD_OWNED_RUNTIME_CONTROLS`와 제외가 모두 거기서
+파생됩니다. 그 매핑의 주석이 이미 적어 둔 교훈입니다: 같은 집합을 손으로 두 번 쓰면
+어긋나고, 게시 판정을 결정하는 쪽이 조용히 이깁니다. 행마다
+`runtime_check_owner`를 게시하므로 읽는 사람이 어느 쪽인지 알 수 있습니다.
+`credential_vault`는 제외를 유지합니다 — 거기서 발화하면 배포되는 demo image에서
+발화합니다. 규칙의 `condition`과 `not_covered`, production readiness 기준,
+`docs/enterprise-readiness.md`를 모두 사실로 고쳤습니다.
+
+**부수로 찾은 것: probe 라우트의 게시된 응답 스키마가 5개 모양 중 1개에서 파생돼
+있었습니다.** `_fetch`가 `connector_id`를 하나만 치환하므로, 스키마는 그 connector의
+control 행에서 파생되고 위의 parametrize 검사는 같은 하나에 대해서만 검증합니다. 200을
+답하는 모든 connector/dataset 쌍에 대해 측정하면 라이브 행이 스키마에 없는 키 **11개**를
+담고 있었습니다 — `gap_reason`, ontology 핀의 관찰 4개, credential vault의 4개,
+그리고 `runtime_check_owner`. 하나의 모양에서 파생된 게시 스키마는 이 모듈이 존재해서
+거부하는 바로 그 drift입니다(모듈 docstring 자신의 표현). 11개를 게시하고, 모든 쌍을
+도는 테스트를 더했습니다.
+
+증거: 세 수리를 각각 되돌렸습니다. M1(세 번째 사유 제거): 1건 red. M2(`credential_vault`를
+빌드 소유로 표시 — demo image를 페이지하게 됨): 5건 red. M3(스키마에서
+`runtime_check_owner` 제거): 새 전수 테스트 1건 red. 전체 정순 `pytest`
+1344 passed, 15 skipped (1340에서 +4).
+
 ### Fixed — alert 경로의 예외 가드가 요청 스레드에 없었고, 래치 결정이 관찰 순서를 지키지 않았습니다 (high)
 
 **가드가 엉뚱한 스레드에 있었습니다.** `_deliver_alert`의 넓은 `except Exception`은 스폰된
@@ -543,6 +593,9 @@ proof endpoint를 이 빌드가 서비스하지 않음. 둘 다 caller 통제도
 20쌍 전부에서 0입니다. 규칙은 제외한 두 결과(설정 gap과 caller 실수)와, seed 20개
 control 행 중 19개가 `proof_route_served`에 기대고 있다는 사실을 `not_covered`로
 함께 공표합니다 — 0이 "모든 control이 통과했다"는 주장이 아니기 때문입니다.
+
+**이 "빌드가 소유하는 실패"는 그때 두 개가 아니라 세 개였어야 했습니다.** `verdict_basis`의
+conjunct는 셋이고 이 조건은 둘만 읽었습니다. 뒤의 "읽지 않은 conjunct" 항목에서 고쳤습니다.
 
 **공개 표면에 추가되는 것과 되지 않는 것.** `alert_routing: implemented` 옆에
 `alert_delivery`가 실측 전이·전달·억제 횟수를 게시하고, 규칙마다 `routable`·

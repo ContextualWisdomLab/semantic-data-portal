@@ -106,8 +106,11 @@ PYTHONPATH=src SDP_SQLITE_PATH=.local/sdp-evidence.sqlite3 uvicorn sdp.api:app -
     파생했을 때 열린 `GET /ontology/concepts`가 `POST`의 403을 물려받아 미인증 요청
     한 번에 critical 규칙이 발화했다(측정).
     두 번째 평가 규칙 `connector_probe_failure`도 같은 원칙으로 좁다 — probe의
-    `verdict_basis` 중 **빌드가 소유하는** 실패(선언된 adapter 미구현, 또는 선언한
-    proof endpoint를 이 빌드가 서비스하지 않음)만 세고, 정상 배포에서 0이다.
+    `verdict_basis` 중 **빌드가 소유하는** 실패(선언된 adapter 미구현, 선언한
+    proof endpoint를 이 빌드가 서비스하지 않음, 또는 빌드가 소유하는 runtime 검증
+    control의 효과가 성립하지 않음)만 세고, 정상 배포에서 0이다. 세 번째 사유는 뒤늦게
+    추가됐다 — 그 전에는 `verdict_basis`의 세 conjunct 중 둘만 읽었고, 효과가 실제로
+    측정되는 유일한 control(`ontology_version_pin`)이 깨져도 규칙이 0을 보고했다.
     seed catalogue 20쌍 측정 결과 "ready_for_demo가 아닌 probe"를 세는 조건은 배포되는
     demo image에서 발화하고(그 1건은 optional secret reference 대기 상태이며
     `demo_smoke`의 ready gate가 그 상태를 단언하고 통과한다), scheme이 맞지 않는 15쌍은

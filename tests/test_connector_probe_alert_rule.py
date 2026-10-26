@@ -479,3 +479,131 @@ def test_the_counter_is_restored_between_tests() -> None:
     assert obs.connector_probe_failure_report()["observed_total"] == 0
     assert obs._CONNECTOR_PROBE_FAILURES == {}
     assert obs._CONNECTOR_PROBE_VERIFICATIONS == {}
+
+
+# --------------------------------------------------------------------------- #
+# The conjunct the rule did not read.
+#
+# ``verdict_basis`` has three conjuncts: adapter_implemented + every required
+# control's declared proof endpoint is served + any runtime-verified control
+# passed. ``connector_probe_failure_reason`` keyed on the first two. The third
+# is the only one whose *effect* is measured rather than inferred from a route
+# existing, and half of it is build-owned: of the two runtime checks,
+# ``credential_vault``'s outcome is an operator's SDP_CONNECTOR_SECRET_*
+# configuration, but ``ontology_version_pin``'s is a predicate in this source
+# tree.
+#
+# Measured with that predicate broken, before the repair:
+#
+#     probe status       contract_only
+#     row verification   proof_route_served   (the route IS served)
+#     row gap_reason     the version pin predicate did not hold in both directions
+#     failure_reason     ''
+#     rule report        observed_total 0, firing False
+#     gauge              sdp_connector_probe_failures_total 0
+#
+# on a genuine build defect, while three published surfaces said the rule
+# covered "the build-owned half of verdict_basis".
+# --------------------------------------------------------------------------- #
+
+
+def _break_the_version_pin(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stop the ontology pin refusing a different digest, as a build defect would.
+
+    Patches the verdict function rather than editing source, and keeps every
+    other field it returns, so the probe degrades exactly the way the real
+    defect degrades it.
+    """
+    from sdp import ontology_version
+
+    original = ontology_version.version_pin_verdict
+
+    def _always_matches(pinned, live):
+        """Answer that any pin matches, which is the defect."""
+        return {**original(pinned, live), "pin_matches": True}
+
+    monkeypatch.setattr(ontology_version, "version_pin_verdict", _always_matches)
+
+
+def test_a_broken_build_owned_control_is_a_pageable_probe_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The third reason, end to end: reason, rule report and gauge."""
+    _break_the_version_pin(monkeypatch)
+    probe = conn.connector_probe("rdf_connector", "semantic-glossary")
+
+    assert probe["status"] == "contract_only"
+    row = next(
+        item
+        for item in probe["control_evidence"]
+        if item["control"] == "ontology_version_pin"
+    )
+    assert row["verification"] == conn.VERIFICATION_PROOF_ROUTE, (
+        "the proof route is still served, so the row does not become "
+        "declared_only - which is why keying on declared_only missed this"
+    )
+    reason = conn.connector_probe_failure_reason(probe)
+    assert "ontology_version_pin" in reason, reason
+
+    report = obs.connector_probe_failure_report()
+    assert report["observed_total"] == 1, report
+    assert report["firing"] is True, report
+    manifest = obs.build_observability_manifest()
+    assert manifest["metrics"]["connector_probe_failures_total"] == 1
+    assert "sdp_connector_probe_failures_total 1" in obs.prometheus_metrics_text()
+
+
+def test_the_deployment_owned_runtime_control_stays_excluded() -> None:
+    """``credential_vault`` must not page, with the image exactly as shipped.
+
+    Its outcome is whether an operator set ``SDP_CONNECTOR_SECRET_*``, which is
+    in no required_environment list, and ``demo_smoke`` reports ``ready: True``
+    with the secret unset. A rule that fires here fires on the demo image.
+    """
+    probe = conn.connector_probe("rest_connector", "marketing-campaign")
+    row = next(
+        item
+        for item in probe["control_evidence"]
+        if item["control"] == "credential_vault"
+    )
+    assert row["secret_present"] is False
+    assert row["runtime_check_owner"] == conn.OWNER_DEPLOYMENT
+    assert probe["status"] == "contract_only"
+    assert conn.connector_probe_failure_reason(probe) == "", (
+        "the shipped demo image would page an operator"
+    )
+    assert obs.connector_probe_failure_report()["observed_total"] == 0
+
+
+def test_build_ownership_is_derived_from_one_collection() -> None:
+    """Both directions, so a third runtime check cannot default into silence.
+
+    ``BUILD_OWNED_RUNTIME_CONTROLS`` and the exclusion are derived from
+    ``_RUNTIME_CONTROL_CHECKS``, which is the only place the ownership is
+    written. A hand-written second list would drift, and the one that decides
+    the published verdict would win silently - the lesson that mapping's own
+    comment already records.
+    """
+    owners = {
+        control: owner for control, (_check, owner) in conn._RUNTIME_CONTROL_CHECKS.items()
+    }
+    assert set(owners) == set(conn._RUNTIME_VERIFIED_CONTROLS)
+    assert set(owners.values()) <= {conn.OWNER_BUILD, conn.OWNER_DEPLOYMENT}, owners
+    assert conn.BUILD_OWNED_RUNTIME_CONTROLS == frozenset(
+        control for control, owner in owners.items() if owner == conn.OWNER_BUILD
+    )
+    assert conn.BUILD_OWNED_RUNTIME_CONTROLS, (
+        "no runtime check is build-owned any more, so the rule's third reason "
+        "can never fire and this family is the wrong shape"
+    )
+
+    # And the published row says which it is, for every pair that has one.
+    for connector_id, dataset_id in (
+        ("rdf_connector", "semantic-glossary"),
+        ("rest_connector", "marketing-campaign"),
+    ):
+        for row in conn.connector_probe(connector_id, dataset_id)["control_evidence"]:
+            if row["control"] in owners:
+                assert row["runtime_check_owner"] == owners[row["control"]]
+            else:
+                assert "runtime_check_owner" not in row

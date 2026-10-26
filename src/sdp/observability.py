@@ -1460,8 +1460,10 @@ def build_observability_manifest() -> dict[str, Any]:
                 "condition": (
                     "a connector probe's verdict basis failed for a reason this "
                     "build owns: an adapter the connector registry declares that "
-                    "this build does not implement, or a required control whose "
-                    "declared proof endpoint this build does not serve"
+                    "this build does not implement, a required control whose "
+                    "declared proof endpoint this build does not serve, or a "
+                    "build-owned runtime-verified control whose own effect did "
+                    "not hold"
                 ),
                 "declared_condition": "connector probe failure",
                 # The gap between the declared name and the computed condition,
@@ -1482,10 +1484,15 @@ def build_observability_manifest() -> dict[str, Any]:
                     "the dataset, or an unsupported connector id, or an unknown dataset "
                     "id - the connector id arrives as a caller-supplied path segment, so "
                     "counting those would put the operator's pager behind a typo; and "
-                    "the effect of the controls themselves - measured, 19 of 20 control "
-                    "rows on seed data rest on proof_route_served, which is a fact about "
-                    "this build's route table and not about what the control does, so a "
-                    "zero here is not a claim that every control passed"
+                    "the effect of every control whose evidence is only that its route "
+                    "exists - measured, 19 of 20 control rows on seed data rest on "
+                    "proof_route_served, which is a fact about this build's route table "
+                    "and not about what the control does, so a zero here is not a claim "
+                    "that every control passed. The 20th row is the one control whose "
+                    "effect IS measured and whose outcome the build owns "
+                    "(ontology_version_pin), and it is covered: this rule's third reason "
+                    "fires when its predicate stops holding. Before that reason existed "
+                    "the probe degraded to contract_only and this rule still reported 0"
                 ),
                 "severity": "critical",
                 "evaluated": True,

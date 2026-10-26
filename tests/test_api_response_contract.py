@@ -285,3 +285,43 @@ def test_no_published_schema_claims_integer_or_null() -> None:
     for (_method, path), schema in RESPONSE_SCHEMAS.items():
         offenders.extend(walk(schema, path))
     assert not offenders, offenders
+
+
+def test_the_probe_schema_covers_every_connector_not_only_the_one_probed() -> None:
+    """A route whose shape depends on a path segment needs every segment probed.
+
+    ``_fetch`` substitutes one connector id, so the published schema for
+    ``/enterprise/connectors/{connector_id}/probe`` was derived from one
+    connector's control rows and the parametrized check above validates it
+    against that same one. Measured before this test, over every
+    connector/dataset pair that answers 200: the live rows carry eleven keys the
+    schema did not publish - ``gap_reason``, the ontology pin's four
+    observation fields, the credential vault's four, and
+    ``runtime_check_owner`` - because no probed pair has a runtime-verified
+    control. A published response schema derived from one of five shapes is the
+    drift this module exists to refuse, in the module's own words.
+    """
+    from sdp.catalog import list_datasets
+    from sdp.connectors import _SOURCE_CONNECTORS
+
+    schema = RESPONSE_SCHEMAS[("GET", "/enterprise/connectors/{connector_id}/probe")]
+    answered = []
+    for connector_id in sorted(_SOURCE_CONNECTORS):
+        for dataset in list_datasets():
+            response = client.get(
+                f"/enterprise/connectors/{connector_id}/probe",
+                params={"dataset_id": dataset.id, "user": "admin"},
+            )
+            if response.status_code != 200:
+                continue
+            answered.append(f"{connector_id}/{dataset.id}")
+            violations = _violations(response.json(), schema)
+            assert not violations, (
+                f"{connector_id}/{dataset.id} publishes keys the schema does "
+                f"not: {violations}"
+            )
+
+    assert len(answered) >= 4, (
+        "fewer pairs answered 200 than the seed catalogue provides, so this "
+        f"validated almost nothing: {answered}"
+    )
