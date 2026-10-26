@@ -427,7 +427,26 @@ def test_nothing_posts_to_the_alert_webhook() -> None:
 
     If a routing path is ever added, this fails and whoever added it moves the
     variable back into ``required_environment`` deliberately.
+
+    **It did not, until this round.** The three assertions below - two files
+    mention the variable, one ``os.getenv`` read, that read's exact text - are
+    all satisfiable by a *working* routing path, because none of them looks at
+    what happens to the value. Measured: a ``_deliver_alert`` that builds a
+    ``urllib`` ``Request`` and POSTs through ``urlopen``, added to
+    ``observability.py`` and fed from the existing read via one
+    ``_ALERT_TARGET["url"] = alert_webhook_url``, left this test **passing** (3
+    passed). So the docstring above promised a tripwire the body did not set -
+    the same shape as every other guard this cycle that was checked against its
+    own list rather than against the thing it describes.
+
+    The fourth assertion is the one that trips. The value is read once and used
+    **only in a boolean context**: ``bool(alert_webhook_url)`` for the
+    ``alert_webhook_configured`` field, twice. Routing needs the string itself -
+    to parse, to connect, or to stash - so any routing path has to either store
+    it, pass it, return it, or read the variable again. Parsed from the AST, not
+    grepped, because the reaching assignment and its uses are structure.
     """
+    import ast
     import pathlib
 
     source_root = pathlib.Path(obs.__file__).resolve().parents[1]
@@ -445,6 +464,56 @@ def test_nothing_posts_to_the_alert_webhook() -> None:
     reads = [line for line in mentions["sdp/observability.py"] if "os.getenv" in line]
     assert len(reads) == 1, reads
     assert 'alert_webhook_url = os.getenv("SDP_ALERT_WEBHOOK_URL", "").strip()' in reads[0]
+
+    # And the value goes nowhere but a boolean.
+    tree = ast.parse((source_root / "sdp" / "observability.py").read_text())
+    holders = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        if "SDP_ALERT_WEBHOOK_URL" not in ast.unparse(node.value):
+            continue
+        for target in node.targets:
+            assert isinstance(target, ast.Name), (
+                "the alert webhook value is assigned somewhere that is not a "
+                f"plain local name: {ast.unparse(node)}"
+            )
+            holders.add(target.id)
+    assert holders, "the read was not found as an assignment; re-point this guard"
+
+    # Every ``bool(<holder>)`` argument node, by identity. Checked per *load*
+    # rather than per enclosing statement: the first version of this walk asked
+    # whether the statement containing a load also contained something
+    # impermissible, and every permitted use is inside a dict literal inside a
+    # return, so it reported both legitimate uses as escapes.
+    permitted = {
+        id(node.args[0])
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "bool"
+        and len(node.args) == 1
+        and isinstance(node.args[0], ast.Name)
+        and node.args[0].id in holders
+    }
+    escapes = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name)
+        and node.id in holders
+        and isinstance(node.ctx, ast.Load)
+        and id(node) not in permitted
+    ]
+    assert escapes == [], (
+        "the alert webhook value is read somewhere other than bool(...) at "
+        f"observability.py lines {escapes}, so something can route with it. If "
+        "routing was added deliberately, rewrite this test and move "
+        "SDP_ALERT_WEBHOOK_URL into required_environment."
+    )
+    assert len(permitted) == 2, (
+        f"expected the two bool() uses that build alert_webhook_configured, "
+        f"found {len(permitted)}"
+    )
 
 
 # --------------------------------------------------------------------------- #
