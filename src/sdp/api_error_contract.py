@@ -131,6 +131,10 @@ ROUTE_REFUSALS: dict[tuple[str, str], tuple[int, ...]] = {
     ("POST", "/graph/edges"): (400, 403, 409),
     ("POST", "/graph/nodes"): (403, 409),
     ("GET", "/graph/nodes/{node_id}"): (403, 404),
+    # ``/graph/stats`` refuses an anonymous caller like every other graph read.
+    # It answered 200 to one, with no policy decision recorded, until the gate
+    # its three siblings already used was applied.
+    ("GET", "/graph/stats"): (403,),
     ("POST", "/graph/query"): (400, 403, 404),
     ("POST", "/llm/draft-query"): (400, 403, 404),
     ("POST", "/llm/search"): (400, 403),

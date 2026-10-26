@@ -2393,9 +2393,39 @@ def semantic_search(payload: SemanticSearchRequest) -> dict[str, Any]:
 
 
 @app.get("/graph/stats")
-def graph_stats() -> dict[str, Any]:
+def graph_stats(actor: str = Query(default="anonymous")) -> dict[str, Any]:
+    """Graph store counts, behind the same gate as every other graph read.
+
+    This route took no actor, evaluated no policy and recorded no evidence,
+    while its three siblings over the same store refuse an anonymous caller.
+    Measured, an unauthenticated ``GET`` answered 200 with instance-wide counts
+    and ``policy decisions +0``.
+
+    The counts are a channel, not a curiosity: catalog mutations mirror one node
+    per dataset plus one per declared column into the graph by design, so
+    onboarding a three-column dataset owned by another tenant moved the
+    anonymous response from ``nodes 26`` to ``nodes 30`` - ``+4`` reading as one
+    dataset and three columns. An unauthenticated caller could poll one URL and
+    watch a competitor tenant onboard governed assets.
+
+    Two published claims were false while that held: ``CLAUDE.md``'s governance
+    invariant, and the ``policy_audit_coverage`` KPI's guardrail "No preview or
+    query path may bypass policy", which ships ``implemented`` at a
+    ``100 percent`` target.
+
+    The counts stay **instance-wide** and now say so. Scoping them per tenant is
+    a separate change: the in-memory backend could filter through
+    ``policy.can_see_graph_node``, the SQL backend needs tenant-aware counting,
+    and an instance-wide count published as scoped would be worse than an
+    authenticated one labelled honestly.
+    """
+    _authorize_graph_read(actor, "graph")
     store = get_store()
-    return {"backend": store.readiness().get("backend"), "stats": store.stats()}
+    return {
+        "backend": store.readiness().get("backend"),
+        "stats": store.stats(),
+        "count_scope": "instance_wide_all_tenants",
+    }
 
 
 @app.get("/browse/{dataset_id}/schema")

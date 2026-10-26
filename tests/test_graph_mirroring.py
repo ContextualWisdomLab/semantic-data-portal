@@ -84,10 +84,12 @@ def _remirror_the_seeded_datasets(_restore_catalog):
 
 
 def test_a_created_dataset_and_its_columns_reach_the_graph() -> None:
-    before = client.get("/graph/stats").json()["stats"]
+    # ``/graph/stats`` now requires an authorized reader like every other graph
+    # read; it answered 200 to an anonymous caller and recorded no decision.
+    before = client.get("/graph/stats", params={"actor": "data-admin"}).json()["stats"]
     created = client.post("/catalog/datasets", json=_create_payload("mirror-new-ds"))
     assert created.status_code == 200, created.text
-    after = client.get("/graph/stats").json()["stats"]
+    after = client.get("/graph/stats", params={"actor": "data-admin"}).json()["stats"]
 
     assert after["nodes"] > before["nodes"], "the dataset node was not written"
     assert after["embeddings"] > before["embeddings"], "no embedding was indexed"

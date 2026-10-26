@@ -30,7 +30,7 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 11
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                       1366 passed, 16 skipped
+    pytest                       1372 passed, 16 skipped
     pytest (파일 순서 정/역/난수)  각 1347 passed, 15 skipped — 순서 무관
                                  (정순 · 역순 · seed 11/707/31337; 트리거 가드 커밋 이전 head)
     pytest tests/fuzz            11 passed
@@ -64,6 +64,45 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 백그라운드 측정 중에 트리를 고친 탓에 seed 11이 4건 실패로 나온 일이 있고, 그것은 결함이
 아니라 동시 편집이었습니다. Atheris(`fuzz/fuzz_query_safety.py`)는 로컬에 wheel이 없어
 실행하지 않았습니다 — 같은 invariant의 Hypothesis 미러가 `tests/fuzz`에서 돕니다.
+
+### Security — `GET /graph/stats`가 인증 없이 다른 테넌트의 스키마 폭을 알려 줬습니다 (high)
+
+구매자 체감 갭 탐색의 governance-invariant 렌즈가 라우트 66개를 전수로 쓸어서 찾았습니다.
+`/graph/stats`는 mutation·browse·query 집합에서 **actor 파라미터도, `evaluate()` 호출도,
+증빙 행도 없는 유일한 라우트**였습니다. 측정:
+
+    anonymous GET /graph/stats -> 200 {'backend': 'in_memory',
+        'stats': {'nodes': 26, 'edges': 78, 'concepts': 5, 'embeddings': 26}}
+        policy decisions +0
+    anonymous GET /graph/nodes/crm-customer-master -> 403
+        '목록 조회는 인증된 사용자만 가능합니다.'
+
+같은 store를 읽는 형제 라우트 셋은 그 호출자를 거부합니다. 그리고 그 숫자는 무해하지
+않습니다 — 카탈로그 mutation이 **설계상** dataset 하나당 노드 하나와 선언된 컬럼마다 노드
+하나를 그래프에 미러링하므로, 다른 테넌트가 소유한 3컬럼 dataset을 온보딩하면 익명 응답이
+`nodes 26` → `nodes 30`으로 움직입니다. `nodes +4`는 "dataset 1개 + 컬럼 3개"로 읽힙니다.
+인증 없는 호출자가 URL 하나를 폴링하면서 경쟁 테넌트가 governed asset을 온보딩하는 것을
+지켜보고, dataset을 몇 개 추가했는지와 각각이 몇 컬럼인지를 알 수 있습니다.
+
+그 동안 게시된 주장 **둘**이 거짓이었습니다. `CLAUDE.md`의 governance invariant(browse/query
+경로에서 정책 평가와 증빙 기록을 빼는 변경은 회귀)와, `policy_audit_coverage` KPI —
+`status="implemented"`, `target="100 percent"`, guardrail **"No preview or query path may
+bypass policy."** 입니다.
+
+형제들이 이미 쓰는 게이트(`_authorize_graph_read(actor, "graph")`)를 붙였습니다. 그러면
+거부가 생기므로 **거부 계약에도 게시합니다**(`("GET", "/graph/stats"): (403,)`) — 코드가
+일으킬 수 있는 모든 거부는 공표돼야 하고, 그 가드가 이 커밋을 잡아서 알려 줬습니다
+(`test_every_refusal_the_code_can_raise_is_published`).
+
+**숫자는 여전히 instance 전체이고, 이제 그렇다고 적습니다**(`count_scope:
+instance_wide_all_tenants`). 테넌트 단위로 좁히는 것은 분리된 더 큰 작업입니다 — in-memory
+backend는 기존 `policy.can_see_graph_node`로 걸러낼 수 있지만 SQL backend는 테넌트 인식
+집계가 필요하고, **instance 전체 숫자를 scoped라고 게시하는 것이 인증된 instance 전체
+숫자보다 나쁩니다.** 그래서 한계를 라벨로 적고 닫지 않았습니다.
+
+증거: 세 변형을 각각 되돌렸습니다. M1(게이트 제거): 2건 red. M2(`count_scope` 라벨 제거):
+1건 red. M3(`count_scope`를 `tenant_scoped`라고 주장): 1건 red. 전체 정순 `pytest`
+1372 passed, 16 skipped (1366에서 +6), `demo_smoke` exit 0 · `ready: true`.
 
 ### Fixed — 운영자 계약이 "절대 빨개지지 않는" liveness 엔드포인트를 health로 게시했습니다 (high)
 
