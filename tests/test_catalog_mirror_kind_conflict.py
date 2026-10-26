@@ -786,15 +786,35 @@ def test_the_published_409_description_enumerates_every_cause_the_code_raises() 
     enumeration can no longer drift, because only one of them is written down in
     the document.
 
-    **What it does not do**, stated because the previous round's docstring
-    claimed it did: it cannot notice a *new* 409 in the code. The comparison is
-    between the published description and ``_409_CAUSES`` in this file, so a
-    sixth reachable cause added to ``api.py`` leaves both sides agreeing at five
-    and this test green. Catching that needs the causes derived from the code,
-    which they are not. A new 409 therefore needs a deliberate edit here - and
-    the round that published a cause **no request can produce** shows the
-    traffic goes both ways, so the entries carry the measurement that justifies
-    each one.
+    **What it does not do.** The previous round's docstring claimed a seventh
+    409 in the code would leave this test naming what is missing. It would not:
+    the comparison is between the published description and ``_409_CAUSES`` in
+    this file, so both sides agreeing leaves it green regardless of what the
+    code raises.
+
+    The honest boundary is narrower than "the suite is blind to new 409s",
+    though, and it is worth stating exactly, because half of it *is* guarded.
+    ``tests/test_api_error_contract.py`` derives each route's raiseable statuses
+    by AST-parsing ``api.py`` transitively through shared gates and
+    route-to-route delegation, and asserts both directions against
+    ``ROUTE_REFUSALS``. Measured, both halves::
+
+        a reachable 409 added to GET /audit/events, which declares none
+          -> test_every_refusal_the_code_can_raise_is_published FAILS:
+             "these routes can refuse with statuses the OpenAPI document does
+              not mention: {('GET', '/audit/events'): [409]}"
+
+        a sixth 409 *cause* added to PATCH /catalog/datasets/{id},
+        which already declares 409
+          -> whole targeted run exits 0; nothing in the suite notices
+
+    So the **status** a route can return is guarded; the **enumeration's
+    content** is not. Every route that can raise a new 409 cause already
+    declares 409 - the four catalog mutations, the graph writes, the ontology
+    writes - so in practice a new cause is exactly the unguarded case. It needs
+    a deliberate edit here, and because the round that published a cause **no
+    request can produce** shows the traffic runs both ways, each entry carries
+    the measurement that justifies it.
     """
     import re
 

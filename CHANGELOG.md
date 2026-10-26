@@ -91,8 +91,25 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 **2. 그 테스트의 낡음 방지 주장이 거짓이었습니다 (medium).** 5라운드 docstring은 "코드에
 일곱 번째 409가 생기고 문서에 안 적히면 테스트가 빠진 것을 이름으로 말한다"고 적었지만,
 테스트는 문서를 **이 파일의 `_409_CAUSES`와** 비교합니다 — 코드와 비교하지 않습니다.
-양쪽이 다섯에서 일치하면 녹색입니다. 주장을 철회하고 테스트가 실제로 보증하는 것만
-적었습니다.
+양쪽이 다섯에서 일치하면 녹색입니다.
+
+**철회하면서 반대쪽으로 넓히지 않도록 경계를 측정했습니다.** 검증 에이전트가 "스위트가
+새 409에 완전히 눈이 멀었다"는 서술은 과하다고 지적했고, 맞았습니다 —
+`tests/test_api_error_contract.py`가 `api.py`를 AST로 전이 파싱해 라우트별 raiseable
+status를 `ROUTE_REFUSALS`와 양방향 대조합니다. 양쪽을 직접 측정했습니다:
+
+    409을 선언하지 않는 GET /audit/events에 도달 가능한 409 추가
+      -> test_every_refusal_the_code_can_raise_is_published 실패:
+         "these routes can refuse with statuses the OpenAPI document does not
+          mention: {('GET', '/audit/events'): [409]}"
+
+    이미 409을 선언한 PATCH /catalog/datasets/{id}에 여섯 번째 409 **사유** 추가
+      -> 대상 실행 exit 0, 스위트에서 아무것도 알아채지 못함
+
+즉 **라우트가 답할 수 있는 status는 지켜지고, 열거의 내용은 지켜지지 않습니다.** 그리고
+새 409 사유를 낼 수 있는 라우트는 전부 이미 409을 선언하고 있으므로(카탈로그 mutation 네
+개, graph·ontology write), 실무적으로 새 사유가 정확히 그 사각지대입니다. 과소 주장도
+과대 주장과 같은 결함이므로 양쪽 측정을 함께 적어 둡니다.
 
 **3. 그래프 스토어 제외 철회가 다섯 곳을 놓쳤고, 재발 가드가 통과했습니다 (high).**
 5라운드가 네 곳을 고치고 세 가지 문구를 금지했는데, **다섯 개 파일이 네 번째 문구**를
