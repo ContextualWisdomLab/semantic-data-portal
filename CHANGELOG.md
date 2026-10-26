@@ -2,15 +2,15 @@
 
 이 문서는 `claude/semantic-portal-pr-merge-e5a48k` 브랜치(PR
 [#102](https://github.com/ContextualWisdomLab/semantic-data-portal/pull/102))가
-베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **235개** 커밋 중 125개는
-gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 110개입니다. 이 숫자는 **이
+베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **252개** 커밋 중 128개는
+gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 124개입니다. 이 숫자는 **이
 줄을 담은 커밋을 포함한** 값입니다 — 측정 시점의 234에 이 커밋을 더한 것. 측정 명령:
 
     git rev-list --count origin/docs/product-technical-gap-baseline..HEAD
     git log --format=%H origin/docs/product-technical-gap-baseline..HEAD \
       --name-only -- docs/product-technical-gap-baseline.md | grep -c '^[0-9a-f]\{40\}$'
 
-앞서 적혀 있던 164/112, 186/113, 199/122/77, 203/122/81, 211/122/89, 212/122/90, 213/122/91, 214/122/92, 215/122/93, 216/122/94, 218/122/96, 219/122/97, 220/122/98, 221/122/99, 222/122/100, 223/122/101, 224/122/102, 225/122/103, 226/122/104, 228/122/106, 230/123/107, 231/123/108, 233/124/109은 각각 그 시점의 값이고 이후
+앞서 적혀 있던 164/112, 186/113, 199/122/77, 203/122/81, 211/122/89, 212/122/90, 213/122/91, 214/122/92, 215/122/93, 216/122/94, 218/122/96, 219/122/97, 220/122/98, 221/122/99, 222/122/100, 223/122/101, 224/122/102, 225/122/103, 226/122/104, 228/122/106, 230/123/107, 231/123/108, 233/124/109, 235/125/110은 각각 그 시점의 값이고 이후
 커밋을 반영하지 않은 숫자였습니다 — 자기 문서의 수치도 측정해서 맞춰 둡니다. 199는 이
 줄을 쓴 뒤 3개 커밋이 더 쌓여 낡아 203으로, 203은 다음 커밋에서 낡아 204로, 204는 또
 두 커밋 뒤에 206으로 다시 측정해 고쳤습니다. 206도 그 값을 담은 커밋 자신 때문에 도착
@@ -30,9 +30,10 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 11
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                       1397 passed, 23 skipped
-    pytest (파일 순서 정/역/난수)  각 1347 passed, 15 skipped — 순서 무관
-                                 (정순 · 역순 · seed 11/707/31337; 트리거 가드 커밋 이전 head)
+    pytest                       1421 passed, 23 skipped
+    pytest (파일 순서 정/역/난수)  각 1421 passed, 23 skipped — 순서 무관
+                                 (정순 · 역순 · seed 11/707/31337; 이 커밋의 코드·테스트를
+                                  동결한 트리에서 측정)
     pytest tests/fuzz            11 passed
     python -m sdp.demo_smoke     exit 0, "ready": true
 
@@ -41,16 +42,19 @@ pgvector 핀 커밋이 10건, event-loop 수리 커밋이 2건, 환경 변수 �
 (새 파일 둘), readiness 진단 커밋이 7건(새 파일 하나) 늘렸고, 그 뒤 2026-10-26 적대적 리뷰
 수리 여섯 커밋이 3+3+3+4+4+3건을 더했으므로 위 숫자는 앞서 적혀 있던
 1266 → 1300 → 1310 → 1312 → 1320 → 1327 → 1330 → 1333 → 1336 → 1340 → 1344 → 1347로
-올라갔습니다. 다섯 순서 측정은 트리를 동결한 상태에서
+올라갔고, 그 뒤 수리들을 거쳐 1397에, 이 커밋의 새 파일 24건으로 1421에 와 있습니다
+(1397은 다섯 순서 측정 head보다 뒤의 값이라 위 사슬에 중간 항이 빠져 있습니다 — 사슬은
+그 시점까지의 기록이고, 현재 값은 측정해서 적습니다). 다섯 순서 측정은 트리를 동결한 상태에서
 돌렸고, 그 뒤에 바뀐 파일은 이 CHANGELOG 하나입니다 — CHANGELOG 내용을 읽는 테스트는
 파일 순서와 무관한 산술 가드
 (`test_every_published_node_breakdown_sums_to_its_own_total`) 하나뿐이므로, 순서 성질을
 다시 재지 않고 전체 정순 실행으로만 확인합니다. 측정하고 쓴 뒤 커밋하는 순서상 이
 숫자가 자기 커밋 때문에 낡는 것은 위 off-by-one과 같은 종류입니다.
 
-위 다섯 순서 숫자는 2026-10-26 적대적 리뷰 수리 여섯 커밋이 모두 들어온 뒤의 측정입니다.
-각 중간 커밋은 **전체 정순 1회**만을 증거로 가졌고, 다섯 순서는 묶음이 끝난 뒤 한 번
-재서 이 블록을 갱신했습니다 — 중간 head에 대해 다섯 순서를 주장하지 않습니다. 이 커밋이
+위 다섯 순서 숫자는 **이 커밋의** 코드·테스트 트리에서 다시 측정한 값입니다(다섯 순서
+모두 1421 passed / 23 skipped). 그 사이의 중간 커밋들은 각각 **전체 정순 1회**만을
+증거로 가졌고, 다섯 순서는 묶음이 끝날 때 한 번 재서 이 블록을 갱신합니다 — 중간
+head에 대해 다섯 순서를 주장하지 않습니다. 이 커밋이
 바꾼 파일은 CHANGELOG와 gap 문서 둘뿐이고, CHANGELOG 내용을 읽는 테스트는 파일 순서와
 무관한 산술 가드 하나뿐이므로 순서 성질을 다시 재지 않고 전체 정순 실행으로만 확인합니다.
 
@@ -64,6 +68,76 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 백그라운드 측정 중에 트리를 고친 탓에 seed 11이 4건 실패로 나온 일이 있고, 그것은 결함이
 아니라 동시 편집이었습니다. Atheris(`fuzz/fuzz_query_safety.py`)는 로컬에 wheel이 없어
 실행하지 않았습니다 — 같은 invariant의 Hypothesis 미러가 `tests/fuzz`에서 돕니다.
+
+### Fixed — 드래프트가 테이블 이름을 연결 locator에서 **추측**하면서 "카탈로그에서 검증된 테이블"이라고 적었습니다 (high)
+
+`POST /llm/draft-query`의 `assumptions`에 `카탈로그에서 검증된 테이블/컬럼만 사용`이
+있었습니다. **컬럼**은 카탈로그 선언에서 옵니다. **테이블**은 아닙니다 — `table_name`은
+`source_system`의 마지막 경로 조각이고, `source_system`은 relation이 아니라 *연결*
+locator입니다. 시드 카탈로그 다섯 건 전수를 `9cf278e`에서 측정했습니다:
+
+    crm-customer-master  postgresql://analytics.dw/customer   -> FROM customer
+      카탈로그 자신이 선언한 relation(postgresql.table distribution):
+      https://example.internal/api/table/crm_customer_master
+    crm-event            s3://analytics/events/crm            -> FROM crm
+    sales-order          postgresql://analytics.dw/sales      -> FROM sales
+    semantic-glossary    sparql://semantic.graph/customer-intelligence
+                                              -> FROM customer_intelligence
+    marketing-campaign   https://api.example.internal/marketing/campaigns
+                                              -> FROM campaigns
+
+두 가지가 동시에 틀립니다. libpq URI의 그 조각은 **데이터베이스** 이름이지 relation
+이름이 아니고, 나머지 셋은 **애초에 관계형이 아닙니다** — 객체 prefix, named graph,
+REST 경로입니다. 그런데도 다섯 건 모두 `"dialect": "postgresql"` SQL을 받습니다. 즉
+**어느 draft도 실제로 존재하는 relation을 지목하지 않았고**, 그것을 자기 웨어하우스에
+붙여 넣은 구매자는 `relation "customer" does not exist`를 받습니다. 그래프 스토어에
+관계형 SQL을 주면서 "카탈로그가 테이블을 검증했다"고 적은 것이 결함입니다.
+
+같은 측정에서 자기 모순이 하나 더 나옵니다. `validate_sql_query`의 allow-list는 드래프터와
+**같은 추측**을 공유하므로, 카탈로그가 선언한 진짜 relation을 넣으면 거부하고 추측한
+이름은 통과시킵니다:
+
+    validate_sql_query("... FROM crm_customer_master ...")  -> ['unauthorized_table_reference']
+    validate_sql_query("... FROM customer ...")             -> []
+
+**두 설계를 시도했고 첫 번째를 되돌렸습니다.** 관계형이 아닌 source에 대해 draft를
+거부하는 쪽을 먼저 썼습니다. 네 파일 11건이 red로 바뀝니다 — 세 파일은 데이터셋을 전수
+열거하며 draft를 기대하고, `test_latency_budget_measurement.py`는 이 라우트를 **지연
+표본 수집용 트래픽 인프라**로 씁니다(fixture 오류 7건). 다른 측정이 올라서 있는 표면을
+없애는 것은 결함보다 큰 변경이고, 결함은 draft의 존재가 아니라 **거짓 주장**입니다.
+그래서 `/graph/stats`의 instance-wide 카운트와 mock executor의 provenance 필드에서와
+같은 선택을 했습니다 — 전달 지점에서 스스로를 라벨합니다.
+
+`executable_against_source`는 SQL source까지 포함해 **다섯 건 모두 `False`**입니다. 그게
+현재 사실이기 때문입니다. 카탈로그의 `postgresql.table` distribution에서 relation을
+해석하고 `validate_sql_query`의 allow-list를 같은 파생으로 세우는 수리는 gap 베이스라인에
+별건으로 적혀 있고, 그것이 들어오면 SQL source가 `True`로 바뀌며
+`tests/test_draft_source_kind.py`의 기대도 같이 바뀝니다.
+
+바뀐 것:
+
+* `sdp_core.demo_seed.classify_source_type()` — `buyer_demo_dataset_summaries`가
+  인라인으로 갖고 있던 분류를 추출했습니다. 드래프터도 같은 답이 필요하고, 사본은
+  갈라집니다(이 저장소가 그 대가를 여러 번 기록했습니다). 파생 하나, 독자 둘.
+* 응답에 `source_kind`, `executable_against_source`, `execution_caveat` 셋을 공표합니다.
+  caveat는 두 가지를 말합니다 — 이름이 **locator에서 왔다**는 것과, 진짜 이름이
+  **카탈로그 distribution에 있다**는 것.
+* `assumptions`에서 거짓 문장을 빼고 참인 것으로 바꿨습니다: 컬럼은 카탈로그 선언에서
+  왔고, 테이블 이름은 `source_system` 경로에서 파생했으며 카탈로그가 검증한 relation
+  이름이 아니라고 적습니다.
+* 이 주장을 역사로 인용하던 세 곳(`orchestrator.py` 둘, `test_draft_execute_round_trip.py`
+  하나)에 **지금은 공표하지 않는다**는 한 줄을 붙였습니다. 측정 당시의 기록으로는
+  정확하지만, HEAD에서 grep한 독자는 아직 출하 중인지 구분할 수 없었습니다.
+
+테스트 24건(`tests/test_draft_source_kind.py`). 역검증은 7개 변이로 했습니다:
+`source_kind` 키 제거(6 red), `executable_against_source = True`(5), 옛 assumption 복구(5),
+caveat가 출처를 안 말하게(5), caveat가 진짜 이름의 위치를 안 말하게(5), 공유 분류기의
+`sparql` 분기 제거(3), **드래프터가 자기 사본을 갖게(1)**. 마지막 하나가 1건만 red인 것은
+의도대로입니다 — import를 남겨 둔 사본은 구조적 identity 검사를 통과하므로, 드래프터의
+바인딩을 교체하고 응답이 따라오는지 보는 **행동** 검사가 그것을 잡습니다. 변이 둘은 처음에
+green으로 돌아왔고 둘 다 테스트의 결함이었습니다: caveat의 `"relation" in caveat`은 두
+문장 중 **어느 쪽으로도** 만족되어 주장과 그 부정을 구분하지 못했고(두 성질로 쪼갰습니다),
+또 하나는 제가 엉뚱한 자리를 변이시킨 것이었습니다.
 
 ### Security — 거부된 cross-tenant graph read가 prober의 테넌트에 `allow`로 기록되고 audit event가 없었습니다 (high)
 

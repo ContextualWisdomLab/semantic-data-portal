@@ -4,6 +4,8 @@ import math
 import re
 from typing import Any
 from datetime import datetime, timezone
+from sdp_core.demo_seed import classify_source_type
+
 from .authz import can_access_tenant
 from .catalog import get_dataset, ingest_event
 from .domain import QueryDraftRequest
@@ -158,6 +160,10 @@ def _is_emittable_identifier(value: str) -> bool:
         query             SELECT order_amount, count(*) ... FROM customer
         requested_columns ['order amount']
         assumptions       ['카탈로그에서 검증된 테이블/컬럼만 사용', ...]
+
+    (That assumption no longer ships - see ``draft_sql``, which now states which
+    half is catalog-backed - but it is what the response said when this was
+    measured, and it is the reason the mismatch was invisible.)
 
     The statement passed ``validate_sql_query`` and ``/browse/query`` answered
     200, so nothing in the product flagged it; the buyer finds out when the
@@ -314,7 +320,8 @@ def _temporal_column(dataset: Any) -> str | None:
     """Return the dataset's first declared temporal column, or ``None``.
 
     The drafter hard-coded ``created_at`` into its window predicate while
-    claiming, in the same response, to use "카탈로그에서 검증된 테이블/컬럼만".
+    claiming, in the same response, to use "카탈로그에서 검증된 테이블/컬럼만"
+    (a claim since removed from ``draft_sql``'s ``assumptions``).
     Three of the five seeded datasets declare no temporal column at all and not
     one of them declares ``created_at``: ``crm-customer-master`` has
     ``signup_at``, ``crm-event`` has ``event_timestamp``, and ``sales-order``,
@@ -465,6 +472,21 @@ def draft_sql(req: QueryDraftRequest) -> dict:
         where_clause = (
             f"WHERE {_safe_identifier(window_column)} >= current_date - {req.date_window_days}"
         )
+    # Relational SQL is drafted only for a relational source. Measured over the
+    # seed catalogue, this function emitted PostgreSQL for all five datasets and
+    # three of them are not relational at all - the "table" was an S3 prefix
+    # (``s3://analytics/events/crm`` -> ``FROM crm``), a SPARQL named graph
+    # (``sparql://semantic.graph/customer-intelligence`` ->
+    # ``FROM customer_intelligence``) and a REST endpoint path
+    # (``https://api.example.internal/marketing/campaigns`` ->
+    # ``FROM campaigns``) - while the response asserted
+    # ``카탈로그에서 검증된 테이블/컬럼만 사용``. A buyer was handed relational
+    # SQL for a graph store and told the catalog had verified the table.
+    #
+    # The classifier is ``sdp_core.demo_seed.classify_source_type``, which
+    # already existed inline for ``buyer_demo_dataset_summaries`` and is now
+    # shared rather than copied.
+    source_kind = classify_source_type(dataset.source_system)
     table_name = _source_table_name(dataset.source_system)
     # ``_referenced_source_tables`` treats a clause keyword as the end of the
     # table list, so a source table named ``order`` - one of the most ordinary
@@ -540,6 +562,16 @@ def draft_sql(req: QueryDraftRequest) -> dict:
     # source table colliding with a clause keyword); this check is what catches
     # the third without waiting for a report.
     self_check = validate_sql_query(sql, source_system=dataset.source_system)
+    # Published rather than inferred: no draft currently names a relation that
+    # exists on the target system, so the response states that instead of
+    # letting the buyer discover it in their own warehouse.
+    executable_against_source = False
+    execution_caveat = (
+        f"source_kind={source_kind}. 이 draft의 테이블 이름은 연결 locator에서 "
+        "파생된 것이므로 대상 시스템의 relation 이름과 다를 수 있습니다. "
+        "실행 전에 카탈로그의 distribution(postgresql.table 등)에 기록된 실제 "
+        "relation 이름으로 바꾸십시오."
+    )
     if self_check:
         return {
             "error": "draft_rejected_by_validator",
@@ -550,8 +582,37 @@ def draft_sql(req: QueryDraftRequest) -> dict:
             "warnings": self_check,
         }
 
+    # ``카탈로그에서 검증된 테이블/컬럼만 사용`` was false for every dataset,
+    # for two different reasons, so it is replaced by what is true.
+    #
+    # The columns are catalog-declared; the **table** is not. ``table_name``
+    # comes from the last path segment of ``source_system``, which is a
+    # *connection* locator. Measured over the seed catalogue::
+    #
+    #   crm-customer-master  postgresql://analytics.dw/customer  -> FROM customer
+    #     catalog's own relation, from its postgresql.table distribution:
+    #     .../api/table/crm_customer_master
+    #   crm-event            s3://analytics/events/crm           -> FROM crm
+    #   semantic-glossary    sparql://semantic.graph/customer-intelligence
+    #                                              -> FROM customer_intelligence
+    #   marketing-campaign   https://api.../marketing/campaigns  -> FROM campaigns
+    #
+    # For a libpq URI that segment is the **database** name, not a relation; for
+    # the other three the source is not relational at all and the segment is an
+    # object prefix, a named graph and a REST path. So no draft currently names
+    # a relation that exists, and a buyer who pasted one into their warehouse
+    # got ``relation "customer" does not exist``.
+    #
+    # Resolving the relation from the catalog's declared ``postgresql.table``
+    # distribution - and building ``validate_sql_query``'s allow-list from that
+    # same derivation, which today shares this guess and therefore refuses the
+    # catalog's own relation - is the separate repair recorded in the gap
+    # baseline. Until it lands the response says so rather than claiming
+    # otherwise.
     assumptions = [
-        "카탈로그에서 검증된 테이블/컬럼만 사용",
+        "컬럼은 카탈로그 선언에서 가져왔습니다",
+        f"테이블 이름은 source_system({source_kind}) 경로의 마지막 조각에서 "
+        "파생했습니다 — 카탈로그가 검증한 relation 이름이 아닙니다",
         "read-only SELECT만 허용",
         "목적별 정책으로 PII 필드는 masking 또는 집계 제한",
     ]
@@ -595,6 +656,9 @@ def draft_sql(req: QueryDraftRequest) -> dict:
         "policy_decision": decision.model_dump(),
         "preview_required": req.purpose == "analysis",
         "dialect": "postgresql",
+        "source_kind": source_kind,
+        "executable_against_source": executable_against_source,
+        "execution_caveat": execution_caveat,
         "row_limit": max_rows,
         "requested_columns": requested_columns,
         # What the emitted SQL actually names, where it differs from the

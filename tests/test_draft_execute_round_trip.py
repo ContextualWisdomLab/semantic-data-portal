@@ -21,7 +21,9 @@ Two independent defects in one predicate:
   ``event_timestamp``, and ``sales-order``, ``semantic-glossary`` and
   ``marketing-campaign`` declare no temporal column at all. So the predicate
   filtered on a phantom column while the same response claimed to use
-  "카탈로그에서 검증된 테이블/컬럼만".
+  "카탈로그에서 검증된 테이블/컬럼만" - a claim since removed from the response,
+  because the table half of it was false for every dataset too
+  (``tests/test_draft_source_kind.py``).
 
 The datasets are enumerated from the catalog rather than listed, so a seed whose
 schema shape differs is covered without anyone remembering to add it.
