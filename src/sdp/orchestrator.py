@@ -851,11 +851,26 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
     now = datetime.now(timezone.utc).isoformat()
     query_id = f"qry-{now.replace(':', '')}"
     columns = ["week", "active_count"] if "group by" in lowered else ["result"]
-    rows = (
-        [{"week": now[:10], "active_count": 1}]
-        if "group by" in lowered
-        else [{"result": row_count}]
-    )
+    # ``rows`` has to agree with ``row_count``, which is computed above and is
+    # ``0`` on a dry run. It did not consult ``dry_run`` at all, so a dry run
+    # reported zero and delivered one row - and on the group-by branch that row
+    # carried a fabricated non-zero figure dated today::
+    #
+    #     dry_run=True  row_count=0  len(rows)=1
+    #     rows=[{'week': '2026-10-26', 'active_count': 1}]
+    #     audit: {"dry_run": true, "row_count": 0, ...}
+    #
+    # So one response contradicted itself and the compliance ledger asserted
+    # that nothing was delivered while the caller held a row. ``columns`` stays
+    # published: the declared result shape is what a dry run is for, and only
+    # the data is withheld.
+    rows: list[dict[str, str | int | float | bool | None]] = []
+    if not req.dry_run:
+        rows = (
+            [{"week": now[:10], "active_count": 1}]
+            if "group by" in lowered
+            else [{"result": row_count}]
+        )
     # No query is executed here, so every figure below is labelled with where it
     # came from. `elapsedMs` and `bytesScanned` are fixed constants and
     # `row_count` is the catalog's own profile estimate, not a measurement.
@@ -870,6 +885,14 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
         # provenance of the two constants and said nothing about the row count,
         # which is the only figure a reader is likely to act on.
         "row_count_source": row_count_source,
+        # ``rows`` was the one figure in this response with no provenance,
+        # while the comment above claims every figure carries one. It is not
+        # the result set and it is not a sample of one: on a dry run nothing
+        # is returned, and otherwise it is a fixed illustrative row whose
+        # length has no relation to ``row_count`` - which is why a test
+        # asserting ``row_count == len(rows)`` on a live run would be
+        # demanding that the mock fabricate 2000 rows.
+        "rows_source": "withheld_dry_run" if req.dry_run else "fixed_mock_sample",
     }
     audit(
         dataset_id=dataset.id,

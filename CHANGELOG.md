@@ -30,7 +30,7 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 11
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                       1351 passed, 16 skipped
+    pytest                       1353 passed, 16 skipped
     pytest (파일 순서 정/역/난수)  각 1347 passed, 15 skipped — 순서 무관
                                  (정순 · 역순 · seed 11/707/31337; 트리거 가드 커밋 이전 head)
     pytest tests/fuzz            11 passed
@@ -64,6 +64,52 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 백그라운드 측정 중에 트리를 고친 탓에 seed 11이 4건 실패로 나온 일이 있고, 그것은 결함이
 아니라 동시 편집이었습니다. Atheris(`fuzz/fuzz_query_safety.py`)는 로컬에 wheel이 없어
 실행하지 않았습니다 — 같은 invariant의 Hypothesis 미러가 `tests/fuzz`에서 돕니다.
+
+### Fixed — dry run이 데이터 행을 하나 지어내면서 "0건"이라고 보고했습니다 (high)
+
+구매자 체감 갭 탐색(6개 표면)의 query-path 렌즈가 찾았습니다. `execute_query`의 `row_count`는
+`_row_count_estimate(dataset, dry_run=req.dry_run)`로 계산되어 dry run에서 올바르게 `0`을
+돌려주는데, 그 아래 `rows`/`columns` 구성이 **`req.dry_run`을 전혀 보지 않았습니다**:
+
+    dry_run=True [plain  ]  row_count=0  len(rows)=1  rows=[{'result': 0}]
+    dry_run=True [group by]  row_count=0  len(rows)=1
+                             rows=[{'week': '2026-10-26', 'active_count': 1}]
+    audit:  {"dry_run": true, "row_count": 0, "measurement_status": "mock_execution_no_real_data", ...}
+
+한 응답이 **자기와 모순**합니다(0건이라면서 1건을 전달). group-by 경로에서는 그 1건이
+**오늘 날짜의 0이 아닌 지어낸 측정치**(`active_count: 1`)입니다. 그리고 compliance 원장은
+"전달된 행 없음"을 기록하는 동안 호출자는 행을 들고 있습니다 — 이 저장소의 표준 규칙이
+"원장에 올라간 라벨 없는 추정치는 지어낸 측정치"이므로, 라벨이 붙은 mock 표시와 별개로
+이것은 원장의 거짓 진술입니다.
+
+`rows`를 dry run 분기에서 비웁니다. `columns`는 **계속 게시합니다** — 선언된 결과 모양은
+dry run이 존재하는 이유이고, 비는 것은 데이터뿐입니다.
+
+`tests/test_orchestrator.py::test_execute_query_dry_run_succeeds_with_zero_rows`는 이름이
+"zero rows"인데 `row_count == 0`만 단언하고 `rows == []`는 **한 번도 단언하지 않았으므로**,
+행을 실어 보내는 응답에 대해 통과했습니다. 이 주기에 자기 이름이 약속한 것을 검사하지 않는
+테스트 **일곱 번째**입니다. 그 단언을 추가하고 group-by 경로 케이스를 더했습니다.
+
+**내 테스트가 두 번 틀렸고, 둘 다 적어 둡니다.**
+
+1. 첫 판은 `dry_run` 양쪽에서 `recorded == row_count == len(rows)`를 요구했습니다. live
+   실행에서 이것은 거짓이고 **거짓이어야 합니다** — 거기서 `row_count`는 라벨 붙은
+   추정치(2000, 카탈로그 프로필)이고 `rows`는 고정된 예시 한 줄입니다. 같기를 요구하면
+   mock이 2000행을 지어내야 하고, 그것은 라벨 붙은 한 줄보다 **더 나쁩니다.** 코드가
+   주장하지 않은 값 도메인을 단언한 것과 같은 종류의 과잉이고, 이 주기에 `minimum=1`로
+   한 번 했던 실수입니다. 다만 그 과잉이 진짜 갭 하나를 드러냈습니다: 이 응답의 모든
+   수치가 출처 라벨을 달고 있는데(`elapsed_ms_source`·`bytes_scanned_source`·
+   `row_count_source`) **`rows`만 없었고**, 바로 위 주석이 "아래 모든 수치는 출처가
+   라벨된다"고 적고 있었습니다. `rows_source`를 추가했습니다 —
+   `withheld_dry_run` 또는 `fixed_mock_sample`.
+2. 두 번째 판은 최신 audit event를 `events[-1]`로 읽었습니다.
+   `catalog.list_audit_events`는 **최신이 먼저**이므로 그것은 가장 오래된 행이고, 루프
+   두 번째 패스에서는 **이전 호출의 event**였습니다 — 제품이 2000행 응답에 대해
+   `row_count: 0`을 기록하는 것처럼 보였습니다. 순서를 가정하지 않고 확인한 것이 결함과
+   오독을 가른 지점이고, 그 문장을 테스트 docstring에 적어 두었습니다.
+
+증거: 두 수리를 각각 되돌렸습니다. M1(dry run이 다시 행을 전달): 3건 red. M2(`rows_source`
+라벨 제거): 1건 red. 전체 정순 `pytest` 1353 passed, 16 skipped (1351에서 +2).
 
 ### Fixed — 기본 테스트 게이트가 stacked PR에서 아예 돌지 않고 있었습니다 (high)
 

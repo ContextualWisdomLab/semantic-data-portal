@@ -177,6 +177,120 @@ def test_execute_query_dry_run_succeeds_with_zero_rows() -> None:
     )
     assert resp.status == "SUCCEEDED"
     assert resp.row_count == 0
+    # The property this test is named for. It asserted the count and never the
+    # rows, so it passed against a response that reported zero and delivered
+    # one: `row_count=0, len(rows)=1, rows=[{"result": 0}]`.
+    assert resp.rows == [], (
+        f"a dry run delivered {len(resp.rows)} row(s) while reporting "
+        f"row_count={resp.row_count}: {resp.rows}"
+    )
+
+
+def test_a_dry_run_group_by_does_not_fabricate_a_measurement() -> None:
+    """The group-by path invented a non-zero figure dated today.
+
+    Measured before the repair, with ``dry_run=True``::
+
+        row_count=0  len(rows)=1  columns=['week', 'active_count']
+        rows=[{'week': '2026-10-26', 'active_count': 1}]
+
+    and the audit event for the same call recorded ``{"dry_run": true,
+    "row_count": 0}``. So the response contradicted itself and the compliance
+    ledger asserted that no rows were delivered while one was. ``active_count:
+    1`` is the part that matters: a reader cannot tell a fabricated row from a
+    measured one, and this product's standing rule is that an unlabelled
+    estimate on the ledger is a fabricated measurement.
+
+    ``columns`` is deliberately still published on a dry run - the declared
+    result shape is what a dry run is for - and only the data is empty.
+    """
+    resp = orch.execute_query(
+        QueryExecutionRequest(
+            dataset_ids=[_CRM],
+            query=(
+                "SELECT signup_at, count(*) AS active_customer_count "
+                "FROM customer GROUP BY signup_at LIMIT 1000"
+            ),
+            user="admin",
+            purpose="analysis",
+            dry_run=True,
+        )
+    )
+    assert resp.status == "SUCCEEDED"
+    assert resp.row_count == 0
+    assert resp.rows == [], (
+        f"a dry run fabricated a data row: {resp.rows}"
+    )
+    assert resp.columns, "the declared result shape is what a dry run reports"
+
+
+def test_the_ledger_and_the_response_agree_and_the_rows_carry_provenance() -> None:
+    """Two separate properties, because the first version of this conflated them.
+
+    It asserted ``recorded == row_count == len(rows)`` for both values of
+    ``dry_run``, which is false on a live run **and should be**: ``row_count``
+    there is a labelled estimate (2000, from the catalog profile) while ``rows``
+    is one fixed illustrative row. Demanding equality would demand that the mock
+    fabricate 2000 rows, which is strictly worse than publishing one labelled
+    sample. That over-reach is the same mistake as asserting a value domain the
+    code never claimed, and writing it down is how it was caught.
+
+    What is actually required:
+
+    * the ledger's ``row_count`` describes the response's, always;
+    * on a dry run all three agree at zero, because nothing was returned;
+    * ``rows`` carries its own provenance, like every other figure in that
+      response - it was the only one that did not, while the comment above it
+      claimed each one did.
+
+    One more thing this test got wrong before it got it right: it read the
+    newest audit event as ``events[-1]``. ``catalog.list_audit_events`` returns
+    newest **first**, so that was the oldest row, and on the loop's second pass
+    it was a previous call's event - presenting as the product recording
+    ``row_count: 0`` for a 2000-row response. Checking the ordering instead of
+    assuming it is the difference between a defect and a misread.
+    """
+    from sdp import catalog
+
+    for dry_run in (True, False):
+        for query in (
+            "SELECT customer_id FROM customer",
+            "SELECT signup_at, count(*) AS n FROM customer GROUP BY signup_at",
+        ):
+            before = len(catalog.list_audit_events(limit=500))
+            resp = orch.execute_query(
+                QueryExecutionRequest(
+                    dataset_ids=[_CRM],
+                    query=query,
+                    user="admin",
+                    purpose="analysis",
+                    dry_run=dry_run,
+                )
+            )
+            events = catalog.list_audit_events(limit=500)
+            assert len(events) > before, "the execution recorded no audit event"
+            # Newest **first**. Reading ``events[-1]`` gave the oldest row, and
+            # on the second iteration of this loop that was a previous call's
+            # event - which looked exactly like the product recording 0 for a
+            # 2000-row response until the ordering was checked rather than
+            # assumed.
+            recorded = events[0].details.get("row_count")
+            assert recorded == resp.row_count, (
+                f"dry_run={dry_run} {query!r}: the ledger recorded "
+                f"row_count={recorded} and the response reported {resp.row_count}"
+            )
+            rows_source = resp.execution.get("rows_source")
+            if dry_run:
+                assert resp.row_count == len(resp.rows) == 0, (
+                    f"{query!r}: a dry run reported {resp.row_count} and "
+                    f"delivered {len(resp.rows)}"
+                )
+                assert rows_source == "withheld_dry_run", rows_source
+            else:
+                assert rows_source == "fixed_mock_sample", (
+                    "the row sample is the one figure in this response with no "
+                    f"provenance: {resp.execution}"
+                )
 
 
 @pytest.mark.parametrize(
