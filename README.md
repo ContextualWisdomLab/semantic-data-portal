@@ -314,6 +314,81 @@ SDP_DATABASE_DSN='postgresql+psycopg://sdp_graph_app:<url-encoded-password>@loca
   python -m migrations.run_migrations
 ```
 
+## 환경 변수 전수 목록
+
+모두 `SDP_` prefix입니다. **이 표가 `src/`가 실제로 읽는 변수의 전수 목록이고,
+`tests/test_environment_documentation.py`가 그것을 기계적으로 강제합니다** — 소스에서 변수 집합을
+*파생*해 이 표와 `CLAUDE.md` 양쪽에 다 있는지 확인하고, 반대로 코드가 읽지 않는 변수를 문서가
+약속하고 있지도 않은지 확인합니다(후자의 유일한 예외는 registry가
+`declared_unimplemented_environment`로 공표한 변수입니다).
+
+이 표가 생긴 이유를 적어 둡니다. 전에는 환경 변수가 README 본문 여기저기에 산문으로만
+설명돼 있어서 **어디도 전수 목록이 아니었고**, 측정 결과 `src/`가 읽는 23개 중 **9개가 README나
+CLAUDE.md에 없었습니다**. 그중 둘(`SDP_CONNECTOR_VAULT_PROVIDER`,
+`SDP_CONNECTOR_TIMEOUT_MS`)은 `required_environment`라서 `GET /enterprise/production-readiness`가
+`missing_environment`로 **이름을 공표하면서** `paid_pilot_ready`를 막고 있었는데, 그 이름이 무엇인지
+어떤 값을 넣어야 하는지 어느 문서에도 없었습니다 — 조치할 수 없는 blocker를 공표하는 것은 blocker가
+없는 것보다 나쁩니다.
+
+| 변수 | 기본값 | 의미 | paid-pilot gate |
+| --- | --- | --- | --- |
+| `SDP_ALERT_TIMEOUT_MS` | `500` | alert POST 소켓 timeout(ms) | |
+| `SDP_ALERT_WEBHOOK_URL` | 미설정 | alert 전달 대상. `http`/`https`만 허용하고, 미설정이면 라우팅은 no-op | 선택 |
+| `SDP_CONFIG_NAMESPACE` | `default` | KV config 테이블에서 이 배포가 읽는 config row의 논리 namespace/tenant | |
+| `SDP_CONNECTOR_SECRET_*` | 미설정 | connector별 secret. 이름은 아래 prefix + connector/dataset slug + `_TOKEN`으로 만들어지고, **값은 presence만 검증하며 API 응답에 노출하지 않습니다** | |
+| `SDP_CONNECTOR_SECRET_REF_PREFIX` | `SDP_CONNECTOR_SECRET_` | 위 이름을 만들 때 쓰는 prefix | **필수** |
+| `SDP_CONNECTOR_TIMEOUT_MS` | `1000` | connector vault 조회 timeout(ms). **1 이상의 정수**이고, 그 외는 gate가 거절합니다 | **필수** |
+| `SDP_CONNECTOR_VAULT_PROVIDER` | `env` | connector secret을 담는 vault provider. **구현된 값은 `env` 하나뿐**이고, 그 외는 gate가 거절합니다 | **필수** |
+| `SDP_DATABASE_DSN` | 미설정 | 그래프/config store(Postgres+AGE+pgvector)에 닿는 SQLAlchemy DSN | |
+| `SDP_DATABASE_SSLMODE` | 미설정 | Postgres evidence store의 SSL mode(예: `require`) | **필수** |
+| `SDP_DATABASE_URL` | 미설정 | Postgres evidence store. 설정되면 SQLite fallback보다 우선합니다 | **필수** |
+| `SDP_ENV` | `local` | 배포 환경 라벨 | |
+| `SDP_EVIDENCE_RETENTION_DAYS` | — | **선언만 되고 구현되지 않았습니다.** 두 evidence store 중 어느 쪽도 prune/purge/expiry 경로가 없으므로 이 값을 설정해도 아무 일도 일어나지 않습니다. registry가 `declared_unimplemented_environment`로, manifest가 `unimplemented_environment`로 그 사실을 공표합니다 | |
+| `SDP_LOG_SINK_TIMEOUT_MS` | `500` | http(s) log sink export timeout(ms) | |
+| `SDP_LOG_SINK_URL` | 미설정 | request observation sink. `file:///absolute/path` 또는 `http(s)`. URL의 credential은 `Authorization` 헤더로 분리됩니다 | **필수** |
+| `SDP_OIDC_AUDIENCE` | 미설정 | OIDC audience | **필수** |
+| `SDP_OIDC_GROUP_ROLE_MAP` | 미설정 | group → role 매핑(JSON) | **필수** |
+| `SDP_OIDC_ISSUER` | 미설정 | OIDC issuer | **필수** |
+| `SDP_OIDC_JWKS` | 미설정 | JWKS 문서를 그대로 담는 형태. air-gapped 배포용 | **필수(택1)** |
+| `SDP_OIDC_JWKS_TIMEOUT_SECONDS` | `2` | JWKS fetch timeout(초). 캐시가 비어 있을 때 inbound 요청당 한 번 | |
+| `SDP_OIDC_JWKS_TTL_SECONDS` | `300` | 가져온 JWKS를 재사용하는 기간(초). key rotation 시 `clear_jwks_cache()` | |
+| `SDP_OIDC_JWKS_URL` | 미설정 | JWKS를 가져올 URL. `http`/`https`만 허용(`file://` LFI 차단) | **필수(택1)** |
+| `SDP_REQUEST_ID_HEADER` | `X-Request-Id` | request id를 읽고 응답에 되돌려 줄 헤더 이름 | **필수** |
+| `SDP_SQLITE_PATH` | 미설정 | SQLite evidence fallback 경로. production credential 없이 같은 store protocol을 검증할 때 | |
+
+**필수(택1)** 두 개는 **둘 다 설정하는 것이 아니라 하나만** 설정합니다. `authz`가 inline 문서를
+먼저 읽고 없을 때 URL로 떨어지므로, 양쪽을 다 요구하면 URL 형태를 쓰는 배포가 gate를 통과하려고
+더미 inline 값을 넣어야 하고 더미 inline 값은 유효하지 않은 JSON이라 그 능력 자체가 깨집니다.
+
+### 값이 틀리면 gate가 통과하지 않습니다
+
+`required_environment`의 대부분은 **presence만** 검사합니다 — 이 모듈은 DSN이나 issuer가 실재하는지
+알아보려고 데이터베이스나 IdP에 닿을 수 없고, 그것이 정직한 한계입니다. 그러나 두 변수는 한계가
+아니었고, 운영자가 자연스럽게 고를 값으로 그 구멍에 닿을 수 있었습니다. 측정(수리 전):
+
+```
+SDP_CONNECTOR_VAULT_PROVIDER='vault'   gate 통과, probe 라우트 400
+                                       "unsupported connector vault provider: vault"
+SDP_CONNECTOR_TIMEOUT_MS='2s'          gate 통과, probe 라우트 400
+                                       "invalid literal for int() with base 10: '2s'"
+```
+
+`vault`·`hashicorp`는 운영자가 실제로 쓰는 제품 이름이고 `2s`는 사람이 timeout을 적는 방식입니다.
+즉 readiness 문서가 `paid_pilot_ready`로 가는 진척을 보고하는 동안
+`GET /enterprise/connectors/{connector_id}/probe`가 모든 connector에 대해 400을 돌려주고 있었습니다.
+이것은 이 registry가 애초에 막으려던 결함보다 **더 나쁩니다** —
+`SDP_EVIDENCE_RETENTION_DAYS`는 아무것도 하지 않는 값으로 gate를 통과시켰고, 이쪽은 그 gate가
+측정한다고 주장하는 능력을 **깨뜨리는** 값으로 통과시켰습니다.
+
+이제 registry가 그 두 변수의 값 도메인을 `environment_value_rules`로 선언하고, manifest가
+설정됐지만 거절된 값을 `rejected_environment`로 **이유와 함께** 따로 공표합니다 — 변수를 방금
+설정한 운영자에게 "missing"이라고 말하면 이름의 오타를 찾으러 가기 때문입니다. 선언이 코드와
+어긋나는 것을 막기 위해 `tests/test_environment_value_domains.py`가 **강제하는 함수를 직접 실행해**
+양방향으로 비교합니다 — 코드가 거절하는 값이 gate를 통과하지 못하는지, 그리고 코드가 받아들이는
+값을 gate가 거절하지는 않는지. 후자가 실제로 과잉 선언 하나를 잡았습니다: `minimum=1`을 적어 뒀는데
+`int()`는 `0`을 받아들였으므로, 수리를 gate가 아니라 `connector_secret_status`로 옮겨
+자신이 공표하는 timeout을 직접 검증하게 했습니다.
+
 ## API
 
 ### 거부(refusal) 계약 — `GET /openapi.json`에 게시됨

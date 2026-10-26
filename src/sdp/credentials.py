@@ -36,7 +36,23 @@ def connector_secret_status(connector_id: str, dataset_id: str) -> ConnectorSecr
         raise ValueError(f"unsupported connector vault provider: {provider}")
 
     secret_ref = connector_secret_ref(connector_id, dataset_id)
-    timeout_ms = int(os.getenv("SDP_CONNECTOR_TIMEOUT_MS", "1000"))
+    # Validated, not just parsed. ``timeout_ms`` is published in every rest
+    # connector probe's control evidence, so a 0 or negative value is a false
+    # published number for a timeout, and int() accepts both. The registry
+    # mirrors this domain in ``environment_value_rules`` so the paid-pilot gate
+    # refuses a value this function would refuse; the mirror is only honest if
+    # the function is the one enforcing it, which is what it does here.
+    raw_timeout = os.getenv("SDP_CONNECTOR_TIMEOUT_MS", "1000").strip()
+    try:
+        timeout_ms = int(raw_timeout)
+    except ValueError:
+        raise ValueError(
+            "SDP_CONNECTOR_TIMEOUT_MS must be an integer number of milliseconds"
+        ) from None
+    if timeout_ms < 1:
+        raise ValueError(
+            "SDP_CONNECTOR_TIMEOUT_MS must be at least 1 millisecond"
+        )
     return ConnectorSecretStatus(
         provider=provider,
         secret_ref=secret_ref,

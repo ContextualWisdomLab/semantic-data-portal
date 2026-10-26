@@ -6,6 +6,60 @@ from collections.abc import Mapping
 from pydantic import BaseModel, Field
 
 
+class EnvironmentValueRule(BaseModel):
+    """What a required variable's value has to be for the gate to count it set.
+
+    ``_is_set`` asks only whether a non-blank string is present, and for most of
+    these variables that is the honest limit of what this module can check - it
+    cannot reach a database or an identity provider to find out whether a DSN or
+    an issuer is real. For two of them it was not the limit, and the gap was
+    reachable with a value an operator would naturally choose. Measured:
+
+        SDP_CONNECTOR_VAULT_PROVIDER='vault'   gate satisfied, probe route 400
+                                               "unsupported connector vault provider: vault"
+        SDP_CONNECTOR_TIMEOUT_MS='2s'          gate satisfied, probe route 400
+                                               "invalid literal for int() with base 10: '2s'"
+
+    Both are the plausible answer: ``vault`` and ``hashicorp`` are the products
+    an operator has, and ``2s`` is how a person writes a timeout. So the
+    readiness document reported progress toward ``paid_pilot_ready`` while
+    ``GET /enterprise/connectors/{connector_id}/probe`` - a buyer-demo surface -
+    answered 400 for every connector.
+
+    That is strictly worse than the defect this registry was built around.
+    ``SDP_EVIDENCE_RETENTION_DAYS`` cleared a gate while doing nothing; this
+    cleared a gate while **breaking** the capability the gate claims to measure.
+    A gate may only measure capabilities that exist, and a gate satisfied by a
+    value that disables the capability measures nothing.
+
+    Deliberately closed rather than general: an enumerated value set, or a
+    positive integer. No regex, no callable, no type coercion. Anything a
+    deployment's real backing service decides is still outside what this can
+    know, and ``buyer_risk`` says so rather than this field implying otherwise.
+    """
+
+    # The complete set of values the code accepts, when it is enumerable.
+    allowed_values: list[str] = []
+    # Whether the value must parse as an integer, and its lower bound if so.
+    integer: bool = False
+    minimum: int | None = None
+
+    def rejection_reason(self, value: str) -> str | None:
+        """Why this value cannot satisfy the gate, or ``None`` when it can."""
+        candidate = value.strip()
+        if self.allowed_values and candidate not in self.allowed_values:
+            accepted = ", ".join(sorted(self.allowed_values))
+            return f"must be one of: {accepted}"
+        if self.integer:
+            try:
+                parsed = int(candidate)
+            except ValueError:
+                return "must be an integer"
+            if self.minimum is not None and parsed < self.minimum:
+                return f"must be an integer >= {self.minimum}"
+        return None
+
+
 class ProductionIntegration(BaseModel):
     id: str
     label: str
@@ -34,6 +88,11 @@ class ProductionIntegration(BaseModel):
     # which makes ``_load_configured_jwks`` raise. The gate pushed operators
     # toward a configuration that breaks the capability it claims to measure.
     required_environment_alternatives: list[list[str]] = []
+    # Per-variable value domains, for the required names whose accepted values
+    # this module can actually check. See :class:`EnvironmentValueRule` for why
+    # this exists and for the measurement behind it. A name absent from this map
+    # is checked for presence only, which stays the honest default.
+    environment_value_rules: dict[str, EnvironmentValueRule] = {}
 
 
 class ProductionReadinessManifest(BaseModel):
@@ -50,6 +109,11 @@ class ProductionReadinessManifest(BaseModel):
     configured_integrations: list[str] = []
     unconfigured_integrations: list[str] = []
     missing_environment: dict[str, list[str]] = {}
+    # Variables this deployment **did** set to a value the code will refuse.
+    # Separate from ``missing_environment`` because an operator who set a
+    # variable and is told it is missing looks for a typo in the name; what they
+    # need is the value's accepted domain, which is the string here.
+    rejected_environment: dict[str, dict[str, str]] = {}
     # Declared-but-unimplemented configuration, surfaced so the readiness
     # document says what it cannot yet honour instead of staying silent.
     unimplemented_environment: dict[str, list[str]] = {}
@@ -143,6 +207,20 @@ def production_integration_registry() -> list[ProductionIntegration]:
                 "SDP_CONNECTOR_VAULT_PROVIDER",
                 "SDP_CONNECTOR_TIMEOUT_MS",
             ],
+            # The two domains ``sdp.credentials.connector_secret_status``
+            # enforces. ``env`` is the only provider implemented - the function
+            # raises for anything else - and the timeout is read with ``int()``.
+            # ``tests/test_environment_value_domains.py`` drives the function
+            # itself to check these declarations against its behaviour, so the
+            # two cannot drift into disagreement.
+            environment_value_rules={
+                "SDP_CONNECTOR_VAULT_PROVIDER": EnvironmentValueRule(
+                    allowed_values=["env"]
+                ),
+                "SDP_CONNECTOR_TIMEOUT_MS": EnvironmentValueRule(
+                    integer=True, minimum=1
+                ),
+            },
             acceptance_criteria=[
                 "raw connector credentials are never stored in dataset records, prompt context, audit payloads, or logs.",
                 "rest_connector probes use a secret reference and fail closed when it is missing "
@@ -293,6 +371,11 @@ def _missing_required_environment(
     report says "one of these" rather than listing names the deployment is not
     supposed to set. Requiring every name of a mutually exclusive pair made the
     gate unsatisfiable by a correct deployment.
+
+    A variable that **is** set but holds a value the code will refuse is not
+    reported here - see :func:`_rejected_required_environment`. Folding the two
+    together would tell an operator a variable they just set is missing, and
+    send them looking for a typo in the name instead of at the value.
     """
     missing = [
         name for name in integration.required_environment if not _is_set(environment, name)
@@ -301,6 +384,27 @@ def _missing_required_environment(
         if not any(_is_set(environment, name) for name in alternatives):
             missing.append(" | ".join(alternatives))
     return missing
+
+
+def _rejected_required_environment(
+    integration: ProductionIntegration, environment: Mapping[str, str]
+) -> dict[str, str]:
+    """Name the set variables whose value the code will refuse, with the reason.
+
+    Only checked for names this integration declares a rule for; a name with no
+    rule is presence-checked and nothing more, which is the honest limit for a
+    DSN or an issuer URL this module cannot reach.
+    """
+    rejected: dict[str, str] = {}
+    for name, rule in integration.environment_value_rules.items():
+        if not _is_set(environment, name):
+            # Unset is ``missing``, not rejected; reporting it twice would make
+            # one unset variable look like two separate problems.
+            continue
+        reason = rule.rejection_reason(environment.get(name) or "")
+        if reason is not None:
+            rejected[name] = reason
+    return rejected
 
 
 def enterprise_production_readiness_manifest(
@@ -360,7 +464,15 @@ def enterprise_production_readiness_manifest(
         for item in integrations
         if (missing := _missing_required_environment(item, resolved_environment))
     }
-    unconfigured = sorted(missing_environment)
+    rejected_environment = {
+        item.id: rejected
+        for item in integrations
+        if (rejected := _rejected_required_environment(item, resolved_environment))
+    }
+    # An integration configured with a value the code refuses is not configured.
+    # Counting it as ready because the name is present is the defect this split
+    # exists to close.
+    unconfigured = sorted(set(missing_environment) | set(rejected_environment))
     paid_pilot_blockers = sorted({*unbuilt, *unconfigured})
 
     return ProductionReadinessManifest(
@@ -377,6 +489,7 @@ def enterprise_production_readiness_manifest(
         ],
         unconfigured_integrations=unconfigured,
         missing_environment=missing_environment,
+        rejected_environment=rejected_environment,
         unimplemented_environment={
             item.id: list(item.declared_unimplemented_environment)
             for item in integrations

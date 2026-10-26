@@ -36,6 +36,23 @@ from sdp_core.production import (
 )
 
 
+def _configured_value(rule) -> str:
+    """A value that satisfies a declared domain, derived from the rule itself.
+
+    Derived rather than written down so a rule added later is satisfied here
+    without anyone remembering to extend a literal map - the same reason the
+    variable set in ``tests/test_environment_documentation.py`` comes from the
+    source.
+    """
+    if rule is None:
+        return "configured"
+    if rule.allowed_values:
+        return rule.allowed_values[0]
+    if rule.integer:
+        return str(rule.minimum if rule.minimum is not None else 1)
+    return "configured"
+
+
 def _fully_configured_environment(*, alternative_index: int = 0) -> dict[str, str]:
     """A deployment that satisfies the declared requirement, as an operator would.
 
@@ -44,15 +61,26 @@ def _fully_configured_environment(*, alternative_index: int = 0) -> dict[str, st
     ``SDP_OIDC_JWKS`` and ``SDP_OIDC_JWKS_URL`` are alternatives, and a dummy
     inline JWKS set only to clear the gate is invalid JSON that makes
     ``authz._load_configured_jwks`` raise.
+
+    Every value was the literal ``"configured"`` until the registry began
+    declaring value domains, and that made this helper's own docstring false:
+    ``SDP_CONNECTOR_VAULT_PROVIDER="configured"`` and
+    ``SDP_CONNECTOR_TIMEOUT_MS="configured"`` are not what an operator would
+    set, and measured, both make
+    ``GET /enterprise/connectors/{connector_id}/probe`` answer 400. So this
+    helper was asserting that a deployment which cannot serve the connector
+    probe is paid-pilot ready - the defect the domains were added to close,
+    reproduced inside the test that exists to prove the gate means something.
+    Values now come from the declared domain where one exists.
     """
-    environment = {
-        name: "configured"
-        for integration in production_integration_registry()
-        for name in integration.required_environment
-    }
+    environment: dict[str, str] = {}
     for integration in production_integration_registry():
+        rules = integration.environment_value_rules
+        for name in integration.required_environment:
+            environment[name] = _configured_value(rules.get(name))
         for alternatives in integration.required_environment_alternatives:
-            environment[alternatives[alternative_index % len(alternatives)]] = "configured"
+            chosen = alternatives[alternative_index % len(alternatives)]
+            environment[chosen] = _configured_value(rules.get(chosen))
     return environment
 
 
