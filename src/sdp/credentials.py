@@ -33,7 +33,15 @@ class ConnectorSecretStatus:
 def connector_secret_status(connector_id: str, dataset_id: str) -> ConnectorSecretStatus:
     provider = os.getenv("SDP_CONNECTOR_VAULT_PROVIDER", "env")
     if provider != "env":
-        raise ValueError(f"unsupported connector vault provider: {provider}")
+        # Names the variable, not just the value. The message read "unsupported
+        # connector vault provider: vault" and left the operator to work out
+        # which setting held it - and this message is the diagnosis
+        # ``sdp.demo_smoke`` now puts in its report instead of raising, so it is
+        # the whole of what an operator gets.
+        raise ValueError(
+            f"unsupported SDP_CONNECTOR_VAULT_PROVIDER: {provider!r} "
+            "(only 'env' is implemented)"
+        )
 
     secret_ref = connector_secret_ref(connector_id, dataset_id)
     # Validated, not just parsed. ``timeout_ms`` is published in every rest

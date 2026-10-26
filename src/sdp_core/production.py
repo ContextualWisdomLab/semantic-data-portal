@@ -16,7 +16,8 @@ class EnvironmentValueRule(BaseModel):
     reachable with a value an operator would naturally choose. Measured:
 
         SDP_CONNECTOR_VAULT_PROVIDER='vault'   gate satisfied, probe route 400
-                                               "unsupported connector vault provider: vault"
+                                               "unsupported SDP_CONNECTOR_VAULT_PROVIDER:
+        'vault' (only 'env' is implemented)"
         SDP_CONNECTOR_TIMEOUT_MS='2s'          gate satisfied, probe route 400
                                                "invalid literal for int() with base 10: '2s'"
 

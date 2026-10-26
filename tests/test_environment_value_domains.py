@@ -8,7 +8,9 @@ else configured:
 
     SDP_CONNECTOR_VAULT_PROVIDER='vault'       gate satisfied,
       GET /enterprise/connectors/rest_connector/probe?dataset_id=marketing-campaign&user=admin
-      -> 400 {"detail": "unsupported connector vault provider: vault"}
+      -> 400 {"detail": "unsupported SDP_CONNECTOR_VAULT_PROVIDER: 'vault' ..."}
+      (the message named only the value then; it names the variable now, because
+      sdp.demo_smoke reports it to an operator instead of raising)
     SDP_CONNECTOR_TIMEOUT_MS='2s'              gate satisfied,
       same route -> 400 {"detail": "invalid literal for int() with base 10: '2s'"}
 

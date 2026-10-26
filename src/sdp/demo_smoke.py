@@ -149,6 +149,42 @@ def http_walkthrough() -> dict[str, Any]:
     }
 
 
+def _probe_or_record_configuration_error(
+    connector_id: str, dataset_id: str, errors: list[str]
+) -> dict[str, Any] | None:
+    """Probe one connector, turning a configuration refusal into a reported reason.
+
+    ``connector_probe`` reaches ``credentials.connector_secret_status``, which
+    raises for a vault provider it does not implement or a timeout that is not a
+    positive integer. Both are operator configuration, and both reached this
+    entry point as an unhandled exception. Measured on the previous head:
+
+        SDP_CONNECTOR_TIMEOUT_MS=2s       exit 1, no JSON, ValueError traceback
+        SDP_CONNECTOR_VAULT_PROVIDER=vault exit 1, no JSON, ValueError traceback
+        SDP_CONNECTOR_TIMEOUT_MS=0        exit 0, JSON, ready: true - while
+                                          publishing timeout_ms: 0 in the rest
+                                          connector's control evidence
+
+    The exit code was right for the first two and the report was missing, which
+    is the wrong half to lose: this command is the documented way to ask whether
+    a deployment is ready (``PYTHONPATH=src python -m sdp.demo_smoke``), so an
+    operator who misconfigured a timeout got a Python traceback where the
+    diagnosis belongs. The third case was worse - it answered ready while
+    publishing a timeout of zero - and is refused at the point of use now, which
+    is what brought it here.
+
+    A ``KeyError`` is deliberately not caught: that means the seed catalogue no
+    longer holds a dataset this function names, which is a defect in the build
+    rather than in the deployment's configuration, and it should not be reported
+    as "not ready, check your environment".
+    """
+    try:
+        return connector_probe(connector_id, dataset_id)
+    except ValueError as exc:
+        errors.append(f"{connector_id}/{dataset_id}: {exc}")
+        return None
+
+
 def smoke_summary() -> dict[str, Any]:
     readiness = enterprise_readiness_manifest()
     demo_plan = buyer_demo_activation_plan()
@@ -158,10 +194,19 @@ def smoke_summary() -> dict[str, Any]:
     steward_review = build_steward_review_summary()
     kpis = enterprise_kpi_framework()
     production = enterprise_production_readiness_manifest()
-    sql_probe = connector_probe("sql_connector", "crm-customer-master")
-    rdf_probe = connector_probe("rdf_connector", "semantic-glossary")
-    file_probe = connector_probe("file_lake_connector", "crm-event")
-    rest_probe = connector_probe("rest_connector", "marketing-campaign")
+    configuration_errors: list[str] = []
+    sql_probe = _probe_or_record_configuration_error(
+        "sql_connector", "crm-customer-master", configuration_errors
+    )
+    rdf_probe = _probe_or_record_configuration_error(
+        "rdf_connector", "semantic-glossary", configuration_errors
+    )
+    file_probe = _probe_or_record_configuration_error(
+        "file_lake_connector", "crm-event", configuration_errors
+    )
+    rest_probe = _probe_or_record_configuration_error(
+        "rest_connector", "marketing-campaign", configuration_errors
+    )
     walkthrough = http_walkthrough()
 
     return {
@@ -178,15 +223,20 @@ def smoke_summary() -> dict[str, Any]:
         "ontology_mapping_coverage": evidence["ontology_mapping_coverage"],
         "enterprise_controls": len(controls.controls),
         "implemented_enterprise_controls": controls.implemented_controls,
-        "connector_probe_status": sql_probe["status"],
-        "connector_probe_dataset": sql_probe["dataset_id"],
-        "connector_probe_domain": (sql_probe["demo_context"] or {}).get("domain_id"),
-        "rdf_connector_probe_status": rdf_probe["status"],
-        "rdf_connector_probe_dataset": rdf_probe["dataset_id"],
-        "file_lake_connector_probe_status": file_probe["status"],
-        "file_lake_connector_probe_dataset": file_probe["dataset_id"],
-        "rest_connector_probe_status": rest_probe["status"],
-        "rest_connector_adapter_status": rest_probe["adapter_status"],
+        "connector_probe_status": (sql_probe or {}).get("status"),
+        "connector_probe_dataset": (sql_probe or {}).get("dataset_id"),
+        "connector_probe_domain": ((sql_probe or {}).get("demo_context") or {}).get(
+            "domain_id"
+        ),
+        "rdf_connector_probe_status": (rdf_probe or {}).get("status"),
+        "rdf_connector_probe_dataset": (rdf_probe or {}).get("dataset_id"),
+        "file_lake_connector_probe_status": (file_probe or {}).get("status"),
+        "file_lake_connector_probe_dataset": (file_probe or {}).get("dataset_id"),
+        "rest_connector_probe_status": (rest_probe or {}).get("status"),
+        "rest_connector_adapter_status": (rest_probe or {}).get("adapter_status"),
+        # The diagnosis, published rather than raised. Empty on a correct
+        # deployment, which is what makes it safe to require below.
+        "connector_configuration_errors": configuration_errors,
         "production_current_stage": production.current_stage,
         "production_demo_release_ready": production.demo_release_ready,
         "production_paid_pilot_ready": production.paid_pilot_ready,
@@ -205,11 +255,12 @@ def smoke_summary() -> dict[str, Any]:
             and evidence["ontology_mapping_coverage"] >= 0.7
             and len(kpis.primary_kpis) >= 3
             and controls.implemented_controls >= 2
-            and sql_probe["demo_context"] is not None
-            and sql_probe["status"] == "ready_for_demo"
-            and rdf_probe["status"] == "ready_for_demo"
-            and file_probe["status"] == "ready_for_demo"
-            and rest_probe["adapter_status"] == "implemented"
+            and not configuration_errors
+            and (sql_probe or {}).get("demo_context") is not None
+            and (sql_probe or {}).get("status") == "ready_for_demo"
+            and (rdf_probe or {}).get("status") == "ready_for_demo"
+            and (file_probe or {}).get("status") == "ready_for_demo"
+            and (rest_probe or {}).get("adapter_status") == "implemented"
             # The documented buyer journey must actually work over HTTP, not only
             # as direct function calls.
             and walkthrough["all_steps_passed"]

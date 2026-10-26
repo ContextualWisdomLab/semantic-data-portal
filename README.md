@@ -368,7 +368,7 @@ CLAUDE.md에 없었습니다**. 그중 둘(`SDP_CONNECTOR_VAULT_PROVIDER`,
 
 ```
 SDP_CONNECTOR_VAULT_PROVIDER='vault'   gate 통과, probe 라우트 400
-                                       "unsupported connector vault provider: vault"
+                                       "unsupported SDP_CONNECTOR_VAULT_PROVIDER: 'vault'"
 SDP_CONNECTOR_TIMEOUT_MS='2s'          gate 통과, probe 라우트 400
                                        "invalid literal for int() with base 10: '2s'"
 ```
