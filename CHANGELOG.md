@@ -2,15 +2,15 @@
 
 이 문서는 `claude/semantic-portal-pr-merge-e5a48k` 브랜치(PR
 [#102](https://github.com/ContextualWisdomLab/semantic-data-portal/pull/102))가
-베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **233개** 커밋 중 124개는
-gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 109개입니다. 이 숫자는 **이
-줄을 담은 커밋을 포함한** 값입니다 — 측정 시점의 232에 이 커밋을 더한 것. 측정 명령:
+베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **235개** 커밋 중 125개는
+gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 110개입니다. 이 숫자는 **이
+줄을 담은 커밋을 포함한** 값입니다 — 측정 시점의 234에 이 커밋을 더한 것. 측정 명령:
 
     git rev-list --count origin/docs/product-technical-gap-baseline..HEAD
     git log --format=%H origin/docs/product-technical-gap-baseline..HEAD \
       --name-only -- docs/product-technical-gap-baseline.md | grep -c '^[0-9a-f]\{40\}$'
 
-앞서 적혀 있던 164/112, 186/113, 199/122/77, 203/122/81, 211/122/89, 212/122/90, 213/122/91, 214/122/92, 215/122/93, 216/122/94, 218/122/96, 219/122/97, 220/122/98, 221/122/99, 222/122/100, 223/122/101, 224/122/102, 225/122/103, 226/122/104, 228/122/106, 230/123/107, 231/123/108은 각각 그 시점의 값이고 이후
+앞서 적혀 있던 164/112, 186/113, 199/122/77, 203/122/81, 211/122/89, 212/122/90, 213/122/91, 214/122/92, 215/122/93, 216/122/94, 218/122/96, 219/122/97, 220/122/98, 221/122/99, 222/122/100, 223/122/101, 224/122/102, 225/122/103, 226/122/104, 228/122/106, 230/123/107, 231/123/108, 233/124/109은 각각 그 시점의 값이고 이후
 커밋을 반영하지 않은 숫자였습니다 — 자기 문서의 수치도 측정해서 맞춰 둡니다. 199는 이
 줄을 쓴 뒤 3개 커밋이 더 쌓여 낡아 203으로, 203은 다음 커밋에서 낡아 204로, 204는 또
 두 커밋 뒤에 206으로 다시 측정해 고쳤습니다. 206도 그 값을 담은 커밋 자신 때문에 도착
@@ -30,16 +30,16 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 10
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                       1320 passed, 15 skipped
-    pytest (파일 순서 정/역/난수)  각 1320 passed, 15 skipped — 순서 무관
+    pytest                       1327 passed, 15 skipped
+    pytest (파일 순서 정/역/난수)  각 1327 passed, 15 skipped — 순서 무관
                                  (정순 · 역순 · seed 11/707/31337)
     pytest tests/fuzz            11 passed
     python -m sdp.demo_smoke     exit 0, "ready": true
 
 alert 전달 커밋이 테스트를 34건(새 파일 넷 33건 + `test_honest_metrics.py` 1건),
 pgvector 핀 커밋이 10건, event-loop 수리 커밋이 2건, 환경 변수 문서·gate 커밋이 8건
-(새 파일 둘) 늘렸으므로 위 숫자는 앞서 적혀 있던 1266 → 1300 → 1310 → 1312 → 1320으로
-올라갔습니다. 다섯 순서 측정은 트리를 동결한 상태에서
+(새 파일 둘), readiness 진단 커밋이 7건(새 파일 하나) 늘렸으므로 위 숫자는 앞서 적혀 있던
+1266 → 1300 → 1310 → 1312 → 1320 → 1327로 올라갔습니다. 다섯 순서 측정은 트리를 동결한 상태에서
 돌렸고, 그 뒤에 바뀐 파일은 이 CHANGELOG 하나입니다 — CHANGELOG 내용을 읽는 테스트는
 파일 순서와 무관한 산술 가드
 (`test_every_published_node_breakdown_sums_to_its_own_total`) 하나뿐이므로, 순서 성질을
@@ -56,6 +56,56 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 백그라운드 측정 중에 트리를 고친 탓에 seed 11이 4건 실패로 나온 일이 있고, 그것은 결함이
 아니라 동시 편집이었습니다. Atheris(`fuzz/fuzz_query_safety.py`)는 로컬에 wheel이 없어
 실행하지 않았습니다 — 같은 invariant의 Hypothesis 미러가 `tests/fuzz`에서 돕니다.
+
+### Fixed — 문서가 안내하는 readiness 명령이 진단 대신 traceback을 돌려줬습니다 (medium)
+
+바로 전 커밋(`b278e20`)이 `SDP_CONNECTOR_TIMEOUT_MS`를 읽는 지점에서 검증하게 만든 뒤, 그 변경이
+`demo_smoke`에 어떻게 도착하는지 확인하다 나왔습니다. **대부분은 제 변경이 만든 것이 아니라 그 전부터
+있던 결함이고**, 측정으로 구분했습니다 — 부모 head(`88ae5d5`)에서:
+
+```
+SDP_CONNECTOR_TIMEOUT_MS=2s         exit 1, JSON 없음, ValueError traceback   (기존 결함)
+SDP_CONNECTOR_VAULT_PROVIDER=vault  exit 1, JSON 없음, ValueError traceback   (기존 결함)
+SDP_CONNECTOR_TIMEOUT_MS=0          exit 0, JSON 있음, "ready": true          (제 변경이 바꾼 것)
+```
+
+`PYTHONPATH=src python -m sdp.demo_smoke`는 README와 `sdp_core.enterprise`가 "배포가 준비됐는지
+물어보는 방법"으로 안내하는 명령이고, 계약은 **exit code + JSON 보고서**입니다. 앞의 두 경우는
+exit code는 맞았고 **무엇을 고쳐야 하는지 알려 주는 쪽을 잃었습니다** — timeout을 잘못 적은 운영자가
+진단이 있어야 할 자리에서 Python traceback을 받았습니다. 세 번째는 더 나빴습니다(timeout을 `0`으로
+공표하면서 ready라고 답했습니다). 그 세 번째를 읽는 지점에서 거절하게 만든 것이 세 경우를 모두
+같은 자리로 데려왔습니다.
+
+`smoke_summary`가 네 probe의 configuration 거절을 **보고서의 한 항목으로** 바꿉니다 —
+`connector_configuration_errors`에 변수 이름과 문제를 담고, `ready`는 False, exit code는 1입니다.
+exit code는 기존 동작이 맞게 하고 있던 절반이므로, 보고서를 고치면서 그것을 잃으면 수리가 아니라
+교환입니다. `KeyError`는 **의도적으로 잡지 않습니다** — seed catalogue에 이 함수가 지목한 dataset이
+없다는 뜻이고 그것은 배포 설정이 아니라 빌드의 결함이므로, "ready 아님, 환경을 확인하세요"로
+보고하면 이미지의 버그를 두고 운영자를 환경 파일로 보내게 됩니다.
+
+**테스트가 메시지 하나의 비대칭을 잡았습니다.** 각 항목이 자기 변수를 지목하는지 단언했더니
+provider 쪽이 실패했습니다 — `"unsupported connector vault provider: vault"`는 **어떤 설정이 그 값을
+들고 있는지 말하지 않습니다**(제가 쓴 timeout 메시지는 말합니다). 이 보고서가 운영자가 받는 전부이므로
+메시지를 고쳤고(`unsupported SDP_CONNECTOR_VAULT_PROVIDER: 'vault' (only 'env' is implemented)`),
+그 메시지를 측정값으로 인용하던 세 곳(`production.py` docstring,
+`tests/test_environment_value_domains.py` docstring, README의 환경 변수 절)도 함께 갱신했습니다 —
+공개된 인용이 코드가 내는 것과 달라지는 것이 이 저장소가 기계적으로 금지하는 바로 그 결함입니다.
+
+**역검증이 제 테스트에서 이번 라운드 세 번째로 같은 모양의 구멍을 찾았습니다.** `ready` 식에서
+`and not configuration_errors`를 지워도 이 파일 7건이 전부 통과했습니다(6 passed). helper가 오류를
+기록할 때 정확히 `None`을 돌려주고 네 probe 모두 gate에 자기 필드가 있으므로, 실패한 probe는 이미
+자기 clause에서 걸립니다. 측정 결과 네 개 중 **하나만** configuration 오류를 낼 수 있습니다 —
+`credential_vault`가 `rest_connector`의 `required_controls`에만 있어서 나머지 셋은
+`connector_secret_status`에 닿지 않습니다. 즉 그 clause는 **지금은 중복입니다**. 중복이라고 적어 두는
+것이 요점입니다: probe 필드 검사는 "데모 준비됐는가"를 묻고 이 clause는 "설정이 애초에 쓸 수 있었는가"를
+물으며, 둘은 지금 우연히 겹칩니다. 나중에 `rest_probe` 필드가 gate에서 빠지거나 vault가 다른
+connector로 확장되면 그 우연이 끝나고 아무도 보고하지 않습니다. **동작 테스트는 중복인 clause와 없는
+clause를 구별할 수 없으므로** 소스에서 확인합니다 — 같은 라운드에서 미들웨어 호출 지점에 쓴 것과 같은
+장치입니다.
+
+역검증 4건(S1~S3 + 재검증), 모두 실패를 확인했습니다: configuration 거절을 다시 raise하게 함(5건 실패),
+진단은 공표하지만 gate는 통과(소스 가드 1건 — 처음에는 통과했고 그래서 가드를 넣었습니다),
+깨진 seed를 설정 오류로 보고(1건).
 
 ### Fixed — paid-pilot gate가 제품을 **깨뜨리는** 값으로 통과했고, 필수 변수 둘은 어느 문서에도 없었습니다 (high)
 

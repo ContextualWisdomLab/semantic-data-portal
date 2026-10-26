@@ -2960,6 +2960,39 @@ paid-pilot gate 여부, 값 도메인.
 역검증 4건, 모두 실패 확인: README에서 변수 제거, 읽지 않는 변수 문서화, gate를 presence-only로
 되돌림, gate를 코드보다 엄격하게 선언.
 
+## 문서가 안내하는 readiness 명령이 진단 대신 traceback을 돌려줬습니다 (2026-10-26)
+
+`SDP_CONNECTOR_TIMEOUT_MS`를 읽는 지점에서 검증하게 만든 뒤 그 변경이 `demo_smoke`에 어떻게
+도착하는지 확인하다 나왔습니다. **대부분은 그 전부터 있던 결함**이고, 부모 head(`88ae5d5`)에서
+측정해 구분했습니다:
+
+```
+SDP_CONNECTOR_TIMEOUT_MS=2s         exit 1, JSON 없음, ValueError traceback   (기존)
+SDP_CONNECTOR_VAULT_PROVIDER=vault  exit 1, JSON 없음, ValueError traceback   (기존)
+SDP_CONNECTOR_TIMEOUT_MS=0          exit 0, JSON 있음, "ready": true          (이번 변경이 바꿈)
+```
+
+`PYTHONPATH=src python -m sdp.demo_smoke`는 README와 `sdp_core.enterprise`가 안내하는 명령이고
+계약은 exit code + JSON 보고서입니다. 앞의 둘은 exit code는 맞고 **무엇을 고칠지 알려 주는 쪽을
+잃었습니다**. 세 번째는 timeout을 `0`으로 공표하면서 ready라고 답했습니다.
+
+`smoke_summary`가 configuration 거절을 `connector_configuration_errors` 항목으로 보고하고
+`ready: false`·exit 1을 유지합니다. `KeyError`는 의도적으로 잡지 않습니다 — seed에 dataset이
+없다는 것은 배포 설정이 아니라 빌드 결함이므로 환경 파일로 보내면 안 됩니다.
+
+**메시지 비대칭 하나를 테스트가 잡았습니다.** `"unsupported connector vault provider: vault"`는
+어떤 설정이 그 값을 들고 있는지 말하지 않았습니다(timeout 메시지는 말합니다). 이 보고서가 운영자가
+받는 전부이므로 변수를 지목하게 고쳤고, 그 메시지를 측정값으로 인용하던 세 곳도 함께 갱신했습니다.
+
+**역검증이 이번 라운드 세 번째로 같은 모양의 구멍을 찾았습니다.** `ready` 식에서
+`and not configuration_errors`를 지워도 새 파일 전부가 통과했습니다. helper가 오류를 기록할 때
+정확히 `None`을 돌려주고 네 probe 모두 gate에 필드가 있으므로 실패한 probe가 이미 자기 clause에서
+걸립니다. 측정 결과 네 개 중 **하나만**(`rest_connector`) configuration 오류를 낼 수 있습니다 —
+`credential_vault`가 그 connector의 `required_controls`에만 있습니다. 즉 그 clause는 지금 중복이고,
+중복이라고 적어 두는 것이 요점입니다: probe 필드는 "데모 준비됐는가", 이 clause는 "설정이 쓸 수
+있었는가"를 묻고 지금 우연히 겹칩니다. 동작 테스트는 중복인 clause와 없는 clause를 구별할 수
+없으므로 소스에서 확인합니다.
+
 ## 운영 메모
 
 - Database objects: 두 단어 이상 `snake_case`, 3NF. Catalog plane 테이블은 #73의 `migrations/0002_ontology_catalog_plane.sql`.
