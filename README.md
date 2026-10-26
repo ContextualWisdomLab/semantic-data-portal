@@ -120,9 +120,22 @@ guardrail("제안 mapping은 승인으로 취급하지 않는다")과 모순이�
 (라우트 이름이 바뀌면 control이 `planned`로 내려갑니다), 행마다 증거 강도를 함께 게시합니다 —
 `declared_only` / `proof_route_served` / `runtime_probe_verified`와 probe 단위 집계
 `control_verification_counts`, 그리고 `verdict_basis`(판정이 무엇을 주장하고 무엇을 주장하지 않는지).
-여기서 나오는 정직한 숫자: 기본 데모 배포에서 runtime으로 검증되는 control은 **0개**입니다
-(runtime 확인이 있는 control은 `credential_vault` 하나이고, 그것을 요구하는 커넥터의 secret reference가
-설정되어 있지 않습니다). secret을 설정하면 1개가 됩니다. 또한 `credential_vault`의
+여기서 나오는 정직한 숫자: runtime 확인을 가진 control은 `credential_vault`와
+`ontology_version_pin`이고, 기본 데모 배포에서 실제로 runtime 검증되는 것은
+`rdf_connector`/`semantic-glossary`의 `ontology_version_pin`입니다 — `credential_vault`를
+요구하는 커넥터의 secret reference가 설정되어 있지 않기 때문입니다. **개수는 산문에 적지
+않습니다.** 아래 블록은 `tests/test_runtime_verification_documentation.py`가 **제품에서 계산해 정확히
+대조**합니다. 산문에 섞인 숫자를 찾는 방식으로는 같은 문단의 다른 숫자가 검사를 만족시키므로,
+기계가 읽는 한 블록으로 분리했습니다:
+
+```
+controls_with_a_runtime_check = 2
+runtime_verified_in_the_default_demo = 1
+```
+
+앞서 적혀 있던 "0개 / `credential_vault` 하나 / 설정하면 1개"는 `1a62855`가 두 번째 runtime
+확인을 추가한 2026-10-14 17:25 이후 **12일 동안** 거짓이었습니다 — 문서를 손으로 세는 방식이
+그 12일을 만들었고, 그래서 숫자를 손에서 뺐습니다. 또한 `credential_vault`의
 `proof_endpoints`에 들어 있던 환경변수 이름 `SDP_CONNECTOR_SECRET_REF_PREFIX`는 endpoint가 아니므로
 `config_proof` 필드로 분리했습니다.
 `GET /openapi.json`이 **쓸 수 있는 200 스키마를 60개 operation 중 0개**에 게시하고 있었습니다

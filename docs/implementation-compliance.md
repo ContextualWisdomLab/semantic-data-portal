@@ -524,8 +524,12 @@ seed의 `security` subject는 `platform-admin`도 들고 있어 여전히 previe
     `planned`는 도달 불가능했고, 유효한 5쌍 전부에서 11행이 모두 `implemented`였습니다. 이제
     선언된 proof endpoint를 이 빌드가 서비스하는지 확인하고(거짓이 될 수 있는 조건), 증거 강도를
     `declared_only`/`proof_route_served`/`runtime_probe_verified`로 행마다 게시하며
-    `control_verification_counts`와 `verdict_basis`를 함께 노출합니다. 기본 데모 배포에서
-    runtime 검증 control은 0개입니다. 증빙: `tests/test_connector_verdict_evidence.py` (14건).
+    `control_verification_counts`와 `verdict_basis`를 함께 노출합니다. runtime 확인을 가진
+    control은 `credential_vault`와 `ontology_version_pin`입니다 — **개수는 여기에 적지
+    않습니다.** 앞서 적혀 있던 "0개"는 `1a62855` 이후 12일 동안 거짓이었고, 같은 숫자를 두
+    문서가 손으로 들고 있던 것이 원인이므로 숫자는 README의 기계 검사 블록 한 곳에만
+    둡니다(`tests/test_runtime_verification_documentation.py`가 제품에서 계산해 대조).
+    증빙: `tests/test_connector_verdict_evidence.py` (14건).
   - **정정(shape catalog)**: 게시된 `required_properties`가 평가되지 않았습니다. 측정:
     `format`/`endpoint`가 빈 distribution과 `concept`가 빈 mapping이 모두
     `conforms: true`·violation 0건이었고, `DatasetShape`는 실제 강제되는 네 필드를

@@ -30,7 +30,7 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 11
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                       1353 passed, 16 skipped
+    pytest                       1359 passed, 16 skipped
     pytest (파일 순서 정/역/난수)  각 1347 passed, 15 skipped — 순서 무관
                                  (정순 · 역순 · seed 11/707/31337; 트리거 가드 커밋 이전 head)
     pytest tests/fuzz            11 passed
@@ -64,6 +64,47 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 백그라운드 측정 중에 트리를 고친 탓에 seed 11이 4건 실패로 나온 일이 있고, 그것은 결함이
 아니라 동시 편집이었습니다. Atheris(`fuzz/fuzz_query_safety.py`)는 로컬에 wheel이 없어
 실행하지 않았습니다 — 같은 invariant의 Hypothesis 미러가 `tests/fuzz`에서 돕니다.
+
+### Fixed — "정직한 숫자"라고 적은 문단의 숫자가 12일 동안 거짓이었습니다 (high)
+
+`README.md`와 `docs/implementation-compliance.md`가 둘 다 기본 데모 배포에서 runtime 검증되는
+control이 **0개**이고 runtime 확인을 가진 control은 `credential_vault` **하나**라고 적고
+있었습니다. 둘 다 쓰인 시점에는 참이었고 둘 다 12일 동안 거짓이었습니다:
+
+    c74ba8e  2026-10-14 12:27  README 문단 작성 (그때는 credential_vault 하나가 맞았습니다)
+    1a62855  2026-10-14 17:25  ontology_version_pin 추가 — 5시간 뒤
+    측정 2026-10-26            runtime 확인을 가진 control 2개
+                               기본 데모 배포에서 runtime 검증되는 것 1개
+                               REST secret을 설정하면 2개
+
+**처음에 이 drift를 제 커밋(`e6d08ac`) 탓으로 적었고, 그것은 틀렸습니다.** `e6d08ac`는
+`_RUNTIME_CONTROL_CHECKS`를 `control -> (검사, 소유자)` 형태로 재구성했을 뿐이고, 두 번째
+runtime 확인을 넣은 것은 12일 전 `1a62855`입니다. 더 깔끔한 이야기가 되는 쪽으로 책임을
+가져오지 않고 측정한 대로 적습니다. 제 것인 부분은 따로 있습니다 — `e6d08ac`에서 **바로 그
+코드를 읽으면서** 문서를 확인하지 않았습니다.
+
+누구도 잘못 추론하지 않았습니다. 같은 숫자를 **두 문서가 손으로** 들고 있었고 그 숫자를
+만드는 코드가 움직였습니다. 그래서 수리는 문장을 고치는 것으로 끝내지 않았습니다:
+
+* 숫자를 README의 **기계가 읽는 블록 한 곳**으로 옮겼습니다
+  (`controls_with_a_runtime_check` / `runtime_verified_in_the_default_demo`).
+  `fast-mlsirm`이 runtime contract에 쓰는 형태와 같습니다.
+* `docs/implementation-compliance.md`는 **개수를 아예 적지 않습니다** — control 이름만
+  적고 숫자는 README를 가리킵니다. 두 사본이 12일을 만든 원인이므로 사본을 없앴습니다.
+* README **산문에서도** 숫자를 뺐습니다. 블록을 만들고도 산문에 "2개/1개/2개"를 남겨 두면
+  같은 습관이 그대로 남습니다.
+* 가드는 제품에서 세 값을 계산해 블록과 **정확히** 대조하고, 두 번째 문서가 숫자를 다시
+  들면 거부합니다.
+
+**가드의 첫 판은 거의 공허했습니다.** 산문에서 숫자를 찾는 방식이었고, 낡은 README 문장을
+되돌려도 개수 검사는 **초록**이었습니다 — 같은 문단이 자기 몫의 "1"과 "2"를 공급하기
+때문입니다. 그때 걸린 것은 control **이름** 검사뿐이었습니다. 산문에서 숫자를 찾는 검사는
+그 숫자를 이웃과 구별할 수 없습니다. 측정하고 나서 블록 비교로 바꿨습니다.
+
+증거: 세 변형을 각각 되돌렸습니다. M1(블록이 제품과 다른 값을 적음): 개수 검사 1건 red
+(첫 판에서는 green이었습니다 — 그것이 이 수리의 요점입니다). M2(소스에 세 번째 runtime
+확인 추가, 문서 그대로): 개수·이름 2건 red. M3(두 번째 문서가 손으로 센 숫자를 다시 듦):
+1건 red. 전체 정순 `pytest` 1359 passed, 16 skipped (1353에서 +6).
 
 ### Fixed — dry run이 데이터 행을 하나 지어내면서 "0건"이라고 보고했습니다 (high)
 
