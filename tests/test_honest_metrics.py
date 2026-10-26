@@ -791,6 +791,70 @@ def test_the_log_correlation_key_is_not_read_from_a_request_header() -> None:
     assert reads == [], f"the log's evidence ids are named in src as a literal: {reads}"
 
 
+def test_every_published_node_breakdown_sums_to_its_own_total() -> None:
+    """A breakdown whose parts do not add up is as wrong as a bad total.
+
+    The whole-suite graph-store leak was published in three places as a total of
+    277 with a three-kind breakdown - dataset, column and concept - whose parts
+    add to 275. Two ``service`` nodes (``authz-node``, ``svc-A``) were omitted,
+    so every one of the three was internally inconsistent. The figures are
+    described rather than written out here, because written out they are a
+    breakdown and this guard flagged its own explanation - the fourth time in
+    this cycle a mechanical check has fired on the prose documenting it.
+    Nothing mechanical caught the original - the
+    figures come from a measurement taken with the fixture's restore disabled,
+    which no test can reproduce in passing - and the first repair fixed two of
+    the three sites, which is the fourth time in this cycle a claim published in
+    N places was fixed in fewer than N.
+
+    So this checks the **arithmetic** rather than the measurement. It needs no
+    re-measurement, it covers every site at once, and it is the part that was
+    actually wrong. What it cannot do is notice a *correct*-summing breakdown
+    whose numbers are stale or invented; that still needs a reviewer
+    re-measuring, which is how this one was found.
+    """
+    import pathlib
+    import re
+
+    repo_root = pathlib.Path(obs.__file__).resolve().parents[2]
+    # Two published shapes: "<total> nodes (<n> dataset, <n> column, ...)" and
+    # the Korean "노드 <total>건 누출 (dataset <n> · column <n> · ...)". Written
+    # with placeholders for the same reason the figures above are described: a
+    # literal example here is itself a breakdown this guard would read.
+    patterns = (
+        re.compile(r"(\d+) nodes \(([^)]*)\)"),
+        re.compile(r"노드 (\d+)건 누출 \(([^)]*)\)"),
+    )
+    searched = [repo_root / "README.md", repo_root / "CLAUDE.md", repo_root / "CHANGELOG.md"]
+    searched += sorted((repo_root / "docs").rglob("*.md"))
+    searched += sorted((repo_root / "src").rglob("*.py"))
+    searched += sorted((repo_root / "tests").rglob("*.py"))
+
+    offenders = []
+    checked = 0
+    for candidate in searched:
+        if not candidate.is_file():
+            continue
+        flat = re.sub(r"\s+", " ", candidate.read_text(encoding="utf-8"))
+        for pattern in patterns:
+            for match in pattern.finditer(flat):
+                total = int(match.group(1))
+                parts = [int(found) for found in re.findall(r"\d+", match.group(2))]
+                if not parts:
+                    continue
+                checked += 1
+                if sum(parts) != total:
+                    offenders.append(
+                        f"{candidate.relative_to(repo_root).as_posix()}: "
+                        f"{match.group(0)!r} sums to {sum(parts)}, not {total}"
+                    )
+    assert checked >= 3, (
+        f"only {checked} node breakdowns were found; if the published figures "
+        "moved, point this guard at them rather than leaving it vacuous"
+    )
+    assert offenders == [], offenders
+
+
 def test_no_published_text_states_a_gauge_count() -> None:
     """A gauge count written in prose goes stale the next time one is added.
 
