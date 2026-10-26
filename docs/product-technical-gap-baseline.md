@@ -3148,6 +3148,66 @@ disclosure 두 건(규칙 하나만 모는 payload 스캔, 실패 경로만 보�
 
 이 절은 측정 기록이고 병합 허가가 아닙니다.
 
+## 기본 테스트 게이트가 stacked PR에서 한 번도 돌지 않았습니다 — check 목록을 세어서 찾았습니다 (2026-10-26 21:00Z)
+
+워크플로 파일을 읽어서가 아니라 **PR의 check run을 세어서** 찾았습니다. 이 구분이 이 항목의
+요점입니다 — 워크플로 파일은 넷 다 그럴듯하게 생겼고, 틀린 것은 그중 하나가 **만들어 내지
+않는 결과**였습니다.
+
+```
+GET /repos/.../pulls/102/check-runs  ->  total_count: 2
+  Hypothesis property tests          (fuzz.yml)
+  Atheris coverage-guided (bounded)  (fuzz.yml)
+```
+
+`Tests / API integration suite`가 없습니다. 원인은 트리거 한 줄입니다:
+
+| 워크플로 | `pull_request` 트리거 | #102(base: `#79` 브랜치)에서 |
+|---|---|---|
+| `fuzz.yml` | `pull_request:` (필터 없음) | 돈다 → 위 두 체크 |
+| `tests.yml` | `pull_request: branches: [main]` | **돌지 않는다** |
+| `scorecard-analysis.yml` | 없음(`push`/`schedule`만) | 무관 |
+
+`branches` 필터는 PR의 **base** 브랜치에 걸립니다. 이 저장소의 merge order는 PR을
+**의도적으로** 쌓으므로(`README`의 "Merge order"), 기본 테스트 게이트는 가장 많은 변경을
+싣고 있는 PR들에서 정확히 돌지 않았습니다.
+
+**24일 동안 드러나지 않은 이유**는 계정 Actions 과금 잠금이 모든 job을 디스패치 전에
+거부해서 어느 쪽도 돌지 않았기 때문입니다. 즉 이 결함은 **다른 결함에 가려져** 있었습니다.
+드러나는 시점은 잠금이 풀리는 순간이고, 그때 PR은 fuzz 레인의 결과를 보여 주고 `Tests`
+결과는 보여 주지 않습니다 — "체크 통과"를 읽는 리뷰어는 두 레인 중 하나만 읽습니다.
+
+`88c39a3`에서 필터를 제거하고 효과를 즉시 확인했습니다:
+
+```
+GET /repos/.../pulls/102/check-runs  ->  total_count: 3
+  API integration suite              ← 이 PR에 처음 등장 (run 40400861406)
+  Hypothesis property tests
+  Atheris coverage-guided (bounded)
+```
+
+**부수 효과로 과금 잠금에 대한 독립 증거가 하나 생겼습니다.** 이 PR에서 한 번도 돈 적 없는
+레인이 최초 디스패치에서 `21:01:58Z → 21:02:01Z` **3초** 만에 같은 방식으로 거절되었습니다.
+거절이 특정 워크플로·특정 head·특정 diff의 성질이 아니라 계정 상태라는 뜻입니다 — 이전
+열두 행이 signature로 보여 준 것을 이 한 행이 **구성으로** 보여 줍니다.
+
+형제 저장소가 같은 필터를 이미 기록해 두었습니다 — `contextual-orchestrator`의 "Stacked
+quality checks: zero check runs can result from the former `pull_request.branches: [main]`
+filter excluding the PR base. Keep the quality trigger unfiltered." 같은 결함이 두 번째
+저장소에 독립적으로 있었고, 거기서는 워크플로를 읽어서 찾았고 여기서는 결과를 세어서
+찾았습니다. 조직 차원의 교훈은 **트리거를 읽지 말고 산출된 check를 세라**는 것입니다.
+
+가드는 `tests.yml`을 이름으로 부르지 않고 **파생**합니다
+(`tests/test_workflow_triggers.py`): 저장소가 소유한 워크플로를 전부 읽어
+`pull_request` 트리거에 base 브랜치 필터(`branches`/`branches-ignore`)가 있으면 거부합니다.
+나중에 같은 필터를 달고 추가되는 워크플로도 이 파일을 고치지 않고 걸립니다. `types`는 base가
+아니라 이벤트 종류를 좁히므로 범위 밖입니다. PyYAML이 lock에 없고 가드 하나를 위해 의존성을
+추가하는 것은 잘못된 교환이므로 트리거 블록을 텍스트로 읽으며, **파서 자체를 합성 텍스트로
+몰아 테스트합니다** — 아무도 측정하지 않은 파서를 가진 가드는 자기 가정에 대해 검사된
+가드이고, 이 주기에 그 형태로 다섯 번 실패했습니다.
+
+이 절은 측정 기록이고 병합 허가가 아닙니다.
+
 ## 운영 메모
 
 - Database objects: 두 단어 이상 `snake_case`, 3NF. Catalog plane 테이블은 #73의 `migrations/0002_ontology_catalog_plane.sql`.
