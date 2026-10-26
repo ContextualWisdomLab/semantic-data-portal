@@ -62,6 +62,45 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 아니라 동시 편집이었습니다. Atheris(`fuzz/fuzz_query_safety.py`)는 로컬에 wheel이 없어
 실행하지 않았습니다 — 같은 invariant의 Hypothesis 미러가 `tests/fuzz`에서 돕니다.
 
+### Security — 리다이렉트를 따라가며 운영자 자격증명을 다른 authority로 다시 보냈습니다 (high)
+
+`sdp.observability`의 http(s) 내보내기 경로 **둘 다** — 로그 싱크와 alert webhook — 설정된
+URL의 userinfo에서 자격증명을 꺼내 `Authorization` 헤더로 옮깁니다(urllib이 userinfo가 든
+authority로 연결할 수 없기 때문입니다). 그 다음 `urllib.request.urlopen`은 POST에 대한
+301/302/303 응답을 **따라가고**, 메서드를 GET으로 바꾸고, 받은 헤더를 전부 — 방금 옮긴
+`Authorization`을 포함해 — 응답의 `Location`이 가리키는 호스트로 다시 보냅니다.
+
+기본 opener로 측정했습니다. loopback 서버 둘, 첫 번째가 302와
+`Location: http://127.0.0.2:<port>/exfiltrated`를 답합니다:
+
+    POST /webhook      Host 127.0.0.1:35661  Authorization: Basic c2VjcmV0...
+    GET  /exfiltrated  Host 127.0.0.2:39469  Authorization: Basic c2VjcmV0...
+
+결과가 셋입니다. (1) 운영자의 webhook 자격증명이 **두 번째 authority에 도착**했습니다.
+(2) 메서드가 GET으로 바뀌면서 alert 본문이 사라졌으므로 **전달된 것이 없습니다.**
+(3) 교환이 204로 끝났으므로 `_deliver_alert`가 `succeeded`로 셌고, 매니페스트는 일어나지
+않은 전달을 게시했습니다.
+
+두 경로가 리다이렉트를 **거부하는** opener(`_RefuseRedirect` / `SinkRedirectRefused`)로
+엽니다. 리다이렉트하는 싱크는 설정 오류이고, 이제 집계되는 실패입니다. userinfo lift가
+싱크 쪽 헬퍼(`_http_sink_request_parts`)에 있으므로 alert 경로만 고치면 **더 오래된 누출이
+그대로 남습니다** — 그래서 싱크 쪽도 같은 커밋에서 닫고, 싱크 쪽 테스트는
+`_EXPORT_ERRORS`에 남는 메시지가 자격증명을 담지 않는 것까지 봅니다(그 ring에 자격증명이
+들어간 전례가 이 모듈 docstring에 기록돼 있습니다).
+
+`authz`의 JWKS fetch는 **일부러** 바꾸지 않았습니다: 그 요청은 자격증명을 싣지 않고,
+리다이렉트가 빠져나갈 호스트 allow-list가 없고(스킴만 http(s)로 제한), urllib은 http(s)가
+아닌 스킴으로의 리다이렉트를 이미 거부하며, 리다이렉트로 서비스되는 JWKS 엔드포인트는
+평범한 배치입니다.
+
+테스트는 loopback 서버에 대해 **실제** opener를 돌립니다. disclosure 계열은 일부러
+그러지 않습니다(seam을 바꿔서 seam에 무엇이 건네지는지 봅니다) — 이 결함은 urllib이
+*응답*을 어떻게 다루는지에 있으므로 double로는 보이지 않습니다. 그래서 두 계열은 합칠 수
+없고, 새 파일 `tests/test_http_export_redirects.py`로 들어갑니다.
+
+증거: opener를 `build_opener()`(기본 리다이렉트)로 되돌려 새 테스트 2건이 빨개지는 것을
+확인했습니다. 전체 정순 `pytest` 1333 passed, 15 skipped (1330에서 +3).
+
 ### Fixed — 전체 수집을 중단시키던 테스트, 비어 있던 stage 예외, 미고정 입력을 하나로 세었던 주장 (high)
 
 2026-10-26 적대적 리뷰 6개 렌즈가 **독립적으로 같은 결함을 보고했습니다.** 6개 렌즈 모두

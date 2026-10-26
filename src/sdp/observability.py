@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse, urlunsplit
-from urllib.request import Request as UrlRequest, urlopen
+from urllib.request import HTTPRedirectHandler, Request as UrlRequest, build_opener
 from urllib.request import url2pathname
 from uuid import uuid4
 
@@ -56,6 +56,57 @@ def request_id_from_headers(headers: Any) -> str:
 
 class SinkConfigurationError(ValueError):
     """The configured observability sink can never be written."""
+
+
+class SinkRedirectRefused(Exception):
+    """An http(s) sink or alert webhook answered with a redirect.
+
+    Not followed, because following it hands the credential to a host this
+    service never configured. See ``_RefuseRedirect``.
+    """
+
+
+class _RefuseRedirect(HTTPRedirectHandler):
+    """A redirect handler that refuses instead of re-sending the request."""
+
+    def redirect_request(
+        self,
+        req: Any,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> None:
+        """Refuse every redirect, whatever its code or method."""
+        raise SinkRedirectRefused(
+            "an http(s) observability sink or alert webhook answered with a "
+            "redirect; the request is not re-sent to the host it names"
+        )
+
+
+# Both HTTP exports in this module open through this opener rather than through
+# ``urllib.request.urlopen``. urllib's default opener follows a 301/302/303 from
+# a POST, converts it to a GET, and re-sends every header it was given -
+# including the ``Authorization`` this module lifts out of the configured URL's
+# userinfo - to whatever host the response's ``Location`` names. Measured
+# against two loopback servers, the first answering 302 with
+# ``Location: http://127.0.0.2:<port>/exfiltrated``::
+#
+#     POST /webhook      Host 127.0.0.1:35661  Authorization: Basic c2VjcmV0...
+#     GET  /exfiltrated  Host 127.0.0.2:39469  Authorization: Basic c2VjcmV0...
+#
+# The operator's credential reached a second authority, the alert body was
+# dropped along with the method, and the exchange was counted as ``succeeded``.
+# A redirecting sink is a misconfiguration; it is now a counted failure.
+#
+# Not applied to ``authz``'s JWKS fetch, deliberately: that request carries no
+# credential, there is no host allow-list for a redirect to escape, urllib
+# refuses a redirect to a non-http(s) scheme, and a JWKS endpoint served through
+# a redirect is an ordinary deployment.
+_NO_REDIRECT_OPENER = build_opener(_RefuseRedirect)
+
+urlopen = _NO_REDIRECT_OPENER.open
 
 
 def _file_sink_path(sink_url: str, parsed: Any) -> Path:
@@ -413,9 +464,11 @@ def governed_evidence_gap_report() -> dict[str, Any]:
 
 ALERT_ROUTING_STATUS = "implemented"
 
-# The alert path's own ``urlopen``, kept separate from the log sink's name. A
-# shared seam would make a webhook POST indistinguishable from a log export in
-# the tests that already assert on what the sink sent.
+# The alert path's own name for the opener above, kept separate from the log
+# sink's name. A shared seam would make a webhook POST indistinguishable from a
+# log export in the tests that already assert on what the sink sent. The two
+# names resolve to the same opener; what is separate is which one a test may
+# replace.
 alert_urlopen = urlopen
 
 # How long the evaluating request waits for the delivery thread before returning.
