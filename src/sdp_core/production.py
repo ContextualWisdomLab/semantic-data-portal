@@ -162,17 +162,25 @@ def production_integration_registry() -> list[ProductionIntegration]:
                 "implemented: SDP_ALERT_WEBHOOK_URL is read only to report whether it "
                 "is set, nothing posts to it, and the alert rules published by "
                 "GET /enterprise/observability are declared conditions that no code "
-                "evaluates. Log export to a file or http(s) sink IS implemented."
+                "evaluates. Log export to a file or http(s) sink IS implemented, and "
+                "a row's evidence_ids now names the policy decisions and audit events "
+                "the server recorded while serving that request - it was read from the "
+                "caller-supplied X-SDP-Evidence-Ids header, so the correlation key was "
+                "chosen by the caller the row is about and the id the server recorded "
+                "never appeared."
             ),
             current_evidence=[
                 "SDP_LOG_SINK_URL",
                 "SDP_REQUEST_ID_HEADER",
                 "sdp.observability.record_request_observation",
                 "sdp.observability.record_request_observation_async",
+                "sdp.evidence.collect_request_evidence_ids",
                 "/enterprise/observability",
                 "/metrics",
                 "tests/test_api.py::test_enterprise_observability_and_metrics_endpoints",
                 "tests/test_api.py::test_request_observability_export_writes_bodyless_jsonl",
+                "tests/test_request_evidence_correlation.py::test_the_exported_log_carries_the_decision_the_server_recorded",
+                "tests/test_request_evidence_correlation.py::test_a_caller_cannot_assert_its_own_evidence_ids",
             ],
             required_environment=[
                 "SDP_LOG_SINK_URL",
@@ -187,7 +195,11 @@ def production_integration_registry() -> list[ProductionIntegration]:
             # can learn from the readiness document itself that nothing honours it.
             declared_unimplemented_environment=["SDP_ALERT_WEBHOOK_URL"],
             acceptance_criteria=[
-                "Request logs include request id, tenant, actor, route, status, latency, and evidence ids without request bodies.",
+                "Request logs include request id, tenant, actor, route, status, latency, and evidence ids without request bodies. "
+                "The evidence ids are the server's own: the two functions every evidence row flows through record them against "
+                "the request in flight. Reading them from the X-SDP-Evidence-Ids header satisfied the wording and not the "
+                "criterion - measured, a governed preview exported two forged ids and not its real decision. tenant_id and actor "
+                "remain caller-asserted and are declared as such by GET /enterprise/observability.",
                 "Policy/audit gap, connector-probe failure and queue-drift conditions are DECLARED by "
                 "GET /enterprise/observability and are not evaluated: no code computes them and no code "
                 "routes them to SDP_ALERT_WEBHOOK_URL. Implementing this criterion means evaluating the "

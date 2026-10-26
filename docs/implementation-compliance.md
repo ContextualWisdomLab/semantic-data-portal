@@ -380,6 +380,25 @@ seed의 `security` subject는 `platform-admin`도 들고 있어 여전히 previe
     `tests/test_honest_metrics.py::test_nothing_posts_to_the_alert_webhook`이 담당합니다.
     게시되는 alert 규칙은 삭제하지 않고 `alert_evaluation: declared_not_evaluated`,
     규칙별 `evaluated: false`, `alert_webhook_routing: declared_unimplemented`로 표시합니다.
+  - 같은 integration의 **첫 번째** acceptance criterion(`request id, tenant, actor,
+    route, status, latency, and evidence ids`)은 문구만 만족하고 있었습니다.
+    `evidence_ids`를 caller가 보낸 `X-SDP-Evidence-Ids` 헤더에서 읽었기 때문입니다 —
+    로그 행을 증빙 원장(`/policy/decisions`, `/audit/events`)에 연결하는 **그 키**를
+    행의 주체인 caller가 정했습니다. 측정: 인증된 governed preview 1회에
+    `X-SDP-Evidence-Ids: 00000000-dead-beef-...,another-forged-id`를 보내면 export된
+    행의 `evidence_ids`가 그 두 값이고, 서버가 실제 기록한 decision
+    `4ff4d6c7-...`은 로그에 없습니다. 어떤 라우트도 이 헤더를 설정하지 않으므로
+    평상시 값은 빈 리스트였고, 그 상태로 `fields` 목록에 `evidence_ids`가 공표돼
+    있었습니다. 이는 `tenant_id`가 이미 주석으로 인정한 결함(caller 자기주장)과
+    같은 종류인데, `tenant_id`는 주장값으로 **선언**되고 미인증 manifest에서
+    집계만 공개되는 반면 `evidence_ids`는 correlation 키로 공표됐다는 차이가
+    있습니다. 지금은 증빙 행이 지나는 두 지점에서 요청 단위로 수집하고
+    (`evidence.collect_request_evidence_ids`), 헤더는 읽지 않습니다.
+    manifest는 `evidence_id_source: server_recorded`와
+    `caller_asserted_fields: [tenant_id, actor, request_id]`를 함께 공표합니다.
+    드리프트 가드는 AST 기반입니다 —
+    `tests/test_honest_metrics.py::test_the_log_correlation_key_is_not_read_from_a_request_header`가
+    `src` 안에서 그 헤더 이름을 **호출 인자로** 넘기는 곳을 금지합니다(주석은 허용).
   - `SDP_LOG_SINK_URL`의 http(s) 형태는 URL에 담긴 credential을 `Authorization` 헤더로
     분리합니다. 이전에는 URL 전체를 `urllib`에 넘겨 userinfo가 연결 host로 남아
     (`sdp-ingest:TOKEN@logs.example.net` → `InvalidURL: nonnumeric port`) 모든 export가
@@ -469,6 +488,7 @@ seed의 `security` subject는 `platform-admin`도 들고 있어 여전히 previe
   - `tests/test_api.py::test_enterprise_production_readiness_tracks_paid_pilot_integrations`
   - `tests/test_api.py::test_enterprise_evidence_pack_summarizes_buyer_diligence`
   - `tests/test_api.py::test_request_observability_export_writes_bodyless_jsonl`
+  - `tests/test_request_evidence_correlation.py` (로그 correlation 키가 서버 기록 값이고 caller가 바꿀 수 없음·거부 요청도 상관 가능·요청 간 격리·상한과 withheld 공표)
   - `tests/test_api.py::test_enterprise_rest_connector_probe_uses_vault_reference_without_secret_leak`
   - `tests/test_api.py::test_oidc_jwks_verification_maps_verified_token_without_token_leak`
   - `tests/test_api.py::test_oidc_jwks_verification_rejects_wrong_audience`

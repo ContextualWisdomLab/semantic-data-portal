@@ -6,6 +6,7 @@ import threading
 import time
 from base64 import b64encode
 from collections import deque
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -221,14 +222,27 @@ def build_request_observation(
     latency_ms: float,
     headers: Any,
     request_id: str,
+    evidence_ids: Sequence[str] = (),
+    withheld_evidence_id_count: int = 0,
 ) -> dict[str, Any]:
-    evidence_header = _header_value(headers, "X-SDP-Evidence-Ids", "")
-    evidence_ids = (
-        [item.strip() for item in evidence_header.split(",") if item.strip()]
-        if evidence_header
-        else []
+    """Build one request observation from server-side facts and request headers.
+
+    ``evidence_ids`` is passed in by the caller because it is the one field here
+    that must **not** come from the request: it was read from a caller-supplied
+    ``X-SDP-Evidence-Ids`` header, which made the governance log's correlation
+    key assertable by the caller the line is about - measured, a governed
+    preview exported two forged ids while the decision the server recorded was
+    absent. ``evidence.collect_request_evidence_ids`` supplies them now, and
+    this function no longer reads that header at all.
+
+    ``tenant_id`` and ``actor`` are still header-derived and still
+    caller-asserted; that is why the unauthenticated manifest publishes only
+    aggregates of these rows (see ``build_observability_manifest``).
+    """
+    evidence_ids = list(evidence_ids)
+    withheld_evidence_ids = (
+        max(0, len(evidence_ids) - MAX_OBSERVATION_EVIDENCE_IDS) + withheld_evidence_id_count
     )
-    withheld_evidence_ids = max(0, len(evidence_ids) - MAX_OBSERVATION_EVIDENCE_IDS)
     observation = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "request_id": _bounded_field(request_id),
@@ -650,6 +664,16 @@ def build_observability_manifest() -> dict[str, Any]:
                 "latency_ms",
                 "evidence_ids",
             ],
+            # Which of those fields the server owns. ``evidence_ids`` is the key
+            # that ties a row to /policy/decisions and /audit/events, and it was
+            # read from the caller-supplied X-SDP-Evidence-Ids header - so the
+            # caller a row is about chose the row's correlation key, and the id
+            # the server recorded never appeared. It now comes from the two
+            # evidence chokepoints (see evidence.collect_request_evidence_ids).
+            # ``tenant_id`` and ``actor`` are still caller-asserted, which is why
+            # only aggregates of these rows are published here.
+            "evidence_id_source": "server_recorded",
+            "caller_asserted_fields": ["tenant_id", "actor", "request_id"],
             "body_logging": "disabled",
             "sink_breaker": sink_breaker_state(),
         },

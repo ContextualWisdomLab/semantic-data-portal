@@ -695,3 +695,47 @@ def test_no_published_count_is_the_length_of_a_paged_read() -> None:
         "these published counts are the size of the page they were read from, "
         f"so they saturate instead of counting: {offenders}"
     )
+
+
+def test_the_log_correlation_key_is_not_read_from_a_request_header() -> None:
+    """``evidence_ids`` must stay a server fact, pinned at source level.
+
+    The field is the key that ties a request log row to ``/policy/decisions``
+    and ``/audit/events``, and it was read from the caller-supplied
+    ``X-SDP-Evidence-Ids`` header - so the caller a row is about chose the row's
+    correlation key. Measured: a governed preview exported two forged ids while
+    the decision the server recorded, ``4ff4d6c7-...``, appeared nowhere in the
+    log. No route set the header either, so the ordinary row carried an empty
+    list under a published field name that claimed correlation.
+
+    Behaviour is covered by ``tests/test_request_evidence_correlation.py``; this
+    is the drift guard, because the defect was one ``_header_value`` call and
+    would come back the same way.
+
+    Parsed rather than searched, for the reason the backend-rule contract test
+    gives: a substring check over the source would also fire on the comments
+    that explain why the header is gone, and those are worth keeping. What is
+    banned is *passing that header name to a call* - which is what reading it
+    requires - anywhere under ``src``.
+    """
+    import ast
+    import pathlib
+
+    source_root = pathlib.Path(obs.__file__).resolve().parents[1]
+    reads: list[str] = []
+    for path in sorted(source_root.rglob("*.py")):
+        text = path.read_text()
+        if "X-SDP-Evidence-Ids" not in text:
+            continue
+        for node in ast.walk(ast.parse(text)):
+            if not isinstance(node, ast.Call):
+                continue
+            literals = [
+                argument
+                for argument in list(node.args) + [kw.value for kw in node.keywords]
+                if isinstance(argument, ast.Constant) and argument.value == "X-SDP-Evidence-Ids"
+            ]
+            if literals:
+                where = f"{path.relative_to(source_root).as_posix()}:{node.lineno}"
+                reads.append(where)
+    assert reads == [], f"the log's evidence ids are read from a request header: {reads}"

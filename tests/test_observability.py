@@ -358,9 +358,17 @@ def test_a_caller_cannot_pin_unbounded_bytes_in_the_observation_buffer() -> None
         headers={
             "X-SDP-Tenant": oversized,
             "X-SDP-Actor": oversized,
+            # Ignored now, and that is the point: a caller cannot put anything
+            # into ``evidence_ids``, oversized or not. The field used to be read
+            # from this header, which let the caller a log line is about choose
+            # the line's correlation key - see
+            # ``tests/test_request_evidence_correlation.py``.
             "X-SDP-Evidence-Ids": ",".join([oversized] * 100),
         },
         request_id=oversized,
+        # Server-recorded ids, which is the only source left. The bound still
+        # matters: one request can record many evidence rows.
+        evidence_ids=[oversized] * 100,
     )
     for field in ("request_id", "tenant_id", "actor"):
         assert len(observation[field]) <= obs.MAX_OBSERVATION_FIELD_CHARS, field
@@ -386,11 +394,14 @@ def test_an_ordinary_observation_is_not_truncated() -> None:
         headers={
             "X-SDP-Tenant": "demo",
             "X-SDP-Actor": "analyst",
-            "X-SDP-Evidence-Ids": "d-1, d-2",
+            "X-SDP-Evidence-Ids": "forged-1, forged-2",
         },
         request_id="sdp-abc",
+        evidence_ids=["d-1", "d-2"],
     )
     assert observation["tenant_id"] == "demo"
     assert observation["actor"] == "analyst"
     assert observation["evidence_ids"] == ["d-1", "d-2"]
+    # The header is not a source for this field any more.
+    assert "forged-1" not in observation["evidence_ids"]
     assert "withheld_evidence_id_count" not in observation

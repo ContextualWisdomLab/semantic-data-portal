@@ -102,7 +102,7 @@ PYTHONPATH=src SDP_SQLITE_PATH=.local/sdp-evidence.sqlite3 uvicorn sdp.api:app -
 14. 완료: `/enterprise/auth/oidc-preview` claim-shape 검증과 직접 role-claim 무시 동작을 추가한다. `/enterprise/auth/oidc-verify`는 issuer/audience/expiry/JWKS 서명 검증 후 같은 group allow-list mapping을 적용한다.
 15. 완료: `/browse/query` literal tautology injection을 query-safety validation에서 fail-closed로 거절한다.
 16. 완료: `/enterprise/console`로 evidence, KPI, controls, connector probe 상태를 한 화면에 노출한다.
-17. 완료: request observability export를 `SDP_LOG_SINK_URL=file://...` 또는 `http(s)://...` sink로 연결하고, request id, tenant, actor, route, status, latency, evidence ids만 body 없이 기록한다.
+17. 완료: request observability export를 `SDP_LOG_SINK_URL=file://...` 또는 `http(s)://...` sink로 연결하고, request id, tenant, actor, route, status, latency, evidence ids만 body 없이 기록한다. `evidence_ids`는 **서버가 기록한 것**이다 — 이전에는 caller가 보낸 `X-SDP-Evidence-Ids` 헤더에서 읽었으므로 그 행이 가리키는 증빙을 그 행의 주체인 caller가 고를 수 있었고, 측정 결과 서버가 실제로 기록한 decision id는 로그에 없었다. 지금은 모든 증빙 행이 지나는 두 지점(`evidence.record_policy_decision` / `append_audit_event`)에서 요청 단위로 수집한다. `tenant_id`/`actor`는 여전히 caller 주장값이며 manifest가 `caller_asserted_fields`로 그렇게 공표한다.
 18. 완료: connector credential vault를 `SDP_CONNECTOR_SECRET_REF_PREFIX` 기반 env provider로 구현하고, REST connector probe가 raw secret 없이 secret reference presence만 노출하게 한다.
 19. 완료: OIDC JWKS verification을 PyJWT crypto 기반으로 구현하고, 테스트 JWKS로 서명 검증 성공/잘못된 audience 거절/raw token 미노출을 검증한다.
 20. 완료: group-to-role mapping을 tenant scoped 형태로 확장하고 group별 binding을 audit event로 기록해 `sso_oidc_adapter` control을 구현 상태로 올린다. wildcard/tenant scope 혼합 설정은 거절하고, tenant scope는 wildcard 부여를 회수할 수 있다.

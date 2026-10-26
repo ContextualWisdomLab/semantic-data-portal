@@ -55,7 +55,7 @@ from .domain import (
     QueryExecutionRequest,
 )
 from .enterprise_evidence import build_enterprise_evidence_pack
-from .evidence import list_policy_decisions
+from .evidence import collect_request_evidence_ids, list_policy_decisions
 from .latency_budgets import latency_budget_report
 from .observability import (
     build_observability_manifest,
@@ -128,26 +128,38 @@ async def record_request_observability(request: Request, call_next):
     request_id = request_id_from_headers(request.headers)
     response: Response | None = None
 
-    try:
-        response = await call_next(request)
-        return response
-    finally:
-        latency_ms = (monotonic() - started) * 1000
-        status_code = response.status_code if response is not None else 500
-        observation = build_request_observation(
-            method=request.method,
-            route=request.url.path,
-            status_code=status_code,
-            latency_ms=latency_ms,
-            headers=request.headers,
-            request_id=request_id,
-        )
-        if response is not None:
-            response.headers[request_id_header()] = request_id
-        # The sink write is blocking, so it is awaited off the event loop; see
-        # record_request_observation_async. Setting the header first keeps the
-        # response untouched by the export path.
-        await record_request_observation_async(observation)
+    # The log line's ``evidence_ids`` is the key that ties it to
+    # ``/policy/decisions`` and ``/audit/events``. It was read from the
+    # caller-supplied ``X-SDP-Evidence-Ids`` header, so the caller the line is
+    # about chose its own correlation key and the id the server recorded never
+    # appeared - measured, a governed preview exported two forged ids while its
+    # real decision was absent from the log. Collected from the two evidence
+    # chokepoints instead; the list the handler appends to is the one read here,
+    # which is why a ``ContextVar`` holding a mutable object works across the
+    # threadpool copy FastAPI makes for ``def`` handlers.
+    with collect_request_evidence_ids() as collected:
+        try:
+            response = await call_next(request)
+            return response
+        finally:
+            latency_ms = (monotonic() - started) * 1000
+            status_code = response.status_code if response is not None else 500
+            observation = build_request_observation(
+                method=request.method,
+                route=request.url.path,
+                status_code=status_code,
+                latency_ms=latency_ms,
+                headers=request.headers,
+                request_id=request_id,
+                evidence_ids=collected.ids,
+                withheld_evidence_id_count=collected.withheld,
+            )
+            if response is not None:
+                response.headers[request_id_header()] = request_id
+            # The sink write is blocking, so it is awaited off the event loop;
+            # see record_request_observation_async. Setting the header first
+            # keeps the response untouched by the export path.
+            await record_request_observation_async(observation)
 
 
 def _change_reason(payload: dict[str, Any] | None) -> str | None:

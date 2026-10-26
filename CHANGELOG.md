@@ -2,15 +2,15 @@
 
 이 문서는 `claude/semantic-portal-pr-merge-e5a48k` 브랜치(PR
 [#102](https://github.com/ContextualWisdomLab/semantic-data-portal/pull/102))가
-베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **212개** 커밋 중 122개는
-gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 90개입니다. 이 숫자는 **이
+베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **213개** 커밋 중 122개는
+gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 91개입니다. 이 숫자는 **이
 줄을 담은 커밋을 포함한** 값입니다 — 측정 시점의 210에 이 커밋을 더한 것. 측정 명령:
 
     git rev-list --count origin/docs/product-technical-gap-baseline..HEAD
     git log --format=%H origin/docs/product-technical-gap-baseline..HEAD \
       --name-only -- docs/product-technical-gap-baseline.md | grep -c '^[0-9a-f]\{40\}$'
 
-앞서 적혀 있던 164/112, 186/113, 199/122/77, 203/122/81, 211/122/89은 각각 그 시점의 값이고 이후
+앞서 적혀 있던 164/112, 186/113, 199/122/77, 203/122/81, 211/122/89, 212/122/90은 각각 그 시점의 값이고 이후
 커밋을 반영하지 않은 숫자였습니다 — 자기 문서의 수치도 측정해서 맞춰 둡니다. 199는 이
 줄을 쓴 뒤 3개 커밋이 더 쌓여 낡아 203으로, 203은 다음 커밋에서 낡아 204로, 204는 또
 두 커밋 뒤에 206으로 다시 측정해 고쳤습니다. 206도 그 값을 담은 커밋 자신 때문에 도착
@@ -30,8 +30,8 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 90
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                       1225 passed, 15 skipped
-    pytest (파일 순서 정/역/난수)  각 1225 passed, 15 skipped — 순서 무관
+    pytest                       1235 passed, 15 skipped
+    pytest (파일 순서 정/역/난수)  각 1235 passed, 15 skipped — 순서 무관
                                  (정순 · 역순 · seed 11/707/31337)
     pytest tests/fuzz            11 passed
     python -m sdp.demo_smoke     exit 0, "ready": true
@@ -46,6 +46,65 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 백그라운드 측정 중에 트리를 고친 탓에 seed 11이 4건 실패로 나온 일이 있고, 그것은 결함이
 아니라 동시 편집이었습니다. Atheris(`fuzz/fuzz_query_safety.py`)는 로컬에 wheel이 없어
 실행하지 않았습니다 — 같은 invariant의 Hypothesis 미러가 `tests/fuzz`에서 돕니다.
+
+### Fixed — 요청 로그의 증빙 상관 키를 caller가 정하고 있었습니다 (high)
+
+`GET /enterprise/observability`는 `structured_logs.fields`에 `evidence_ids`를 공표하고,
+readiness manifest의 `request_observability_export` acceptance criterion은 "request id,
+tenant, actor, route, status, latency, **and evidence ids** without request bodies"라고
+적혀 있으며 그 integration은 `implemented`입니다. 그런데 이 필드는 **caller가 보낸 요청
+헤더** `X-SDP-Evidence-Ids`에서 읽혔습니다. 인증된 governed read 1회 측정:
+
+    POST /browse/crm-customer-master/preview
+      headers: X-SDP-Evidence-Ids: 00000000-dead-beef-0000-000000000000,
+                                   another-forged-id
+      -> 200
+         서버가 실제 기록한 decision:  4ff4d6c7-52a3-4f51-a1e2-cb585180a27d
+         export된 행의 evidence_ids:   ['00000000-dead-beef-...', 'another-forged-id']
+         로그가 실제 decision을 담았나: False
+
+로그 행을 증빙 원장(`/policy/decisions`, `/audit/events`)에 연결하는 **그 키**를 행의
+주체인 caller가 고를 수 있었습니다. 감사자는 자기가 서버 기록이라고 믿는 값을 읽지만
+실제로는 caller 주장값이고, caller는 남의 요청 증빙을 가리키거나 아무것도 보내지 않아
+"증빙 없음"으로 보이게 할 수 있었습니다. 어떤 라우트도 이 헤더를 설정하지 않으므로
+**평상시 모든 governed 요청의 값은 빈 리스트**였습니다 — correlation을 주장하는 필드
+이름 아래에서.
+
+이것은 `tenant_id`가 이미 주석으로 인정한 결함과 같은 종류입니다("self-asserted by the
+very caller whose rows would be filtered"). 차이는 `tenant_id`는 주장값으로 **선언**되고
+미인증 manifest에서 집계만 공개되는 반면, `evidence_ids`는 correlation 키로 공표됐다는
+점입니다.
+
+지금은 모든 증빙 행이 반드시 지나는 두 지점 — `evidence.record_policy_decision`과
+`evidence.append_audit_event` — 에서 요청 단위로 수집하고(`collect_request_evidence_ids`),
+헤더는 읽지 않습니다. 라우트마다 보고를 추가하는 방식이 아니므로 새 라우트가 증빙을
+빠뜨릴 수도, 기록하지 않은 증빙을 보고할 수도 없습니다. 거부된 요청도 상관 가능합니다 —
+거부는 decision이고, 그 행이 바로 "거부된 시도"를 찾는 감사자가 읽는 것입니다(이 라우트의
+거부는 존재 oracle을 피하려 404로 답하므로, 사유를 담은 원장을 찾을 키가 더 중요합니다).
+
+구현 메모 하나: 요청 단위 수집은 `ContextVar`에 **가변 객체**를 담아서 합니다. FastAPI는
+이 앱의 `def` 핸들러를 threadpool에서 컨텍스트 **복사본**으로 실행하므로 핸들러 안에서
+ContextVar를 다시 바인딩해도 미들웨어에 보이지 않지만, 이미 들고 있는 객체를 변형하면
+보입니다. 상한(32)을 넘는 id는 버리지 않고 세어 `withheld_evidence_id_count`에 더합니다 —
+이 제품의 다른 모든 상한 리스트와 같은 규칙입니다.
+
+manifest도 계산한 것을 공표하도록 고쳤습니다: `evidence_id_source: server_recorded`,
+`caller_asserted_fields: [tenant_id, actor, request_id]`. 드리프트 가드는 AST 기반입니다 —
+`src` 안에서 그 헤더 이름을 **호출 인자로** 넘기는 곳을 금지하고 주석은 허용합니다(결함을
+설명하는 주석까지 금지하면 설명이 사라집니다).
+
+**남은 경계를 분명히 합니다.** 이 변경은 첫 번째 acceptance criterion을 사실로 만들 뿐이고,
+같은 integration의 두 번째 criterion(alert 조건 평가 + `SDP_ALERT_WEBHOOK_URL` 라우팅)은
+여전히 미구현입니다. `SDP_ALERT_WEBHOOK_URL`은 `declared_unimplemented_environment`에
+그대로 있고, 게시되는 alert 규칙 두 건도 `evaluated: false`입니다. 그중
+`policy_audit_gap`은 이제 in-process 상태로 평가할 수 있게 됐지만(이 키가 있어야 창
+단위로 셀 수 있습니다) 그것은 별도 변경입니다. `central_workflow_backlog`은 GitHub
+Actions 상태를 봐야 하므로 이 서비스가 평가할 수 있는 조건이 아닙니다.
+
+역검증: 헤더 읽기를 되돌리면 correlation 테스트 5건과 AST 가드가 실패합니다.
+`record_policy_decision`의 수집 호출을 지우면 로그에 audit event id는 남고 decision id는
+사라져 3건이 실패합니다 — 두 지점이 각각 필요하다는 뜻입니다. 미들웨어 배선을 지우면
+모든 행이 빈 리스트로 돌아가 5건이 실패합니다.
 
 ### Fixed — kind 충돌 가드가 네 경로 중 두 곳만 덮었고, 그 두 곳도 틀린 id를 봤습니다 (high)
 

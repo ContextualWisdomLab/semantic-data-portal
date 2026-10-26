@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 from typing import Any
 
 from sdp_core import AuditEvent, PolicyDecision, PostgresEvidenceStore, SQLiteEvidenceStore
@@ -66,9 +69,80 @@ def has_configured_evidence_store() -> bool:
     return _STORE is not None
 
 
+# How many evidence ids one request may collect for its log line. The same
+# number as ``observability.MAX_OBSERVATION_EVIDENCE_IDS``, but not imported from
+# there: ``observability`` imports this module, so the dependency only runs one
+# way. A request that records more than this many rows keeps the first ones and
+# counts the rest, so the log line's ``withheld_evidence_id_count`` is the true
+# total withheld rather than only what the observation builder trimmed.
+MAX_REQUEST_EVIDENCE_IDS = 32
+
+
+@dataclass
+class CollectedRequestEvidenceIds:
+    """The evidence ids one request recorded, and how many did not fit."""
+
+    ids: list[str] = field(default_factory=list)
+    withheld: int = 0
+
+
+# Set per request by the observability middleware. The value is the *same list
+# object* the request's handler appends to, which is what makes this work for
+# this app's ``def`` handlers: FastAPI runs those in a threadpool with a **copy**
+# of the context, so rebinding a ContextVar inside the handler would not reach
+# the middleware - mutating the object it already holds does.
+_REQUEST_EVIDENCE_IDS: ContextVar[CollectedRequestEvidenceIds | None] = ContextVar(
+    "sdp_request_evidence_ids", default=None
+)
+
+
+@contextmanager
+def collect_request_evidence_ids() -> Iterator[CollectedRequestEvidenceIds]:
+    """Collect the evidence ids recorded while one request is served.
+
+    The request log's ``evidence_ids`` is the key that ties a log line to
+    ``/policy/decisions`` and ``/audit/events``. It used to be read from the
+    caller-supplied ``X-SDP-Evidence-Ids`` header, so the field was asserted by
+    the very caller the line is about and the id the server recorded never
+    appeared - measured, a governed preview exported two forged ids while its
+    real decision ``4ff4d6c7-...`` was nowhere in the log. No route set that
+    header, so the ordinary case was an empty list under a published field name
+    that claimed correlation.
+
+    Collected here instead, at the two functions every evidence row already
+    flows through, so a new route cannot forget to report its evidence and
+    cannot report evidence it did not record.
+    """
+    collected = CollectedRequestEvidenceIds()
+    token = _REQUEST_EVIDENCE_IDS.set(collected)
+    try:
+        yield collected
+    finally:
+        _REQUEST_EVIDENCE_IDS.reset(token)
+
+
+def note_request_evidence_id(evidence_id: str) -> None:
+    """Record one evidence id against the request in flight, if there is one.
+
+    A no-op outside a request - startup seeding records evidence with nothing in
+    flight - and idempotent: two rows naming one decision id are one correlation
+    key, not two.
+    """
+    collected = _REQUEST_EVIDENCE_IDS.get()
+    if collected is None or not evidence_id:
+        return
+    if evidence_id in collected.ids:
+        return
+    if len(collected.ids) >= MAX_REQUEST_EVIDENCE_IDS:
+        collected.withheld += 1
+        return
+    collected.ids.append(evidence_id)
+
+
 def record_policy_decision(decision: PolicyDecision) -> PolicyDecision:
     global _RECORDED_POLICY_DECISION_COUNT
     _RECORDED_POLICY_DECISION_COUNT += 1
+    note_request_evidence_id(decision.decision_id)
     if _STORE:
         _STORE.record_decision(decision)
     else:
@@ -81,6 +155,7 @@ def record_policy_decision(decision: PolicyDecision) -> PolicyDecision:
 def append_audit_event(event: AuditEvent) -> AuditEvent:
     global _RECORDED_AUDIT_EVENT_COUNT
     _RECORDED_AUDIT_EVENT_COUNT += 1
+    note_request_evidence_id(event.id)
     if _STORE:
         _STORE.append_event(event)
     else:
