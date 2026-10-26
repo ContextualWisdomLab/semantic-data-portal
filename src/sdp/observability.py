@@ -1347,7 +1347,29 @@ def build_observability_manifest() -> dict[str, Any]:
 
     return {
         "service": "semantic-data-portal",
+        # Two probes, both published, each labelled with what it reports. The
+        # contract carried only ``health_endpoint: "/health"``, and ``/health``
+        # returns a constant and consults nothing - so an operator who wired
+        # monitoring, a load balancer or a Kubernetes probe to the endpoint this
+        # service itself publishes got a check that stays green while the
+        # backend is unreachable and every request behind it fails.
+        #
+        # ``docs/product-technical-gap-baseline.md`` records the same wrong
+        # endpoint one layer down ("Dockerfile + compose 2곳이 상수 /health를
+        # 조회 — 백엔드 죽은 컨테이너가 healthy"). The containers were repaired
+        # then and this contract was not, so the service kept recommending what
+        # its own images had stopped using. ``health_endpoint`` is kept rather
+        # than corrected in place: a reader has already wired it, and the defect
+        # was one ambiguous pointer, not the wrong single one.
         "health_endpoint": "/health",
+        "readiness_endpoint": "/healthz",
+        "probe_semantics": {
+            "/health": "liveness; returns a constant and consults nothing",
+            "/healthz": (
+                "readiness; reports the active store and answers 503 when the "
+                "backend is unreachable. Wire monitoring here."
+            ),
+        },
         "metrics_endpoint": "/metrics",
         "structured_logs": {
             "status": "implemented",

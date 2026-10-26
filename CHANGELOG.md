@@ -30,7 +30,7 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 11
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                       1359 passed, 16 skipped
+    pytest                       1366 passed, 16 skipped
     pytest (파일 순서 정/역/난수)  각 1347 passed, 15 skipped — 순서 무관
                                  (정순 · 역순 · seed 11/707/31337; 트리거 가드 커밋 이전 head)
     pytest tests/fuzz            11 passed
@@ -64,6 +64,47 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 백그라운드 측정 중에 트리를 고친 탓에 seed 11이 4건 실패로 나온 일이 있고, 그것은 결함이
 아니라 동시 편집이었습니다. Atheris(`fuzz/fuzz_query_safety.py`)는 로컬에 wheel이 없어
 실행하지 않았습니다 — 같은 invariant의 Hypothesis 미러가 `tests/fuzz`에서 돕니다.
+
+### Fixed — 운영자 계약이 "절대 빨개지지 않는" liveness 엔드포인트를 health로 게시했습니다 (high)
+
+`GET /enterprise/observability`는 이 서비스의 **기계가 읽는 운영자 계약**이고, 거기 있던
+health 포인터는 `health_endpoint: "/health"` 하나였습니다. 측정:
+
+    published health pointer(s): {'health_endpoint': '/health'}
+    '/healthz' anywhere in the manifest: False
+
+    GET /health   -> 200 {'status': 'ok', 'at': ...}         # 아무것도 조회하지 않음
+    GET /healthz  -> 200 {'status': 'ready', 'store': {...}} # 미준비 시 503
+
+`/health`는 상수를 돌려주고 아무것도 조회하지 않으므로 **실패할 수 없습니다.**
+`/healthz`는 활성 store를 확인하고 백엔드가 닿지 않으면 503을 내며, `Dockerfile`
+HEALTHCHECK와 `docker-compose` healthcheck 두 곳이 **이미** 그것을 조회합니다. 그래서
+모니터링·로드밸런서·Kubernetes probe를 **플랫폼 자신이 게시한** 엔드포인트에 연결한 SRE는
+포털 백엔드가 죽고 모든 요청이 실패하는 동안 초록인 체크를 갖게 됩니다.
+
+**가장 날카로운 부분은 이것입니다: README는 맞게 적고 있었습니다.** README 461-462행이
+`/health`를 liveness, `/healthz`를 "미준비 시 503"으로 정확히 구분합니다. 사람이 읽는 문서가
+옳은 동안 **기계가 읽는 계약이 틀렸고**, SRE가 연결하는 것은 계약입니다. 한 층 아래의 같은
+결함은 이미 닫혀 있었습니다 — `docs/product-technical-gap-baseline.md`의
+"healthcheck | Dockerfile + compose 2곳이 상수 /health를 조회 — 백엔드 죽은 컨테이너가
+healthy" 행입니다. 그때 컨테이너를 고치고 **계약은 고치지 않았으므로**, 서비스는 자기
+이미지가 쓰지 않게 된 엔드포인트를 계속 권하고 있었습니다.
+
+두 포인터를 각자의 의미와 함께 게시합니다 — `health_endpoint`(liveness, 상수),
+`readiness_endpoint`(readiness, 503), 그리고 `probe_semantics`가 둘의 차이를 적습니다.
+`health_endpoint`는 **지우지 않습니다**: 이미 연결한 독자가 있고, 결함은 "틀린 하나"가
+아니라 "모호한 하나"였습니다. 응답 계약(`api_response_contract.py`)에도 두 키를 게시합니다.
+
+**내 테스트에 substring 구멍이 있었습니다.** 컨테이너와 계약이 같은 엔드포인트를 권하는지
+보는 검사가 `recommended in line`이었는데, `/healthz`를 조회하는 줄은 `/health`를 **포함**
+하므로 계약을 상수 엔드포인트로 돌려도 그 검사는 통과했습니다(측정). 경로를 정규식으로
+뽑아 **정확히** 비교합니다 — 그러자 같은 변형이 2건이 아니라 3건을 빨갛게 만듭니다.
+M3를 처음 돌릴 때 엉뚱한 단어를 바꿔 변형이 단언을 건드리지 못했고, 제대로 돌려서 red를
+확인했습니다. 변형이 통과하면 가드가 아니라 변형을 먼저 의심해야 한다는 쪽이 이번 교훈입니다.
+
+증거: 세 변형을 각각 되돌렸습니다. M1(`readiness_endpoint` 제거): 4건 red.
+M2(readiness를 상수 엔드포인트로 지정): 3건 red(substring 수리 전에는 2건). M3(readiness
+설명에서 503 제거): 1건 red. 전체 정순 `pytest` 1366 passed, 16 skipped (1359에서 +7).
 
 ### Fixed — "정직한 숫자"라고 적은 문단의 숫자가 12일 동안 거짓이었습니다 (high)
 
