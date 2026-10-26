@@ -2,15 +2,15 @@
 
 이 문서는 `claude/semantic-portal-pr-merge-e5a48k` 브랜치(PR
 [#102](https://github.com/ContextualWisdomLab/semantic-data-portal/pull/102))가
-베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **226개** 커밋 중 122개는
-gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 104개입니다. 이 숫자는 **이
-줄을 담은 커밋을 포함한** 값입니다 — 측정 시점의 225에 이 커밋을 더한 것. 측정 명령:
+베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **228개** 커밋 중 122개는
+gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 106개입니다. 이 숫자는 **이
+줄을 담은 커밋을 포함한** 값입니다 — 측정 시점의 227에 이 커밋을 더한 것. 측정 명령:
 
     git rev-list --count origin/docs/product-technical-gap-baseline..HEAD
     git log --format=%H origin/docs/product-technical-gap-baseline..HEAD \
       --name-only -- docs/product-technical-gap-baseline.md | grep -c '^[0-9a-f]\{40\}$'
 
-앞서 적혀 있던 164/112, 186/113, 199/122/77, 203/122/81, 211/122/89, 212/122/90, 213/122/91, 214/122/92, 215/122/93, 216/122/94, 218/122/96, 219/122/97, 220/122/98, 221/122/99, 222/122/100, 223/122/101, 224/122/102, 225/122/103은 각각 그 시점의 값이고 이후
+앞서 적혀 있던 164/112, 186/113, 199/122/77, 203/122/81, 211/122/89, 212/122/90, 213/122/91, 214/122/92, 215/122/93, 216/122/94, 218/122/96, 219/122/97, 220/122/98, 221/122/99, 222/122/100, 223/122/101, 224/122/102, 225/122/103, 226/122/104은 각각 그 시점의 값이고 이후
 커밋을 반영하지 않은 숫자였습니다 — 자기 문서의 수치도 측정해서 맞춰 둡니다. 199는 이
 줄을 쓴 뒤 3개 커밋이 더 쌓여 낡아 203으로, 203은 다음 커밋에서 낡아 204로, 204는 또
 두 커밋 뒤에 206으로 다시 측정해 고쳤습니다. 206도 그 값을 담은 커밋 자신 때문에 도착
@@ -30,11 +30,19 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 10
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                       1266 passed, 15 skipped
-    pytest (파일 순서 정/역/난수)  각 1266 passed, 15 skipped — 순서 무관
+    pytest                       1300 passed, 15 skipped
+    pytest (파일 순서 정/역/난수)  각 1300 passed, 15 skipped — 순서 무관
                                  (정순 · 역순 · seed 11/707/31337)
     pytest tests/fuzz            11 passed
     python -m sdp.demo_smoke     exit 0, "ready": true
+
+이 커밋이 테스트를 34건 늘렸으므로(새 파일 넷 33건 + `test_honest_metrics.py` 1건) 위
+숫자는 앞서 적혀 있던 1266에서 올라갔습니다. 다섯 순서 측정은 트리를 동결한 상태에서
+돌렸고, 그 뒤에 바뀐 파일은 이 CHANGELOG 하나입니다 — CHANGELOG 내용을 읽는 테스트는
+파일 순서와 무관한 산술 가드
+(`test_every_published_node_breakdown_sums_to_its_own_total`) 하나뿐이므로, 순서 성질을
+다시 재지 않고 전체 정순 실행으로만 확인합니다. 측정하고 쓴 뒤 커밋하는 순서상 이
+숫자가 자기 커밋 때문에 낡는 것은 위 off-by-one과 같은 종류입니다.
 
 skip 15건의 내역을 적어 둡니다 — 숫자만 적으면 읽는 사람이 해석할 수 없습니다:
 `SDP_DATABASE_DSN not set` 11건(Postgres 통합)과 `pyld is a dev-only dependency`
@@ -46,6 +54,176 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 백그라운드 측정 중에 트리를 고친 탓에 seed 11이 4건 실패로 나온 일이 있고, 그것은 결함이
 아니라 동시 편집이었습니다. Atheris(`fuzz/fuzz_query_safety.py`)는 로컬에 wheel이 없어
 실행하지 않았습니다 — 같은 invariant의 Hypothesis 미러가 `tests/fuzz`에서 돕니다.
+
+### Added — alert 전달(routing)과 세 번째 alert 규칙 (feature)
+
+`SDP_ALERT_WEBHOOK_URL`은 이 저장소에서 가장 오래된 "선언만 되어 있고 구현되지 않은"
+항목이었습니다 — 패키지 전체에서 이 값을 읽는 곳이 `_sink_status`의
+`bool(alert_webhook_url)` 하나였고, `production.py`의
+`declared_unimplemented_environment`가 그 사실을 공표하고 있었습니다. 전달을
+구현했습니다. 함께 `request_observability_export` 인수 기준이 "이름만 지목되고 한 번도
+게시된 적 없다"고 적어 둔 **connector-probe-failure 규칙**도 게시·평가합니다.
+
+구현보다 먼저 결정해야 했던 것은 **빈도**입니다. `policy_audit_gap` 카운터는 미들웨어가
+요청마다 올리고, 그 표면은 credential을 요구하지 않습니다. 측정: 익명 probe 요청 25건이
+197.1 ms에 끝납니다. 따라서 "firing이면 POST"를 증가 지점에서 평가하면 **익명 트래픽
+200 ms당 운영자의 webhook으로 POST 25건**입니다. 규칙은 이렇게 정했습니다 —
+
+* **episode당 1회.** routable 규칙이 not-firing→firing으로 **전이**할 때만 보냅니다.
+  이미 firing인 동안의 2..N번째 증가는 세어서 버리고, 그 수(`increments_suppressed`)도
+  함께 게시합니다 — 1건의 alert가 1000건을 대표할 때 운영자가 억제와 거부를 구별할 수
+  있어야 하므로, breaker의 `skipped_exports`와 같은 규율입니다.
+* **re-arm은 타이머가 아니라 규칙 자신의 flag를 따릅니다.** `firing`은
+  `observed_total > 0`이고 `src/` 어디에도 이 카운터를 **감소시키는 경로가 없습니다** —
+  배포된 worker에서 한 번 발화한 규칙은 재시작까지 firing으로 남습니다. 최소 간격 규칙은
+  결코 해소되지 않는 조건에 영원히 재전송하고, "첫 전이만"은 reset 이후의 진짜 episode를
+  침묵시킵니다. 그래서 latch는 규칙이 firing을 그만둘 때 풀리고,
+  `reset_request_observability()`가 그 유일한 경로입니다.
+* **상한이 숫자입니다.** routable은 3건 중 2건이므로 reset 사이 한 worker가 보내는 POST는
+  버스트 크기와 무관하게 최대 2건입니다. `central_workflow_backlog`은 이 서비스가 관측할
+  수 없는 GitHub Actions 상태가 조건이므로 `routable: false`로 공표합니다 — routable로
+  적으면 결코 발화할 수 없는 전달을 약속하게 됩니다.
+* **read path에서는 절대 보내지 않습니다.** `build_observability_manifest`와
+  `prometheus_metrics_text`는 미인증으로 열린 두 라우트가 도달하고, manifest는 규칙의
+  `firing` flag를 이미 게시합니다 — read path 구현이 바로 그 값으로 행동하려 들 지점입니다.
+* **요청이 webhook을 기다리지 않습니다.** 전달은 자기 스레드에서 돌고 평가 지점은
+  `ALERT_HANDSHAKE_BUDGET_SECONDS`(0.25초)만 join합니다. 측정된 선례: 요청이 직접
+  await하는 log sink는 handshake만 받고 응답하지 않는 소켓에 대해 500 ms timeout에서
+  요청당 507.8–514.5 ms를 물렸습니다.
+
+**조건을 정직하게 고르는 것이 이 작업의 절반입니다.** connector-probe 규칙의 뻔한 조건
+("`ready_for_demo`에 도달하지 못한 probe를 센다")은 **배포되는 demo image에서 발화합니다**.
+seed catalogue 20쌍(connector 4 × dataset 5) 측정:
+
+    20쌍  4 ready_for_demo · 1 contract_only · 15 scheme mismatch(ValueError) · 0 기타
+
+`contract_only` 1건(`rest_connector`/`marketing-campaign`)은 고장난 것이 아닙니다 —
+optional한 `SDP_CONNECTOR_SECRET_*` 하나가 설정되지 않아 `credential_vault`가 fail-closed한
+것이고, 그 이름 하나를 설정하면 `ready_for_demo`로 바뀝니다(같은 프로세스에서 측정).
+`demo_smoke`의 ready gate는 `status == "ready_for_demo"`가 아니라
+`adapter_status == "implemented"`를 단언하며 그 상태로 `ready: true`를 보고합니다. 나머지
+15쌍은 caller가 dataset을 받치지 않는 connector를 지목한 것이고, `connector_id`는 caller가
+주는 path segment입니다 — 세면 path segment 오타가 운영자의 pager를 울립니다.
+
+남는 정직한 조건은 probe 자신의 `verdict_basis` 중 **빌드가 소유하는** 실패입니다:
+레지스트리가 선언한 adapter를 이 빌드가 구현하지 않음, 또는 required control이 선언한
+proof endpoint를 이 빌드가 서비스하지 않음. 둘 다 caller 통제도 설정도 아니고, 측정 결과
+20쌍 전부에서 0입니다. 규칙은 제외한 두 결과(설정 gap과 caller 실수)와, seed 20개
+control 행 중 19개가 `proof_route_served`에 기대고 있다는 사실을 `not_covered`로
+함께 공표합니다 — 0이 "모든 control이 통과했다"는 주장이 아니기 때문입니다.
+
+**공개 표면에 추가되는 것과 되지 않는 것.** `alert_routing: implemented` 옆에
+`alert_delivery`가 실측 전이·전달·억제 횟수를 게시하고, 규칙마다 `routable`·
+`alerts_delivered`·`alerts_failed`·`increments_suppressed`가 붙고, `/metrics`가
+`sdp_connector_probe_failures_total`·`sdp_alerts_delivered_total`을 내보냅니다.
+alert **대상 호스트는 redact해서도 게시하지 않습니다** — log sink가 redacted `target`을
+게시하는 이유(설정 오류와 미설정을 구별)는 `invalid_configuration`과
+`alert_webhook_routing`으로 이미 충족되고, 운영자의 paging endpoint 호스트는 이 서비스의
+거버넌스에 대한 사실이 아닙니다. webhook의 userinfo는 urllib가 보기 전에
+`_http_sink_request_parts`가 `Authorization` 헤더로 들어올립니다. 측정: userinfo를 담은
+webhook은 네트워크에 도달조차 하지 않고 `http.client`가 **복호화된 credential을 그대로
+인용하며** 예외를 던집니다.
+
+    https://sdp-alerts:p%40ssw0rd-42@alerts.invalid.example/hook
+      InvalidURL  "nonnumeric port: 'p@ssw0rd-42@alerts.invalid.example'"
+
+그래서 실패는 `str(exc)`가 아니라 **예외 타입과 단계만** 보관합니다 — URL의 어떤 조각도
+남기지 않습니다. alert body도 규칙과 그 보고서만 싣습니다. 이 모듈이 가진 context는
+`list_request_observations()`이고 그 행은 caller가 주장한 `tenant_id`·`actor`·
+`request_id`와 **구체적 경로**를 담습니다 — manifest가 per-request feed를 거부할 때 든
+바로 그 세 가지이고, alert webhook은 인증된 tenant 표면이 아니라 제3자 운영자 endpoint이므로
+붙이면 한 tenant의 governed-access 활동을 off-box로 재수출하는 것이 됩니다.
+
+**`declared_unimplemented_environment`에서 변수를 빼고, `required_environment`로
+옮기지는 않았습니다.** 낡은 "구현되지 않았다"는 선언은 섣부른 "구현되었다"와 같은 결함을
+같은 독자에게 저지릅니다. 그러나 게이트는 `_is_set`으로 **presence만** 보므로, 요구로
+돌리면 scheme이 없어 POST 자체가 불가능한 `'banana'`가 게이트를 통과합니다 — 이 레지스트리가
+거부하려는 결함이 반대 방향에서 도착하는 것입니다. 경보는 선택 사항입니다. 변수는
+`current_evidence`에 소비자·테스트와 함께 나열합니다.
+
+**역검증(mutate → 측정 → 복원), 모두 실패를 확인했습니다**: latch 제거(7건 실패),
+join 무제한(wedged webhook을 요청이 지불, 1건), 조건을 `status`로 keying(demo image에서
+발화, 4건), 원본 URL을 urlopen에 + `str(exc)` 보관(credential이 표면에, 1건), payload에
+observation 행 첨부(tenant/actor off-box, 1건), reset이 latch를 남김(다음 episode 침묵,
+2건), chokepoint 제거(직접 호출자 미집계, 5건), scheme gate 제거(1건), counter를
+dataset id로 keying(3건), backlog를 routable로 선언(1건), alert target 게시(1건).
+
+**역검증이 제 테스트에서 구멍 셋을 찾았고, 셋 다 메웠습니다.**
+
+1. **read-path 테스트 둘이 공허했습니다.** `build_observability_manifest` 맨 위에서 두
+   routable 규칙을 라우팅하는 mutation — 그 테스트들이 이름으로 지목하는 바로 그 결함 —
+   을 넣었는데 **통과했습니다(23 passed)**. 각 테스트는 seam이 살아 있음을 먼저 증명하려고
+   진짜 전이 하나를 일으키고, 그 전이가 규칙을 latch하므로 read-path 호출은 억제 분기에
+   떨어집니다. docstring이 호출 지점 제약의 공로로 돌린 일을 latch가 하고 있었고, latch가
+   있는 한 호출 지점 제약은 **측정되지 않았습니다**. 수리: liveness 전이 뒤에 latch만
+   비웁니다(`_disarm_the_latch`) — 규칙은 firing으로 남고 latch는 비므로 read-path 구현이면
+   첫 manifest build에서 POST합니다. 같은 mutation이 이제 두 테스트를 실패시킵니다.
+2. **scheme gate를 재는 테스트가 gate를 재지 않았습니다.** gate를 삭제해도 `ftp://`
+   케이스는 통과합니다 — 값이 `_http_sink_request_parts`를 지나 host가 해석되고 연결
+   가능한 URL이 만들어진 뒤 **DNS에서** 실패하기 때문입니다(측정: `URLError [Errno -2]`).
+   둘을 가르는 결함은 `file://`입니다. 측정: `file://` URL로의 POST는 실패하지 않고
+   `FileHandler`가 **로컬 경로를 열어 내용을 돌려줍니다** — gate가 없으면 firing episode마다
+   서버의 로컬 파일 읽기가 되고 **성공한 전달로 집계·게시됩니다**. 두 scheme 모두
+   구동하고, `file://` 케이스는 `deliveries_succeeded == 0`을 단언합니다. 그리고 URL은
+   `Path.as_uri()`가 아니라 명시적 `localhost` authority로 만듭니다 — 측정 결과
+   빈 authority 형태(`file:///...`)는 host 요구 조건에 걸려서, `as_uri()`로 쓰면 gate가
+   없는데도 있는 것처럼 보고합니다.
+3. **억제 횟수가 트래픽으로 채워질 수 있었습니다.** `note_connector_probe`에서
+   `observed_increment=True`를 무조건 넘기는 mutation(즉 정상 probe도 억제로 집계)이
+   **전부 통과했습니다(28 passed)**. gap 규칙은 이것을 잡을 수 없습니다 — 그 평가 지점의
+   모든 호출은 실제 증가이기 때문입니다. probe 규칙이 정상 트래픽에도 호출되는 유일한
+   규칙입니다. "1건 alert, 499건 억제"를 읽는 운영자는 governed 실패 500건을 결론해야
+   하는데, 정상 probe가 섞이면 그 숫자는 실패의 이름을 쓴 트래픽 양입니다. 혼합을
+   구동하는 테스트를 넣었습니다 — proof endpoint를 깨면 네 connector 모두 실패하므로,
+   대신 한 connector의 adapter를 제거해 그 하나만 실패하고 나머지 셋은 정상으로 둡니다.
+
+새 RED 테스트 33건(네 파일)과 `test_honest_metrics.py` 1건, 합계 **+34건**. 네 파일의
+prose는 측정된 head(= 이 커밋의 부모)를 가리키도록 과거형으로 다시 썼습니다 — RED 명세로
+쓰인 글을 현재형으로 두면 자신이 지키는 코드의 반대를 주장하는 파일 넷을 싣게 되고, 그것이
+이 저장소가 반복해서 찾아내는 결함 그 자체입니다.
+
+**이전 가드는 설계대로 실패했고, 설계대로 다시 썼습니다.**
+`test_nothing_posts_to_the_alert_webhook`의 docstring이 약속한 대로입니다. 후속 가드 둘:
+값의 **읽기 방식이 하나**임을 AST로 단언합니다(측정: `SDP_ALERT_WEBHOOK_URL="   "`일 때
+strip한 읽기는 falsy고 manifest는 `alert_webhook_configured: false`를 게시하지만, 같은
+변수의 strip하지 않은 읽기는 **truthy**입니다 — 전달 경로가 strip하지 않으면 manifest가
+"미설정"이라 적는 동안 `"   "`를 webhook으로 삼습니다), 그리고 값이 **어디에도 저장되지
+않음**(모든 대입 대상이 평범한 지역 이름; `_ALERT_TARGET["url"] = ...` 한 줄이면 공개
+manifest가 답하는 그 집합에 운영자 credential이 들어갑니다). 두 번째 후속 가드는
+"전달되지 않는다"는 문장을 README·CLAUDE.md·docs·src·tests에서 기계적으로 금지합니다 —
+평가에 대한 같은 종류의 가드가 이미 있었고, 전달 쪽에만 없으면 첫 재발은 잡고 두 번째는
+놓칩니다. 금지 문장은 **현재형만** 대상입니다(과거형 역사 기술은 남겨 둡니다).
+
+**가드가 자기 설명과 대조되는 결함이 이 사이클에서 다섯 번째였습니다.** 새 금지 목록도
+처음에는 자기 파일을 적발했습니다 — 목록의 리터럴 자체가 적발 대상이었습니다. 두 조각의
+연결로 조립해 리터럴이 소스에 존재하지 않게 했고(`tests/test_state_isolation.py`가 같은
+이유로 도달한 방법), 설명하는 산문에서는 금지 문장을 **인용하지 않고 바꿔 씁니다**.
+
+### Fixed — 그래프 스토어 제외의 *결론*이 세 파일에 현재형으로 남아 있었습니다 (medium)
+
+적대적 리뷰가 `c50eae7`을 대상으로 "제외 주장이 다섯 파일에 그대로 있고, 그것을 막으려고
+추가한 재발 가드가 통과한다"고 보고했습니다. HEAD에서 다시 측정했습니다 — **제외 주장
+자체는 모두 사라졌습니다**. `dd0c3f3`이 그 다섯 사이트를 잡는 문구 둘을
+`_RETRACTED_EXCLUSION_CLAIMS`에 추가했고, 지금 가드는 어느 것도 적발하지 않습니다.
+리뷰는 7개 커밋 뒤처진 head를 재고 있었습니다.
+
+남아 있던 것은 **한 단계 아래**이고 가드는 그쪽을 보지 않습니다. 세 docstring이 제외에서
+**파생된 규칙** — 그래프 수치에 의존하는 테스트는 자기 baseline을 잡아야 한다 — 을 현재의
+표준 규칙으로 제시하고 있었고, 그중 하나는 `56259e0`이 삭제한 `tests/conftest.py`의
+문장을 인용하고 있었습니다(측정: `grep -n "own baseline" tests/conftest.py` → 결과 없음).
+주장과 같은 이유로 문제입니다 — 이것이 표준 규칙이라고 읽은 사람은 파일별 그래프 cleanup을
+계속 쓰게 되고, 그것은 fixture 자신의 docstring이 "이 fixture가 막으려고 존재하는 바로 그
+구성"이라고 부르는 것입니다. 세 사이트를 고치고, 파생된 지시문 문구를 가드에 추가했습니다.
+
+파일별 fixture 자체는 **남겨 둡니다**. fixture docstring이 선행 사본들에 대해 이미
+정리한 바 — 중앙 fixture 안에 중첩되고 같은 값으로 복원하므로 틀린 것이 아니라 중복 —
+이고, 셋 중 둘은 여전히 유효한 두 번째 이유를 기록하고 있습니다(공유 스토어에 위반이나
+cycle을 남긴 테스트는 이후의 모든 단언을 파일 순서에 의존하게 만듭니다). 다만 중복이라는
+사실을 측정해서 적어 둡니다 — `test_graph_mirroring.py`의 fixture 본문을 빈 `yield`로
+바꿔도 그 파일 단독 14건과 스토어를 공유하는 두 파일과 함께 43건이 통과합니다.
+
+역검증: 철회한 지시문을 세 사이트가 쓰던 문구로 되돌리면
+`test_no_published_text_still_says_the_graph_store_is_excluded`가 실패합니다.
 
 ### Fixed — alert 라우팅을 막는다는 tripwire가 실제로는 막지 않았습니다 (high)
 

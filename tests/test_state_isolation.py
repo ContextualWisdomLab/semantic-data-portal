@@ -200,6 +200,21 @@ _RETRACTED_EXCLUSION_CLAIMS = (
     # and is how a reader learns why these tests clean up after themselves.
     "does not " + "restore the graph",
     "deliberately does not " + "restore the",
+    # The consequence, which the five wordings above do not reach. An
+    # adversarial review of c50eae7 reported five files still stating the
+    # exclusion; re-measured after dd0c3f3 added the two fragments above, those
+    # wordings are gone and three files had moved one step downstream - still
+    # presenting the instruction a reader derives from the exclusion (that a
+    # test touching graph counts must seed a graph baseline for itself) as the
+    # current rule, one of them citing a sentence of tests/conftest.py that
+    # 56259e0 deleted. A guard that catches the claim and not the instruction
+    # derived from it leaves readers doing the thing the claim was wrong about.
+    # The banned phrasings are deliberately not written out in this comment:
+    # five guards this cycle were checked against a list that contained their
+    # own explanation, so each searched for a string it had just introduced.
+    "takes its " + "own baseline",
+    "establish its " + "own baseline",
+    "must take its " + "own baseline",
 )
 
 

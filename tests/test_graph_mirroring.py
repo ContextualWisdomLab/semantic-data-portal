@@ -61,14 +61,22 @@ def _remirror_the_seeded_datasets(_restore_catalog):
     """Establish this file's own graph baseline before each test.
 
     ``tests/conftest.py`` restores ``catalog._DATA`` and, as of the round that
-    measured what the store was accumulating, the graph store too. When this was
-    written it did not - on the stated grounds that there is no snapshot API, and that adding one to the
-    product for the test suite would be the wrong trade. Its docstring says a
-    test that depends on graph-store contents must establish its own baseline,
-    and these tests do: once a test removes edges, the catalog is restored while
-    the graph keeps the removal, so the next test would find nothing left to
-    remove and its precondition would fail. Re-mirroring from the restored
-    catalog is idempotent, which is the property that makes this cheap.
+    measured what the store was accumulating, the graph store too. When this
+    fixture was written it did not - on the stated grounds that there is no
+    snapshot API and that adding one to the product for the test suite would be
+    the wrong trade - so this file seeded its own baseline because nothing else
+    would: once a test removed edges, the catalog was restored while the graph
+    kept the removal, so the next test found nothing left to remove and its
+    precondition failed.
+
+    The fixture is kept rather than deleted, which is what the central
+    fixture's docstring settled for every per-file copy that predates it: they
+    nest inside it and restore to the same values. It is **redundant now** -
+    measured, with this body replaced by a bare ``yield``, this file passes
+    alone (14) and beside the two files that share the store (43) - and a reader
+    arriving here should not take it as a rule that a new test needs its own
+    graph baseline. Re-mirroring from the restored catalog is idempotent, which
+    is the property that made it cheap enough to leave in place.
     """
     for dataset in catalog.list_datasets():
         seed_dataset(dataset)

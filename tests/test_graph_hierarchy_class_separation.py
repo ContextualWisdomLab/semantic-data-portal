@@ -82,9 +82,9 @@ def _private_seeded_store() -> Iterator[InMemoryGraphStore]:
     """A freshly seeded store, swapped in for the body and restored after.
 
     ``tests/conftest.py``'s autouse fixture restores the graph-store singleton
-    now; it did not when this fixture was written, and this repository's
-    standing rule is therefore that a test depending on graph counts takes its
-    own baseline. Two reasons here, and the second is the stronger one:
+    now; it did not when this fixture was written, which is why it exists. That
+    is history, not a standing rule - a new test here needs no graph baseline of
+    its own. Two reasons keep this one, and the second is the stronger one:
 
     * the counts below are about the **shipped seed**, not about whatever edges
       an earlier test in this file legitimately added;
