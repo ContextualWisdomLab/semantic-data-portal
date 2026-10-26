@@ -2,15 +2,15 @@
 
 이 문서는 `claude/semantic-portal-pr-merge-e5a48k` 브랜치(PR
 [#102](https://github.com/ContextualWisdomLab/semantic-data-portal/pull/102))가
-베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **231개** 커밋 중 123개는
-gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 108개입니다. 이 숫자는 **이
-줄을 담은 커밋을 포함한** 값입니다 — 측정 시점의 230에 이 커밋을 더한 것. 측정 명령:
+베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **233개** 커밋 중 124개는
+gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 109개입니다. 이 숫자는 **이
+줄을 담은 커밋을 포함한** 값입니다 — 측정 시점의 232에 이 커밋을 더한 것. 측정 명령:
 
     git rev-list --count origin/docs/product-technical-gap-baseline..HEAD
     git log --format=%H origin/docs/product-technical-gap-baseline..HEAD \
       --name-only -- docs/product-technical-gap-baseline.md | grep -c '^[0-9a-f]\{40\}$'
 
-앞서 적혀 있던 164/112, 186/113, 199/122/77, 203/122/81, 211/122/89, 212/122/90, 213/122/91, 214/122/92, 215/122/93, 216/122/94, 218/122/96, 219/122/97, 220/122/98, 221/122/99, 222/122/100, 223/122/101, 224/122/102, 225/122/103, 226/122/104, 228/122/106, 230/123/107은 각각 그 시점의 값이고 이후
+앞서 적혀 있던 164/112, 186/113, 199/122/77, 203/122/81, 211/122/89, 212/122/90, 213/122/91, 214/122/92, 215/122/93, 216/122/94, 218/122/96, 219/122/97, 220/122/98, 221/122/99, 222/122/100, 223/122/101, 224/122/102, 225/122/103, 226/122/104, 228/122/106, 230/123/107, 231/123/108은 각각 그 시점의 값이고 이후
 커밋을 반영하지 않은 숫자였습니다 — 자기 문서의 수치도 측정해서 맞춰 둡니다. 199는 이
 줄을 쓴 뒤 3개 커밋이 더 쌓여 낡아 203으로, 203은 다음 커밋에서 낡아 204로, 204는 또
 두 커밋 뒤에 206으로 다시 측정해 고쳤습니다. 206도 그 값을 담은 커밋 자신 때문에 도착
@@ -30,15 +30,16 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 10
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                       1312 passed, 15 skipped
-    pytest (파일 순서 정/역/난수)  각 1312 passed, 15 skipped — 순서 무관
+    pytest                       1320 passed, 15 skipped
+    pytest (파일 순서 정/역/난수)  각 1320 passed, 15 skipped — 순서 무관
                                  (정순 · 역순 · seed 11/707/31337)
     pytest tests/fuzz            11 passed
     python -m sdp.demo_smoke     exit 0, "ready": true
 
 alert 전달 커밋이 테스트를 34건(새 파일 넷 33건 + `test_honest_metrics.py` 1건),
-pgvector 핀 커밋이 10건, event-loop 수리 커밋이 2건 늘렸으므로 위 숫자는 앞서 적혀 있던
-1266 → 1300 → 1310 → 1312로 올라갔습니다. 다섯 순서 측정은 트리를 동결한 상태에서
+pgvector 핀 커밋이 10건, event-loop 수리 커밋이 2건, 환경 변수 문서·gate 커밋이 8건
+(새 파일 둘) 늘렸으므로 위 숫자는 앞서 적혀 있던 1266 → 1300 → 1310 → 1312 → 1320으로
+올라갔습니다. 다섯 순서 측정은 트리를 동결한 상태에서
 돌렸고, 그 뒤에 바뀐 파일은 이 CHANGELOG 하나입니다 — CHANGELOG 내용을 읽는 테스트는
 파일 순서와 무관한 산술 가드
 (`test_every_published_node_breakdown_sums_to_its_own_total`) 하나뿐이므로, 순서 성질을
@@ -55,6 +56,97 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 백그라운드 측정 중에 트리를 고친 탓에 seed 11이 4건 실패로 나온 일이 있고, 그것은 결함이
 아니라 동시 편집이었습니다. Atheris(`fuzz/fuzz_query_safety.py`)는 로컬에 wheel이 없어
 실행하지 않았습니다 — 같은 invariant의 Hypothesis 미러가 `tests/fuzz`에서 돕니다.
+
+### Fixed — paid-pilot gate가 제품을 **깨뜨리는** 값으로 통과했고, 필수 변수 둘은 어느 문서에도 없었습니다 (high)
+
+alert 전달 라운드를 마치고 "이번 변경이 새로 만든 환경 변수는 문서에 들어갔는가"를 확인하다
+나왔습니다. 처음 찾은 것은 `SDP_ALERT_TIMEOUT_MS`가 README에 없다는 것 하나였는데, 그 부류 전체를
+세어 보니 훨씬 컸습니다.
+
+```
+src/가 읽는 SDP_ 이름 23개 중 9개가 README나 CLAUDE.md 중 한쪽 이상에서 누락
+  SDP_CONNECTOR_TIMEOUT_MS         required_environment, 양쪽 다 없음
+  SDP_CONNECTOR_VAULT_PROVIDER     required_environment, 양쪽 다 없음
+  SDP_ALERT_TIMEOUT_MS             CLAUDE.md에만
+  SDP_DATABASE_DSN                 README.md에만
+  SDP_CONFIG_NAMESPACE             양쪽 다 없음
+  SDP_ENV                          양쪽 다 없음
+  SDP_OIDC_JWKS_TIMEOUT_SECONDS    양쪽 다 없음
+  SDP_OIDC_JWKS_TTL_SECONDS        양쪽 다 없음
+  SDP_EVIDENCE_RETENTION_DAYS      declared-unimplemented, 양쪽 다 없음
+```
+
+**앞의 두 건은 문서 문제가 아닙니다.** `production_integration_registry`가 둘을
+`connector_credential_vault`의 `required_environment`에 넣어 두었으므로
+`GET /enterprise/production-readiness`가 `missing_environment`로 **이름을 공표하면서**
+`paid_pilot_ready`를 막고 있었는데, 그 변수가 무엇이고 어떤 값을 넣어야 하는지는 어느 문서에도
+없었습니다. 조치할 수 없는 blocker를 공표하는 것은 blocker가 없는 것보다 나쁩니다.
+
+#### 그리고 그 둘은 gate를 통과하는 값으로 제품을 깨뜨릴 수 있었습니다
+
+`_is_set`은 비어 있지 않은 문자열이 있는지만 봅니다. 대부분의 변수에는 그것이 정직한 한계입니다 —
+이 모듈은 DSN이나 issuer가 실재하는지 알아보려고 데이터베이스나 IdP에 닿을 수 없습니다. 그러나 이
+둘은 한계가 아니었고, 운영자가 **자연스럽게 고를 값**으로 그 구멍에 닿습니다. 측정:
+
+```
+SDP_CONNECTOR_VAULT_PROVIDER='vault'       gate 통과, probe 라우트 400
+  GET /enterprise/connectors/rest_connector/probe?dataset_id=marketing-campaign&user=admin
+  -> {"detail": "unsupported connector vault provider: vault"}
+SDP_CONNECTOR_VAULT_PROVIDER='hashicorp'   gate 통과, 같은 라우트 400
+SDP_CONNECTOR_TIMEOUT_MS='2s'              gate 통과, 같은 라우트 400
+  -> {"detail": "invalid literal for int() with base 10: '2s'"}
+```
+
+`vault`·`hashicorp`는 운영자가 실제로 쓰는 제품 이름이고 `2s`는 사람이 timeout을 적는 방식입니다.
+즉 readiness 문서가 `paid_pilot_ready`로 가는 진척을 보고하는 동안 connector probe — buyer demo의
+핵심 surface — 가 네 connector 전부에 400을 돌려주고 있었습니다. 나머지 required 변수 전수를 같은
+방식으로 찔러 봤고(그럴듯하지만 틀린 값 + 가장 손상이 드러날 라우트), 이 둘만 해당했습니다.
+
+**이것은 이 registry가 애초에 막으려던 결함보다 나쁩니다.** `SDP_EVIDENCE_RETENTION_DAYS`는
+*아무것도 하지 않는* 값으로 gate를 통과시켰고, 이쪽은 gate가 측정한다고 주장하는 능력을
+*깨뜨리는* 값으로 통과시켰습니다. 모듈 자신의 문장이 "A gate may only measure capabilities that
+exist"인데, **능력을 비활성화하는 값으로 만족되는 gate는 아무것도 측정하지 않습니다.**
+
+#### 수리
+
+registry가 값 도메인을 `environment_value_rules`로 선언합니다 — 의도적으로 **닫힌** 형태입니다
+(열거된 값 집합, 또는 하한이 있는 정수. regex도 callable도 타입 변환도 없습니다). manifest는
+설정됐지만 거절된 값을 `rejected_environment`에 **이유와 함께** 따로 공표합니다. `missing`과
+합치지 않은 이유: 변수를 방금 설정한 운영자에게 "missing"이라고 말하면 이름의 오타를 찾으러
+가는데, 필요한 것은 값의 허용 도메인입니다. 설정되지 않은 변수는 `missing`에만, 거절된 값은
+`rejected`에만 나옵니다 — 한 문제에 한 항목입니다.
+
+**과잉 선언 하나를 역방향 검사가 잡았습니다.** `minimum=1`을 선언했는데 `int()`는 `0`과 `-5`를
+받아들였습니다. gate가 코드에 없는 요구를 발명하는 것은 gate가 느슨한 것과 같은 종류의 결함이므로,
+수리를 gate가 아니라 `credentials.connector_secret_status`로 옮겼습니다 — `timeout_ms`는 rest
+connector probe의 control evidence로 **공표되는 값**이고 `0`이나 `-5`는 timeout으로서 거짓 공표된
+숫자이므로, 읽는 지점에서 검증하는 것이 맞습니다. 그 다음에 registry가 그 도메인을 **거울처럼**
+선언합니다.
+
+**가드 8건, 두 파일.** `tests/test_environment_documentation.py`는 변수 집합을 `src/`에서
+**파생**해(문자열 리터럴 기준 — 이 저장소는 `os.getenv`·`os.environ.get`·`os.environ[...]`·
+설정 로더 전달 네 가지 형태로 읽으므로, `os.getenv`만 보는 검사는 23개 중 18개만 찾습니다) README와
+CLAUDE.md 양쪽에 있는지, 그리고 역방향으로 코드가 읽지 않는 변수를 문서가 약속하지는 않는지
+확인합니다(후자의 유일한 예외가 `declared_unimplemented_environment`입니다).
+`tests/test_environment_value_domains.py`는 선언과 코드가 어긋나지 않도록 **강제하는 함수를 직접
+실행해** 양방향으로 비교합니다 — 두 리스트를 서로 대조하는 것은 이 저장소가 반복해서 찾아낸
+결함의 모양이기 때문입니다.
+
+**기존 테스트 하나가 같은 결함을 품고 있었습니다.**
+`test_production_readiness_measurement.py`의 `_fully_configured_environment`는 모든 required
+변수를 리터럴 `"configured"`로 채우면서 docstring에 "as an operator would"라고 적고 있었습니다.
+운영자는 그렇게 설정하지 않고, 측정 결과 그 값들은 probe를 400으로 만듭니다 — **gate가 의미 있음을
+증명하려고 존재하는 테스트 안에서 바로 그 결함이 재현되고 있었습니다.** 값은 이제 선언된 도메인에서
+파생합니다(나중에 추가되는 규칙도 자동으로 만족시킵니다).
+
+README에는 **`## 환경 변수 전수 목록` 표**를 새로 넣었습니다. 전에는 환경 변수가 README 본문
+여기저기 산문으로만 있어서 **어디도 전수 목록이 아니었고**, 그것이 9건이 잊힌 구조적 이유입니다.
+표에는 변수 23개 전부와 측정한 기본값, paid-pilot gate 여부, 그리고 값 도메인이 있는 두 건의
+허용 집합이 있습니다.
+
+역검증 4건, 모두 실패를 확인했습니다: README에서 변수 하나 제거(1건 실패), 아무것도 읽지 않는
+변수를 문서에 추가(1건), gate를 presence-only로 되돌림(1건), gate를 코드보다 엄격하게 선언(3건 —
+양방향 합의 검사가 과잉 선언 쪽도 잡습니다).
 
 ### Fixed — 제가 바로 전에 넣은 alert 전달이 event loop를 막았습니다 (high)
 

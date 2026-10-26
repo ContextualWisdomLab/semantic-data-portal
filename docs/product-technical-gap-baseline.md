@@ -2895,6 +2895,71 @@ GitHub 계정에 귀속되지 않아 `require_extra_approval_for_unattributed_ch
 issue.`), 새 head에서 required check가 green이 될 수 있는 경로가 없습니다. 이 세션이 할 수 없는 일로
 남은 것: 독립 승인, billing 해제, artifact storage 회수, isolated runner 용량 등록.
 
+## paid-pilot gate가 제품을 깨뜨리는 값으로 통과했습니다 — 필수 변수 둘, 문서 누락 9건 (2026-10-26)
+
+alert 전달 라운드 뒤 "이번 변경이 만든 환경 변수가 문서에 들어갔는가"를 확인하다 발견했습니다.
+`SDP_ALERT_TIMEOUT_MS`가 README에 없다는 한 건으로 시작해 그 부류 전체를 세었습니다 — `src/`가
+읽는 `SDP_` 이름 23개 중 **9건**이 README나 CLAUDE.md 중 한쪽 이상에서 누락이었고, 그중 둘이
+`required_environment`였습니다.
+
+### 두 건은 문서 문제가 아니었습니다
+
+`GET /enterprise/production-readiness`가 `SDP_CONNECTOR_VAULT_PROVIDER`·
+`SDP_CONNECTOR_TIMEOUT_MS`를 `missing_environment`로 **이름을 공표하면서** `paid_pilot_ready`를
+막고 있었는데, 그 변수가 무엇이고 어떤 값을 넣어야 하는지 어느 문서에도 없었습니다. 조치할 수
+없는 blocker를 공표하는 것은 blocker가 없는 것보다 나쁩니다.
+
+그리고 `_is_set`은 비어 있지 않은 문자열만 봅니다. 운영자가 자연스럽게 고를 값으로 그 구멍에
+닿습니다 — 측정:
+
+```
+SDP_CONNECTOR_VAULT_PROVIDER='vault'       gate 통과, probe 라우트 400
+SDP_CONNECTOR_VAULT_PROVIDER='hashicorp'   gate 통과, probe 라우트 400
+SDP_CONNECTOR_TIMEOUT_MS='2s'              gate 통과, probe 라우트 400
+```
+
+`vault`·`hashicorp`는 운영자가 쓰는 제품 이름이고 `2s`는 사람이 timeout을 적는 방식입니다. 즉
+readiness가 진척을 보고하는 동안 connector probe가 네 connector 전부에 400을 돌려주고 있었습니다.
+required 변수 전수를 같은 방식으로 찔러 본 결과 이 둘만 해당했습니다 — 나머지는 presence 검사가
+정직한 한계인 것들(DSN·issuer 등 이 모듈이 닿을 수 없는 대상)입니다.
+
+**이것은 `SDP_EVIDENCE_RETENTION_DAYS` 결함보다 나쁩니다.** 그쪽은 아무것도 하지 않는 값으로
+gate를 통과시켰고, 이쪽은 gate가 측정한다고 주장하는 능력을 **깨뜨리는** 값으로 통과시켰습니다.
+
+### 수리
+
+registry가 값 도메인을 `environment_value_rules`로 선언합니다(의도적으로 닫힌 형태 — 열거된 값
+집합, 또는 하한 있는 정수. regex도 callable도 없습니다). manifest는 설정됐지만 거절된 값을
+`rejected_environment`에 이유와 함께 따로 공표합니다 — `missing`과 합치면 변수를 방금 설정한
+운영자가 이름의 오타를 찾으러 가기 때문입니다.
+
+**역방향 검사가 과잉 선언 하나를 잡았습니다.** `minimum=1`을 선언했는데 `int()`는 `0`·`-5`를
+받아들였습니다. gate가 코드에 없는 요구를 발명하는 것은 gate가 느슨한 것과 같은 결함이므로,
+수리를 gate가 아니라 `credentials.connector_secret_status`로 옮겼습니다 — `timeout_ms`는 probe의
+control evidence로 **공표되는 값**이고 `0`은 timeout으로서 거짓 공표된 숫자이므로 읽는 지점에서
+검증하는 것이 맞습니다. registry는 그 도메인을 거울처럼 선언합니다.
+
+### 구조적 원인과 가드
+
+README에는 환경 변수가 본문 여기저기 산문으로만 있어서 **어디도 전수 목록이 아니었습니다**. 그것이
+9건이 잊힌 이유이므로 `## 환경 변수 전수 목록` 표를 넣었습니다 — 23개 전부, 측정한 기본값,
+paid-pilot gate 여부, 값 도메인.
+
+가드 8건. `tests/test_environment_documentation.py`는 변수 집합을 `src/`에서 **파생**해 양쪽
+문서에 있는지와 역방향(코드가 읽지 않는 변수를 문서가 약속하지 않는지)을 확인합니다. 문자열
+리터럴 기준인 이유: 이 저장소는 `os.getenv`·`os.environ.get`·`os.environ[...]`·설정 로더 전달 네
+형태로 읽으므로 `os.getenv`만 보는 검사는 23개 중 18개만 찾습니다.
+`tests/test_environment_value_domains.py`는 **강제하는 함수를 직접 실행해** 선언과 양방향으로
+비교합니다 — 두 리스트를 서로 대조하는 것은 이 저장소가 반복해 찾아낸 결함의 모양입니다.
+
+**기존 테스트가 같은 결함을 품고 있었습니다.** `_fully_configured_environment`가 모든 required
+변수를 리터럴 `"configured"`로 채우면서 docstring에 "as an operator would"라고 적고 있었고, 측정
+결과 그 값들은 probe를 400으로 만듭니다 — gate가 의미 있음을 증명하려고 존재하는 테스트 안에서
+바로 그 결함이 재현되고 있었습니다. 값은 이제 선언된 도메인에서 파생합니다.
+
+역검증 4건, 모두 실패 확인: README에서 변수 제거, 읽지 않는 변수 문서화, gate를 presence-only로
+되돌림, gate를 코드보다 엄격하게 선언.
+
 ## 운영 메모
 
 - Database objects: 두 단어 이상 `snake_case`, 3NF. Catalog plane 테이블은 #73의 `migrations/0002_ontology_catalog_plane.sql`.
