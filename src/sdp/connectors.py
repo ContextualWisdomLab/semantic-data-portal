@@ -477,7 +477,7 @@ def connector_probe(connector_id: str, dataset_id: str) -> dict[str, Any]:
     }
 
     ready_for_demo = adapter_status == "implemented" and satisfied_controls == len(connector.required_controls)
-    return {
+    probe = {
         "connector_id": connector.id,
         "dataset_id": dataset.id,
         "source_type": connector.source_type,
@@ -503,3 +503,71 @@ def connector_probe(connector_id: str, dataset_id: str) -> dict[str, Any]:
         ),
         "proof": connector.proof,
     }
+    # The one chokepoint, placed after the result is built and before it is
+    # returned. ``demo_smoke`` calls this function directly four times and
+    # twenty-odd tests call it directly too, so a counter hooked at the route
+    # would miss every one of them; a counter in the middleware would miss those
+    # and also count nothing for a probe that raised. Being here, after the two
+    # caller-caused refusals above have already raised, is also what excludes
+    # them for free: an unsupported connector id, an unknown dataset id and the
+    # 15 of 20 seed pairs whose scheme does not back the dataset never reach it.
+    #
+    # Imported inside the function on purpose. ``observability`` imports
+    # ``sdp.api`` at call time for the latency-budget report and ``sdp.api``
+    # imports this module, so a module-level import here is a cycle - the same
+    # pattern the served-route check above already uses.
+    from .observability import note_connector_probe
+
+    note_connector_probe(
+        connector.id,
+        connector_probe_failure_reason(probe),
+        probe["control_verification_counts"],
+    )
+    return probe
+
+
+def connector_probe_failure_reason(probe: dict[str, Any]) -> str:
+    """The ``connector_probe_failure`` alert condition, as a function of one probe.
+
+    Returns the reason an operator should be paged, or ``""`` when this outcome
+    is not one. The two reasons are the halves of the probe's own
+    ``verdict_basis`` that the **build** owns, and neither is caller-controlled
+    or configuration:
+
+    * the connector registry declares an adapter this build does not implement
+      (``adapter_status`` is not ``implemented``);
+    * a required control's declared proof endpoint is not served by this build,
+      which is what leaves its row at ``VERIFICATION_DECLARED``.
+
+    Deliberately **not** keyed on ``probe["status"]`` or on the presence of a
+    ``gap_reason``. Measured over the seed catalogue, the one ``contract_only``
+    pair - ``rest_connector``/``marketing-campaign`` - carries a ``gap_reason``
+    on its ``credential_vault`` row because the optional
+    ``SDP_CONNECTOR_SECRET_REST_CONNECTOR_MARKETING_CAMPAIGN_TOKEN`` is unset,
+    while that row's ``verification`` stays ``proof_route_served``. Setting the
+    one variable flips the pair to ``ready_for_demo``, and ``demo_smoke`` asserts
+    ``adapter_status == "implemented"`` rather than ``status == "ready_for_demo"``
+    and reports ``ready: True`` with the pair exactly as shipped. So a condition
+    reading either of those fields fires on the demo image, which is the
+    standing complaint this repository treats as a defect in its own words.
+
+    Measured, both reasons are zero across all 20 seed pairs: ``adapter_status``
+    is ``implemented`` for all four connectors and ``declared_only`` is 0 in
+    every pair's ``control_verification_counts``.
+    """
+    if probe["adapter_status"] != "implemented":
+        return (
+            "the connector registry declares "
+            f"{probe['connector_id']} but this build implements no adapter for it"
+        )
+    unserved = [
+        row["control"]
+        for row in probe["control_evidence"]
+        if row["verification"] == VERIFICATION_DECLARED
+    ]
+    if unserved:
+        return (
+            "this build does not serve the declared proof endpoint of: "
+            + ", ".join(sorted(unserved))
+        )
+    return ""

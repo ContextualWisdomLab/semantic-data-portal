@@ -382,17 +382,26 @@ seed의 `security` subject는 `platform-admin`도 들고 있어 여전히 previe
     `tests/test_production_readiness_measurement.py::test_every_required_variable_has_a_consumer`.
   - `local_evidence_retention` control은 이름이 보존 정책을 주장하면서 실제로는
     **내구성**(재시작 생존)만 제공했습니다. label과 설명을 사실에 맞췄습니다.
-  - 같은 이유로 `SDP_ALERT_WEBHOOK_URL`도 `required_environment`에서
-    `declared_unimplemented_environment`로 옮겼습니다. 이 변수를 읽는 코드는
+  - 같은 이유로 `SDP_ALERT_WEBHOOK_URL`도 한동안 `required_environment`에서
+    `declared_unimplemented_environment`로 옮겨져 있었습니다. 당시 이 변수를 읽는 코드는
     `observability._sink_status`가 **설정 여부**(`alert_webhook_configured`)를 보고하는
-    한 곳뿐이고, 이 URL로 POST하는 코드는 없습니다. `GET /enterprise/observability`가
-    게시하는 alert 조건 중 `policy_audit_gap`은 **이 서비스가 직접 계산합니다**
-    (`evaluated: true`, `evaluation: measured_in_process`) — 평가는 들어왔고
-    전달만 없습니다. 이 사례는
+    한 곳뿐이었고, 전달 경로가 없었습니다. 이 사례는
     `test_every_required_variable_has_a_consumer`의 한계를 드러냅니다 — 소비자가
-    **존재**했고(자기 자신의 존재 여부만 읽는 소비자) 검사를 통과했습니다. 능력에 대한
-    증빙은 이름 검색이 아니라
-    `tests/test_honest_metrics.py::test_nothing_posts_to_the_alert_webhook`이 담당합니다.
+    **존재**했고(자기 자신의 존재 여부만 읽는 소비자) 검사를 통과했습니다.
+  - **전달(routing)이 구현된 뒤 선언은 철회되었습니다.** `declared_unimplemented_environment`는
+    비었고, `SDP_ALERT_WEBHOOK_URL`은 `required_environment`로 가지 **않았습니다** —
+    경보는 선택 사항이고, `_is_set`은 presence만 보므로 scheme이 없어 POST 자체가
+    불가능한 `'banana'` 같은 값이 게이트를 통과하게 됩니다. 그것이 이 레지스트리가
+    거부하려는 바로 그 결함입니다. 변수는 `current_evidence`에 소비자·테스트와 함께
+    나열됩니다. 능력에 대한 증빙은 이름 검색이 아니라 전달 자체를 측정하는
+    `tests/test_alert_routing_firing_discipline.py`,
+    `tests/test_alert_routing_request_path.py`,
+    `tests/test_alert_routing_disclosure.py`가 담당합니다.
+  - 공개되는 세 규칙 중 **두 개가 routable**입니다 — `policy_audit_gap`과
+    신설된 `connector_probe_failure`. `central_workflow_backlog`은 이 서비스가 관측할 수
+    없는 GitHub Actions 상태가 조건이므로 게시만 되고 전달되지 않으며, 규칙 항목의
+    `routable: false`가 그 사실을 함께 공개합니다. 따라서 reset 사이 한 worker가 보내는
+    POST 총량은 routable 규칙 수(2)로 **상한**이 정해집니다.
     게시되는 alert 규칙은 삭제하지 않고 규칙별 `evaluated` 플래그로 표시하며,
     `alert_webhook_routing: declared_unimplemented`는 그대로입니다. 2건 중
     `policy_audit_gap`은 이제 **평가됩니다** — `evidence_ids`가 caller 헤더에서

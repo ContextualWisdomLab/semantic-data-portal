@@ -41,7 +41,7 @@
 - `GET /enterprise/kpis`: 20억 판매 가능성 판단용 primary KPI, guardrail KPI, 목표, 측정 원천
 - `GET /enterprise/controls`: `sdp_enterprise` feature gate 아래 retention, SSO/OIDC, RBAC, deployment, 중앙 workflow diligence 상태
 - `GET /enterprise/rbac-matrix`: role/action/tenant-scope permission matrix
-- `GET /enterprise/observability`: health, metrics, evidence count, request observation, bodyless structured log sink, alert condition 운영 증빙
+- `GET /enterprise/observability`: health, metrics, evidence count, request observation, bodyless structured log sink, alert condition·전달 실측(`alert_delivery`) 운영 증빙
 - `GET /enterprise/production-readiness`: demo-ready와 paid-pilot-ready를 분리해 Postgres evidence store, OIDC JWKS verification, connector credential vault, request observability export의 환경변수·acceptance criteria·blocker를 노출. Postgres evidence store는 `SDP_DATABASE_URL`/`SDP_DATABASE_SSLMODE`, OIDC JWKS verification은 `SDP_OIDC_ISSUER`/`SDP_OIDC_AUDIENCE`/`SDP_OIDC_JWKS_URL`, request observability export는 `SDP_LOG_SINK_URL`/`SDP_REQUEST_ID_HEADER`, connector credential vault는 `SDP_CONNECTOR_SECRET_REF_PREFIX`/`SDP_CONNECTOR_VAULT_PROVIDER` 기반 구현 증빙으로 paid-pilot blocker에서 제거되었다.
 - `GET /enterprise/evidence-pack`: buyer diligence용 metadata validation, ontology mapping coverage, policy/audit evidence, proof endpoint 요약
 - `GET /enterprise/shacl-validation`: buyer priority dataset 전체의 SHACL 호환 validation pass rate와 shape/report 요약
@@ -96,7 +96,7 @@ PYTHONPATH=src SDP_SQLITE_PATH=.local/sdp-evidence.sqlite3 uvicorn sdp.api:app -
 8. 완료: buyer demo seed를 도메인별 fixture로 분리하고, `GET /enterprise/demo-plan` 및 connector probe와 연결한다.
 9. 완료: retention policy, SSO/RBAC, deployment template를 `sdp_enterprise` feature gate manifest로 묶고 RBAC matrix와 Dockerfile/Compose deployment template를 추가한다.
 10. 완료: buyer evidence pack endpoint로 metadata, ontology, policy, audit, controls 증빙을 한 번에 요약한다.
-11. 완료: health, metrics, evidence count, alert condition을 `/enterprise/observability`와 `/metrics`로 노출한다. 게시되는 alert 규칙 2건 중
+11. 완료: health, metrics, evidence count, alert condition을 `/enterprise/observability`와 `/metrics`로 노출한다. 게시되는 alert 규칙 3건 중
     `policy_audit_gap`은 **평가된다** — policy-gated 라우트가 2xx인데 policy decision도
     audit event도 기록하지 않은 횟수를 미들웨어가 세고, manifest가 `observed_total`과
     `firing`을, `/metrics`가 `sdp_governed_requests_without_evidence_total`을 공표한다.
@@ -104,9 +104,23 @@ PYTHONPATH=src SDP_SQLITE_PATH=.local/sdp-evidence.sqlite3 uvicorn sdp.api:app -
     않고, decision은 있고 audit 행만 없는 경우도 세지 않는다)는 사실은 규칙 자체가
     `not_covered`로 공표한다. governed 경계는 `(method, path)` 쌍이다 — path만으로
     파생했을 때 열린 `GET /ontology/concepts`가 `POST`의 403을 물려받아 미인증 요청
-    한 번에 critical 규칙이 발화했다(측정). 전달(routing)은 여전히
-    미구현이고 `central_workflow_backlog`은 이 서비스가 볼 수 없는 GitHub Actions
-    상태라 선언 상태로 남으며 그 이유를 함께 공표한다.
+    한 번에 critical 규칙이 발화했다(측정).
+    두 번째 평가 규칙 `connector_probe_failure`도 같은 원칙으로 좁다 — probe의
+    `verdict_basis` 중 **빌드가 소유하는** 실패(선언된 adapter 미구현, 또는 선언한
+    proof endpoint를 이 빌드가 서비스하지 않음)만 세고, 정상 배포에서 0이다.
+    seed catalogue 20쌍 측정 결과 "ready_for_demo가 아닌 probe"를 세는 조건은 배포되는
+    demo image에서 발화하고(그 1건은 optional secret reference 대기 상태이며
+    `demo_smoke`의 ready gate가 그 상태를 단언하고 통과한다), scheme이 맞지 않는 15쌍은
+    caller가 잘못된 쌍을 지목한 것이므로 path segment 오타가 운영자의 pager를 울리게
+    된다 — 두 제외 모두 규칙의 `not_covered`가 공표한다.
+    전달(routing)은 **구현되었다**: routable 규칙이 not-firing→firing으로 전이할 때
+    평가 지점에서 episode당 1회 POST하며, 미인증으로 열려 있는 두 게시 라우트
+    (`/enterprise/observability`, `/metrics`)의 read path에서는 절대 전송하지 않는다.
+    routable은 3건 중 2건이므로 reset 사이 한 worker의 POST 총량은 2로 상한이 정해지고,
+    이미 firing인 동안 억제된 증가 횟수도 함께 게시한다. 재시도·큐·내구성 있는 실패
+    기록은 없고 실패는 예외 타입과 단계만 보관한다(URL은 남기지 않는다).
+    `central_workflow_backlog`은 이 서비스가 볼 수 없는 GitHub Actions
+    상태라 선언 상태로 남고 `routable: false`이며 그 이유를 함께 공표한다.
 12. 완료: `/catalog/datasets/{dataset_id}/semantic-validation`과 `/enterprise/shacl-validation`으로 SHACL 호환 validation report와 95% pass rate 증빙을 노출한다.
 13. 완료: `/enterprise/steward-review`로 validation failure와 ontology patch proposal 검토 대기열, 2영업일 SLA, buyer handoff readiness를 노출한다.
 14. 완료: `/enterprise/auth/oidc-preview` claim-shape 검증과 직접 role-claim 무시 동작을 추가한다. `/enterprise/auth/oidc-verify`는 issuer/audience/expiry/JWKS 서명 검증 후 같은 group allow-list mapping을 적용한다.

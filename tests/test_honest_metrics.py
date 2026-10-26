@@ -327,15 +327,30 @@ def test_an_unconnectable_http_sink_is_not_reported_as_configured(
 # --------------------------------------------------------------------------- #
 
 
-def test_the_alert_webhook_is_declared_unimplemented_rather_than_required() -> None:
-    """``SDP_ALERT_WEBHOOK_URL`` gated paid-pilot readiness and does nothing.
+def test_the_alert_webhook_is_in_neither_readiness_list() -> None:
+    """Delivery exists, so the declaration is retired - and it is still not a gate.
 
-    Measured: its only read in the whole package is
-    ``observability._sink_status`` taking ``bool()`` of it for the
-    ``alert_webhook_configured`` field. Nothing posts to the URL, and nothing
-    evaluates the alert conditions the manifest publishes next to it - so the
-    gate could be cleared by setting a variable that routes nothing, exactly like
+    For as long as nothing delivered, ``SDP_ALERT_WEBHOOK_URL`` sat in
+    ``declared_unimplemented_environment``: its only read in the whole package
+    was ``observability._sink_status`` taking ``bool()`` of it for the
+    ``alert_webhook_configured`` field, so a gate it could clear would have
+    measured a capability that did not exist - exactly like
     ``SDP_EVIDENCE_RETENTION_DAYS`` before it.
+
+    Both halves of this test are the correction. The declaration goes, because a
+    stale "this is not implemented" misleads the same buyer as a premature "this
+    is", and the retraction has to be mechanical or it goes stale again - the
+    alert prose in this repository has now done so three times.
+
+    It did **not** move into ``required_environment``, and that is the half worth
+    pinning rather than assuming. ``production._is_set`` gates on a non-blank
+    string and nothing else, so requiring the variable would let ``'banana'``
+    clear the gate, and ``'banana'`` has no scheme: measured below through the
+    delivery path's own configuration gate, it cannot be posted to at all. That
+    is the defect ``declared_unimplemented_environment`` exists to refuse,
+    arriving from the other direction. Alerting is optional - an operator who
+    wants no outbound POST sets nothing, and routing is a no-op - so the variable
+    belongs in ``current_evidence`` beside its consumers and tests.
     """
     from sdp_core.production import (
         enterprise_production_readiness_manifest,
@@ -348,19 +363,28 @@ def test_the_alert_webhook_is_declared_unimplemented_rather_than_required() -> N
         if item.id == "request_observability_export"
     )
     assert "SDP_ALERT_WEBHOOK_URL" not in integration.required_environment
-    assert integration.declared_unimplemented_environment == ["SDP_ALERT_WEBHOOK_URL"]
-    # The gap stays visible to a buyer rather than being deleted with the claim.
+    assert integration.declared_unimplemented_environment == []
     manifest = enterprise_production_readiness_manifest({})
-    assert manifest.unimplemented_environment["request_observability_export"] == [
-        "SDP_ALERT_WEBHOOK_URL"
-    ]
-    assert "Alert routing is NOT implemented" in integration.buyer_risk
-    # No acceptance criterion may still claim the capability.
-    claims = [item for item in integration.acceptance_criteria if "alertable signals" in item]
-    assert not claims, claims
+    assert "request_observability_export" not in manifest.unimplemented_environment
+    # Listed as evidence instead, with the consumers that make it real.
+    assert "SDP_ALERT_WEBHOOK_URL" in integration.current_evidence
+    assert "sdp.observability.alert_routing_state" in integration.current_evidence
+
+    # Why it is not a gate, measured rather than asserted: the value that would
+    # clear a presence-only gate is one the delivery path refuses outright.
+    with pytest.raises(obs.SinkConfigurationError, match="http or https scheme"):
+        obs._alert_request_parts("banana")
 
 
 def test_setting_the_alert_webhook_cannot_clear_the_readiness_gate() -> None:
+    """Unchanged assertion, different reason - and the reason is why it is kept.
+
+    This used to hold because the variable routed nothing. It now holds because
+    alerting is optional and deliberately gates nothing: ``_is_set`` would accept
+    any non-blank string, including the two below that can never be delivered to,
+    so a gate on this name would measure the presence of a string rather than the
+    existence of a delivery path.
+    """
     from sdp_core.production import enterprise_production_readiness_manifest
 
     base = {"SDP_LOG_SINK_URL": "file:///data/requests.jsonl", "SDP_REQUEST_ID_HEADER": "X-Request-Id"}
@@ -379,20 +403,37 @@ def test_each_published_alert_rule_says_whether_it_is_evaluated(
     """A list named "alerts" beside ``alert_webhook_configured: true`` read as monitoring.
 
     The conditions are kept - they are the right ones - and every surface says
-    which of them this service actually computes. ``policy_audit_gap`` is
-    measured in process now; ``central_workflow_backlog`` is about GitHub
-    Actions run state this service does not observe, so it stays declared and
-    says why. The top-level key points at the per-rule flag rather than making
-    one claim for both, which is the thing that would be false either way it
-    was written.
+    which of them this service computes and which it delivers. Two are measured
+    in process; ``central_workflow_backlog`` is about GitHub Actions run state
+    this service does not observe, so it stays declared, says why, and declares
+    that it is not routable. The top-level keys point at the per-rule flags
+    rather than making one claim for all three, which is the thing that would be
+    false however it was written.
+
+    Both flags are enumerated over every published rule rather than checked on
+    the two this test names, because "evaluated" and "routable" are independent
+    and a rule carrying one without the other is the shape a reader assumes
+    away: a routable rule that is not evaluated promises a delivery nothing can
+    trigger.
     """
     monkeypatch.setenv("SDP_ALERT_WEBHOOK_URL", "https://alerts.example/hook")
     manifest = obs.build_observability_manifest()
 
     assert manifest["alert_evaluation"] == "per_rule"
-    assert manifest["alert_routing"] == "declared_unimplemented"
+    assert manifest["alert_routing"] == "implemented"
     assert manifest["alerts"], "the declared conditions must stay published"
     by_id = {alert["id"]: alert for alert in manifest["alerts"]}
+
+    for rule_id, rule in by_id.items():
+        assert isinstance(rule["routable"], bool), rule_id
+        if rule["routable"]:
+            assert rule["evaluated"] is True, (
+                f"{rule_id} is declared routable while nothing evaluates it, so "
+                "its delivery can never be triggered"
+            )
+    assert sorted(
+        rule_id for rule_id, rule in by_id.items() if rule["routable"]
+    ) == sorted(obs.ROUTABLE_ALERT_RULE_IDS)
 
     gap = by_id["policy_audit_gap"]
     assert gap["evaluated"] is True
@@ -404,115 +445,229 @@ def test_each_published_alert_rule_says_whether_it_is_evaluated(
     assert gap["declared_condition"]
     assert gap["not_covered"]
 
+    probe = by_id["connector_probe_failure"]
+    assert probe["evaluated"] is True
+    assert probe["declared_condition"] == "connector probe failure"
+    assert probe["condition"] != probe["declared_condition"], (
+        "the computed condition is narrower than the name it was declared with; "
+        "publishing one string for both hides exactly that gap"
+    )
+
     backlog = by_id["central_workflow_backlog"]
     assert backlog["evaluated"] is False
+    assert backlog["routable"] is False
     assert backlog["evaluation"] == "declared_not_evaluated"
     assert "GitHub Actions" in backlog["not_evaluated_because"]
 
     sink = manifest["structured_logs"]["sink"]
     assert sink["alert_webhook_configured"] is True
-    assert sink["alert_webhook_routing"] == "declared_unimplemented", (
-        "the configuration fact must not stand alone as a capability claim"
+    assert sink["alert_webhook_routing"] == "implemented"
+    # The capability claim is made good by a measurement published beside it,
+    # not by the status string alone.
+    assert manifest["alert_delivery"]["routable_rules"] == len(
+        obs.ROUTABLE_ALERT_RULE_IDS
     )
 
 
-def test_nothing_posts_to_the_alert_webhook() -> None:
-    """The reason the variable is declared-unimplemented, pinned.
+def test_the_alert_webhook_value_is_read_one_way_and_stashed_nowhere() -> None:
+    """The successor to the guard that proved nothing routed.
 
-    ``test_every_required_variable_has_a_consumer`` did not catch this one and
-    cannot: ``_sink_status`` *is* a consumer, it just reads the variable to
-    report whether the variable is set. A name read solely for its own presence
-    passes an "is it read anywhere" check while routing nothing - so the proof
-    has to be about the capability, not the name.
+    That guard asserted three things about ``SDP_ALERT_WEBHOOK_URL`` - two files
+    mention it, one ``os.getenv`` read, that read's exact text - and its
+    docstring promised a tripwire the body did not set: measured, a
+    ``_deliver_alert`` that POSTed through ``urlopen``, fed from the existing
+    read via one ``_ALERT_TARGET["url"] = alert_webhook_url``, left it **passing**
+    (3 passed). A fourth assertion was added, that the value is loaded only as
+    ``bool(...)``, and that one did trip when delivery landed. It is rewritten
+    here deliberately, which is what its own docstring asked of whoever added
+    routing.
 
-    If a routing path is ever added, this fails and whoever added it moves the
-    variable back into ``required_environment`` deliberately.
+    Routing needs the string, so "it goes nowhere but a boolean" is no longer
+    the invariant. Two others replace it, and neither is covered by any
+    behaviour test:
 
-    **It did not, until this round.** The three assertions below - two files
-    mention the variable, one ``os.getenv`` read, that read's exact text - are
-    all satisfiable by a *working* routing path, because none of them looks at
-    what happens to the value. Measured: a ``_deliver_alert`` that builds a
-    ``urllib`` ``Request`` and POSTs through ``urlopen``, added to
-    ``observability.py`` and fed from the existing read via one
-    ``_ALERT_TARGET["url"] = alert_webhook_url``, left this test **passing** (3
-    passed). So the docstring above promised a tripwire the body did not set -
-    the same shape as every other guard this cycle that was checked against its
-    own list rather than against the thing it describes.
+    *Every read is the same expression.* There are three now - the published
+    ``alert_webhook_configured`` flag, the published ``webhook_configured``
+    counter, and the delivery decision - and they must agree, because the
+    manifest's claim about configuration is only honest if the code that
+    delivers asks the same question. Measured with
+    ``SDP_ALERT_WEBHOOK_URL="   "``: the stripped read is falsy and
+    ``_sink_status`` publishes ``alert_webhook_configured: false``, while an
+    unstripped read of the same variable is **truthy**. A delivery path reading
+    it unstripped would therefore hand ``"   "`` to
+    ``_alert_request_parts`` - measured, ``SinkConfigurationError`` - and post
+    nothing while the manifest said unconfigured and the failure counter rose:
+    the "published number disagrees with the code enforcing it" shape, from a
+    one-call difference. Compared through the AST rather than by grepping,
+    because two spellings of the same string are the thing being ruled out.
 
-    The fourth assertion is the one that trips. The value is read once and used
-    **only in a boolean context**: ``bool(alert_webhook_url)`` for the
-    ``alert_webhook_configured`` field, twice. Routing needs the string itself -
-    to parse, to connect, or to stash - so any routing path has to either store
-    it, pass it, return it, or read the variable again. Parsed from the AST, not
-    grepped, because the reaching assignment and its uses are structure.
+    *The value is never stashed.* Every assignment of a read targets a plain
+    local name, never a subscript or an attribute. ``observability`` holds the
+    module-level containers that
+    ``tests/test_alert_routing_disclosure.py::test_a_credential_bearing_alert_webhook_never_reaches_a_published_surface``
+    scans by reflection, and a webhook with userinfo is an operator credential;
+    ``_ALERT_TARGET["url"] = ...`` is one line and puts it in that set, one
+    published key from an anonymous reader. The disclosure test catches it only
+    once a delivery has been attempted through the seam it patches, so this is
+    the cheaper guard that does not need the traffic.
     """
     import ast
     import pathlib
 
     source_root = pathlib.Path(obs.__file__).resolve().parents[1]
-    mentions = {
-        path.relative_to(source_root).as_posix(): [
-            line.strip()
-            for line in path.read_text().splitlines()
-            if "SDP_ALERT_WEBHOOK_URL" in line
-        ]
+    mentions = sorted(
+        path.relative_to(source_root).as_posix()
         for path in source_root.rglob("*.py")
         if "SDP_ALERT_WEBHOOK_URL" in path.read_text()
-    }
-    # Only the declaration site and the single presence check.
-    assert sorted(mentions) == ["sdp/observability.py", "sdp_core/production.py"], mentions
-    reads = [line for line in mentions["sdp/observability.py"] if "os.getenv" in line]
-    assert len(reads) == 1, reads
-    assert 'alert_webhook_url = os.getenv("SDP_ALERT_WEBHOOK_URL", "").strip()' in reads[0]
+    )
+    assert mentions == ["sdp/observability.py", "sdp_core/production.py"], mentions
 
-    # And the value goes nowhere but a boolean.
     tree = ast.parse((source_root / "sdp" / "observability.py").read_text())
-    holders = set()
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Assign):
-            continue
-        if "SDP_ALERT_WEBHOOK_URL" not in ast.unparse(node.value):
-            continue
-        for target in node.targets:
-            assert isinstance(target, ast.Name), (
-                "the alert webhook value is assigned somewhere that is not a "
-                f"plain local name: {ast.unparse(node)}"
-            )
-            holders.add(target.id)
-    assert holders, "the read was not found as an assignment; re-point this guard"
-
-    # Every ``bool(<holder>)`` argument node, by identity. Checked per *load*
-    # rather than per enclosing statement: the first version of this walk asked
-    # whether the statement containing a load also contained something
-    # impermissible, and every permitted use is inside a dict literal inside a
-    # return, so it reported both legitimate uses as escapes.
-    permitted = {
-        id(node.args[0])
+    # One read is ``os.getenv(name, default)`` wrapped in ``.strip()``. Both are
+    # ``Call`` nodes containing the name and the outer one encloses the inner,
+    # so they are collected by what they are rather than by how their text
+    # begins: the first version of this check filtered on "starts with
+    # os.getenv(", kept both halves of every read, and reported the product's
+    # single spelling as two.
+    getenv_reads = [
+        node
         for node in ast.walk(tree)
         if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "bool"
-        and len(node.args) == 1
-        and isinstance(node.args[0], ast.Name)
-        and node.args[0].id in holders
-    }
-    escapes = [
-        node.lineno
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Name)
-        and node.id in holders
-        and isinstance(node.ctx, ast.Load)
-        and id(node) not in permitted
+        and ast.unparse(node.func) == "os.getenv"
+        and "SDP_ALERT_WEBHOOK_URL" in ast.unparse(node)
     ]
-    assert escapes == [], (
-        "the alert webhook value is read somewhere other than bool(...) at "
-        f"observability.py lines {escapes}, so something can route with it. If "
-        "routing was added deliberately, rewrite this test and move "
-        "SDP_ALERT_WEBHOOK_URL into required_environment."
+    assert getenv_reads, "the variable is no longer read through os.getenv; re-point this guard"
+    defaults = sorted({ast.unparse(node) for node in getenv_reads})
+    assert defaults == ["os.getenv('SDP_ALERT_WEBHOOK_URL', '')"], (
+        "the alert webhook variable is read with more than one default, so the "
+        "configuration the manifest publishes and the configuration delivery "
+        f"acts on can disagree: {defaults}"
     )
-    assert len(permitted) == 2, (
-        f"expected the two bool() uses that build alert_webhook_configured, "
-        f"found {len(permitted)}"
+    stripped = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "strip"
+        and ast.unparse(node) == "os.getenv('SDP_ALERT_WEBHOOK_URL', '').strip()"
+    ]
+    assert len(stripped) == len(getenv_reads), (
+        f"{len(getenv_reads) - len(stripped)} read(s) of the alert webhook are "
+        "not stripped; measured with the value \"   \", a stripped read is falsy "
+        "and the manifest publishes alert_webhook_configured: false while an "
+        "unstripped read of the same variable is truthy"
+    )
+
+    # Which functions *read* it, by node identity - not which functions mention
+    # the name. ``_alert_request_parts`` names the variable in the message it
+    # raises when the scheme is unusable, and a text match counted that as a
+    # fourth consumer: the same mistake as asking whether a statement contains
+    # something impermissible instead of asking what each load does.
+    reading_nodes = {id(node) for node in getenv_reads}
+    enclosing = {
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+        and any(id(inner) in reading_nodes for inner in ast.walk(node))
+    }
+    assert enclosing == {"_sink_status", "alert_routing_state", "_route_alert"}, (
+        "the alert webhook is read outside the three functions that need it - "
+        "the two published status fields and the delivery decision - so there is "
+        f"a fourth consumer to account for: {sorted(enclosing)}"
+    )
+    assert len(getenv_reads) == len(enclosing), (
+        "one of those functions reads the variable more than once; a second read "
+        "in the same function is a second chance for the two to drift apart"
+    )
+
+    stashes = [
+        ast.unparse(target)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and "SDP_ALERT_WEBHOOK_URL" in ast.unparse(node.value)
+        for target in node.targets
+        if not isinstance(target, ast.Name)
+    ]
+    assert stashes == [], (
+        "the alert webhook value is assigned into a container or an attribute "
+        f"({stashes}); a module-level store puts an operator credential in the "
+        "set GET /enterprise/observability answers from"
+    )
+
+
+def test_no_published_text_still_says_the_alert_rules_are_not_delivered() -> None:
+    """The sibling of the unevaluated-conditions guard, for the other half.
+
+    That guard exists because "no code evaluates the published alert conditions"
+    was true, then false, and survived the change in three separate places found
+    one round apart - the comment above the alert block in ``observability.py``,
+    the comment justifying ``declared_unimplemented_environment`` in
+    ``production.py``, and the paragraph in ``README.md``. Delivery has now
+    landed in exactly the same shape, and the same three documents plus
+    ``CLAUDE.md`` and ``docs/implementation-compliance.md`` each carried a
+    sentence saying nothing was delivered. A guard for the evaluation claim and
+    none for the delivery claim would have caught the first recurrence and
+    missed the second.
+
+    Scoped to claims about **delivery**, and in the past tense where the history
+    is worth keeping: the four test families added with routing describe the head
+    they were measured against, and saying so is not the defect. What is banned
+    is a present-tense claim that this service delivers nothing, in either
+    language.
+
+    Whitespace-normalised, because its sibling was not and a line-wrapped copy of
+    a banned sentence was live on ``main`` while that test was green.
+
+    The banned fragments are deliberately **not** quoted in this docstring, and
+    the explanations above are paraphrases for that reason. Four guards this
+    cycle were written against a list that included their own prose, so each one
+    searched for a string it had just introduced and reported the file it lived
+    in - a guard checked against itself rather than against the product.
+    """
+    import pathlib
+    import re
+
+    repo_root = pathlib.Path(obs.__file__).resolve().parents[2]
+    routable = [
+        alert
+        for alert in obs.build_observability_manifest()["alerts"]
+        if alert.get("routable")
+    ]
+    assert routable, "if no rule is routable any more, this guard is the wrong one"
+
+    stale = tuple(
+        head + tail
+        for head, tail in (
+            ("no code posts to ", "SDP_ALERT_WEBHOOK_URL"),
+            ("nothing posts ", "to it"),
+            ("Nothing is routed ", "anywhere"),
+            ("Alert routing is ", "NOT implemented"),
+            ("neither is ", "delivered"),
+            ("이 URL로 POST하는 ", "코드는 없"),
+            ("설정 여부만 보고하고 ", "라우팅하지 않"),
+            ("어느 쪽도 ", "전달되지 않"),
+            ("전달만 ", "없"),
+        )
+    )
+    searched = [repo_root / "README.md", repo_root / "CLAUDE.md"]
+    searched += sorted((repo_root / "docs").rglob("*.md"))
+    searched += sorted((repo_root / "src").rglob("*.py"))
+    searched += sorted((repo_root / "tests").rglob("*.py"))
+
+    offenders = []
+    for candidate in searched:
+        if not candidate.is_file():
+            continue
+        flat = re.sub(r"\s+", " ", candidate.read_text(encoding="utf-8"))
+        for fragment in stale:
+            if fragment in flat:
+                offenders.append(
+                    f"{candidate.relative_to(repo_root).as_posix()}: {fragment!r}"
+                )
+    assert offenders == [], (
+        "these texts say the published alert rules are not delivered, and "
+        f"{len(routable)} of them are routable with alert_routing "
+        f"{obs.build_observability_manifest()['alert_routing']!r}: {offenders}"
     )
 
 

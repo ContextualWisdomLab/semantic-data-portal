@@ -158,17 +158,28 @@ def production_integration_registry() -> list[ProductionIntegration]:
             status="implemented",
             buyer_risk=(
                 "Local metrics are enough for pilot review, but paid operation needs "
-                "tenant-scoped logs and external alert routing. Alert routing is NOT "
-                "implemented: SDP_ALERT_WEBHOOK_URL is read only to report whether it "
-                "is set, nothing posts to it, and the alert rules published by "
-                "GET /enterprise/observability are not routed anywhere - one of the two "
-                "published rules is evaluated in process and neither is delivered. "
-                "Log export to a file or http(s) sink IS implemented, and "
-                "a row's evidence_ids now names the policy decisions and audit events "
-                "the server recorded while serving that request - it was read from the "
-                "caller-supplied X-SDP-Evidence-Ids header, so the correlation key was "
-                "chosen by the caller the row is about and the id the server recorded "
-                "never appeared."
+                "tenant-scoped logs. Alert delivery to SDP_ALERT_WEBHOOK_URL IS "
+                "implemented, and its boundary is narrower than the word 'alerting' "
+                "suggests: of the three published rules, two are routable - "
+                "policy_audit_gap and connector_probe_failure, both computed in "
+                "process - and central_workflow_backlog is published and never "
+                "delivered, because its condition is about GitHub Actions run state "
+                "this service does not observe. Delivery is one POST per firing "
+                "episode per worker with no retry and no queue: a rule whose counter "
+                "has no decrement path stays firing until the worker restarts, so an "
+                "operator receives one alert per rule per worker lifetime rather than "
+                "a repeating page, and the count of increments that alert stood for is "
+                "published beside it. A failed delivery is retained only as an "
+                "exception type and a stage in a bounded in-process ring - no URL, "
+                "because the message urllib produces for a credential-bearing webhook "
+                "is the decoded credential - so a paid pilot still needs the "
+                "operator's own monitoring on the exported gauges rather than treating "
+                "this path as a delivery guarantee. Log export to a file or http(s) "
+                "sink IS implemented, and a row's evidence_ids now names the policy "
+                "decisions and audit events the server recorded while serving that "
+                "request - it was read from the caller-supplied X-SDP-Evidence-Ids "
+                "header, so the correlation key was chosen by the caller the row is "
+                "about and the id the server recorded never appeared."
             ),
             current_evidence=[
                 "SDP_LOG_SINK_URL",
@@ -185,21 +196,39 @@ def production_integration_registry() -> list[ProductionIntegration]:
                 "sdp.observability.governed_evidence_gap_report",
                 "tests/test_request_evidence_correlation.py::test_a_governed_two_hundred_without_evidence_is_counted",
                 "tests/test_request_evidence_correlation.py::test_the_gap_condition_is_zero_on_ordinary_governed_traffic",
+                # Alert delivery. The variable is listed here rather than in
+                # ``required_environment`` because routing is implemented and
+                # optional: an operator who wants no outbound POST sets nothing
+                # and routing is a no-op. Gating paid-pilot readiness on it
+                # would also re-create the defect this registry exists to
+                # refuse, because ``_is_set`` checks presence and nothing else -
+                # ``'banana'`` has no scheme, can never be posted to, and would
+                # clear the gate.
+                "SDP_ALERT_WEBHOOK_URL",
+                "sdp.observability.alert_routing_state",
+                "sdp.observability.connector_probe_failure_report",
+                "sdp.connectors.connector_probe_failure_reason",
+                "tests/test_alert_routing_firing_discipline.py::test_one_alert_post_per_transition_into_firing",
+                "tests/test_alert_routing_firing_discipline.py::test_the_process_wide_ceiling_is_the_routable_rule_count",
+                "tests/test_alert_routing_request_path.py::test_an_alert_path_failure_never_becomes_the_requests_response",
+                "tests/test_alert_routing_disclosure.py::test_a_credential_bearing_alert_webhook_never_reaches_a_published_surface",
+                "tests/test_connector_probe_alert_rule.py::test_no_seed_probe_outcome_is_a_pageable_failure",
             ],
             required_environment=[
                 "SDP_LOG_SINK_URL",
                 "SDP_REQUEST_ID_HEADER",
             ],
-            # Same reasoning as SDP_EVIDENCE_RETENTION_DAYS: the only read of
-            # this variable is ``observability._sink_status`` taking ``bool()`` of
-            # it for the ``alert_webhook_configured`` field. No code posts to the
-            # URL, so a readiness gate it could clear would measure a capability
-            # that does not exist. Routing is the missing half, not evaluation -
-            # ``policy_audit_gap`` IS computed in process (this entry's own
-            # ``buyer_risk`` says so); this comment read "and no code evaluates
-            # the published alert conditions" after that stopped being true. Declared rather than deleted, so an operator who sets it
-            # can learn from the readiness document itself that nothing honours it.
-            declared_unimplemented_environment=["SDP_ALERT_WEBHOOK_URL"],
+            # ``SDP_ALERT_WEBHOOK_URL`` was listed here for as long as nothing
+            # posted to it: its only read was ``observability._sink_status``
+            # taking ``bool()`` of it, so a readiness gate it could clear would
+            # have measured a capability that did not exist. Delivery is
+            # implemented now, so the declaration is retired rather than left
+            # standing - a stale "this is not implemented" is the same defect as
+            # a premature "this is", read by the same buyer. It did not move into
+            # ``required_environment``: alerting is optional, and ``_is_set``
+            # gates on presence alone, so requiring it would let a value that can
+            # never be posted to clear the gate.
+            declared_unimplemented_environment=[],
             acceptance_criteria=[
                 "Request logs include request id, tenant, actor, route, status, latency, and evidence ids without request bodies. "
                 "The evidence ids are the server's own: the two functions every evidence row flows through record them against "
@@ -214,12 +243,36 @@ def production_integration_registry() -> list[ProductionIntegration]:
                 "publishes the count and whether the rule is firing, and /metrics exports "
                 "sdp_governed_requests_without_evidence_total. It is narrower than the condition as "
                 "declared - it counts at request time and does not see evidence removed out of band - "
-                "and the published rule says so. Nothing is routed anywhere: no code posts to "
-                "SDP_ALERT_WEBHOOK_URL, so the variable stays declared-unimplemented. The queue-drift "
-                "condition (central_workflow_backlog) is about GitHub Actions run state this service "
-                "does not observe and stays declared with that reason. A connector-probe-failure rule "
-                "is named by this criterion and has never been published at all. Clearing this "
-                "criterion means routing, plus a published rule for the third condition.",
+                "and the published rule says so. The queue-drift condition "
+                "(central_workflow_backlog) is about GitHub Actions run state this service does not "
+                "observe and stays declared with that reason.",
+                "The connector-probe-failure rule IS published and evaluated: connector_probe computes "
+                "it for every probe, including the four demo_smoke makes directly, and "
+                "GET /enterprise/observability publishes the count, the per-connector breakdown and "
+                "the verification mix while /metrics exports "
+                "sdp_connector_probe_failures_total. The condition is the half of the probe's own "
+                "verdict_basis the BUILD owns - a declared adapter this build does not implement, or a "
+                "required control whose declared proof endpoint this build does not serve - and it "
+                "reports 0 on a correct deployment. Measured over the seed catalogue, 4 connectors x 5 "
+                "datasets: the obvious condition (count probes that did not reach ready_for_demo) "
+                "would fire on the shipped demo image, because the one contract_only pair waits on an "
+                "optional secret reference that demo_smoke asserts and passes; and the 15 pairs that "
+                "refuse a scheme mismatch are a caller naming a wrong pair, so counting them would put "
+                "the operator's pager behind a typo in a path segment. Both exclusions are published in "
+                "the rule's not_covered, as is the fact that 19 of 20 seed control rows rest on "
+                "proof_route_served - so a zero is not a claim that every control passed.",
+                "Alert delivery IS implemented: a false-to-true transition of a routable rule POSTs "
+                "once to SDP_ALERT_WEBHOOK_URL, from the evaluation site and never from the read path, "
+                "so neither of the two anonymous published routes can make this service send anything. "
+                "Two of the three rules are routable, which bounds a worker at two POSTs between "
+                "resets however large the burst; the 2nd..Nth increment while a rule is already firing "
+                "is counted and dropped, and that count is published so an operator seeing one alert "
+                "for a thousand gap requests can tell suppression from a webhook that refused. The "
+                "userinfo is lifted into an Authorization header before urllib sees the URL, a failure "
+                "is retained as an exception type and a stage with no URL in it, and no alert target "
+                "is published on either anonymous surface - redacted or otherwise. What is NOT "
+                "implemented: retry, a queue, a durable record of a failed delivery, and any delivery "
+                "for central_workflow_backlog.",
                 "Operators can correlate health, metrics, audit events, and policy decisions for a buyer pilot.",
             ],
         ),

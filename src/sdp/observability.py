@@ -264,24 +264,28 @@ def build_request_observation(
     return observation
 
 
-# The alert conditions below were authored rules, not evaluated ones: no code
-# computed any of them and no code posts to ``SDP_ALERT_WEBHOOK_URL`` - its only
-# read in the whole package is ``bool()`` of it for ``alert_webhook_configured``.
-# Published as a list named "alerts" next to ``alert_webhook_configured: true``,
-# they read as monitoring that exists, so every surface says which of them this
-# service computes.
+# The alert conditions below were authored rules before any of them was
+# computed, and publishing them as a list named "alerts" next to
+# ``alert_webhook_configured: true`` read as monitoring that exists. Every
+# surface now says which of them this service computes and which it delivers.
 #
-# ``policy_audit_gap`` IS computed now (see ``governed_evidence_gap_report``);
-# ``central_workflow_backlog`` is not and says why. Nothing is routed anywhere
-# either way. This comment claimed "no code computes any of them" five lines
-# above the function that computes one - the commit that added the computation
-# updated the published fields and left the prose asserting the opposite.
-ALERT_ROUTING_STATUS = "declared_unimplemented"
+# Two of the three are computed in process - ``policy_audit_gap`` by
+# ``governed_evidence_gap_report`` and ``connector_probe_failure`` by
+# ``connector_probe_failure_report`` - and those two are the routable set.
+# ``central_workflow_backlog`` is neither: its condition is about GitHub Actions
+# run state this service does not observe, and it says so rather than letting
+# the id imply coverage. This comment once claimed that no code computed any of
+# them, five lines above the function that computes one, and then carried the
+# opposite of the truth about delivery once delivery landed. Both are one
+# failure: published prose left asserting the inverse of the code beneath it.
+# The phrases are deliberately not quoted here - a guard that scans for them
+# would match this very comment, which is how four of this cycle's guards came
+# to be checked against their own explanations rather than against the product.
 ALERT_EVALUATION_STATUS = "declared_not_evaluated"
 
-# One of the two rules is evaluated now, so a single blanket status at the top
-# of the manifest would be wrong either way it was written. The per-rule
-# ``evaluated`` flag is the truth; this says to read it.
+# Not every rule has the same answer, so a single blanket status at the top of
+# the manifest would be wrong however it was written. The per-rule ``evaluated``
+# and ``routable`` flags are the truth; this says to read them.
 ALERT_EVALUATION_SCOPE = "per_rule"
 
 # ``policy_audit_gap`` evaluated. The declared condition is "preview/query count
@@ -310,13 +314,19 @@ def note_governed_request_without_evidence(route: str) -> None:
     """
     if route in _GOVERNED_EVIDENCE_GAPS:
         _GOVERNED_EVIDENCE_GAPS[route] += 1
-        return
-    if len(_GOVERNED_EVIDENCE_GAPS) < MAX_TRACKED_EVIDENCE_GAP_ROUTES:
+    elif len(_GOVERNED_EVIDENCE_GAPS) < MAX_TRACKED_EVIDENCE_GAP_ROUTES:
         _GOVERNED_EVIDENCE_GAPS[route] = 1
-        return
-    _GOVERNED_EVIDENCE_GAPS[_OTHER_GAP_ROUTES] = (
-        _GOVERNED_EVIDENCE_GAPS.get(_OTHER_GAP_ROUTES, 0) + 1
-    )
+    else:
+        _GOVERNED_EVIDENCE_GAPS[_OTHER_GAP_ROUTES] = (
+            _GOVERNED_EVIDENCE_GAPS.get(_OTHER_GAP_ROUTES, 0) + 1
+        )
+    # The evaluation event is the send site. Not the read path: this counter is
+    # published by two anonymous routes, so routing from there would turn any
+    # anonymous GET into an outbound POST at the operator's endpoint. The three
+    # early returns above became one branch for this: a routing call reachable
+    # from only one of them would deliver for a first-seen route and stay silent
+    # once the map was full, which is the arrangement the branch shape invited.
+    _route_alert("policy_audit_gap", observed_increment=True)
 
 
 def governed_evidence_gap_report() -> dict[str, Any]:
@@ -329,6 +339,392 @@ def governed_evidence_gap_report() -> dict[str, Any]:
         "routes": routes,
         "measurement_window": "this worker, since start",
     }
+
+
+# --------------------------------------------------------------------------- #
+# Alert routing.
+#
+# For most of this product's life ``SDP_ALERT_WEBHOOK_URL`` was read in exactly
+# one place - ``bool()`` of it for the ``alert_webhook_configured`` field - and
+# nothing posted to it, which is why it sat in ``production.py``'s
+# ``declared_unimplemented_environment``. Delivery is implemented below. Three
+# decisions make it safe to hook onto a per-request evaluation event, and each
+# is pinned by a test family rather than left to the reader:
+#
+# 1. *One POST per firing episode, not per increment.* The ``policy_audit_gap``
+#    counter is incremented from the request middleware, once per policy-gated
+#    2xx that recorded no evidence - and that surface takes no credential.
+#    Measured, 25 anonymous probe requests complete in 197.1 ms, so "POST while
+#    the rule is firing" evaluated at the increment site is 25 outbound POSTs
+#    per 200 ms of uncredentialed traffic, aimed at a URL the operator supplied.
+#    So delivery fires on the false->true edge of a rule's own ``firing`` flag
+#    and the 2nd..Nth increment is counted and dropped. The bound is a number an
+#    operator can budget against: between resets a worker sends at most
+#    ``len(ROUTABLE_ALERT_RULE_IDS)`` POSTs however long the burst runs.
+#
+# 2. *Re-arm follows the rule, not a clock.* ``governed_evidence_gap_report()``
+#    reports ``firing`` as ``observed_total > 0`` and nothing decrements that
+#    counter, so in a deployed worker a rule that has fired once stays firing
+#    until the worker restarts. A minimum-interval rule would therefore re-post
+#    forever on a condition that can never clear; "first transition only" would
+#    make the next genuine episode silent. The latch is cleared when the rule
+#    itself stops firing, which is also what ``reset_alert_routing()`` does.
+#
+# 3. *Never from the read path.* ``build_observability_manifest`` and
+#    ``prometheus_metrics_text`` are reachable anonymously through
+#    ``GET /enterprise/observability`` and ``GET /metrics``, and the manifest
+#    already publishes each rule's ``firing`` flag - exactly the value a
+#    read-path implementation would act on. Routing is called only from the two
+#    evaluation sites, so an anonymous GET cannot make this service post
+#    anywhere.
+#
+# What is *not* implemented, stated here rather than left to be inferred from
+# the absence of code: there is no retry, no queue, no durable record of a
+# failed delivery beyond the bounded ring below, and no delivery at all for
+# ``central_workflow_backlog`` - it is published and not routable, because its
+# condition is about GitHub Actions run state this service does not observe and
+# listing it as routable would promise a delivery that can never be triggered.
+# --------------------------------------------------------------------------- #
+
+ALERT_ROUTING_STATUS = "implemented"
+
+# The alert path's own ``urlopen``, kept separate from the log sink's name. A
+# shared seam would make a webhook POST indistinguishable from a log export in
+# the tests that already assert on what the sink sent.
+alert_urlopen = urlopen
+
+# How long the evaluating request waits for the delivery thread before returning.
+# The alert path must not charge a governed request for an unreachable webhook:
+# measured on the log sink, which the request *does* await, a socket that accepts
+# the handshake and never answers cost 507.8-514.5 ms per request at a 500 ms
+# timeout. So delivery runs on its own thread and the evaluation site joins it
+# only for this budget - long enough that a healthy webhook is observed inline
+# (which is what makes "exactly one POST" measurable at all), short enough that a
+# wedged one cannot become the response's latency. Past the budget the thread
+# keeps going and its outcome lands in the counters below.
+ALERT_HANDSHAKE_BUDGET_SECONDS = 0.25
+
+MAX_RETAINED_ALERT_ERRORS = 50
+
+# Per-connector counts of probes whose verdict basis failed for a reason this
+# build owns, and the verification mix every returning probe reported. Keyed by
+# connector id, which ``connector_registry_manifest()`` bounds at four - dataset
+# ids are caller-supplied and a caller that can register datasets could
+# otherwise grow a published map without limit.
+_CONNECTOR_PROBE_FAILURES: dict[str, int] = {}
+_CONNECTOR_PROBE_VERIFICATIONS: dict[str, int] = {}
+
+# The latch and the counters, plus a generation marker. A delivery thread that
+# outlives the episode it was started for - a wedged webhook holds one for the
+# whole alert timeout - must not write its outcome into a later episode's
+# counters, so it carries the generation it started under and
+# ``reset_alert_routing`` bumps it.
+_ALERT_ROUTING: dict[str, Any] = {
+    "generation": 0,
+    "latched": set(),
+    "transitions": {},
+    "suppressed": {},
+    "attempted": {},
+    "succeeded": {},
+    "failed": {},
+}
+_ALERT_ROUTING_LOCK = threading.Lock()
+
+# Why a failure is retained as a type and a stage rather than as a message:
+# measured with the real ``urllib`` on this interpreter, a userinfo-bearing
+# webhook never reaches the network - ``urllib.request.Request`` unquotes the
+# authority, ``http.client`` splits the whole thing at its last colon and raises
+# before connecting - and the message is the decoded credential verbatim::
+#
+#     https://sdp-alerts:p%40ssw0rd-42@alerts.invalid.example/hook
+#       InvalidURL  "nonnumeric port: 'p@ssw0rd-42@alerts.invalid.example'"
+#
+# ``_alert_request_parts`` lifts the userinfo into an ``Authorization`` header
+# before urllib sees it, so that particular message cannot arise; recording
+# ``str(exc)`` anyway would still put the operator's paging host into a ring in
+# the module whose manifest answers anonymously, one published key away from a
+# reader. The exception type and the stage are the diagnosis an operator needs
+# and carry no part of the URL.
+_ALERT_ERRORS: deque[dict[str, Any]] = deque(maxlen=MAX_RETAINED_ALERT_ERRORS)
+
+
+def note_connector_probe(
+    connector_id: str,
+    failure_reason: str,
+    verification_counts: dict[str, int],
+) -> None:
+    """Record one connector probe's verdict for the ``connector_probe_failure`` rule.
+
+    Called from ``connectors.connector_probe`` itself rather than from the route
+    or the middleware: ``demo_smoke`` calls that function directly four times
+    and twenty-odd tests call it directly too, so a counter hooked at the route
+    would miss every one of them.
+
+    ``failure_reason`` is empty for every outcome the seed deployment produces.
+    The verification mix is accumulated for every probe that returned, because a
+    zero on this rule is not a claim that the controls passed - measured across
+    the five pairs that return on seed data, 19 of 20 control rows rest on
+    ``proof_route_served``, which is a fact about the route table.
+    """
+    for level, count in verification_counts.items():
+        _CONNECTOR_PROBE_VERIFICATIONS[level] = (
+            _CONNECTOR_PROBE_VERIFICATIONS.get(level, 0) + count
+        )
+    if failure_reason:
+        _CONNECTOR_PROBE_FAILURES[connector_id] = (
+            _CONNECTOR_PROBE_FAILURES.get(connector_id, 0) + 1
+        )
+    _route_alert("connector_probe_failure", observed_increment=bool(failure_reason))
+
+
+def connector_probe_failure_report() -> dict[str, Any]:
+    """What this worker observed for the ``connector_probe_failure`` condition."""
+    connectors = dict(sorted(_CONNECTOR_PROBE_FAILURES.items()))
+    total = sum(connectors.values())
+    return {
+        "observed_total": total,
+        "firing": total > 0,
+        "connectors": connectors,
+        # Published beside the zero, so "not firing" cannot be read as "every
+        # declared control was exercised and passed".
+        "control_verification_counts_observed": {
+            level: _CONNECTOR_PROBE_VERIFICATIONS.get(level, 0)
+            for level in ("runtime_probe_verified", "proof_route_served", "declared_only")
+        },
+        "measurement_window": "this worker, since start",
+    }
+
+
+# The routable rules, as a mapping from id to the report function that answers
+# "is this firing". ``ROUTABLE_ALERT_RULE_IDS`` is derived from it rather than
+# written out, so a rule cannot be declared routable without a condition this
+# service computes.
+_ROUTABLE_ALERT_RULES = {
+    "policy_audit_gap": governed_evidence_gap_report,
+    "connector_probe_failure": connector_probe_failure_report,
+}
+
+ROUTABLE_ALERT_RULE_IDS = tuple(sorted(_ROUTABLE_ALERT_RULES))
+
+
+def _alert_timeout_seconds() -> float:
+    """The per-delivery socket timeout, in seconds."""
+    return int(os.getenv("SDP_ALERT_TIMEOUT_MS", "500")) / 1000
+
+
+def _alert_request_parts(webhook_url: str) -> tuple[str, dict[str, str]]:
+    """Resolve the configured webhook to a connectable URL plus request headers.
+
+    Two gates, in this order. The scheme must be ``http`` or ``https``:
+    ``_http_sink_request_parts`` does not check it, and the sink's wider set is
+    wider than an alert webhook needs - ``file://`` is not an outbound POST.
+    Then the userinfo is lifted into an ``Authorization`` header by that helper,
+    which is the whole reason the alert path goes through it.
+
+    The delegate's messages name ``SDP_LOG_SINK_URL``, so they are re-pointed at
+    the variable the operator actually set. None of them quotes the URL.
+    """
+    parsed = urlparse(webhook_url)
+    if parsed.scheme not in {"http", "https"}:
+        raise SinkConfigurationError(
+            "SDP_ALERT_WEBHOOK_URL must use the http or https scheme"
+        )
+    try:
+        return _http_sink_request_parts(webhook_url, parsed)
+    except SinkConfigurationError as exc:
+        raise SinkConfigurationError(
+            str(exc).replace("SDP_LOG_SINK_URL", "SDP_ALERT_WEBHOOK_URL")
+        ) from exc
+
+
+def _alert_payload(rule_id: str) -> bytes:
+    """Serialise the alert body: the rule and its own report, and nothing else.
+
+    What is deliberately absent is the traffic. The context this module holds is
+    ``list_request_observations()``, whose rows carry a concrete request path
+    plus a caller-asserted ``tenant_id``, ``actor`` and ``request_id`` - the
+    three facts ``build_observability_manifest`` names when it refuses to
+    publish a per-request feed. An alert webhook is a third-party operator
+    endpoint, not an authenticated tenant surface, so attaching those rows would
+    re-export one tenant's governed-access activity off-box with the values
+    chosen by whoever triggered the alert.
+
+    What a rule's report does carry is already published on the anonymous
+    manifest: the gap rule's map is keyed by route **template**, placeholder
+    intact, and the probe rule's by registry connector id.
+    """
+    report = _ROUTABLE_ALERT_RULES[rule_id]()
+    body = {
+        "service": "semantic-data-portal",
+        "alert": "rule_firing",
+        "rule_id": rule_id,
+        "report": report,
+        "delivery": "one POST per firing episode per worker; no retry",
+    }
+    return json.dumps(body, ensure_ascii=False, sort_keys=True).encode("utf-8")
+
+
+def _bump_alert_counter(kind: str, rule_id: str, generation: int) -> None:
+    """Add one to a per-rule routing counter, unless the episode has been reset."""
+    with _ALERT_ROUTING_LOCK:
+        if generation != _ALERT_ROUTING["generation"]:
+            return
+        bucket = _ALERT_ROUTING[kind]
+        bucket[rule_id] = bucket.get(rule_id, 0) + 1
+
+
+def record_alert_routing_error(rule_id: str, stage: str, error_type: str) -> None:
+    """Retain one alert-delivery failure, as a type and a stage.
+
+    No message and no URL: see the comment above ``_ALERT_ERRORS``. A failure
+    that is swallowed entirely would leave an operator unable to tell a
+    suppressed increment from a webhook that never accepted the POST, which is
+    the distinction this ring exists to preserve.
+    """
+    _ALERT_ERRORS.append(
+        {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "rule_id": rule_id,
+            "stage": stage,
+            "error_type": error_type,
+        }
+    )
+
+
+def list_alert_routing_errors(limit: int = MAX_RETAINED_ALERT_ERRORS) -> list[dict[str, Any]]:
+    """The retained alert-delivery failures, newest last."""
+    return list(_ALERT_ERRORS)[-limit:]
+
+
+def _deliver_alert(rule_id: str, webhook_url: str, payload: bytes, generation: int) -> None:
+    """POST one alert, counting the attempt before it can block.
+
+    Runs on its own thread. The attempt is counted first so that a wedged
+    webhook is visible as an attempt rather than as nothing at all; the outcome
+    is counted after, and discarded if the episode was reset while this thread
+    was waiting.
+    """
+    _bump_alert_counter("attempted", rule_id, generation)
+    stage = "configuration"
+    try:
+        url, headers = _alert_request_parts(webhook_url)
+        request = UrlRequest(url, data=payload, headers=headers, method="POST")
+        stage = "delivery"
+        # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected -- the scheme is allow-listed to {http,https} in _alert_request_parts above
+        with alert_urlopen(request, timeout=_alert_timeout_seconds()):
+            pass
+    except Exception as exc:  # noqa: BLE001 - any delivery failure is the request's to absorb
+        # Deliberately broad, and deliberately not ``BaseException``: an alert
+        # is a side effect of a governed request, and nothing that happens on
+        # the way to the operator's webhook may become that request's response.
+        # Measured on the precedent this forecloses - a hook that raised
+        # ``OSError`` from inside ``connector_probe`` - the governed probe
+        # answered 500 through a real worker and left +1 policy decision with
+        # +0 audit events: a decision it never audited.
+        _bump_alert_counter("failed", rule_id, generation)
+        record_alert_routing_error(rule_id, stage, type(exc).__name__)
+    else:
+        _bump_alert_counter("succeeded", rule_id, generation)
+
+
+def _route_alert(rule_id: str, *, observed_increment: bool) -> None:
+    """Deliver at most one alert for this rule's current firing episode.
+
+    ``observed_increment`` says whether the caller's own observation moved the
+    rule's counter. It is what keeps the suppression count honest: every
+    connector probe calls ``note_connector_probe``, most of them reporting no
+    failure, and counting those as suppressed increments would publish a
+    "thousand gap events suppressed" figure made of healthy traffic.
+    """
+    firing = bool(_ROUTABLE_ALERT_RULES[rule_id]()["firing"])
+    with _ALERT_ROUTING_LOCK:
+        latched = _ALERT_ROUTING["latched"]
+        if not firing:
+            latched.discard(rule_id)
+            return
+        if rule_id in latched:
+            if observed_increment:
+                suppressed = _ALERT_ROUTING["suppressed"]
+                suppressed[rule_id] = suppressed.get(rule_id, 0) + 1
+            return
+        latched.add(rule_id)
+        transitions = _ALERT_ROUTING["transitions"]
+        transitions[rule_id] = transitions.get(rule_id, 0) + 1
+        generation = _ALERT_ROUTING["generation"]
+
+    webhook_url = os.getenv("SDP_ALERT_WEBHOOK_URL", "").strip()
+    if not webhook_url:
+        # The transition is a fact about the rule, not about the operator's
+        # configuration: it is counted above either way, and only the delivery
+        # is skipped. An unset variable has to make routing a no-op rather than
+        # a failed POST - the test suite itself drives this condition, so a rule
+        # that posts when unconfigured is a rule that posts from CI.
+        return
+    worker = threading.Thread(
+        target=_deliver_alert,
+        args=(rule_id, webhook_url, _alert_payload(rule_id), generation),
+        name=f"sdp-alert-{rule_id}",
+        daemon=True,
+    )
+    worker.start()
+    worker.join(ALERT_HANDSHAKE_BUDGET_SECONDS)
+
+
+def alert_routing_state() -> dict[str, Any]:
+    """The measured delivery facts, so the manifest reports rather than claims."""
+    with _ALERT_ROUTING_LOCK:
+        counts = {
+            kind: sum(_ALERT_ROUTING[kind].values())
+            for kind in ("transitions", "suppressed", "attempted", "succeeded", "failed")
+        }
+    return {
+        "webhook_configured": bool(os.getenv("SDP_ALERT_WEBHOOK_URL", "").strip()),
+        "routable_rules": len(ROUTABLE_ALERT_RULE_IDS),
+        # Derived from the rules themselves rather than read off the latch: a
+        # latch left set across a reset would otherwise publish a firing rule
+        # whose counter is zero.
+        "firing_rules": sorted(
+            rule_id
+            for rule_id, report in _ROUTABLE_ALERT_RULES.items()
+            if report()["firing"]
+        ),
+        "transitions_observed": counts["transitions"],
+        "suppressed_increments": counts["suppressed"],
+        "deliveries_attempted": counts["attempted"],
+        "deliveries_succeeded": counts["succeeded"],
+        "deliveries_failed": counts["failed"],
+        "retained_failures": len(_ALERT_ERRORS),
+    }
+
+
+def _alert_delivery_fields(rule_id: str) -> dict[str, Any]:
+    """The per-rule delivery facts the manifest publishes next to the condition."""
+    if rule_id not in _ROUTABLE_ALERT_RULES:
+        return {"routable": False}
+    with _ALERT_ROUTING_LOCK:
+        return {
+            "routable": True,
+            "alerts_delivered": _ALERT_ROUTING["attempted"].get(rule_id, 0),
+            "alerts_failed": _ALERT_ROUTING["failed"].get(rule_id, 0),
+            "increments_suppressed": _ALERT_ROUTING["suppressed"].get(rule_id, 0),
+        }
+
+
+def reset_alert_routing() -> None:
+    """Clear the latch, the counters and the retained failures.
+
+    The generation is bumped rather than reset, so a delivery thread still
+    waiting on a webhook from the previous episode cannot write its outcome into
+    the next one.
+    """
+    with _ALERT_ROUTING_LOCK:
+        _ALERT_ROUTING["generation"] += 1
+        _ALERT_ROUTING["latched"] = set()
+        for kind in ("transitions", "suppressed", "attempted", "succeeded", "failed"):
+            _ALERT_ROUTING[kind] = {}
+    _ALERT_ERRORS.clear()
+    _CONNECTOR_PROBE_FAILURES.clear()
+    _CONNECTOR_PROBE_VERIFICATIONS.clear()
 
 
 def _authority(host: str, port: int | None) -> str:
@@ -712,6 +1108,12 @@ def reset_request_observability() -> None:
     _EXPORT_ERRORS.clear()
     _GOVERNED_EVIDENCE_GAPS.clear()
     reset_sink_breaker()
+    # The alert latch follows the counters the rules read. Clearing the gap
+    # counter without clearing the latch would leave a rule whose
+    # ``observed_total`` is zero still latched, which silences the next genuine
+    # firing episode; this is also what makes a reset the only false->true->false
+    # sequence available in a deployed worker.
+    reset_alert_routing()
 
 
 def _latency_budget_report() -> dict[str, Any]:
@@ -787,6 +1189,11 @@ def build_observability_manifest() -> dict[str, Any]:
             "governed_requests_without_evidence_total": governed_evidence_gap_report()[
                 "observed_total"
             ],
+            # The ``connector_probe_failure`` condition, same reasoning.
+            "connector_probe_failures_total": connector_probe_failure_report()[
+                "observed_total"
+            ],
+            "alerts_delivered_total": alert_routing_state()["deliveries_attempted"],
         },
         # No per-request feed on an unauthenticated manifest. Each observation
         # carries the caller's actor and tenant plus the route - which embeds the
@@ -804,11 +1211,19 @@ def build_observability_manifest() -> dict[str, Any]:
         },
         # The PRD's six p95 budgets, compared to what this worker observed.
         "latency_budgets": _latency_budget_report(),
-        # One rule is measured in process, one is still a declared condition an
-        # operator implements in their own stack. Read the per-rule flag; the
-        # top-level key says so rather than making one claim for both.
+        # Two rules are measured in process, one is still a declared condition
+        # an operator implements in their own stack. Read the per-rule flag; the
+        # top-level key says so rather than making one claim for all three.
         "alert_evaluation": ALERT_EVALUATION_SCOPE,
         "alert_routing": ALERT_ROUTING_STATUS,
+        # The delivery facts, not a delivery claim. Without these an operator
+        # reading the manifest after an episode cannot tell a suppressed
+        # increment from a webhook that refused the POST - the same rule the
+        # sink's ``configured`` field already follows. No alert target is
+        # published, redacted or otherwise: the hostname of the operator's
+        # paging endpoint is not a fact about this service's governance, and
+        # this surface answers anonymously.
+        "alert_delivery": alert_routing_state(),
         "alerts": [
             {
                 "id": "policy_audit_gap",
@@ -832,6 +1247,45 @@ def build_observability_manifest() -> dict[str, Any]:
                 "evaluated": True,
                 "evaluation": "measured_in_process",
                 **governed_evidence_gap_report(),
+                **_alert_delivery_fields("policy_audit_gap"),
+            },
+            {
+                "id": "connector_probe_failure",
+                "condition": (
+                    "a connector probe's verdict basis failed for a reason this "
+                    "build owns: an adapter the connector registry declares that "
+                    "this build does not implement, or a required control whose "
+                    "declared proof endpoint this build does not serve"
+                ),
+                "declared_condition": "connector probe failure",
+                # The gap between the declared name and the computed condition,
+                # which is the whole reason this rule reports zero on a correct
+                # deployment. Measured over the seed catalogue, 4 connectors x 5
+                # datasets: 4 pairs ready_for_demo, 1 contract_only, 15 refused
+                # for a scheme mismatch. The obvious condition - "count probes
+                # that did not reach ready_for_demo" - fires on the shipped demo
+                # image, because the one contract_only pair is waiting on an
+                # optional secret reference and ``demo_smoke`` reports
+                # ``ready: True`` with it in exactly that state.
+                "not_covered": (
+                    "the optional credential_vault configuration gap (rest_connector "
+                    "/marketing-campaign probes contract_only because "
+                    "SDP_CONNECTOR_SECRET_* is unset, which is a deployment choice and "
+                    "not a build defect - the demo ready gate asserts that state and "
+                    "passes); a caller naming a connector whose scheme does not back "
+                    "the dataset, or an unsupported connector id, or an unknown dataset "
+                    "id - the connector id arrives as a caller-supplied path segment, so "
+                    "counting those would put the operator's pager behind a typo; and "
+                    "the effect of the controls themselves - measured, 19 of 20 control "
+                    "rows on seed data rest on proof_route_served, which is a fact about "
+                    "this build's route table and not about what the control does, so a "
+                    "zero here is not a claim that every control passed"
+                ),
+                "severity": "critical",
+                "evaluated": True,
+                "evaluation": "measured_in_process",
+                **connector_probe_failure_report(),
+                **_alert_delivery_fields("connector_probe_failure"),
             },
             {
                 "id": "central_workflow_backlog",
@@ -843,6 +1297,10 @@ def build_observability_manifest() -> dict[str, Any]:
                     "the condition is about GitHub Actions run state, which this service "
                     "does not observe"
                 ),
+                # Published and not routable. Listing it as routable would
+                # promise a delivery that can never be triggered, since nothing
+                # here can evaluate the condition in the first place.
+                **_alert_delivery_fields("central_workflow_backlog"),
             },
         ],
     }
@@ -876,6 +1334,12 @@ def prometheus_metrics_text() -> str:
         "# HELP sdp_governed_requests_without_evidence_total Policy-gated 2xx responses that recorded no policy decision and no audit event.",
         "# TYPE sdp_governed_requests_without_evidence_total gauge",
         f"sdp_governed_requests_without_evidence_total {metrics['governed_requests_without_evidence_total']}",
+        "# HELP sdp_connector_probe_failures_total Connector probes whose verdict basis failed for a reason this build owns.",
+        "# TYPE sdp_connector_probe_failures_total gauge",
+        f"sdp_connector_probe_failures_total {metrics['connector_probe_failures_total']}",
+        "# HELP sdp_alerts_delivered_total Alert deliveries attempted at the configured webhook, one per firing episode per rule.",
+        "# TYPE sdp_alerts_delivered_total gauge",
+        f"sdp_alerts_delivered_total {metrics['alerts_delivered_total']}",
         "",
     ]
     return "\n".join(lines)

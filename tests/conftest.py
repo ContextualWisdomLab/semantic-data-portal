@@ -33,6 +33,8 @@ The state covered here was enumerated from the modules, not listed from memory::
     sdp.ontology_version _CHANGE_LOG, _REVISION_STATE
     sdp.observability    request-observation ring buffer, export-error buffer,
                          governed-evidence gap counter,
+                         connector-probe failure and verification counters,
+                         alert-routing latch and counters, alert-error ring,
                          _SINK_BREAKER
     sdp.authz            _JWKS_CACHE
 
@@ -149,6 +151,14 @@ def restore_in_memory_app_state():
     jwks_cache = dict(authz._JWKS_CACHE)
     sink_breaker = dict(observability._SINK_BREAKER)
     governed_evidence_gaps = dict(observability._GOVERNED_EVIDENCE_GAPS)
+    connector_probe_failures = dict(observability._CONNECTOR_PROBE_FAILURES)
+    connector_probe_verifications = dict(observability._CONNECTOR_PROBE_VERIFICATIONS)
+    alert_routing = {
+        key: deepcopy(value)
+        for key, value in observability._ALERT_ROUTING.items()
+        if key != "generation"
+    }
+    alert_errors = list(observability._ALERT_ERRORS)
     graph = _graph_snapshot()
     request_observations = observability.list_request_observations()
     export_errors = observability.list_observability_export_errors()
@@ -186,5 +196,21 @@ def restore_in_memory_app_state():
         # one test's deliberate gap must not be another test's reading.
         observability._GOVERNED_EVIDENCE_GAPS.clear()
         observability._GOVERNED_EVIDENCE_GAPS.update(governed_evidence_gaps)
+        # Same position and the same reason: the reset above clears all four of
+        # these too, and every one of them is published by
+        # GET /enterprise/observability and /metrics, so one test's deliberate
+        # probe failure or firing episode must not be another test's reading.
+        observability._CONNECTOR_PROBE_FAILURES.clear()
+        observability._CONNECTOR_PROBE_FAILURES.update(connector_probe_failures)
+        observability._CONNECTOR_PROBE_VERIFICATIONS.clear()
+        observability._CONNECTOR_PROBE_VERIFICATIONS.update(connector_probe_verifications)
+        # ``generation`` is deliberately not restored. It is a monotonic marker
+        # that lets a delivery thread still waiting on a wedged webhook discard
+        # its outcome instead of writing it into a later episode's counters;
+        # rolling it back to the snapshot value would hand that thread a
+        # matching generation and let the write land after all.
+        observability._ALERT_ROUTING.update(deepcopy(alert_routing))
+        observability._ALERT_ERRORS.clear()
+        observability._ALERT_ERRORS.extend(alert_errors)
         _graph_restore(graph)
 
