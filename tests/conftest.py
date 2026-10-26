@@ -88,8 +88,28 @@ from sdp import authz, catalog, evidence, graph_store, observability, ontology, 
 
 
 # The graph store's five collections, snapshotted and put back the same way the
-# module-level dicts above are.
+# module-level dicts above are. Enumerated from the backend rather than listed:
+# these are exactly the attributes ``InMemoryGraphStore`` assigns outside
+# ``__init__`` plus the dicts it mutates in place. ``_config`` and ``_lock`` are
+# set once at construction and are deliberately not restored.
 _GRAPH_COLLECTIONS = ("_nodes", "_edges", "_embeddings", "_concepts", "_alias_to_concept")
+
+# ``deepcopy``, not a one-level copy, because one write path mutates a *contained*
+# object: ``InMemoryGraphStore.upsert_edge`` finds an existing edge and does
+# ``existing.properties.update(...)`` rather than replacing it, so a
+# ``list(self._edges)`` snapshot would hold the same ``GraphEdge`` objects and
+# restore the mutated properties. ``GraphNode.as_dict`` likewise returns the live
+# ``properties`` dict by reference. Nodes, embeddings and concept records are
+# replaced wholesale, so only edges need it today - the whole snapshot is deep
+# anyway, because the next in-place mutation someone adds should not need this
+# comment re-derived. Measured, 200 round trips against the seeded baseline
+# (26 nodes, 78 edges, 26 embeddings of dimension 128):
+#
+#     deepcopy   4.53 ms/test   ~5.8 s over the suite
+#     one-level  0.005 ms/test  ~0.01 s over the suite
+#
+# ~6% of the suite's wall clock, paid for a snapshot that cannot be defeated by
+# a mutation inside a stored object.
 
 
 def _graph_snapshot():

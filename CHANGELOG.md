@@ -2,15 +2,15 @@
 
 이 문서는 `claude/semantic-portal-pr-merge-e5a48k` 브랜치(PR
 [#102](https://github.com/ContextualWisdomLab/semantic-data-portal/pull/102))가
-베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **218개** 커밋 중 122개는
-gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 96개입니다. 이 숫자는 **이
-줄을 담은 커밋을 포함한** 값입니다 — 측정 시점의 217에 이 커밋을 더한 것. 측정 명령:
+베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **219개** 커밋 중 122개는
+gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 97개입니다. 이 숫자는 **이
+줄을 담은 커밋을 포함한** 값입니다 — 측정 시점의 218에 이 커밋을 더한 것. 측정 명령:
 
     git rev-list --count origin/docs/product-technical-gap-baseline..HEAD
     git log --format=%H origin/docs/product-technical-gap-baseline..HEAD \
       --name-only -- docs/product-technical-gap-baseline.md | grep -c '^[0-9a-f]\{40\}$'
 
-앞서 적혀 있던 164/112, 186/113, 199/122/77, 203/122/81, 211/122/89, 212/122/90, 213/122/91, 214/122/92, 215/122/93, 216/122/94는 각각 그 시점의 값이고 이후
+앞서 적혀 있던 164/112, 186/113, 199/122/77, 203/122/81, 211/122/89, 212/122/90, 213/122/91, 214/122/92, 215/122/93, 216/122/94, 218/122/96은 각각 그 시점의 값이고 이후
 커밋을 반영하지 않은 숫자였습니다 — 자기 문서의 수치도 측정해서 맞춰 둡니다. 199는 이
 줄을 쓴 뒤 3개 커밋이 더 쌓여 낡아 203으로, 203은 다음 커밋에서 낡아 204로, 204는 또
 두 커밋 뒤에 206으로 다시 측정해 고쳤습니다. 206도 그 값을 담은 커밋 자신 때문에 도착
@@ -134,6 +134,42 @@ snapshot은 추측하지 않고 건너뜁니다.
 `not collected.ids`를 지우면 2xx 테스트 둘만 실패 · 제외 문구를 제품 코드에 줄바꿈된
 형태로 다시 넣으면 재발 가드가 그 파일을 이름으로 말하며 실패 · fixture에서
 `_graph_restore`를 지우면 baseline 가드가 실패.
+
+**같은 커밋을 다시 읽고 세 건을 더 고쳤습니다.** 리뷰 라운드를 띄우지 않고 직접
+확인했습니다 — 이 세션의 지침이 에이전트/워크플로를 요청 없이 쓰지 말라고 하므로.
+
+**a. 열거의 exhaustive 주장이 경쟁 조건에서는 성립하지 않습니다 (medium).** 열 개
+409 지점을 하나씩 분류하다 보니, `ontology.register_concept`를 감싼
+`except ValueError`가 어휘 상한(1)뿐 아니라 그 함수가 **락 안에서 다시 확인하는**
+별칭 충돌에도 409를 답합니다. 평범한 경로에서는 그 충돌이 락 위에서 걸려 400입니다:
+
+    POST /ontology/concepts {"concept": "새로운개념하나", "aliases": ["customer"]}
+      -> 400 "alias conflict: 'customer' already belongs to '고객'"
+
+따라서 한 별칭을 두 writer가 동시에 집을 때만 거부로 올라오고, 그때는 같은 사유가 두
+status를 갖습니다. 열거에 **넣지 않고** 테스트에 경계로 적었습니다 — 400으로 문서화된
+사유에 race 전용 status를 공표하면 누락보다 더 오해를 만듭니다. status가 갈리는 것 자체는
+문서 문제가 아니라 코드 문제이므로 그대로 둡니다.
+
+**b. `deepcopy`가 load-bearing인데 주석이 그 이유를 적지 않았습니다 (medium).**
+`upsert_edge`는 같은 간선이 이미 있으면 교체하지 않고 `existing.properties.update(...)`로
+**담긴 객체를 제자리에서** 고칩니다. 그래서 한 단계 복사는 복원이 되지 않습니다:
+
+    one-level 스냅샷 후 upsert_edge(properties={"leaked_marker": ...}) 후 복원
+      -> leaked_marker 남아 있음: True
+    deepcopy 스냅샷으로 같은 절차
+      -> leaked_marker 남아 있음: False
+
+측정한 비용도 같이 적었습니다(시드 baseline 26노드·78간선·dimension 128, 200회 왕복):
+deepcopy 4.53 ms/test(스위트 약 5.8초, 약 6%) vs 한 단계 0.005 ms/test. 6%를 내고
+"담긴 객체의 변경에 뚫리지 않는" 스냅샷을 삽니다.
+
+**c. baseline 단언의 메시지가 kind 불일치를 말하지 못했습니다 (low).**
+`sorted(set(nodes) ^ set(expected))`는 id는 같고 **kind만 다른** 경우에 빈 집합입니다 —
+그런데 그것이 이번 사이클의 규칙들이 거부하려는 바로 그 "재분류된 노드"입니다. 메시지를
+`unexpected`/`missing`/`wrong_kind` 세 갈래로 바꿨습니다. 역검증: 시드 노드 하나를
+`kind="concept"`로 복원시키면 `{'wrong_kind': {'crm-customer-master': ('concept', 'dataset')}}`로
+실패합니다.
 
 ### Fixed — 4라운드: 직전 수리가 만든 결함 (high)
 

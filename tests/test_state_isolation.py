@@ -109,7 +109,19 @@ def test_the_graph_store_starts_from_the_catalog_and_the_vocabulary() -> None:
         }
     )
     expected.update({concept: "concept" for concept in ontology._CONCEPT_DEFINITIONS})
-    assert nodes == expected, sorted(set(nodes) ^ set(expected))
+    # The message names both failure shapes. ``set(nodes) ^ set(expected)`` alone
+    # is empty when the ids match and a *kind* differs - which is the reclassified
+    # node this cycle's rules exist to refuse, so it is the shape most worth
+    # naming.
+    assert nodes == expected, {
+        "unexpected": {node_id: nodes[node_id] for node_id in sorted(set(nodes) - set(expected))},
+        "missing": {node_id: expected[node_id] for node_id in sorted(set(expected) - set(nodes))},
+        "wrong_kind": {
+            node_id: (nodes[node_id], expected[node_id])
+            for node_id in sorted(set(nodes) & set(expected))
+            if nodes[node_id] != expected[node_id]
+        },
+    }
 
 
 # The retracted claim, in both languages it was published in. Two reasons for

@@ -724,6 +724,22 @@ _COUNT_WORDS = {1: "한", 2: "두", 3: "세", 4: "네", 5: "다섯", 6: "여섯"
 # One distinctive fragment per 409 the code can raise, and the exception or
 # route that raises it. ``api.py`` answers 409 at ten sites; these are the
 # distinct *causes* those sites report, which is what the document enumerates.
+#
+# Exhaustive on the ordinary request path, which is what a published enumeration
+# is for, and **not** under concurrency. One site - the ``except ValueError``
+# around ``ontology.register_concept`` - answers 409 for the vocabulary cap (1)
+# and would also answer it for the alias conflict that function re-checks
+# *inside* its lock. On the ordinary path that conflict is caught above the lock
+# and answers 400, measured::
+#
+#     POST /ontology/concepts {"concept": "새로운개념하나", "aliases": ["customer"]}
+#       -> 400 "alias conflict: 'customer' already belongs to '고객'"
+#
+# so only two writers racing for one alias can surface it as a refusal, and then
+# the same cause carries two different statuses. Recorded here rather than added
+# to the enumeration: a published list that names a race-only status for a cause
+# documented as 400 would mislead a client more than the omission does. The
+# status split itself is a code question, not a document one.
 _409_CAUSES = {
     "가득 찼고": "the capped-vocabulary eviction refusal",
     "content digest": "the ontology digest precondition",
