@@ -258,7 +258,10 @@ _CONSOLE_TEMPLATE = """<!doctype html>
     </div>
     <div class="header-tools">
       <div class="status-line">
-        <span class="badge ok" id="readyBadge">pilot evidence</span>
+        <!-- Neutral until a fetch resolves: if the script never runs the page
+             keeps what the server painted, and green with a placeholder is a
+             claim about evidence that was never loaded. -->
+        <span class="badge" id="readyBadge">pilot evidence</span>
         <span class="badge">KRW 2B enterprise readiness</span>
         <span class="badge warn">Figma Code Connect disabled</span>
       </div>
@@ -349,6 +352,17 @@ _CONSOLE_TEMPLATE = """<!doctype html>
     const pct = (value) => `${Math.round(Number(value || 0) * 100)}%`;
     const width = (id, value) => document.getElementById(id).style.width = pct(value);
     const text = (id, value) => document.getElementById(id).textContent = value;
+    // The readiness chip's text changed across four states and its class never
+    // did, so a green chip announced "evidence load failed". The colour is read
+    // before the words on a handoff dashboard. One helper writes both, because
+    // two calls per state is how they drift apart.
+    //
+    // ``className``, not an HTML sink: the console stays free of innerHTML.
+    const badge = (id, value, tone) => {
+      const node = document.getElementById(id);
+      node.textContent = value;
+      node.className = tone ? `badge ${tone}` : 'badge';
+    };
 
     // The console propagates the actor from its OWN query string. It is read
     // here rather than templated server-side so no caller-supplied value is ever
@@ -483,16 +497,19 @@ _CONSOLE_TEMPLATE = """<!doctype html>
       });
 
       if (failures.length) {
-        text('readyBadge', `evidence load failed: ${failures.join(', ')}`);
+        badge('readyBadge', `evidence load failed: ${failures.join(', ')}`, 'warn');
       } else if (needActor.length) {
-        text('readyBadge', `signed-out view - add ?user= to load: ${needActor.join(', ')}`);
+        // Neutral, not amber and not green: nothing is wrong and nothing is
+        // confirmed. Amber would report a platform problem; green would claim
+        // evidence nobody fetched.
+        badge('readyBadge', `signed-out view - add ?user= to load: ${needActor.join(', ')}`, '');
       } else if (refusedForActor.length) {
         // Worded as a refusal, not as a tenant reason: the console cannot know
         // why the gate refused, only that it did, and claiming a tenant scope
         // for a 400 would be a different wrong answer.
-        text('readyBadge', `refused for this actor: ${refusedForActor.join(', ')}`);
+        badge('readyBadge', `refused for this actor: ${refusedForActor.join(', ')}`, 'warn');
       } else {
-        text('readyBadge', 'ready for pilot review');
+        badge('readyBadge', 'ready for pilot review', 'ok');
       }
 
       // The hint REPLACES the panel body. It used to be appended only when the
