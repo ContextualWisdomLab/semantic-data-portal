@@ -2993,6 +2993,54 @@ SDP_CONNECTOR_TIMEOUT_MS=0          exit 0, JSON 있음, "ready": true          
 있었는가"를 묻고 지금 우연히 겹칩니다. 동작 테스트는 중복인 clause와 없는 clause를 구별할 수
 없으므로 소스에서 확인합니다.
 
+## 열린 PR 전수 재측정, 그리고 main이 여전히 담고 있는 것 (2026-10-26)
+
+루프 과제 1(열린 PR 전수 확인)을 12일 만에 다시 측정했습니다. 2026-10-14 측정은
+비-draft 7건 전부 APPROVED 0건이었고, 지금도 같습니다 — 다만 이번에는 PR별로 묻지 않고
+한 번의 권위 있는 질의로 확인했습니다.
+
+```
+GET /search/issues?q=repo:...+is:pr+is:open+review:approved
+  -> total_count: 0
+```
+
+열린 PR은 **40건**(비-draft 7: `#112` `#111` `#109` `#107` `#104` `#102` `#82`)이고,
+**승인된 리뷰는 전 저장소에 0건**입니다. `#104`는 리뷰 5건이 모두 `COMMENTED`,
+`#107`은 리뷰 0건입니다. 즉 병합을 막는 두 조건(독립 승인 0건, 필수 체크가 과금 잠금으로
+디스패치 전 거절)은 **둘 다 owner 측이고 12일 동안 변하지 않았습니다.**
+
+### main은 SQL validator 우회 세 건을 여전히 담고 있습니다
+
+"감사 큐 소진 (1)"은 세 우회를 **이 브랜치에서** 닫았다고 기록했고, `origin/main`이 어떤
+상태인지는 적지 않았습니다. 두 트리에서 같은 입력을 **직접 실행해** 측정했습니다:
+
+| 입력 | `origin/main` (`e48aa13`) | 이 브랜치 (`2f9f61d`) |
+| --- | --- | --- |
+| `select id from crm_customer_master, pg_catalog.pg_authid` | `[]` 통과 | `['unauthorized_table_reference']` |
+| `select id into exfil from crm_customer_master` | `[]` 통과 | `['forbidden_keyword_detected']` |
+| `select $$abc$$ from crm_customer_master` | `[]` 통과 | `['literal_values_not_allowed']` |
+
+**영향 범위를 정확히 적습니다 — 과장하지 않기 위해 실행 경로를 확인했습니다.**
+`execute_query`는 SQL을 **실행하지 않습니다**: 응답이 `"source": "mock-trino"`,
+`"measurement_status": "mock_execution_no_real_data"`, `elapsedMs`/`bytesScanned`는 고정
+상수이고 row count는 카탈로그 추정치입니다. 따라서 이 세 건은 **오늘 당장 악용 가능한 SQL
+injection이 아니라, 게시된 안전 게이트가 자기 설계대로 동작하지 않는 상태**입니다.
+`validate_sql_query`는 `/browse/query`와 draft 경로의 게이트이고 `/enterprise/*`가 control로
+게시하므로, 실제 실행 백엔드가 들어오는 순간 — 즉 읽는 사람이 "이 게이트는 원래 작동했다"고
+가정할 바로 그 시점에 — 악용 가능해집니다.
+
+### 그래서 `#35`·`#107`을 superseded로 닫지 마십시오
+
+`#35`("close SQL source-table allowlist bypass via comma joins")와 `#107`(금지 키워드를
+substring이 아니라 토큰으로 매칭)은 이 영역을 다룹니다. 수리가 **이 브랜치에만** 있고
+main에는 없으므로, 둘은 **main에 의해 승계된 것이 아닙니다.** 닫으면 이 브랜치가 끝내
+병합되지 않을 경우 수리 자체가 사라집니다. 이 문서 140행이 cryptography에 대해 적은 원칙이
+그대로 적용됩니다 — "수정이 존재한다"와 "수정이 main에 있다"를 섞지 마십시오. 이번에는
+SQL validator에 적용해 둡니다.
+
+이 절은 측정 기록이고 병합 허가가 아닙니다. PR을 닫거나 상태를 바꾸는 것은 owner 결정이며,
+이 세션은 어느 PR도 닫지 않았습니다.
+
 ## 운영 메모
 
 - Database objects: 두 단어 이상 `snake_case`, 3NF. Catalog plane 테이블은 #73의 `migrations/0002_ontology_catalog_plane.sql`.
