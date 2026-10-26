@@ -2,15 +2,15 @@
 
 이 문서는 `claude/semantic-portal-pr-merge-e5a48k` 브랜치(PR
 [#102](https://github.com/ContextualWisdomLab/semantic-data-portal/pull/102))가
-베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **220개** 커밋 중 122개는
-gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 98개입니다. 이 숫자는 **이
-줄을 담은 커밋을 포함한** 값입니다 — 측정 시점의 219에 이 커밋을 더한 것. 측정 명령:
+베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **221개** 커밋 중 122개는
+gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 99개입니다. 이 숫자는 **이
+줄을 담은 커밋을 포함한** 값입니다 — 측정 시점의 220에 이 커밋을 더한 것. 측정 명령:
 
     git rev-list --count origin/docs/product-technical-gap-baseline..HEAD
     git log --format=%H origin/docs/product-technical-gap-baseline..HEAD \
       --name-only -- docs/product-technical-gap-baseline.md | grep -c '^[0-9a-f]\{40\}$'
 
-앞서 적혀 있던 164/112, 186/113, 199/122/77, 203/122/81, 211/122/89, 212/122/90, 213/122/91, 214/122/92, 215/122/93, 216/122/94, 218/122/96, 219/122/97은 각각 그 시점의 값이고 이후
+앞서 적혀 있던 164/112, 186/113, 199/122/77, 203/122/81, 211/122/89, 212/122/90, 213/122/91, 214/122/92, 215/122/93, 216/122/94, 218/122/96, 219/122/97, 220/122/98은 각각 그 시점의 값이고 이후
 커밋을 반영하지 않은 숫자였습니다 — 자기 문서의 수치도 측정해서 맞춰 둡니다. 199는 이
 줄을 쓴 뒤 3개 커밋이 더 쌓여 낡아 203으로, 203은 다음 커밋에서 낡아 204로, 204는 또
 두 커밋 뒤에 206으로 다시 측정해 고쳤습니다. 206도 그 값을 담은 커밋 자신 때문에 도착
@@ -30,8 +30,8 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 98
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                       1262 passed, 15 skipped
-    pytest (파일 순서 정/역/난수)  각 1262 passed, 15 skipped — 순서 무관
+    pytest                       1265 passed, 15 skipped
+    pytest (파일 순서 정/역/난수)  각 1265 passed, 15 skipped — 순서 무관
                                  (정순 · 역순 · seed 11/707/31337)
     pytest tests/fuzz            11 passed
     python -m sdp.demo_smoke     exit 0, "ready": true
@@ -46,6 +46,64 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 백그라운드 측정 중에 트리를 고친 탓에 seed 11이 4건 실패로 나온 일이 있고, 그것은 결함이
 아니라 동시 편집이었습니다. Atheris(`fuzz/fuzz_query_safety.py`)는 로컬에 wheel이 없어
 실행하지 않았습니다 — 같은 invariant의 Hypothesis 미러가 `tests/fuzz`에서 돕니다.
+
+### Fixed — 카탈로그 mutation이 증빙 없이 커밋될 수 있었습니다 (high)
+
+적대적 리뷰가 **이 제품의 중심 주장 자체에 대한 위반**을 찾았습니다. 네 개의 카탈로그
+mutation은 모두 같은 세 줄을 같은 순서로 실행합니다 — `_DATA[id] = updated` ·
+schema 스냅샷 · **마지막에** 감사 행. 그 감사 행은 설정된 evidence store를 통해
+쓰이고, 그 store는 문서화된 두 배포 모두에서 실제 외부 의존성입니다
+(Docker 데모의 `SDP_SQLITE_PATH`, paid-pilot 프로파일의 `SDP_DATABASE_URL`).
+그 쓰기가 실패하면 — 테이블 드롭, 디스크 가득, Postgres 도달 불가 — **mutation은 이미
+커밋되어 있었습니다.** `record_decision`은 정상이고 `append_event`만 raise하는 store로 측정:
+
+    PATCH /catalog/datasets/crm-customer-master {"description": ...}
+      -> 400 {"error": "invalid_request", "reason": "request body is not valid"}
+         description 변경됨:   True
+         그 변경의 감사 행:     0건
+
+    POST /catalog/datasets            -> 500, 카탈로그 행 생성됨
+    POST .../publish, .../deprecate   -> 500, status 변경됨
+
+네 건 모두 **승인되었다는 증빙 없이 착륙한 governed write**입니다 — 이 저장소가
+`CLAUDE.md`에 "카탈로그 mutation과 browse/query 경로에 정책 평가와 evidence 기록을
+생략하는 변경은 회귀다"라고 적은 바로 그 회귀입니다. 그리고 patch 라우트는 추가로
+**서버측 저장 실패를 400 "request body is not valid"로 보고**했습니다 — 호출자의 본문에는
+아무 문제가 없는데 본문이 잘못됐다고 말한 것입니다.
+
+**두 가지를 고쳤습니다.**
+
+**1. 증빙을 기록할 수 없으면 write를 되돌립니다.** `_commit_dataset_with_evidence` 하나가
+저장·스냅샷·감사를 수행하고, 감사 쓰기가 raise하면 이전 dataset을 복원하거나(등록이라면
+키를 삭제하고) 이 mutation이 추가한 schema 스냅샷을 되돌린 뒤 store의 예외를 다시
+던집니다. 네 writer 전부 이 함수를 통과합니다. mutation 이전에 기록된 **정책 결정은 일부러
+남깁니다** — 권한은 실제로 평가되고 허용되었고, 감사 행도 mutation도 없는 상태에서 원장이
+그렇게 말하는 것이 실패한 write의 정직한 기록입니다.
+
+이것은 트랜잭션이 아닙니다. 한 Postgres store를 보는 서로 다른 프로세스의 두 writer에는
+여전히 직렬화 지점이 없고, store가 커밋한 **뒤** 이 함수가 반환하기 전에 실패하면 행은
+쓰이고 mutation은 되돌아갑니다. 제거한 것은 배포된 구성이 실제로 만들어내는 단일 프로세스
+경우입니다. 이 경계를 코드와 테스트에 적어 둡니다.
+
+**2. patch 라우트의 400 arm을 `ValueError`로 좁혔습니다.** 네 mutation 중 **이 하나만**
+`except Exception` 포괄 arm을 가지고 있었고, 그래서 이 하나만 서버 실패를 클라이언트
+오류로 보고했습니다(`publish`는 이미 `ValueError`, `create`·`deprecate`는 400 arm 자체가
+없어 500으로 올라갑니다). `ValueError`는 "이 본문이 검증을 통과하지 못했다"의 정확한
+계열이고(`pydantic.ValidationError`가 그것이며, `NodeKindConflict`는 위에서 잡히므로
+좁히기가 conflict를 흘려보내지 않습니다), store 실패(`RuntimeError`·`sqlite3.Error`·
+`psycopg.Error`·`OSError`)는 어느 것도 아니므로 이제 나머지 셋과 같이 5xx로 올라갑니다.
+
+**드리프트 가드도 넣었습니다.** 다섯 번째 writer가 `_DATA`를 직접 대입하면 테스트가
+실패합니다 — 이 영역의 이전 수리들이 전부 "넷 중 둘"만 덮었던 모양이기 때문입니다
+(kind 충돌 가드, IPv6 authority). 가드가 묻는 질문은 "`_record_audit_event`를 호출하는가"가
+아니라 "`_DATA`를 직접 대입하는가"입니다 — 전자로 쓴 첫 버전은 patch의 **no-op 분기**에서
+실패했습니다. 패치할 필드를 하나도 지정하지 않은 요청은 no-op을 원장에 기록하고 dataset을
+**건드리지 않고** 반환하며, 버전 범프와 스냅샷을 의도적으로 건너뜁니다. mutation 없는 감사
+행에는 되돌릴 것이 없습니다.
+
+역검증 2건: 네 writer 중 patch 하나만 원래의 세 줄로 되돌리면 동작 테스트와 드리프트 가드가
+함께 실패하고(`'감사실패변경' == '고객의 상태와...'`), 포괄 arm을 되돌리면 상태 단언이
+`(400, '{"detail":{"error":"invalid_request"...}}')`로 실패합니다.
 
 ### Fixed — alert routing 설계 조사가 기존 코드에서 찾아낸 결함 셋 (medium)
 

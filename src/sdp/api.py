@@ -1348,7 +1348,27 @@ def patch_catalog_dataset(dataset_id: str, payload: dict[str, Any]) -> dict[str,
             reason=str(conflict),
         )
         raise HTTPException(status_code=409, detail=str(conflict)) from conflict
-    except Exception as exc:
+    except ValueError as exc:
+        # ``ValueError``, not ``Exception``. This was the only one of the four
+        # catalog mutations with a blanket arm, and it is why it was the only one
+        # that reported a **server-side** failure as a client error. Measured
+        # against an evidence store whose ``append_event`` raises (a dropped
+        # table, a full disk, Postgres unreachable - the configured store in both
+        # documented deployments):
+        #
+        #     PATCH /catalog/datasets/crm-customer-master {"description": ...}
+        #       -> 400 {"error": "invalid_request", "reason": "request body is
+        #               not valid"}
+        #     POST /catalog/datasets, .../publish, .../deprecate
+        #       -> 500
+        #
+        # So one route told the caller their body was malformed because the
+        # server could not write its own ledger. ``ValueError`` is the precise
+        # class of "this body did not validate" - ``pydantic.ValidationError``
+        # is one, and ``NodeKindConflict`` is caught above so narrowing cannot
+        # let a conflict fall through here - while a store failure
+        # (``RuntimeError``, ``sqlite3.Error``, ``psycopg.Error``, ``OSError``)
+        # is none of them and now surfaces as a 5xx, the same as the other three.
         raise HTTPException(status_code=400, detail=_invalid_request_detail(exc))
     return {"status": "updated", "dataset": catalog.mutation_response_view(dataset)}
 

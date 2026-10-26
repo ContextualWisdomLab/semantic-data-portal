@@ -273,3 +273,223 @@ def test_every_catalog_mutation_takes_the_lock() -> None:
         assert "_MUTATION_LOCK" in source, (
             f"catalog.{name} mutates the store without taking the mutation lock"
         )
+
+
+# --- the evidence write, which is the last of the three and can fail ---------
+
+
+class _StoreWithDeadAuditTable:
+    """An evidence store whose audit table is gone: decisions write, events raise.
+
+    Not a general outage: ``record_decision`` succeeds so the route's policy
+    decision is recorded exactly as it is in production, and only the audit
+    write - the **last** of a mutation's three writes - fails. That asymmetry is
+    the point, because it is the one that used to leave the mutation committed
+    with nothing certifying it.
+    """
+
+    def __init__(self) -> None:
+        """Count what reached the store, so a test can tell silence from success."""
+        self.decisions: list[object] = []
+        self.event_attempts = 0
+
+    def record_decision(self, decision: object) -> None:
+        """Accept the decision, as a store with a live decisions table would."""
+        self.decisions.append(decision)
+
+    def append_event(self, event: object) -> None:
+        """Fail the way a dropped table fails."""
+        self.event_attempts += 1
+        raise RuntimeError("no such table: audit_events")
+
+    def list_events(self, **kwargs: object) -> list:
+        """No rows to read."""
+        return []
+
+    def list_decisions(self, **kwargs: object) -> list:
+        """Read back what was accepted."""
+        return list(self.decisions)
+
+
+@pytest.fixture
+def dead_audit_table():
+    """Install the half-broken store for one test and put the previous one back."""
+    from sdp import evidence
+
+    store = _StoreWithDeadAuditTable()
+    previous = evidence.configure_evidence_store(store)
+    try:
+        yield store
+    finally:
+        evidence.configure_evidence_store(previous)
+
+
+_MUTATION_TARGET = "crm-customer-master"
+
+
+def test_a_mutation_whose_audit_row_cannot_be_written_is_not_applied(
+    dead_audit_table: _StoreWithDeadAuditTable,
+) -> None:
+    """The violation of this product's central claim, on all four routes.
+
+    The audit row is written last, through the configured evidence store, and
+    that store is a real external dependency in both documented deployments
+    (``SDP_SQLITE_PATH`` for the Docker demo, ``SDP_DATABASE_URL`` for the
+    paid-pilot profile). When its write failed, the mutation was already
+    committed. Measured before the repair, with ``record_decision`` healthy and
+    ``append_event`` raising::
+
+        PATCH /catalog/datasets/crm-customer-master {"description": ...}
+          -> 400 {"error": "invalid_request", "reason": "request body is not valid"}
+             description changed:  True
+             audit rows for it:    0
+
+        POST /catalog/datasets           -> 500, catalog row created
+        POST .../publish, .../deprecate  -> 500, status changed
+
+    Four governed writes that landed with no evidence that they were
+    authorised - and the patch route additionally told the caller their body was
+    malformed because the **server** could not write its own ledger.
+    """
+    from fastapi.testclient import TestClient
+
+    from sdp.api import app
+
+    client = TestClient(app, raise_server_exceptions=False)
+    stored = catalog.get_dataset(_MUTATION_TARGET)
+    assert stored is not None
+    before_description = stored.description
+    before_status = stored.status
+    before_version = stored.version
+    before_history = len(catalog._SCHEMA_HISTORY.get(_MUTATION_TARGET, []))
+
+    response = client.patch(
+        f"/catalog/datasets/{_MUTATION_TARGET}",
+        json={"actor": "admin", "description": "감사실패변경", "change_reason": "probe"},
+    )
+    # A server-side storage failure, not a client error. 400 was the measured
+    # answer and it is the one thing a caller cannot act on.
+    assert response.status_code >= 500, (response.status_code, response.text)
+
+    after = catalog.get_dataset(_MUTATION_TARGET)
+    assert after is not None
+    assert after.description == before_description
+    assert after.status == before_status
+    # The version bump and the schema snapshot are part of the mutation and roll
+    # back with it; a kept snapshot would leave the history claiming a revision
+    # the catalog does not hold.
+    assert after.version == before_version
+    assert len(catalog._SCHEMA_HISTORY.get(_MUTATION_TARGET, [])) == before_history
+
+    # The store was really asked, so the test is about the failure handling and
+    # not about a route that skipped the write.
+    assert dead_audit_table.event_attempts >= 1
+    # And the policy decision is deliberately kept: authorization was evaluated
+    # and granted, and the write then failed. That is the honest record.
+    assert dead_audit_table.decisions
+
+
+def test_a_registration_whose_audit_row_cannot_be_written_leaves_no_row(
+    dead_audit_table: _StoreWithDeadAuditTable,
+) -> None:
+    """The create path's rollback has to **remove** the key, not restore a value.
+
+    ``register_dataset`` writes an id that had no previous entry, so the undo is
+    a deletion. Restoring ``previous`` without that case would leave the new
+    dataset in the catalog - which is the defect, not the fix - and the next
+    ``seed_store`` would mirror a row no audit event covers.
+    """
+    from fastapi.testclient import TestClient
+
+    from sdp.api import app
+
+    client = TestClient(app, raise_server_exceptions=False)
+    new_id = "감사실패등록셋"
+    assert new_id not in catalog._DATA
+
+    response = client.post(
+        "/catalog/datasets",
+        json={
+            "actor": "admin",
+            "id": new_id,
+            "title": "제목",
+            "description": "설명",
+            "owner": "owner",
+            "steward": "steward",
+            "domain": "테스트",
+            "source_system": "postgresql://analytics.dw/t",
+            "sensitivity": "low",
+            "update_frequency": "daily",
+            "quality_score": 0.9,
+            "freshness_score": 0.9,
+            "tags": ["테스트"],
+            "terms": ["테스트"],
+            "related_datasets": [],
+            "schema": [],
+            "distributions": [
+                {
+                    "id": f"dist-{new_id}",
+                    "format": "postgresql.table",
+                    "endpoint": "https://example.internal/api/table/t",
+                }
+            ],
+            "mappings": [],
+        },
+    )
+    assert response.status_code >= 500, (response.status_code, response.text)
+    assert new_id not in catalog._DATA
+    assert new_id not in catalog._SCHEMA_HISTORY
+    assert catalog.get_dataset(new_id) is None
+    # Checked in the store, not over HTTP: while this store is installed a
+    # governed *read* answers 5xx too, because it records an audit event of its
+    # own and that write fails the same way. That is the correct answer - a read
+    # that cannot be audited should not serve the row - so the absence is
+    # asserted where it is unambiguous. With the store restored, the id is free
+    # again, which the fixture's teardown leaves true for the next test.
+
+
+def test_every_catalog_writer_commits_through_the_evidence_helper() -> None:
+    """The drift guard: a fifth writer must not reintroduce the bare sequence.
+
+    All four writers had the same three lines in the same order, and a repair to
+    one would not have reached the others - the same shape as the IPv6 authority
+    defect and the kind-conflict guard that covered two of four writes. This
+    reads the source so a new writer that assigns ``_DATA`` directly is refused
+    here rather than in production.
+
+    The question is **"does this function assign ``_DATA`` itself"**, not "does
+    it call ``_record_audit_event``". Written the second way, this test failed
+    on ``_patch_dataset_locked``'s no-op branch: a patch naming no patchable
+    field records the no-op in the ledger and returns the dataset **untouched**,
+    deliberately skipping the version bump and the schema snapshot, so routing
+    it through the helper would add a snapshot for a request that changed
+    nothing. An audit row without a mutation needs no rollback; a mutation is
+    what does.
+    """
+    import inspect
+    import re
+
+    # The *locked* functions, which are where the writes live; the public
+    # ``publish_dataset``/``deprecate_dataset`` are lock wrappers that delegate,
+    # and naming those made this test pass vacuously on their delegating source.
+    for name in (
+        "_register_dataset_locked",
+        "_patch_dataset_locked",
+        "_publish_dataset_locked",
+        "_deprecate_dataset_locked",
+    ):
+        source = inspect.getsource(getattr(catalog, name))
+        assert "_commit_dataset_with_evidence" in source, (
+            f"catalog.{name} commits without the evidence helper, so a failed "
+            "audit write would leave its mutation applied"
+        )
+        direct = re.findall(r"_DATA\[[^\]]*\]\s*=", source)
+        assert direct == [], (
+            f"catalog.{name} assigns _DATA directly ({direct}); commit through "
+            "_commit_dataset_with_evidence so a failed audit write rolls back"
+        )
+
+    # And the helper is the only place that does assign it, so the guard above
+    # is not satisfied by moving the assignment somewhere else in the module.
+    helper = inspect.getsource(catalog._commit_dataset_with_evidence)
+    assert re.findall(r"_DATA\[[^\]]*\]\s*=", helper)

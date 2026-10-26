@@ -354,6 +354,76 @@ def _record_schema_snapshot(dataset: Dataset) -> None:
     history.append(_make_schema_snapshot(dataset))
 
 
+def _commit_dataset_with_evidence(dataset: Dataset, event: AuditEvent) -> Dataset:
+    """Store a dataset, snapshot its schema and record its audit row, or undo all three.
+
+    All four catalog mutations had the same three lines in the same order::
+
+        _DATA[dataset_id] = updated
+        _record_schema_snapshot(updated)
+        _record_audit_event(payload)
+
+    and the audit row is written **last**, through the configured evidence
+    store. That store is a real external dependency in both documented
+    deployments (``SDP_SQLITE_PATH`` for the Docker demo,
+    ``SDP_DATABASE_URL`` for the paid-pilot profile), so its write can fail -
+    a dropped table, a full disk, Postgres unreachable - and when it did, the
+    mutation was already committed. Measured against a store whose
+    ``append_event`` raises, with its ``record_decision`` healthy::
+
+        PATCH /catalog/datasets/crm-customer-master {"description": ...}
+          -> 400 {"error": "invalid_request", "reason": "request body is not valid"}
+             description changed:  True
+             audit rows for it:    0
+
+        POST /catalog/datasets           -> 500, catalog row created
+        POST .../publish, .../deprecate  -> 500, status changed
+
+    Every one of them is the violation this product's central claim rules out:
+    a governed write that landed with no evidence that it was authorised. The
+    patch route additionally reported a **server-side storage failure as a 400
+    "request body is not valid"**, telling the caller their request was
+    malformed when nothing was wrong with it.
+
+    So the write is undone when its evidence cannot be recorded. The previous
+    dataset is restored - or the key removed, for a registration that had no
+    previous value - and the schema snapshot this mutation appended is popped,
+    before the store's exception is re-raised for the route to map. The policy
+    decision recorded before the mutation is deliberately kept: authorization
+    *was* evaluated and granted, and the ledger saying so while no audit row
+    and no mutation exist is the honest record of a write that failed.
+
+    This is not a transaction. Two writers in different processes against one
+    Postgres store still have no serialisation point, and a failure *after* the
+    store commits but before this function returns would leave the row written
+    and the mutation rolled back. What it removes is the single-process case
+    that the shipped configurations actually produce.
+    """
+    previous = _DATA.get(dataset.id)
+    history = _SCHEMA_HISTORY.get(dataset.id)
+    history_depth = len(history) if history is not None else None
+
+    _DATA[dataset.id] = dataset
+    _record_schema_snapshot(dataset)
+    try:
+        _record_audit_event(event)
+    except Exception:
+        # Undo in the reverse order, so an exception in the rollback itself
+        # cannot leave the dataset visible with the snapshot already gone.
+        appended = _SCHEMA_HISTORY.get(dataset.id)
+        if appended is not None:
+            if history_depth is None:
+                del _SCHEMA_HISTORY[dataset.id]
+            else:
+                del appended[history_depth:]
+        if previous is None:
+            _DATA.pop(dataset.id, None)
+        else:
+            _DATA[dataset.id] = previous
+        raise
+    return dataset
+
+
 def _coerce_version_index(history: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return {entry["schema_version"]: entry for entry in history}
 
@@ -909,18 +979,16 @@ def _register_dataset_locked(
         updated_at=now,
     )
     dataset.recompute_scores()
-    _DATA[dataset.id] = dataset
-    _record_schema_snapshot(dataset)
-    _record_audit_event(
+    return _commit_dataset_with_evidence(
+        dataset,
         _build_dataset_payload(
             dataset,
             actor=actor,
             action="dataset.register",
             decision_id=decision_id,
             details=change_reason_details(change_reason),
-        )
+        ),
     )
-    return dataset
 
 
 def patch_dataset(
@@ -995,9 +1063,8 @@ def _patch_dataset_locked(
     data["version"] = _bump_version(dataset.version)
     updated = Dataset.model_validate(data)
     updated.recompute_scores()
-    _DATA[dataset_id] = updated
-    _record_schema_snapshot(updated)
-    _record_audit_event(
+    return _commit_dataset_with_evidence(
+        updated,
         _build_dataset_payload(
             updated,
             actor=actor,
@@ -1009,9 +1076,8 @@ def _patch_dataset_locked(
                 "after": audited_patch_values({k: data[k] for k in effective}),
                 **change_reason_details(change_reason),
             },
-        )
+        ),
     )
-    return updated
 
 
 def publish_dataset(
@@ -1065,9 +1131,8 @@ def _publish_dataset_locked(
     data["version"] = _bump_version(dataset.version)
     published = Dataset.model_validate(data)
     published.recompute_scores()
-    _DATA[dataset_id] = published
-    _record_schema_snapshot(published)
-    _record_audit_event(
+    return _commit_dataset_with_evidence(
+        published,
         _build_dataset_payload(
             published,
             actor=actor,
@@ -1077,9 +1142,8 @@ def _publish_dataset_locked(
                 "previous_status": dataset.status,
                 **change_reason_details(change_reason),
             },
-        )
+        ),
     )
-    return published
 
 
 def deprecate_dataset(
@@ -1133,18 +1197,16 @@ def _deprecate_dataset_locked(
     dataset_data["updated_at"] = datetime.now(timezone.utc)
     deprecated = Dataset.model_validate(dataset_data)
     deprecated.recompute_scores()
-    _DATA[dataset_id] = deprecated
-    _record_schema_snapshot(deprecated)
-    _record_audit_event(
+    return _commit_dataset_with_evidence(
+        deprecated,
         _build_dataset_payload(
             deprecated,
             actor=actor,
             action="dataset.deprecate",
             decision_id=decision_id,
             details=change_reason_details(reason),
-        )
+        ),
     )
-    return deprecated
 
 
 def list_audit_events(
