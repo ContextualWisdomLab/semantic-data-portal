@@ -3208,6 +3208,98 @@ filter excluding the PR base. Keep the quality trigger unfiltered." 같은 결�
 
 이 절은 측정 기록이고 병합 허가가 아닙니다.
 
+## 드래프트 SQL의 `FROM`이 relation이 아니라 연결 locator였습니다 — 안전 게이트도 같은 추측을 공유합니다 (2026-10-26 22:25Z)
+
+`POST /llm/draft-query`가 `assumptions`에 `카탈로그에서 검증된 테이블/컬럼만 사용`을
+공표했습니다. **컬럼**은 카탈로그 선언에서 옵니다. **테이블**은 아닙니다 —
+`_source_table_name()`이 `source_system`의 마지막 경로 조각을 `_safe_identifier`로 통과시킨
+값이고, `source_system`은 relation이 아니라 *연결* locator입니다. `9cf278e`에서 시드
+카탈로그 다섯 건을 전수 측정했습니다:
+
+| dataset | `source_system` | 공표된 `FROM` | 카탈로그가 선언한 relation |
+| --- | --- | --- | --- |
+| `crm-customer-master` | `postgresql://analytics.dw/customer` | `customer` | `crm_customer_master` (`postgresql.table` distribution) |
+| `crm-event` | `s3://analytics/events/crm` | `crm` | 없음 (관계형 아님) |
+| `sales-order` | `postgresql://analytics.dw/sales` | `sales` | 없음 |
+| `semantic-glossary` | `sparql://semantic.graph/customer-intelligence` | `customer_intelligence` | 없음 (named graph) |
+| `marketing-campaign` | `https://api.example.internal/marketing/campaigns` | `campaigns` | 없음 (REST 경로) |
+
+두 가지가 동시에 틀립니다. libpq URI의 그 조각은 **데이터베이스** 이름이지 relation
+이름이 아니고, 다섯 중 셋은 **애초에 관계형이 아닙니다** — 객체 prefix, named graph, REST
+경로입니다. 그런데도 다섯 건 모두 `"dialect": "postgresql"` SQL을 받습니다. 즉 **어느
+draft도 대상 시스템에 존재하는 relation을 지목하지 않았고**, 붙여 넣은 구매자는
+`relation "customer" does not exist`를 받습니다.
+
+### 자기 모순: 게이트가 카탈로그 자신의 relation을 거부합니다
+
+`validate_sql_query`의 source-table allow-list가 드래프터와 **같은 파생**에서 만들어지므로,
+카탈로그가 `postgresql.table` distribution으로 공표한 진짜 relation을 넣으면 거부하고
+추측한 이름은 통과시킵니다:
+
+```
+validate_sql_query("... FROM crm_customer_master ...")  -> ['unauthorized_table_reference']
+validate_sql_query("... FROM customer ...")             -> []
+```
+
+구매자 쪽에서 보면 **고치면 거부되고, 거부되지 않으면 실행되지 않습니다.**
+
+### 이번에 한 것 (`8ed985d`) — 전달 지점 라벨
+
+관계형이 아닌 source에 대해 draft를 **거부**하는 설계를 먼저 쓰고 되돌렸습니다. 네 파일
+11건이 red가 되고, 그중 `tests/test_latency_budget_measurement.py`는 이 라우트를 **지연
+표본 수집용 트래픽 인프라**로 씁니다(fixture 오류 7건). 다른 측정이 올라서 있는 표면을
+없애는 것은 결함보다 큰 변경이고, 결함은 draft의 존재가 아니라 **거짓 주장**입니다.
+
+그래서 `/graph/stats`의 instance-wide 카운트와 mock executor의 provenance 필드에서와 같은
+선택을 했습니다 — 응답이 전달 지점에서 스스로를 라벨합니다. `source_kind`(공유 분류기
+`sdp_core.demo_seed.classify_source_type`에서 파생),
+`executable_against_source`(다섯 건 모두 `False` — 그게 현재 사실입니다),
+`execution_caveat`(이름이 **locator에서 왔다**는 것과 진짜 이름이 **카탈로그
+distribution에 있다**는 것 둘 다). 거짓 assumption은 참인 두 문장으로 교체했습니다.
+
+### 남은 수리 (이 절이 그 기록입니다)
+
+`8ed985d`의 코드 주석과 커밋 메시지가 "the separate repair recorded in the gap baseline"을
+참조합니다. **그 기록이 바로 이 절입니다** — 참조를 적을 때 대상이 없으면 그 참조 자체가
+이 문서가 반복해 고쳐 온 거짓 진술이므로, 같은 인터벌에 적어 둡니다.
+
+해야 할 것은 하나의 파생을 두 소비자가 공유하게 만드는 것입니다:
+
+1. dataset의 `distributions`에서 `format`에 `table`을 담은 항목의 `endpoint` 마지막 조각을
+   relation으로 해석합니다(`crm-customer-master` → `crm_customer_master`).
+2. `validate_sql_query`의 allow-list를 **같은 함수**에서 세웁니다. 지금처럼 두 곳이 각자
+   추측하면 위의 자기 모순이 되돌아옵니다.
+3. 선언이 없는 dataset(관계형 아님 또는 distribution 미기재)은 relation이 없으므로
+   `executable_against_source`가 계속 `False`이고, 그 사유를 `execution_caveat`가 말합니다.
+4. `validate_sql_query`는 fuzz target(`fuzz/fuzz_query_safety.py`)이고 같은 invariant의
+   Hypothesis 미러가 `tests/fuzz`에 있습니다. allow-list 파생이 바뀌면 **둘 다** 같이
+   움직여야 하고, 미러를 고치지 않은 변경은 fuzz 레인에서만 늦게 드러납니다.
+5. 들어오면 SQL source가 `executable_against_source: True`로 바뀌고
+   `tests/test_draft_source_kind.py`의 기대도 같이 바뀝니다 — 그 파일은 그 전환을 **놓치지
+   않도록** 현재 사실을 고정해 둔 것입니다.
+
+### 같은 라운드에서 확인했지만 아직 수리하지 않은 것
+
+사유를 적어 두는 쪽이 재탐색보다 쌉니다. 모두 재현해 측정했고, 수리는 하지 않았습니다.
+
+- `POST /catalog/datasets`는 actor를 **요청 본문**(`_actor(payload)`)에서 읽는데, 거부
+  메시지는 쿼리 파라미터 기준으로 적힙니다. 그래서 본문에 권한 있는 actor를 담아도
+  `create 작업은 admin 권한만 가능`이 돌아오고, 사유가 실제 원인을 가리키지 않습니다.
+  이 라운드에 저 메시지 때문에 재현을 네 번 헛돌렸습니다 — 사유가 틀린 거부는 호출자뿐
+  아니라 다음 측정자도 잘못된 곳을 보게 만듭니다.
+- `POST /ontology/patches/{patch_id}/review`가 같은 `create 작업은 admin 권한만 가능`으로
+  거부하고, 존재하지 않는 patch에 대해 `{"detail":"'patch not found'"}`를 돌려줍니다 —
+  바깥 따옴표가 `KeyError` repr이 그대로 직렬화된 흔적입니다.
+- `validation_pass_rate` 게이트가 비율 없이 판정만 공표합니다
+  (`shacl_validation.validation_pass_rate`가 `None`). `bc2ebb2`가 이 KPI를
+  `measured: True`로 분류했으므로, **측정되는데 값이 공표되지 않는** 상태입니다.
+- `/enterprise/console`의 상태 chip이 네 상태 전부에서 `class="badge ok"`입니다
+  (`className`/`classList` 사용 0건이고 amber `.badge.warn`은 이미 CSS에 있습니다).
+- `/catalog/facets`가 seed domain 값을 필드 이름처럼 공표하고, audit-trail·policy-decision
+  스키마가 실제 응답 모양과 어긋납니다.
+
+이 절은 측정 기록이고 병합 허가가 아닙니다.
+
 ## 운영 메모
 
 - Database objects: 두 단어 이상 `snake_case`, 3NF. Catalog plane 테이블은 #73의 `migrations/0002_ontology_catalog_plane.sql`.
