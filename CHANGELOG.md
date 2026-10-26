@@ -2,15 +2,15 @@
 
 이 문서는 `claude/semantic-portal-pr-merge-e5a48k` 브랜치(PR
 [#102](https://github.com/ContextualWisdomLab/semantic-data-portal/pull/102))가
-베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **228개** 커밋 중 122개는
-gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 106개입니다. 이 숫자는 **이
-줄을 담은 커밋을 포함한** 값입니다 — 측정 시점의 227에 이 커밋을 더한 것. 측정 명령:
+베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **230개** 커밋 중 123개는
+gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 107개입니다. 이 숫자는 **이
+줄을 담은 커밋을 포함한** 값입니다 — 측정 시점의 229에 이 커밋을 더한 것. 측정 명령:
 
     git rev-list --count origin/docs/product-technical-gap-baseline..HEAD
     git log --format=%H origin/docs/product-technical-gap-baseline..HEAD \
       --name-only -- docs/product-technical-gap-baseline.md | grep -c '^[0-9a-f]\{40\}$'
 
-앞서 적혀 있던 164/112, 186/113, 199/122/77, 203/122/81, 211/122/89, 212/122/90, 213/122/91, 214/122/92, 215/122/93, 216/122/94, 218/122/96, 219/122/97, 220/122/98, 221/122/99, 222/122/100, 223/122/101, 224/122/102, 225/122/103, 226/122/104은 각각 그 시점의 값이고 이후
+앞서 적혀 있던 164/112, 186/113, 199/122/77, 203/122/81, 211/122/89, 212/122/90, 213/122/91, 214/122/92, 215/122/93, 216/122/94, 218/122/96, 219/122/97, 220/122/98, 221/122/99, 222/122/100, 223/122/101, 224/122/102, 225/122/103, 226/122/104, 228/122/106은 각각 그 시점의 값이고 이후
 커밋을 반영하지 않은 숫자였습니다 — 자기 문서의 수치도 측정해서 맞춰 둡니다. 199는 이
 줄을 쓴 뒤 3개 커밋이 더 쌓여 낡아 203으로, 203은 다음 커밋에서 낡아 204로, 204는 또
 두 커밋 뒤에 206으로 다시 측정해 고쳤습니다. 206도 그 값을 담은 커밋 자신 때문에 도착
@@ -30,14 +30,15 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 10
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                       1300 passed, 15 skipped
-    pytest (파일 순서 정/역/난수)  각 1300 passed, 15 skipped — 순서 무관
+    pytest                       1310 passed, 15 skipped
+    pytest (파일 순서 정/역/난수)  각 1310 passed, 15 skipped — 순서 무관
                                  (정순 · 역순 · seed 11/707/31337)
     pytest tests/fuzz            11 passed
     python -m sdp.demo_smoke     exit 0, "ready": true
 
-이 커밋이 테스트를 34건 늘렸으므로(새 파일 넷 33건 + `test_honest_metrics.py` 1건) 위
-숫자는 앞서 적혀 있던 1266에서 올라갔습니다. 다섯 순서 측정은 트리를 동결한 상태에서
+alert 전달 커밋이 테스트를 34건(새 파일 넷 33건 + `test_honest_metrics.py` 1건),
+pgvector 핀 커밋이 10건 늘렸으므로 위 숫자는 앞서 적혀 있던 1266 → 1300 → 1310으로
+올라갔습니다. 다섯 순서 측정은 트리를 동결한 상태에서
 돌렸고, 그 뒤에 바뀐 파일은 이 CHANGELOG 하나입니다 — CHANGELOG 내용을 읽는 테스트는
 파일 순서와 무관한 산술 가드
 (`test_every_published_node_breakdown_sums_to_its_own_total`) 하나뿐이므로, 순서 성질을
@@ -54,6 +55,61 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 백그라운드 측정 중에 트리를 고친 탓에 seed 11이 4건 실패로 나온 일이 있고, 그것은 결함이
 아니라 동시 편집이었습니다. Atheris(`fuzz/fuzz_query_safety.py`)는 로컬에 wheel이 없어
 실행하지 않았습니다 — 같은 invariant의 Hypothesis 미러가 `tests/fuzz`에서 돕니다.
+
+### Fixed — 하나 남아 있던 미고정 빌드 입력을 닫았습니다. 막고 있던 것은 환경이 아니었습니다 (medium)
+
+`docs/product-technical-gap-baseline.md`가 2026-10-14에 **수리하지 않고 기록만 한** 항목으로
+남겨 둔 것입니다. `docker/postgres-age-pgvector.Dockerfile`이 pgvector를 가변 GitHub 태그
+tarball URL에서 받아 체크섬 검증 없이 root로 컴파일해 `make install`했습니다 — 이 저장소에서
+content-addressed되지 않은 **유일한 빌드 입력**이고, 들어가는 곳이 governed 그래프와 증빙
+데이터를 담는 Postgres 서버입니다. 태그는 가변 ref이므로 force-push 한 번으로 같은 URL이
+다른 바이트를 서비스합니다.
+
+당시 기록한 이유는 정당했습니다 — tarball을 받을 수 없어(프록시 403) sha256을 계산할 수
+없고, **검증하지 않은 해시는 핀이 아니라 핀의 외관**입니다. 그런데 그 기록은 대안 두 가지를
+적어 두고 **두 번째가 이 환경에서 가능한지 확인하지 않았습니다.** 가능했습니다:
+
+```
+$ git ls-remote https://github.com/pgvector/pgvector refs/tags/v0.7.4
+103ac50f1a90b47a72003e8e8628a55ec372f202	refs/tags/v0.7.4
+```
+
+tarball HTTP 요청만 403이고 **git 프로토콜은 프록시를 통과합니다.** peeled `^{}` ref가
+advertise되지 않으므로 `v0.7.4`는 lightweight 태그이고 위 이름이 커밋 자체입니다. 그 객체를
+실제로 받아 확인했습니다 — 타입 `commit`, subject `Version bump to 0.7.4 [skip ci]`, tree
+`97af667455d30dba56b092ce3b9241b991f7f888`, tree에 `Makefile`·`src/`·`sql/`·`vector.control`,
+그리고 `vector.control`의 `default_version`이 `'0.7.4'`입니다. 한 달 가까이 "환경이 막는다"로
+남아 있던 항목인데, **막고 있던 것은 환경이 아니라 한 번도 시도하지 않은 명령**이었습니다.
+
+**핀을 강제하는 것이 git 자신입니다.** 그래서 download가 아니라 fetch입니다 —
+`git fetch <sha>`는 받은 객체가 요청한 이름으로 해시되는지 검증하므로, 같은 이름으로 다른
+내용을 주는 서버는 빌드를 실패시킵니다. `git clone --branch <tag>`는 그 검증을 하지 않으므로
+핀처럼 보이지만 핀이 아니고, 아래 가드가 그 형태를 거절합니다. `PGVECTOR_VERSION`은 이미지
+라벨로만 남기고 pin된 tree의 `vector.control`과 빌드 중에 대조합니다 — 커밋 이름이 이미
+내용을 고정하므로 핀을 강화하지는 않고, 두 ARG가 따로 움직여 **이미지가 담고 있지 않은
+버전을 라벨로 붙이는 것**을 막습니다. `curl`은 더 이상 설치하지 않습니다.
+
+**한계를 적어 둡니다**: git 객체 이름은 SHA-1이므로 sha256 content digest보다 약하고, 가변
+태그보다는 확실히 강합니다. tarball에 닿는 환경에서 계산한 sha256으로 교체하는 것은 그대로
+개선입니다. `git archive`로 tarball을 재현해 해시를 뽑지는 않았습니다 — GitHub archive
+엔드포인트는 prefix·gzip 설정·mtime이 고정된 자기 형식이라 byte 단위로 재현되지 않고,
+재현되지 않은 해시는 다시 핀의 외관일 뿐입니다.
+
+**회귀 가드 `tests/test_build_input_pinning.py` 10건.** 고장났던 그 파일을 지목하지 않고
+저장소의 모든 Dockerfile을 찾아 검사합니다 — 나중에 추가되는 두 번째 미고정 입력도 같은
+결함이고, 파일 이름을 적어 둔 가드는 자기 목록과 대조하는 가드입니다. `FROM`은 `@sha256:`
+digest를, 소스 archive는 가변 ref URL 금지를, 빌드 중의 git fetch/clone은 40-hex 객체
+이름을, `*_COMMIT` ARG 기본값도 같은 형식을 요구합니다. Dockerfile의 line continuation과
+주석을 Docker와 같은 방식으로 접어 읽습니다 — 주석 줄에 산문이 있고 한 `RUN`이 여러 줄에
+걸쳐 있으므로, raw 줄 단위로 읽는 검사는 명령과 그 플래그를 다른 줄로 갈라 놓고 놓칩니다.
+
+역검증 5건, 모두 실패를 확인했습니다: 가변 태그 tarball 복원(2건 실패), 태그 ref로 git
+fetch(2건), 버전 대조 제거(1건), 축약 커밋 이름(2건), base image 태그만(1건).
+
+**정리하지 못한 것 하나**: `.claude/worktrees/` 아래에 완료된 workflow의 worktree 11개가
+154 MB로 남아 있습니다. gitignore 대상이라 저장소에는 영향이 없고 디스크도 28 GB 여유가
+있어 급하지 않습니다. 일괄 제거 명령이 권한 분류기에서 거절되었으므로 우회하지 않고
+그대로 두었습니다 — `git worktree remove --force` 11건이 필요합니다.
 
 ### Added — alert 전달(routing)과 세 번째 alert 규칙 (feature)
 

@@ -2780,20 +2780,67 @@ redaction). 패턴이 분명합니다 — 수리는 맞았지만 **같은 결함
 역할을 빼앗는 쪽이든 매트릭스를 바꾸는 쪽이든 의도를 알아야 고를 수 있으므로, 번들링을
 공개하고 scope 주장이 grant보다 좁아지면 깨지는 contract test만 두었습니다.
 
-### 수리하지 않고 기록만 한 항목 — pgvector 빌드 입력 핀 (2026-10-14)
+### pgvector 빌드 입력 핀 — 기록만 했던 항목을 닫았습니다 (2026-10-26)
 
 `docker/postgres-age-pgvector.Dockerfile`은 pgvector를 **가변 GitHub 태그 URL**에서
-받아 체크섬·서명 검증 없이 root로 컴파일해 `make install`합니다(10, 19-25행, `USER root`는
-8행). 이 저장소에서 digest/commit SHA/hash로 고정되지 않은 **유일한 빌드 입력**입니다.
-governed 그래프와 증빙 데이터를 담는 Postgres 서버에 들어가는 확장이므로 공급망 관점에서
-실재하는 결함입니다.
+받아 체크섬·서명 검증 없이 root로 컴파일해 `make install`했습니다. 이 저장소에서
+digest/commit SHA/hash로 고정되지 않은 **유일한 빌드 입력**이었습니다. governed 그래프와
+증빙 데이터를 담는 Postgres 서버에 들어가는 확장이므로 공급망 관점에서 실재하는 결함입니다.
 
-**고치지 않았습니다.** 이 컨테이너에서 해당 tarball을 받을 수 없습니다 —
-`curl https://github.com/pgvector/pgvector/archive/refs/tags/v0.7.4.tar.gz`가 프록시에서
-**403**입니다. 따라서 진짜 sha256을 계산할 수 없고, **검증하지 않은 해시를 적는 것은
-핀이 아니라 핀의 외관**입니다(그 쪽이 더 위험합니다 — 이후 아무도 다시 확인하지 않습니다).
-네트워크가 되는 환경에서 tarball을 받아 `sha256sum`으로 고정하거나, 특정 commit SHA를
-`git clone` 후 체크아웃하는 방식으로 교체해야 합니다.
+**2026-10-14에는 고치지 않고 기록만 했습니다.** 이 컨테이너에서 해당 tarball을 받을 수
+없기 때문입니다 — `curl https://github.com/pgvector/pgvector/archive/refs/tags/v0.7.4.tar.gz`가
+프록시에서 **403**입니다. 따라서 진짜 sha256을 계산할 수 없고, **검증하지 않은 해시를 적는
+것은 핀이 아니라 핀의 외관**입니다(그 쪽이 더 위험합니다 — 이후 아무도 다시 확인하지
+않습니다). 그때 적어 둔 대안이 두 가지였고, 그중 두 번째가 **이 환경에서 가능하다는 것을
+확인하지 않은 채** 미결로 남아 있었습니다.
+
+**가능했습니다. git 프로토콜은 프록시를 통과합니다.** tarball HTTP 요청만 403입니다.
+
+```
+$ git ls-remote https://github.com/pgvector/pgvector refs/tags/v0.7.4
+103ac50f1a90b47a72003e8e8628a55ec372f202	refs/tags/v0.7.4
+```
+
+peeled `^{}` ref가 advertise되지 않으므로 `v0.7.4`는 lightweight 태그이고 위 이름이
+**커밋 자체**입니다. 그 객체를 실제로 받아 확인했습니다 — 타입 `commit`, subject
+`Version bump to 0.7.4 [skip ci]`, tree `97af667455d30dba56b092ce3b9241b991f7f888`,
+tree에 `Makefile`·`src/`·`sql/`·`vector.control`이 있고 `vector.control`의
+`default_version`은 `'0.7.4'`입니다.
+
+#### 수리
+
+tarball 다운로드를 **객체 이름을 지정한 git fetch**로 교체했습니다. 핀을 강제하는 것이
+git 자신이라는 점이 핵심입니다 — `git fetch <sha>`는 받은 객체가 요청한 이름으로
+해시되는지 검증하므로, 같은 이름으로 다른 내용을 주는 서버는 빌드를 **실패시킵니다**.
+`git clone --branch <tag>`는 그 검증을 하지 않으므로 핀처럼 보이지만 핀이 아닙니다.
+
+`PGVECTOR_VERSION`은 이미지 라벨로만 남기고, pin된 tree의 `vector.control`이 선언하는
+버전과 빌드 중에 대조합니다. 커밋 이름이 이미 내용을 고정하므로 이 대조는 핀을 강화하지
+않습니다 — 두 ARG가 따로 움직여 **이미지가 담고 있지 않은 버전을 라벨로 붙이는 것**을
+막습니다. `curl`은 더 이상 설치하지 않습니다(root로 컴파일하는 레이어에 fetch 도구를
+남기지 않습니다).
+
+#### 이 핀의 한계 — 적어 둡니다
+
+git 객체 이름은 SHA-1이므로 **sha256 content digest보다 약하고**, 가변 태그보다는
+확실히 강합니다. tarball에 닿을 수 있는 환경에서 실제로 계산한 sha256으로 교체하는 것은
+그대로 개선입니다. 여기서 `git archive`로 tarball을 재현해 해시를 계산하지는 않았습니다 —
+GitHub의 archive 엔드포인트는 prefix·gzip 설정·mtime이 고정된 자기 형식을 쓰므로
+byte 단위로 재현되지 않고, 재현되지 않은 해시는 다시 핀의 외관일 뿐입니다.
+
+#### 회귀 가드
+
+`tests/test_build_input_pinning.py` 10건. 고장났던 **그 파일을 지목하지 않고** 저장소의
+모든 Dockerfile을 찾아 검사합니다 — 나중에 추가되는 두 번째 미고정 입력도 같은 결함이고,
+파일 이름을 적어 둔 가드는 자기 목록과 대조하는 가드입니다(이 저장소가 반복해서 배운 구분).
+`FROM`은 `@sha256:` digest를, 소스 archive는 가변 ref URL 금지를, 빌드 중의 git
+fetch/clone은 40-hex 객체 이름을 요구하고, `*_COMMIT` ARG의 기본값도 같은 형식을
+요구합니다. Dockerfile의 line continuation과 주석을 Docker와 같은 방식으로 접어
+읽습니다(주석 줄에 산문이 있고 한 `RUN`이 여러 줄에 걸쳐 있으므로, raw 줄 단위로 읽는
+검사는 명령과 그 플래그를 다른 줄로 갈라 놓고 놓칩니다).
+
+역검증 5건, 모두 실패를 확인했습니다: 가변 태그 tarball 복원(2건 실패), 태그 ref로
+git fetch(2건), 버전 대조 제거(1건), 축약 커밋 이름(2건), base image 태그만(1건).
 
 ### 병합 게이트 실측 (2026-10-14)
 
