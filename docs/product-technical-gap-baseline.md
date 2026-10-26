@@ -3446,6 +3446,75 @@ remain_are_the_ones_with_no_model`이 그 경계를 의도적으로 측정합니
 
 이 절은 측정 기록이고 병합 허가가 아닙니다.
 
+## 공표된 문서로는 POST 라우트 **열 개**를 호출할 수 없었습니다 (2026-10-26 23:50Z)
+
+`api_request_contract`가 모델이 있는 라우트 열다섯을 수리했습니다. 공표 본문 스키마가
+`{"type": "object", "additionalProperties": true}`인 라우트 **열**이 남아 있었고, 그 열
+개가 **전부** 본문에서 이름 있는 키를 읽습니다. `5af3adf`에서 AST로 전수 측정:
+
+```
+POST /catalog/datasets/{id}/publish     actor, reason
+POST /catalog/datasets/{id}/deprecate   actor, reason
+POST /enterprise/auth/oidc-preview      actor, claims, role_map
+POST /ontology/patches                  actor, concept, suggestion
+POST /ontology/patches/{id}/review      actor, comment, decision, reviewer
+POST /browse/{id}/preview               limit, offset, purpose, user
+POST /enterprise/auth/oidc-verify       token
+POST /llm/search                        purpose, question, user
+POST /ontology/resolve                  text + 버전 핀
+POST /policy/decision                   action, purpose, resource, subject, user
+```
+
+`additionalProperties: true`는 문서로 만든 본문을 **유효하게** 만들고 호출은 성립시키지
+못합니다 — `api_request_contract`의 자기 docstring이 경고하는 "a schema that cannot be
+used to make the call it describes"가 typed 문이 아니라 **untyped 문**으로 들어온
+것입니다. 열 중 다섯은 인가 주체를 이렇게 읽으므로 그 호출은 핸들러에 닿기도 전에
+거부됩니다.
+
+**주체의 키 이름이 통일되어 있지도 않습니다** — 모든 GET은 쿼리 `?user=`, 이 라우트 중
+다섯은 본문 `actor`, 셋은 본문 `user`입니다. 경로만 보고 유도할 수 있는 규칙이 아니고,
+바로 이것이 문서가 있어야 하는 이유입니다.
+
+### 공표 주장이 가드보다 넓었습니다
+
+그 모듈의 주석은 파생 가드가 "fails if a handler reads a body key this table does not
+publish, so the next one cannot be forgotten"이라고 적습니다. 가드는
+`REQUEST_BODY_MODELS`만 파라미터로 돌므로 **모델 없는 열 개는 애초에 범위 밖**이었습니다.
+`test_the_untyped_bodies_that_remain_are_the_ones_with_no_model`이 그 경계를 측정하긴
+하지만, 그것은 "모델이 없다"를 확인할 뿐 "읽는 키를 공표한다"를 확인하지 않습니다.
+
+### 고친 것
+
+* 열 라우트의 본문 키 전부를 설명과 함께 표에 추가했습니다(주체 키가 라우트마다 다르다는
+  것을 각 설명이 말합니다).
+* 생성기를 확장했습니다. 모델이 없으면 라우트를 **건너뛰고** 있었으므로, 표만 채워도
+  문서에는 아무것도 나타나지 않았습니다. 이제 인라인 스키마에 properties를 병합하며,
+  스키마는 **열린 채로** 둡니다 — 모델이 없는 라우트는 본문을 검증하지 않으므로 문서에서
+  닫으면 핸들러가 강제하지 않는 엄격함을 공표하는 반대 방향의 거짓이 됩니다. `dict | None`
+  본문의 `anyOf`도 평탄화하지 않고 object 멤버에만 병합합니다(평탄화하면 선택적 본문을
+  필수로 공표하게 됩니다).
+* 스캐너가 모듈 상수 키(`payload.get(ontology_version.PIN_PARAMETER)`)를 **읽어서**
+  해석합니다. 문자열을 가드에 하드코딩하면 사본이 하나 더 생기므로, 상수를 import해서
+  읽고 표의 값이 그 상수와 같은지 단언합니다 — 상수 이름이 바뀌면 문서가 아무도 읽지 않는
+  키를 공표하는 대신 테스트가 깨집니다.
+* 스캐너는 형제 테스트에서 **import**합니다. 같은 모듈에 대한 같은 질문이고, 스캐너 사본
+  둘은 맞춰 둘 것이 하나 더 생기는 것입니다.
+
+### 역검증에서 **제 테스트 둘이 green으로 돌아왔습니다**
+
+(1) 생성기가 untyped 라우트를 건너뛰게 만드는 변이 — 즉 이 수리의 **전부를 되돌리는**
+변이 — 가 전부 통과했습니다. 단언이 공표된 문서가 아니라 **표**를 보고 있었기 때문입니다.
+표는 원천이고 문서가 산출물이며, 클라이언트가 읽는 것은 산출물입니다. 모든 단언을
+`/openapi.json`에서 읽도록 바꿨고, 이제 그 변이는 가드 다섯을 red로 만듭니다.
+(2) description 공백 변이는 제가 **엉뚱한 자리**를 집어서 통과했습니다(앵커 불일치가 아니라
+뒤에 오는 같은 키가 덮었습니다). 올바른 앵커로 다시 돌려 red를 확인했습니다. 변이가
+green이면 가드보다 변이를 먼저 의심한다는 규칙이 두 번 다 맞았습니다.
+
+나머지 역검증 둘: review 라우트의 `actor` 키 제거(가드 셋 red), 핀 키 이름 변경(상수
+대조 가드 red).
+
+이 절은 측정 기록이고 병합 허가가 아닙니다.
+
 ## 운영 메모
 
 - Database objects: 두 단어 이상 `snake_case`, 3NF. Catalog plane 테이블은 #73의 `migrations/0002_ontology_catalog_plane.sql`.

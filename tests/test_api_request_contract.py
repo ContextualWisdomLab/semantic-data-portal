@@ -21,6 +21,7 @@ nobody validates against, which is a more useful-looking lie than
 from __future__ import annotations
 
 import ast
+import importlib
 import pathlib
 
 import pytest
@@ -309,6 +310,8 @@ def _body_keys_read(handler: str) -> tuple[set[str], set[str]]:
             ):
                 if sub.args and isinstance(sub.args[0], ast.Constant):
                     found.add(sub.args[0].value)
+                elif sub.args and (literal := _module_constant(sub.args[0])):
+                    found.add(literal)
                 else:
                     unresolved.add(ast.unparse(sub))
                 continue
@@ -342,6 +345,27 @@ def _body_keys_read(handler: str) -> tuple[set[str], set[str]]:
     # design; each call site supplies the literal, which is captured above.
     unresolved = {item for item in unresolved if item != "payload.get(field, default)"}
     return {key for key in found if isinstance(key, str)}, unresolved
+
+
+def _module_constant(node: ast.AST) -> str | None:
+    """The string a ``<module>.<NAME>`` body key resolves to, or ``None``.
+
+    ``POST /ontology/resolve`` reads its version-pin key as
+    ``payload.get(ontology_version.PIN_PARAMETER)``. Treating that as
+    unresolvable makes the scan report an incomplete schema for a route whose
+    key is perfectly well defined; hardcoding the string here would publish a
+    second copy of it. So the constant is *read* from the module, which also
+    means the document and the code cannot drift - if the constant is renamed,
+    the published key stops matching and the contract test fails.
+    """
+    if not (isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)):
+        return None
+    try:
+        module = importlib.import_module(f"sdp.{node.value.id}")
+    except ImportError:
+        return None
+    value = getattr(module, node.attr, None)
+    return value if isinstance(value, str) else None
 
 
 def _handler_name(method: str, path: str) -> str:
