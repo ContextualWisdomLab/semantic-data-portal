@@ -2,7 +2,7 @@
 
 이 문서는 `claude/semantic-portal-pr-merge-e5a48k` 브랜치(PR
 [#102](https://github.com/ContextualWisdomLab/semantic-data-portal/pull/102))가
-베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **253개** 커밋 중 129개는
+베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **254개** 커밋 중 130개는
 gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 124개입니다. 이 숫자는 **이
 줄을 담은 커밋을 포함한** 값입니다 — 측정 시점의 234에 이 커밋을 더한 것. 측정 명령:
 
@@ -10,7 +10,7 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 12
     git log --format=%H origin/docs/product-technical-gap-baseline..HEAD \
       --name-only -- docs/product-technical-gap-baseline.md | grep -c '^[0-9a-f]\{40\}$'
 
-앞서 적혀 있던 164/112, 186/113, 199/122/77, 203/122/81, 211/122/89, 212/122/90, 213/122/91, 214/122/92, 215/122/93, 216/122/94, 218/122/96, 219/122/97, 220/122/98, 221/122/99, 222/122/100, 223/122/101, 224/122/102, 225/122/103, 226/122/104, 228/122/106, 230/123/107, 231/123/108, 233/124/109, 235/125/110, 252/128/124는 각각 그 시점의 값이고 이후
+앞서 적혀 있던 164/112, 186/113, 199/122/77, 203/122/81, 211/122/89, 212/122/90, 213/122/91, 214/122/92, 215/122/93, 216/122/94, 218/122/96, 219/122/97, 220/122/98, 221/122/99, 222/122/100, 223/122/101, 224/122/102, 225/122/103, 226/122/104, 228/122/106, 230/123/107, 231/123/108, 233/124/109, 235/125/110, 252/128/124, 253/129/124는 각각 그 시점의 값이고 이후
 커밋을 반영하지 않은 숫자였습니다 — 자기 문서의 수치도 측정해서 맞춰 둡니다. 199는 이
 줄을 쓴 뒤 3개 커밋이 더 쌓여 낡아 203으로, 203은 다음 커밋에서 낡아 204로, 204는 또
 두 커밋 뒤에 206으로 다시 측정해 고쳤습니다. 206도 그 값을 담은 커밋 자신 때문에 도착
@@ -30,7 +30,7 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 12
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                       1421 passed, 23 skipped
+    pytest                       1429 passed, 31 skipped
     pytest (파일 순서 정/역/난수)  각 1421 passed, 23 skipped — 순서 무관
                                  (정순 · 역순 · seed 11/707/31337; 이 커밋의 코드·테스트를
                                   동결한 트리에서 측정)
@@ -42,7 +42,10 @@ pgvector 핀 커밋이 10건, event-loop 수리 커밋이 2건, 환경 변수 �
 (새 파일 둘), readiness 진단 커밋이 7건(새 파일 하나) 늘렸고, 그 뒤 2026-10-26 적대적 리뷰
 수리 여섯 커밋이 3+3+3+4+4+3건을 더했으므로 위 숫자는 앞서 적혀 있던
 1266 → 1300 → 1310 → 1312 → 1320 → 1327 → 1330 → 1333 → 1336 → 1340 → 1344 → 1347로
-올라갔고, 그 뒤 수리들을 거쳐 1397에, 이 커밋의 새 파일 24건으로 1421에 와 있습니다
+올라갔고, 그 뒤 수리들을 거쳐 1397에, 새 파일 24건으로 1421에, KPI 포인터 가드 8건으로
+1429에 와 있습니다(skip이 23 → 31로 는 것은 새 가드 둘이 `measured`가 아닌 KPI 넷에
+대해 skip하기 때문입니다 — 그 skip 자체가 분기가 측정된 증거이고, 같은 파일의
+`test_at_least_one_kpi_exercises_each_branch`가 양쪽 분기에 사례가 있음을 단언합니다)
 (1397은 다섯 순서 측정 head보다 뒤의 값이라 위 사슬에 중간 항이 빠져 있습니다 — 사슬은
 그 시점까지의 기록이고, 현재 값은 측정해서 적습니다). 다섯 순서 측정은 트리를 동결한 상태에서
 돌렸고, 그 뒤에 바뀐 파일은 이 CHANGELOG 하나입니다 — CHANGELOG 내용을 읽는 테스트는
@@ -51,8 +54,9 @@ pgvector 핀 커밋이 10건, event-loop 수리 커밋이 2건, 환경 변수 �
 다시 재지 않고 전체 정순 실행으로만 확인합니다. 측정하고 쓴 뒤 커밋하는 순서상 이
 숫자가 자기 커밋 때문에 낡는 것은 위 off-by-one과 같은 종류입니다.
 
-위 다섯 순서 숫자는 **이 커밋의** 코드·테스트 트리에서 다시 측정한 값입니다(다섯 순서
-모두 1421 passed / 23 skipped). 그 사이의 중간 커밋들은 각각 **전체 정순 1회**만을
+위 다섯 순서 숫자는 `8ed985d`의 코드·테스트 트리에서 측정한 값입니다(다섯 순서 모두
+1421 passed / 23 skipped). **이 커밋에서는 다시 재지 않았으므로** 전체 정순 값(1429)과
+다릅니다 — 다른 숫자를 같은 head의 것처럼 적지 않기 위해 분리해 둡니다. 그 사이의 중간 커밋들은 각각 **전체 정순 1회**만을
 증거로 가졌고, 다섯 순서는 묶음이 끝날 때 한 번 재서 이 블록을 갱신합니다 — 중간
 head에 대해 다섯 순서를 주장하지 않습니다. 이 커밋이
 바꾼 파일은 CHANGELOG와 gap 문서 둘뿐이고, CHANGELOG 내용을 읽는 테스트는 파일 순서와
@@ -68,6 +72,52 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 백그라운드 측정 중에 트리를 고친 탓에 seed 11이 4건 실패로 나온 일이 있고, 그것은 결함이
 아니라 동시 편집이었습니다. Atheris(`fuzz/fuzz_query_safety.py`)는 로컬에 wheel이 없어
 실행하지 않았습니다 — 같은 invariant의 Hypothesis 미러가 `tests/fuzz`에서 돕니다.
+
+### Fixed — `measured: True` KPI 넷 중 셋이 측정값 대신 **게이트 판정**을 가리켰습니다 (high)
+
+`bc2ebb2`가 KPI 계약에 `measurement_surface`를 넣고 그 필드의 계약을 "where this KPI's own
+figure is published"로 적었습니다. 가드는 **포인터가 resolve되는지**만 봅니다. 셋은
+resolve됩니다 — 문자열 `'pass'`로. `c27958f`에서 넷 전수 측정:
+
+    metadata_completeness      >=90 percent  …#saleability_gates.metadata_completeness      -> 'pass'
+    policy_audit_coverage      100 percent   …#metrics.governed_requests_without_evidence_total -> 0
+    ontology_mapping_coverage  >=70 percent  …#saleability_gates.ontology_mapping_coverage  -> 'pass'
+    validation_pass_rate       >=95 percent  …#saleability_gates.metadata_validation_pass_rate -> 'pass'
+
+**숫자는 처음부터 공표되고 있었습니다.** `/enterprise/evidence-pack` 최상위에
+`mean_metadata_completeness = 1.0`, `ontology_mapping_coverage = 0.8`,
+`metadata_validation_pass_rate = 1.0`이 있고, 포인터는 그 **옆에 있는 판정**을 가리켰습니다.
+`metadata_completeness`는 숫자 키 이름(`mean_…`)이 게이트 이름과 달라서 게이트를 집기
+쉬웠습니다. 판정은 제품이 **측정에 대해 내린 자기 의견**이고, 측정 자리에 의견을 놓으면
+읽는 사람이 값도, 비교된 임계도, 여유도 볼 수 없습니다 — 이 라운드가 드래프터와
+`/graph/stats`에서 고친 것과 같은 치환입니다.
+
+**`bc2ebb2`는 이것을 알면서 틀린 전제로 넘겼습니다.** 당시 제가 쓴 주석이 "the raw rate
+behind it is not [published]"라고 적고 있었는데 사실이 아닙니다. 결함은 포인터였고 raw
+rate는 공표되고 있었습니다. 한 시간 전 `c27958f`가 gap 문서에 적은 진단
+(`shacl_validation.validation_pass_rate`가 `None`)도 같은 오진이었습니다 — **틀린 전제로
+미루면 그 다음 커밋에서도 안 보입니다.** 둘 다 이 커밋에서 바로잡았습니다.
+
+바뀐 것:
+
+* 포인터 셋을 숫자를 담은 키로 옮겼습니다(`mean_metadata_completeness`,
+  `ontology_mapping_coverage`, `metadata_validation_pass_rate` — 모두 최상위).
+* 필드 계약 주석에 **resolve 가능성은 그 성질이 아니라는 것**을 적었습니다.
+* 가드 둘을 추가했습니다: 포인터는 **숫자**로 resolve돼야 하고(`bool`은 `int`의
+  서브클래스이므로 명시적으로 제외 — 불리언도 판정입니다), `saleability_gates` 블록을
+  가리킬 수 없습니다(나중에 그 블록에 숫자가 들어오면 첫 가드만으로는 통과하는데, 두
+  블록은 역할이 다릅니다).
+
+테스트 8건. 역검증 둘: 포인터를 게이트로 되돌리면 두 가드가 red, 불리언 키
+(`ontology_revision_is_durable`)를 가리키면 **첫 가드만** red — `bool` 제외가 살아 있다는
+증거입니다.
+
+**닫지 않은 것을 적습니다.** `policy_audit_coverage`는 숫자로 resolve되지만 그 숫자가 KPI의
+양이 아닙니다 — target `100 percent`에 대해 증빙 없는 요청의 **개수**(`0`)입니다. 0이면
+100 percent가 따라오지만 `0`을 `100 percent`와 직접 비교할 수는 없습니다. 지금 비율을
+공표할 수는 없습니다: 분모 `request_observations_total`이 기본 데모에서 `0`이므로 비율이
+정의되지 않습니다(0/0). 0을 100 percent로 공표하는 것은 측정하지 않은 것을 측정값으로 적는
+것이므로 하지 않았고, 여집합 포인터를 유지한 채 gap 문서에 한계를 적었습니다.
 
 ### Fixed — 드래프트가 테이블 이름을 연결 locator에서 **추측**하면서 "카탈로그에서 검증된 테이블"이라고 적었습니다 (high)
 

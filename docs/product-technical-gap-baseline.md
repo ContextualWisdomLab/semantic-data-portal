@@ -3290,13 +3290,79 @@ distribution에 있다**는 것 둘 다). 거짓 assumption은 참인 두 문장
 - `POST /ontology/patches/{patch_id}/review`가 같은 `create 작업은 admin 권한만 가능`으로
   거부하고, 존재하지 않는 patch에 대해 `{"detail":"'patch not found'"}`를 돌려줍니다 —
   바깥 따옴표가 `KeyError` repr이 그대로 직렬화된 흔적입니다.
-- `validation_pass_rate` 게이트가 비율 없이 판정만 공표합니다
-  (`shacl_validation.validation_pass_rate`가 `None`). `bc2ebb2`가 이 KPI를
-  `measured: True`로 분류했으므로, **측정되는데 값이 공표되지 않는** 상태입니다.
+- ~~`validation_pass_rate` 게이트가 비율 없이 판정만 공표합니다~~ — **이 항목의
+  진단이 틀렸고, 다음 커밋에서 바로잡아 닫았습니다.** 비율은 공표되고 있었습니다
+  (`/enterprise/evidence-pack`의 최상위 `metadata_validation_pass_rate = 1.0`).
+  틀린 것은 `bc2ebb2`가 쓴 **포인터**입니다 — 같은 이름의 한 단계 아래
+  `saleability_gates.metadata_validation_pass_rate`를 가리켰고 그 값은 `'pass'`입니다.
+  `measured: True` KPI 넷 중 **셋**이 그랬습니다(아래 절).
 - `/enterprise/console`의 상태 chip이 네 상태 전부에서 `class="badge ok"`입니다
   (`className`/`classList` 사용 0건이고 amber `.badge.warn`은 이미 CSS에 있습니다).
 - `/catalog/facets`가 seed domain 값을 필드 이름처럼 공표하고, audit-trail·policy-decision
   스키마가 실제 응답 모양과 어긋납니다.
+
+이 절은 측정 기록이고 병합 허가가 아닙니다.
+
+## `measured: True` KPI 넷 중 셋이 측정값 대신 **게이트 판정**을 가리켰습니다 (2026-10-26 22:50Z)
+
+`bc2ebb2`가 KPI 계약에 `measurement_surface`를 넣고 그 필드의 계약을 "where this KPI's
+own figure is published"로 적었습니다. 가드는 **포인터가 resolve되는지**를 봅니다. 셋은
+resolve됩니다 — 문자열 `'pass'`로. `c27958f`에서 넷 전수 측정:
+
+| KPI | target | 포인터 | resolve 결과 |
+| --- | --- | --- | --- |
+| `metadata_completeness` | `>=90 percent` | `…#saleability_gates.metadata_completeness` | `'pass'` |
+| `policy_audit_coverage` | `100 percent` | `…#metrics.governed_requests_without_evidence_total` | `0` |
+| `ontology_mapping_coverage` | `>=70 percent` | `…#saleability_gates.ontology_mapping_coverage` | `'pass'` |
+| `validation_pass_rate` | `>=95 percent` | `…#saleability_gates.metadata_validation_pass_rate` | `'pass'` |
+
+**숫자는 처음부터 공표되고 있었습니다.** `/enterprise/evidence-pack`의 최상위에
+`mean_metadata_completeness = 1.0`, `ontology_mapping_coverage = 0.8`,
+`metadata_validation_pass_rate = 1.0`이 있고, 포인터는 그 **옆에 있는 판정**을 가리켰습니다.
+`metadata_completeness`의 경우 숫자 키 이름(`mean_…`)이 게이트 이름과 달라서 게이트를
+집기 쉬웠습니다.
+
+판정은 제품이 **측정에 대해 내린 자기 의견**입니다. 측정 자리에 의견을 놓으면 읽는 사람이
+값도, 비교된 임계도, 여유도 볼 수 없습니다 — 이 라운드가 드래프터와 `/graph/stats`에서
+고친 것과 같은 치환입니다.
+
+### `bc2ebb2`가 이걸 알면서 **틀린 전제로** 넘겼습니다
+
+`validation_pass_rate` 옆에 당시 제가 쓴 주석이 있었습니다 — "The comparison runs and its
+verdict is published; the raw rate behind it is not, which is a smaller honesty gap recorded
+in the gap baseline rather than closed here." 뒷부분이 사실이 아닙니다. raw rate는 공표되고
+있었고, 결함은 **포인터**였습니다. 틀린 전제로 미루면 그 다음 커밋에서도 안 보입니다. 이
+문서의 직전 절도 같은 틀린 진단(`shacl_validation.validation_pass_rate`가 `None`)을 담고
+있었고, 둘 다 같은 커밋에서 바로잡았습니다.
+
+### 가드를 성질에 맞췄습니다
+
+resolve 가능성은 **더 약한** 성질입니다. 두 가드를 추가했습니다
+(`tests/test_kpi_measurement_disclosure.py`):
+
+1. 포인터는 **숫자**로 resolve돼야 합니다. `bool`은 `int`의 서브클래스이므로 명시적으로
+   제외합니다 — 불리언도 판정입니다.
+2. 포인터는 `saleability_gates` 블록을 가리킬 수 없습니다. 나중에 그 블록 안에 숫자가
+   들어오면 1번만으로는 통과하는데, 두 블록은 역할이 다르고 포인터는 **측정을 담는 쪽**을
+   이름으로 불러야 합니다.
+
+역검증 둘: 포인터를 게이트로 되돌리면 두 가드가 그 KPI에 대해 red, 불리언 키
+(`ontology_revision_is_durable`)를 가리키면 1번만 red — `bool` 제외가 실제로 살아 있다는
+증거입니다.
+
+### 닫지 않은 것: `policy_audit_coverage`는 **여집합**을 가리킵니다
+
+넷 중 하나는 숫자로 resolve되지만 그 숫자가 KPI의 양이 아닙니다. target은
+`100 percent`이고 포인터는 `governed_requests_without_evidence_total = 0` — 증빙 없는
+요청의 **개수**입니다. 0이면 100 percent가 따라오지만, 읽는 사람이 `0`을 `100 percent`와
+직접 비교할 수는 없습니다.
+
+**지금 비율을 공표할 수는 없습니다.** 분모가 `request_observations_total`이고 기본 데모에서
+`0`이므로 비율은 정의되지 않습니다(0/0). 0을 100 percent로 공표하면 측정하지 않은 것을
+측정값으로 적는 것이고, 이 문서가 반복해 고쳐 온 결함입니다. 그래서 여집합 포인터를
+유지하고 **그 사실을 여기 적습니다** — 새 필드를 만들어 의미를 겹치게 하는 것보다, 양이
+정의되는 조건(관측 ≥ 1)이 생길 때 한 번에 바꾸는 쪽이 맞습니다. 가드는 이 포인터를
+통과시킵니다(숫자이므로). 그 한계가 가드의 결함이 아니라 **측정의 현재 상태**입니다.
 
 이 절은 측정 기록이고 병합 허가가 아닙니다.
 

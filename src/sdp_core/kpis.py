@@ -31,6 +31,15 @@ class SaleabilityKPI(BaseModel):
     # Where this KPI's own figure is published, as ``endpoint#key``. Empty when
     # ``measured`` is false, and checked against the live response - a pointer
     # that does not resolve is worse than none.
+    #
+    # *Resolving is not the property.* The first three pointers written here
+    # all resolved, to the string ``'pass'``: they named the
+    # ``saleability_gates`` verdict that sits next to each number instead of
+    # the number. A verdict is the product's own opinion of the measurement,
+    # so publishing it in the measurement's place leaves the reader unable to
+    # compare anything to the target themselves. The pointer must name a
+    # figure, and ``tests/test_kpi_measurement_disclosure.py`` now checks that
+    # it resolves to a number and does not name the gate block.
     measurement_surface: str = ""
     # Required when the feature is ``implemented``, the target carries a number
     # and nothing computes it. This is the disclosure that was absent.
@@ -87,8 +96,11 @@ def enterprise_kpi_framework() -> KPIFramework:
                 guardrails=["Completeness must not hide failed validation.", "Deprecated datasets stay visible with status."],
                 status="implemented",
                 measured=True,
+                # The published figure is ``mean_metadata_completeness`` - the
+                # key differs from the gate's name, which is part of why the
+                # gate was pointed at by mistake.
                 measurement_surface=(
-                    "/enterprise/evidence-pack#saleability_gates.metadata_completeness"
+                    "/enterprise/evidence-pack#mean_metadata_completeness"
                 ),
             ),
             SaleabilityKPI(
@@ -176,7 +188,7 @@ def enterprise_kpi_framework() -> KPIFramework:
                 status="implemented",
                 measured=True,
                 measurement_surface=(
-                    "/enterprise/evidence-pack#saleability_gates.ontology_mapping_coverage"
+                    "/enterprise/evidence-pack#ontology_mapping_coverage"
                 ),
             ),
             SaleabilityKPI(
@@ -195,12 +207,14 @@ def enterprise_kpi_framework() -> KPIFramework:
                 guardrails=["Critical validation failures block publish."],
                 status="implemented",
                 measured=True,
-                # The comparison runs and its verdict is published; the raw
-                # rate behind it is not, which is a smaller honesty gap
-                # recorded in the gap baseline rather than closed here.
+                # The earlier note here said the raw rate "is not" published.
+                # That was wrong: ``/enterprise/evidence-pack`` publishes
+                # ``metadata_validation_pass_rate`` at its top level, and this
+                # pointer named the same-named *gate verdict* one level down.
+                # The defect was the pointer, not a missing measurement - and
+                # deferring it on a false premise is how it survived a commit.
                 measurement_surface=(
-                    "/enterprise/evidence-pack#saleability_gates."
-                    "metadata_validation_pass_rate"
+                    "/enterprise/evidence-pack#metadata_validation_pass_rate"
                 ),
             ),
             SaleabilityKPI(

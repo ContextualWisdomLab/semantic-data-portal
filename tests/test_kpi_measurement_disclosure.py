@@ -101,6 +101,58 @@ def test_a_measured_kpi_points_at_a_surface_that_resolves(kpi) -> None:
 
 
 @pytest.mark.parametrize("kpi", _all_kpis(), ids=lambda k: k.id)
+def test_a_measured_kpi_points_at_a_number_not_a_gate_verdict(kpi) -> None:
+    """Resolving is the weaker property. The field says *figure*.
+
+    ``measurement_surface``'s own contract is "where this KPI's own figure is
+    published", and the guard above checks only that the pointer resolves to
+    something other than ``None``. Measured at ``c27958f``, three of the four
+    ``measured`` pointers resolved to the string ``'pass'`` - the
+    ``saleability_gates`` verdict, next to the number rather than the number::
+
+        metadata_completeness      -> saleability_gates.metadata_completeness      'pass'
+        ontology_mapping_coverage  -> saleability_gates.ontology_mapping_coverage  'pass'
+        validation_pass_rate       -> saleability_gates.metadata_validation_pass_rate 'pass'
+
+    Every target here carries a number (``>=90 percent``, ``>=70 percent``,
+    ``>=95 percent``), so a buyer following the pointer to check the claim got
+    a verdict and could not see the value, the threshold it was compared
+    against, or the margin. The verdict is the product's own opinion of the
+    measurement; publishing it in the measurement's place is the same
+    substitution this round repaired on the drafter and on ``/graph/stats``.
+
+    A number is the checkable property: a reader can compare it to the target
+    themselves. ``bool`` is excluded explicitly because it is an ``int``
+    subclass in Python, and a boolean is a verdict too.
+    """
+    if not kpi.measured:
+        pytest.skip(f"{kpi.id} is not measured")
+    value = _resolve(kpi.measurement_surface)
+    assert isinstance(value, (int, float)) and not isinstance(value, bool), (
+        f"{kpi.id} publishes measured=True and points at "
+        f"{kpi.measurement_surface}, which resolves to {value!r} - a verdict, "
+        f"not the figure its target {kpi.target!r} is compared against"
+    )
+
+
+@pytest.mark.parametrize("kpi", _all_kpis(), ids=lambda k: k.id)
+def test_a_measured_pointer_does_not_name_the_gate_block(kpi) -> None:
+    """The structural half, so the repair cannot be undone by renaming a key.
+
+    A number could be published *inside* ``saleability_gates`` later, which
+    would satisfy the check above while putting the figure back in the block
+    whose job is verdicts. The two blocks have different jobs and the pointer
+    has to name the one that carries measurements.
+    """
+    if not kpi.measured:
+        pytest.skip(f"{kpi.id} is not measured")
+    assert "saleability_gates" not in kpi.measurement_surface, (
+        f"{kpi.id} points into the gate-verdict block: "
+        f"{kpi.measurement_surface}"
+    )
+
+
+@pytest.mark.parametrize("kpi", _all_kpis(), ids=lambda k: k.id)
 def test_an_unmeasured_kpi_publishes_no_pointer_and_no_both_ways(kpi) -> None:
     """The two fields cannot both be set, in either direction."""
     if kpi.measured:
