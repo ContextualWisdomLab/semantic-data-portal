@@ -62,6 +62,55 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 아니라 동시 편집이었습니다. Atheris(`fuzz/fuzz_query_safety.py`)는 로컬에 wheel이 없어
 실행하지 않았습니다 — 같은 invariant의 Hypothesis 미러가 `tests/fuzz`에서 돕니다.
 
+### Fixed — 대문자 하나로 빠져나간 낡은 주장, 그리고 전달 표면의 절반만 보던 disclosure 스캔 (high)
+
+**이 주기 다섯 번째 "자기 목록에 걸린 가드"의 다음 형태: 대소문자.**
+`observability.py:907`의 주석이 `"Nothing posts to it, so the capability is stated next to
+the configuration fact."`라고 적고 있었고, 두 줄 아래가
+`"alert_webhook_routing": ALERT_ROUTING_STATUS`(= `implemented`)입니다. 바로 그 문구를
+금지하려고 추가한 가드의 fragment는 `("nothing posts ", "to it")`이고, 공백 정규화한
+파일 전체에 **대소문자 구분** substring으로 물었으므로 대문자 `N` 하나로 통과했습니다.
+아홉 개 금지 fragment를 README·CLAUDE·docs·src·tests 전체에 돌려 보면 대소문자만
+어긋나는 누락은 정확히 이 한 건입니다. 비교를 casefold하고, 주석은 더 이상 사실이 아니므로
+사실로 바꿨습니다(설정 여부와 전달 능력을 양방향으로 혼동할 수 없게 적습니다).
+
+`docs/implementation-compliance.md`가 `alert_webhook_routing: declared_unimplemented`를
+한 라운드 동안 그대로 들고 있었습니다 — 전달이 구현됐다고 적은 바로 위 항목에서 세 줄
+뒤입니다. "2건 중"도 규칙이 둘이던 시절의 숫자입니다. 둘 다 고쳤습니다.
+
+그 문구를 금지 목록에 **열 번째 fragment로 추가하지 않았습니다.** 대신 제품에서 값을 읽어
+같은 키에 다른 값을 적은 문서를 거부하는 가드를 넣었습니다
+(`alert_webhook_routing`·`alert_routing`·`alert_evaluation`을 `ALERT_ROUTING_STATUS`/
+`ALERT_EVALUATION_SCOPE`와 비교). 상태 값의 이름이 바뀌면 이 가드는 고칠 필요가 없고,
+뒤처진 문서는 걸립니다. 손으로 쓴 목록이 자기 자신에게 걸린 횟수가 이 주기에 다섯 번이므로,
+같은 장치를 하나 더 만드는 대신 파생되는 쪽을 택했습니다.
+
+**disclosure 스캔이 전달 표면의 절반만 봤습니다.** alert 본문을 디코드하는 테스트는 하나뿐이고
+routable 규칙 **둘 중 하나**(`policy_audit_gap`)만 몰았습니다. 측정: `_alert_payload`가
+`connector_probe_failure` 본문에만 `list_request_observations()` 행을 붙여도 전체 스위트가
+1312 passed로 초록이었습니다 — 금지된 값 넷과 키 넷이 모두 익명 `GET`으로 도달 가능한
+규칙의 본문에 실려 off-box로 나갑니다. 즉 alert를 유발한 caller가 **무엇이 새는지도**
+고릅니다. 규칙별 driver를 `ROUTABLE_ALERT_RULE_IDS`로 parametrize하고, driver 없는
+routable 규칙은 조용히 스캔되지 않는 대신 실패합니다.
+
+**자격증명 반사 스캔은 실패 경로에서만 돌았습니다.** `_retained_stores()`는 모듈의 모든
+module-level 컨테이너를 reflection으로 훑고, 이 파일 docstring이 "routing 변경이 추가한
+ring은 여기 이름을 적지 않아도 스캔된다"를 보증으로 내세웁니다. 그런데 그것을 호출하는
+유일한 테스트가 seam을 `failure_from_url`로 설치했으므로 **성공 분기에서 쓰인 상태는 한
+번도 보지 않았습니다.** 측정: 성공 분기가 설정된 URL을 `_ALERT_ROUTING`에 남기면 전체
+스위트가 1312 passed로 초록이고, 다섯 자격증명 형태 중 셋이 익명으로 답하는 모듈의
+module-level dict에 앉아 있습니다. `test_honest_metrics`의 one-way-read 가드도 못 잡습니다 —
+그 대입의 우변은 지역 변수이고, 가드는 변수 **이름**을 grep합니다. 두 결과 모두에 대해
+parametrize하고, 각 분기가 실제로 그 분기였는지 `deliveries_failed`/`deliveries_succeeded`로
+단언합니다(그 단언이 없으면 한쪽이 조용히 다른 쪽을 돌 수 있습니다).
+
+증거: 네 수리를 각각 되돌렸습니다. M1(문서의 낡은 문장 복원): 파생 가드 1건 red.
+M2(낡은 주석 복원): casefold 가드 1건 red — 같은 텍스트에 대해 대소문자 구분 가드는
+green(이것이 결함 그 자체입니다). M3(probe 규칙 본문에만 트래픽 첨부):
+`[connector_probe_failure]` parametrization 1건 red. M4(성공 분기에 URL 보존):
+`[succeeded]` parametrization 1건 red. 전체 정순 `pytest` 1347 passed, 15 skipped
+(1344에서 +3).
+
 ### Fixed — probe 규칙이 읽지 않은 conjunct. 효과가 측정되는 유일한 control이 빠져 있었습니다 (high)
 
 `verdict_basis`의 conjunct는 셋입니다: adapter 구현 + required control의 선언된 proof

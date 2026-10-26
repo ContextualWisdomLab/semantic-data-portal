@@ -1035,8 +1035,10 @@ def _sink_status() -> dict[str, Any]:
         "target": target,
         "alert_webhook_configured": bool(alert_webhook_url),
         # ``alert_webhook_configured`` reports whether the variable is set, which
-        # a reader took for "alerts reach this endpoint". Nothing posts to it, so
-        # the capability is stated next to the configuration fact.
+        # a reader took for "alerts reach this endpoint". The capability is
+        # stated next to the configuration fact, so the two cannot be conflated
+        # in either direction - a set variable is not a delivery, and delivery
+        # being implemented is not a configured endpoint.
         "alert_webhook_routing": ALERT_ROUTING_STATUS,
     }
     if invalid_reason is not None:

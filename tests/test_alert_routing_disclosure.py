@@ -106,6 +106,7 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from sdp import connectors as conn  # noqa: E402
 from sdp import observability as obs  # noqa: E402
 from sdp.api import app  # noqa: E402
 
@@ -351,10 +352,13 @@ def _iter_json_keys(value: Any) -> Iterator[str]:
             yield from _iter_json_keys(item)
 
 
+@pytest.mark.parametrize("delivery_outcome", ["failed", "succeeded"])
 def test_a_credential_bearing_alert_webhook_never_reaches_a_published_surface(
-    configured_alert_webhook: str, monkeypatch: pytest.MonkeyPatch
+    delivery_outcome: str,
+    configured_alert_webhook: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A webhook secret must not survive a failed delivery, in any form.
+    """A webhook secret must not survive a delivery, failed or succeeded, in any form.
 
     The defect this refuses: the obvious routing implementation hands the
     configured value to ``urlopen`` and records ``str(exc)`` when it fails.
@@ -379,8 +383,23 @@ def test_a_credential_bearing_alert_webhook_never_reaches_a_published_surface(
     retains the secret. Measured against the throwaway obvious implementation,
     one hit - the decoded secret in ``_EXPORT_ERRORS`` - and zero against the
     stripping implementation.
+
+    Run over **both** delivery outcomes. It ran only the failing one, and
+    ``_retained_stores()`` - the reflection scan this file advertises as
+    catching any ring the routing change adds without naming it - therefore only
+    ever examined state written while a delivery was failing. Measured: a
+    success branch that kept the configured URL in ``_ALERT_ROUTING`` left the
+    whole suite green at 1312 passed, with three of the five credential forms
+    sitting in a module-level dict in the module whose manifest answers
+    anonymously. The one-way-read guard in ``test_honest_metrics`` does not
+    cover it either - that assignment's right-hand side is a local variable, not
+    the variable name it greps for. The outcome assertion above is what stops
+    either parametrization silently exercising the other branch.
     """
-    attempts = _install_alert_seam(monkeypatch, failure_from_url=_invalid_url_failure)
+    attempts = _install_alert_seam(
+        monkeypatch,
+        failure_from_url=_invalid_url_failure if delivery_outcome == "failed" else None,
+    )
 
     obs.note_governed_request_without_evidence(GAP_ROUTE_TEMPLATE)
 
@@ -388,6 +407,11 @@ def test_a_credential_bearing_alert_webhook_never_reaches_a_published_surface(
         "no delivery was attempted through observability.alert_urlopen, so this "
         "scan would pass over traffic that never existed - alert routing is the "
         "capability under test"
+    )
+    outcome = obs.alert_routing_state()
+    assert outcome[f"deliveries_{delivery_outcome}"] == 1, (
+        f"this run was meant to exercise the {delivery_outcome} branch and did "
+        f"not: {outcome}"
     )
 
     haystacks = dict(_published_surfaces())
@@ -411,8 +435,43 @@ def test_a_credential_bearing_alert_webhook_never_reaches_a_published_surface(
     )
 
 
+
+
+# One driver per routable rule, so the payload scan covers the whole delivery
+# surface rather than the one rule it happened to be written against. Keyed by
+# rule id and checked against ``ROUTABLE_ALERT_RULE_IDS`` inside the test: a
+# rule added without a driver fails there rather than going unscanned.
+#
+# Measured before this: the scan drove only ``policy_audit_gap``, and attaching
+# ``list_request_observations()`` rows to the ``connector_probe_failure`` body
+# left the whole suite green at 1312 passed - all four forbidden values and all
+# four forbidden keys travelling off-box in the body of the rule reachable from
+# an anonymous GET, so the caller who triggers the alert also chooses what leaks.
+
+
+def _drive_policy_audit_gap(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the governed-evidence gap rule transition."""
+    obs.note_governed_request_without_evidence(GAP_ROUTE_TEMPLATE)
+
+
+def _drive_connector_probe_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the connector-probe rule transition by unserving a declared proof route."""
+    monkeypatch.setitem(
+        conn._IMPLEMENTED_PROOF, "audit_event", ["/audit/events-not-served"]
+    )
+    conn.connector_probe("sql_connector", "crm-customer-master")
+
+
+ALERT_DRIVERS = {
+    "policy_audit_gap": _drive_policy_audit_gap,
+    "connector_probe_failure": _drive_connector_probe_failure,
+}
+
+@pytest.mark.parametrize("routable_rule", sorted(obs.ROUTABLE_ALERT_RULE_IDS))
 def test_the_alert_payload_carries_no_caller_controlled_or_tenant_identifying_content(
-    configured_alert_webhook: str, monkeypatch: pytest.MonkeyPatch
+    routable_rule: str,
+    configured_alert_webhook: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The alert body must carry the rule, not the traffic.
 
@@ -452,7 +511,12 @@ def test_the_alert_payload_carries_no_caller_controlled_or_tenant_identifying_co
     )
     attempts = _install_alert_seam(monkeypatch)
 
-    obs.note_governed_request_without_evidence(GAP_ROUTE_TEMPLATE)
+    missing = sorted(set(obs.ROUTABLE_ALERT_RULE_IDS) - set(ALERT_DRIVERS))
+    assert not missing, (
+        f"{missing} is routable and has no driver here, so nothing ever decodes "
+        "its payload"
+    )
+    ALERT_DRIVERS[routable_rule](monkeypatch)
 
     assert attempts, (
         "no delivery was attempted through observability.alert_urlopen, so there "

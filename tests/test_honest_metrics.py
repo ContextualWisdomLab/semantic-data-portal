@@ -678,9 +678,13 @@ def test_no_published_text_still_says_the_alert_rules_are_not_delivered() -> Non
     for candidate in searched:
         if not candidate.is_file():
             continue
-        flat = re.sub(r"\s+", " ", candidate.read_text(encoding="utf-8"))
+        # Case-folded. The live sentence in ``observability.py`` differed from
+        # its banned fragment by one capital letter and passed this guard for a
+        # whole round: the fourth site of the exact recurrence the commit set
+        # said it had closed mechanically.
+        flat = re.sub(r"\s+", " ", candidate.read_text(encoding="utf-8")).lower()
         for fragment in stale:
-            if fragment in flat:
+            if fragment.lower() in flat:
                 offenders.append(
                     f"{candidate.relative_to(repo_root).as_posix()}: {fragment!r}"
                 )
@@ -1243,3 +1247,47 @@ def test_the_rule_publishes_both_of_its_blind_spots() -> None:
     not_covered = gap["not_covered"]
     assert "out of band" in not_covered, not_covered
     assert "audit event" in not_covered and "BOTH" in not_covered, not_covered
+
+
+def test_no_document_states_a_stale_value_for_a_published_status_key() -> None:
+    """Derived, not enumerated: the stated value must equal the live one.
+
+    ``docs/implementation-compliance.md`` carried
+    ``alert_webhook_routing: declared_unimplemented`` for a whole round, three
+    lines after the bullet that says routing was implemented. The ban-list guard
+    beside this one did not catch it, and adding the phrase to that list would
+    make it the tenth hand-written fragment - the shape that has failed against
+    its own list five times this cycle.
+
+    So this guard reads the value out of the product and refuses any document
+    that states a different one for the same key. A rename of the status value
+    needs no edit here; a document left behind does.
+    """
+    import pathlib
+    import re
+
+    repo_root = pathlib.Path(obs.__file__).resolve().parents[2]
+    live = {
+        "alert_webhook_routing": obs.ALERT_ROUTING_STATUS,
+        "alert_routing": obs.ALERT_ROUTING_STATUS,
+        "alert_evaluation": obs.ALERT_EVALUATION_SCOPE,
+    }
+    searched = [repo_root / "README.md", repo_root / "CLAUDE.md"]
+    searched += sorted((repo_root / "docs").rglob("*.md"))
+
+    offenders = []
+    for candidate in searched:
+        if not candidate.is_file():
+            continue
+        text = candidate.read_text(encoding="utf-8")
+        for key, expected in live.items():
+            for match in re.finditer(rf"{key}`?: `?([a-z_]+)", text):
+                if match.group(1) != expected:
+                    offenders.append(
+                        f"{candidate.relative_to(repo_root).as_posix()}: "
+                        f"{key}: {match.group(1)} (live: {expected})"
+                    )
+    assert offenders == [], (
+        "these documents state a value for a published status key that the "
+        f"product does not produce: {offenders}"
+    )

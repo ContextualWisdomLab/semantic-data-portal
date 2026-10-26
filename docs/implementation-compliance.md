@@ -402,8 +402,10 @@ seed의 `security` subject는 `platform-admin`도 들고 있어 여전히 previe
     없는 GitHub Actions 상태가 조건이므로 게시만 되고 전달되지 않으며, 규칙 항목의
     `routable: false`가 그 사실을 함께 공개합니다. 따라서 reset 사이 한 worker가 보내는
     POST 총량은 routable 규칙 수(2)로 **상한**이 정해집니다.
-    게시되는 alert 규칙은 삭제하지 않고 규칙별 `evaluated` 플래그로 표시하며,
-    `alert_webhook_routing: declared_unimplemented`는 그대로입니다. 2건 중
+    게시되는 alert 규칙은 삭제하지 않고 규칙별 `evaluated` 플래그로 표시합니다.
+    `alert_webhook_routing`은 `implemented`입니다 — 이 문단에 한 라운드 동안
+    `declared_unimplemented`로 남아 있었고, 바로 위 항목이 전달이 구현됐다고 적은
+    세 줄 뒤였습니다. 세 규칙 중
     `policy_audit_gap`은 이제 **평가됩니다** — `evidence_ids`가 caller 헤더에서
     오는 동안에는 "이 요청이 증빙을 남겼는가"에 서버가 답할 수 없어 평가가
     불가능했습니다. 무엇을 탐지하는지는 정확히 적습니다: governed 2xx가 policy
