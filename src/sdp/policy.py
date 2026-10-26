@@ -48,7 +48,19 @@ def _effective_tenant_id(subject: str, resource: str, target_tenant_id: str | No
         # preserves the auditability goal without letting an anonymous request
         # pick the ledger.
         return target_tenant_id
-    dataset = get_dataset(resource)
+    # ``graph_node_dataset_id`` first, because a graph node id is
+    # ``<dataset>:<column>`` and ``get_dataset`` returns ``None`` for it. The
+    # stamp therefore fell through to the actor's tenant for every column node,
+    # while ``can_see_graph_node`` and ``graph_node_target_tenant`` - in this
+    # same module - already strip that suffix.
+    #
+    # The consequence was not only a misfiled row. Because the stamp depended on
+    # whether the id happened to resolve, a foreign-but-existing node filed to
+    # the owner (invisible to the prober) while an absent one filed to the
+    # prober (visible), so the prober's own ``GET /policy/decisions`` answered
+    # "does this dataset exist" - the oracle three other families were repaired
+    # to close.
+    dataset = get_dataset(graph_node_dataset_id(resource) or resource)
     if dataset and dataset.tenant_id:
         return dataset.tenant_id
     return resolve_actor_context(subject).tenant_id or UNRESOLVED_TENANT_ID
@@ -95,7 +107,11 @@ def evaluate_dataset_scope_refusal(subject: str, resource: str) -> PolicyDecisio
     The effect is ``deny`` in both cases because the read was in fact refused;
     an ``allow`` row behind a 404 describes something that did not happen.
     """
-    owner = get_dataset(resource)
+    # ``<dataset>:<column>`` resolves through the suffix-stripping helper, the
+    # same way ``_effective_tenant_id`` does. Without it a graph column node
+    # read as "dataset not found" and filed to the reserved unresolved scope,
+    # so the owning tenant's auditor still saw nothing.
+    owner = get_dataset(graph_node_dataset_id(resource) or resource)
     owner_tenant_id = owner.tenant_id if owner else None
     return _decision(
         subject=subject,

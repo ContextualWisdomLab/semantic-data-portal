@@ -2132,6 +2132,30 @@ def _authorize_graph_node_read(actor: str, node_id: str) -> None:
     """
     _authorize_graph_read(actor, node_id)
     if not can_see_graph_node(actor, node_id):
+        # The refusal has to be *recorded* as one. ``_authorize_graph_read``
+        # evaluates the ``search`` branch, which returns before the policy
+        # engine's tenant check, so the only row behind this 404 said
+        # ``effect=allow  reason='카탈로그 발견 정책 통과'`` filed in the
+        # **prober's** tenant, with no audit event at all - while the
+        # structurally identical write refusal against the very same node wrote
+        # ``deny`` in the owner's tenant plus a ``graph.node_upsert/denied``
+        # audit row. The owner could see an attempted write on its own PII
+        # column and not an attempted read.
+        #
+        # ``evaluate_dataset_scope_refusal`` is the helper built for exactly
+        # this, for the catalog and browse families; its docstring records why
+        # ``evaluate`` is wrong for the job. The graph family simply never used
+        # it. The HTTP channel is unchanged on purpose: a bare 404 for both a
+        # foreign node and an absent one is what keeps the existence oracle
+        # closed, so what changes here is the evidence, not the response.
+        refusal = evaluate_dataset_scope_refusal(actor, node_id)
+        _audit_governed_write(
+            event_type="graph.node_read",
+            actor=actor,
+            resource=node_id,
+            decision=refusal,
+            result="denied",
+        )
         raise HTTPException(status_code=404, detail="node not found")
 
 

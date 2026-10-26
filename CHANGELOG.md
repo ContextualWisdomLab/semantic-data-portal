@@ -30,7 +30,7 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 11
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                       1392 passed, 23 skipped
+    pytest                       1397 passed, 23 skipped
     pytest (파일 순서 정/역/난수)  각 1347 passed, 15 skipped — 순서 무관
                                  (정순 · 역순 · seed 11/707/31337; 트리거 가드 커밋 이전 head)
     pytest tests/fuzz            11 passed
@@ -64,6 +64,68 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 백그라운드 측정 중에 트리를 고친 탓에 seed 11이 4건 실패로 나온 일이 있고, 그것은 결함이
 아니라 동시 편집이었습니다. Atheris(`fuzz/fuzz_query_safety.py`)는 로컬에 wheel이 없어
 실행하지 않았습니다 — 같은 invariant의 Hypothesis 미러가 `tests/fuzz`에서 돕니다.
+
+### Security — 거부된 cross-tenant graph read가 prober의 테넌트에 `allow`로 기록되고 audit event가 없었습니다 (high)
+
+governance-invariant 렌즈가 라우트 66개를 쓸어서 찾았습니다. graph read 라우트는
+`search`(카탈로그 발견) 정책 분기를 평가하는데 그 분기는 정책 엔진의 **테넌트 검사 앞에서
+return**하고, 테넌트 경계는 `evaluate()` **밖에서** `can_see_graph_node` → 맨
+`HTTPException(404)`로 강제됩니다. `zeta-bank` 소유 dataset의 `pii: true` 컬럼을
+`data-admin`(테넌트 `demo`, roles `[admin, data-analyst]`, platform-admin 아님)으로 찔러
+측정했습니다:
+
+    READ  GET /graph/nodes/zeta-ledger:holder_rrn?actor=data-admin
+       HTTP 404 "node not found"
+       DECISION effect=allow  reason='카탈로그 발견 정책 통과'  tenant='demo'
+       AUDIT  (없음)
+
+    WRITE 같은 노드, 같은 actor — 구조적으로 동일한 거부
+       HTTP 403 "tenant boundary denied"
+       DECISION effect=deny   reason='tenant boundary denied'  tenant='zeta-bank'
+       AUDIT  graph.node_upsert result=denied tenant='zeta-bank'
+
+결과가 셋입니다. (1) **원장이 결과와 모순합니다** — 요청은 거부됐고 유일한 행은 `allow`라고
+적습니다. `policy_audit_coverage`의 guardrail은 "every governed data action can be explained
+and audited"입니다. (2) **audit event가 아예 없습니다** — 같은 노드에 대한 write 거부는
+쓰는데, 그래서 소유 테넌트는 자기 PII 컬럼에 대한 **write 시도는 보고 read 시도는 보지
+못합니다.** (3) 행이 **prober의 테넌트**에 접수됩니다. `_effective_tenant_id`가
+`get_dataset(resource)`로 스탬프를 정하는데 `<dataset>:<column>`은 dataset id가 아니므로
+actor의 테넌트로 떨어집니다 — `policy.graph_node_dataset_id()`가 **같은 모듈에** 있고
+`can_see_graph_node`와 `graph_node_target_tenant`가 이미 그것을 씁니다.
+
+(3)은 잘못 접수된 행 하나로 끝나지 않습니다. 스탬프가 **id가 해석되는지에 의존**하므로,
+존재하는 외부 노드는 소유자에게(prober에게 안 보임), 없는 노드는 prober에게(보임) 접수되고,
+따라서 prober 자신의 `GET /policy/decisions`가 "이 dataset이 존재하는가"에 답합니다 — 세
+계열(browse·catalog·llm)이 닫은 그 oracle입니다.
+
+**이미 이 일을 위해 만들어진 헬퍼가 있었고 graph 계열만 쓰지 않았습니다.**
+`policy.evaluate_dataset_scope_refusal`의 docstring이 왜 `evaluate`가 이 작업에 틀렸는지,
+그리고 그것을 쓰면 oracle이 다시 열린다는 것을 이미 적어 두고 있습니다 — catalog·browse
+계열이 그것을 씁니다. graph node read 경로가 그냥 호출하지 않았습니다. 그 헬퍼가 컬럼 노드를
+자기 dataset으로 읽도록(`graph_node_dataset_id`) 하고, read 거부 경로가 그것과
+`_audit_governed_write`를 호출합니다.
+
+**HTTP 채널은 일부러 그대로입니다.** 외부 노드와 없는 노드 모두에 맨 404를 답하는 것이
+존재 oracle을 닫아 두는 방법이므로, 바뀌는 것은 **증빙이고 응답이 아닙니다.** 403으로
+바꾸면 새 테스트 2건이 빨개집니다(M4).
+
+**재현을 제대로 하는 데 시간이 걸렸고, 그 과정이 기록할 가치가 있습니다.** 첫 시도는
+`zeta-ledger`가 시드 카탈로그에 **없는** 상태로 찔러서 404가 테넌트 거부가 아니라 그냥
+"없는 노드"였습니다 — 그 상태의 `allow`/`demo` 행은 같은 모양이지만 다른 사실입니다.
+보고자는 그 dataset을 먼저 온보딩했습니다. 그리고 온보딩이 네 번 거부됐는데
+(`create 작업은 admin 권한만 가능`), 원인은 권한이 아니라 **이 라우트가 actor를 `?user=`가
+아니라 body에서 읽는다**는 것이었습니다 — 거부 메시지가 진짜 이유를 가리지 않는 또 하나의
+사례이고, gap 문서에 적어 둡니다.
+
+**내 테스트가 또 공허했습니다.** 스탬프 테스트의 첫 판이
+`crm-customer-master:email`과 `crm-customer-master`의 스탬프를 비교했는데, 그 dataset의
+소유 테넌트가 `demo`이고 prober의 테넌트도 `demo`이므로 **어느 경로로 계산해도 양쪽이
+`demo`**였습니다 — 결함에 대해 통과했습니다. 테넌트 스탬프를 검사하려면 서로 다른 테넌트가
+둘 필요합니다. 외부 dataset으로 몰아서 red를 확인했습니다.
+
+증거: 네 변형을 각각 되돌렸습니다. M1(스탬프를 `get_dataset(resource)`로 복원): 1건 red.
+M2(거부 기록 전체 제거): 2건 red. M3(decision은 기록하고 audit만 제거): 1건 red.
+M4(외부 노드에 403 응답): 2건 red. 전체 정순 `pytest` 1397 passed, 23 skipped (1392에서 +5).
 
 ### Fixed — 아무도 계산하지 않는 숫자를 target으로 걸고 `implemented`로 게시했습니다 (medium)
 
