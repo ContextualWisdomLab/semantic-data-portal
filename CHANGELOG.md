@@ -30,9 +30,9 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 11
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                       1347 passed, 15 skipped
+    pytest                       1351 passed, 16 skipped
     pytest (파일 순서 정/역/난수)  각 1347 passed, 15 skipped — 순서 무관
-                                 (정순 · 역순 · seed 11/707/31337)
+                                 (정순 · 역순 · seed 11/707/31337; 트리거 가드 커밋 이전 head)
     pytest tests/fuzz            11 passed
     python -m sdp.demo_smoke     exit 0, "ready": true
 
@@ -64,6 +64,49 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 백그라운드 측정 중에 트리를 고친 탓에 seed 11이 4건 실패로 나온 일이 있고, 그것은 결함이
 아니라 동시 편집이었습니다. Atheris(`fuzz/fuzz_query_safety.py`)는 로컬에 wheel이 없어
 실행하지 않았습니다 — 같은 invariant의 Hypothesis 미러가 `tests/fuzz`에서 돕니다.
+
+### Fixed — 기본 테스트 게이트가 stacked PR에서 아예 돌지 않고 있었습니다 (high)
+
+PR #102의 check run을 세어 보고 찾았습니다. **두 건뿐입니다**:
+
+    GET /repos/.../pulls/102/check-runs  ->  total_count: 2
+      Hypothesis property tests          (fuzz.yml)
+      Atheris coverage-guided (bounded)  (fuzz.yml)
+
+`Tests / API integration suite`가 **아예 없습니다.** 원인은 한 줄입니다 — `fuzz.yml`은
+`pull_request:`를 필터 없이 선언하고, `tests.yml`은 `pull_request: branches: [main]`로
+선언했습니다. 그 필터는 PR의 **base** 브랜치에 걸립니다. #102의 base는 `main`이 아니라
+`#79` 브랜치이고(이 저장소의 merge order가 **의도적으로** PR을 쌓습니다), 따라서 기본
+테스트 게이트는 stacked PR에서 단 한 번도 돌지 않았습니다.
+
+24일 동안 아무도 눈치채지 못한 이유는 계정 Actions 과금 잠금이 모든 job을 디스패치 전에
+거부해서 어느 쪽도 돌지 않았기 때문입니다. 결과가 드러나는 시점은 그 잠금이 풀리는
+순간입니다: PR은 fuzz 레인의 결과를 보여 주고 `Tests` 결과는 **보여 주지 않으며**,
+"체크 통과"를 읽는 리뷰어는 두 레인 중 하나만 읽게 됩니다.
+
+이것은 형제 저장소가 이미 기록한 결함입니다 — `contextual-orchestrator`의
+"Stacked quality checks: zero check runs can result from the former
+`pull_request.branches: [main]` filter excluding the PR base. Keep the quality trigger
+unfiltered." 같은 필터가 두 번째 저장소에 있었고, 워크플로 파일을 읽어서가 아니라 **check
+목록을 세어서** 찾았습니다.
+
+가드는 `tests.yml`을 이름으로 부르지 않고 **파생**합니다: 이 저장소가 소유한 워크플로를 전부
+읽어 `pull_request` 트리거에 base 브랜치 필터(`branches`/`branches-ignore`)가 있으면
+거부합니다. 나중에 같은 필터를 달고 추가되는 워크플로도 이 파일을 고치지 않고 걸립니다.
+`scorecard-analysis.yml`은 `pull_request` 트리거가 아예 없으므로 예외가 아니라 **무관**이고,
+그래서 skip 1건이 늘었습니다. `types`는 base가 아니라 이벤트 종류를 좁히므로 범위에
+넣지 않습니다.
+
+PyYAML이 이 저장소의 lock에 없고 가드 하나를 위해 의존성을 추가하는 것은 잘못된 교환이므로
+트리거 블록을 텍스트로 읽습니다 — `tests/test_container_entrypoint.py`와
+`tests/test_api.py`가 이미 `docker-compose.yml`과 `fuzz.yml`을 읽는 방식 그대로입니다.
+**파서 자체를 합성 텍스트로 몰아 테스트합니다**(필터 있음/없음, `types`, push 전용,
+`branches-ignore`) — 아무도 측정하지 않은 파서를 가진 가드는 자기 가정에 대해 검사된
+가드이고, 이 주기에 그 형태로 다섯 번 실패했습니다.
+
+증거: 두 수리를 각각 되돌렸습니다. M1(`branches: [main]` 필터 복원): `[tests.yml]`
+parametrization 1건 red. M2(파서가 `types`를 base 필터로 보고하게 함): 파서 테스트 1건 red.
+전체 정순 `pytest` 1351 passed, 16 skipped (1347 passed, 15 skipped에서 +4 통과, skip +1).
 
 ### Fixed — 대문자 하나로 빠져나간 낡은 주장, 그리고 전달 표면의 절반만 보던 disclosure 스캔 (high / 뒤 두 건은 low)
 
