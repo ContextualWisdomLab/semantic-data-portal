@@ -304,6 +304,33 @@ def _require_actor(payload: dict[str, Any]) -> str:
     return _actor(payload)
 
 
+def _missing_resource_detail(exc: KeyError) -> str:
+    """The message a caught ``KeyError`` carries, without its repr quotes.
+
+    ``KeyError.__str__`` returns ``repr(args[0])``, so ``detail=str(exc)``
+    publishes ``"'patch not found'"`` - quotes included - where every other
+    404 in this API answers ``dataset not found``. A client matching on the
+    string saw one route disagree with the rest, and the quotes are a Python
+    detail no caller asked about.
+
+    Eight handlers constructed their detail that way. Seven were shielded by an
+    existence check that raises the clean 404 before the ``try``, so they were
+    latent rather than correct: the shield is a property of today's call order,
+    not of the handler. ``tests/test_not_found_detail_is_not_a_repr.py`` checks
+    the construction over the module's syntax tree so a ninth cannot appear.
+
+    Arity matters, which is why it is not a one-liner. With no arguments
+    ``str()`` is the empty string, which would publish a blank detail, so the
+    class name is used; with two or more, ``str()`` already renders the tuple
+    and there is no single message to unwrap.
+    """
+    if len(exc.args) == 1:
+        return str(exc.args[0])
+    if not exc.args:
+        return type(exc).__name__
+    return str(exc)
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "at": datetime.now(timezone.utc).isoformat()}
@@ -1001,7 +1028,7 @@ def catalog_dataset_schema_history(
     except KeyError as exc:
         # A dataset with no snapshot yet is a 404, per the repository's documented
         # mapping; it was escaping as an uncaught KeyError, i.e. a 500.
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise HTTPException(status_code=404, detail=_missing_resource_detail(exc))
 
 
 @app.get("/catalog/datasets/{dataset_id}/schema-versions")
@@ -1038,7 +1065,7 @@ def catalog_dataset_profile(
     try:
         return browse.dataset_profile(dataset_id, user=user, purpose=purpose)
     except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise HTTPException(status_code=404, detail=_missing_resource_detail(exc))
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
 
@@ -1078,7 +1105,7 @@ def dataset_lineage(
     try:
         return get_dataset_lineage(dataset_id)
     except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise HTTPException(status_code=404, detail=_missing_resource_detail(exc))
 
 
 @app.get("/catalog/datasets/{dataset_id}/related")
@@ -1090,7 +1117,7 @@ def dataset_related(
     try:
         return {"dataset_id": dataset_id, "related_datasets": get_related_datasets(dataset_id)}
     except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise HTTPException(status_code=404, detail=_missing_resource_detail(exc))
 
 
 @app.get("/catalog/datasets/{dataset_id}/audit")
@@ -1268,7 +1295,7 @@ def publish_catalog_dataset(dataset_id: str, payload: dict[str, Any] | None = No
             )
             seed_dataset(dataset)
     except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise HTTPException(status_code=404, detail=_missing_resource_detail(exc))
     except NodeKindConflict as conflict:
         # Before the ``ValueError`` arm: ``NodeKindConflict`` is one, and this
         # refusal is a conflict, not a malformed publish.
@@ -1341,7 +1368,7 @@ def patch_catalog_dataset(dataset_id: str, payload: dict[str, Any]) -> dict[str,
             )
             seed_dataset(dataset)
     except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise HTTPException(status_code=404, detail=_missing_resource_detail(exc))
     except NodeKindConflict as conflict:
         # Before the blanket arm, so a kind conflict is not reported as a
         # malformed body - and catching the *precise* type rather than
@@ -1422,7 +1449,7 @@ def deprecate_catalog_dataset(dataset_id: str, payload: dict[str, str] | None = 
             seed_dataset(dataset)
         return {"status": "deprecated", "dataset": catalog.mutation_response_view(dataset)}
     except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise HTTPException(status_code=404, detail=_missing_resource_detail(exc))
     except NodeKindConflict as conflict:
         _audit_refused_catalog_mutation(
             event_type="dataset.deprecate",
@@ -1908,7 +1935,7 @@ def ontology_patch_review(patch_id: str, payload: dict[str, str]) -> dict[str, A
             comment=payload.get("comment", ""),
         )
     except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise HTTPException(status_code=404, detail=_missing_resource_detail(exc))
     except ontology.ConceptKindConflict as conflict:
         # The same conflict the upsert route answers 409 for; it reached here as
         # a plain 400 until the publication paths were made to agree.
