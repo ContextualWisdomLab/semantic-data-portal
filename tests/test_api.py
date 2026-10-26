@@ -2219,21 +2219,42 @@ def test_catalog_mutation_guard_denies_non_admin_actors(verb: str, actor: str | 
     else:
         response = client.post("/catalog/datasets/guard-probe/deprecate", json={**payload, "reason": "probe"})
 
-    # The refusal status now depends on WHY the actor is refused, and that split
-    # is the point rather than an inconvenience:
+    # The refusal status depends on WHY the actor is refused, and that split is
+    # the point rather than an inconvenience:
     #   - an actor inside the dataset's tenant but lacking the admin role gets
     #     403 and the real reason, because it may legitimately know the dataset
     #     exists and needs a diagnosable error;
-    #   - an actor with no resolvable tenant ("guest", "anonymous", no actor key)
-    #     gets 404, indistinguishable from a dataset that is not there, because
+    #   - an *authenticated* actor that cannot reach the dataset's tenant gets
+    #     404, indistinguishable from a dataset that is not there, because
     #     403-for-foreign plus 404-for-missing is an existence oracle over an
-    #     enumerable id space.
+    #     enumerable id space (see tests/test_catalog_tenant_scope.py);
+    #   - an actor with no resolvable tenant at all ("guest", "anonymous", no
+    #     actor key) gets 403 naming authentication.
+    #
+    # That last line used to read 404 as well, and it was measured to be false:
+    # `GET /catalog/datasets/{id}` answers the same caller
+    # "...인증된 사용자만 가능합니다." while these three said the dataset does not
+    # exist, for a dataset this very fixture creates. One subject, one resource,
+    # two answers - and the one a client follows pointed at the id instead of at
+    # its credentials.
+    #
+    # The oracle stays closed: the scope-less answer is a constant that cannot
+    # vary with the dataset, which tests/test_mutation_refusal_names_its_cause.py
+    # asserts by driving a present and an absent id and comparing both the
+    # status and the body. "A scope refusal must not explain itself" is kept as
+    # the assertion below - the reason may name the caller, never the asset.
     if actor in ("analyst",):
         assert response.status_code == 403, response.text
         assert "admin" in response.json()["detail"]
     else:
-        assert response.status_code == 404, response.text
+        assert response.status_code == 403, response.text
+        detail = response.json()["detail"]
+        assert "인증된 사용자만" in detail, detail
         assert "tenant" not in response.text
+        assert "guard-probe" not in response.text
+        assert "존재하지 않" not in response.text, (
+            "a scope refusal must not claim the asset is absent"
+        )
         assert "admin" not in response.text, "a scope refusal must not explain itself"
     # A guard that denies *after* mutating would be worse than no guard.
     unchanged = app_catalog._DATA["guard-probe"]

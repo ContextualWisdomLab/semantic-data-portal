@@ -348,7 +348,13 @@ def evaluate(
             **decision_base,
             provenance=provenance,
             effect="deny",
-            reason="목록 조회는 인증된 사용자만 가능합니다.",
+            # Worded for every caller this branch refuses, not only for a list
+            # read. ``_catalog_mutation_refusal`` answers a scope-less mutation
+            # caller with this same decision, because it is the only refusal in
+            # this engine whose reason cannot vary with the dataset - and a
+            # reason that varies is the existence oracle the route's 404 exists
+            # to close. "목록 조회" named the wrong action for that caller.
+            reason="카탈로그 접근은 인증된 사용자만 가능합니다.",
             obligations={"required_role": "data-analyst"},
         )
 

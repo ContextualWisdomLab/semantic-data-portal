@@ -3366,6 +3366,86 @@ resolve 가능성은 **더 약한** 성질입니다. 두 가드를 추가했습�
 
 이 절은 측정 기록이고 병합 허가가 아닙니다.
 
+## 거부 사유가 **대상**을 말했습니다. 읽기 라우트는 같은 호출자에게 **인증**을 말합니다 (2026-10-26 23:20Z)
+
+인증되지 않은 호출자 하나로, 시드 카탈로그가 소유한 데이터셋 하나(`crm-customer-master`)에
+대해 `0b19c91`에서 측정했습니다:
+
+```
+GET   /catalog/datasets/{id}            -> 403 "목록 조회는 인증된 사용자만 가능합니다."
+PATCH /catalog/datasets/{id}            -> 404 "dataset not found"
+POST  /catalog/datasets/{id}/publish    -> 404 "dataset not found"
+POST  /catalog/datasets/{id}/deprecate  -> 404 "dataset not found"
+```
+
+**한 주체, 한 자원, 같은 질문에 두 답**입니다. 읽기는 "인증하라"고 하고 mutation 셋은
+데이터셋이 없다고 합니다. 있습니다 — 같은 프로세스에서 인가된 독자에게 카탈로그가 바로
+내줍니다. 그래서 mutation 거부는 **거짓 사유**를 말하고, 호출자는 그 사유를 따라 자격증명이
+아니라 dataset id를 보러 갑니다. 이 세션의 기록이 바로 거기서 재현을 네 번 헛돌렸습니다.
+
+404 자체는 의도된 것이고 `api.py`에 사유가 적혀 있습니다 — **외부 테넌트** 데이터셋은 없는
+것과 구분되지 않아야 하고, 이전 판은 둘 다 403을 주면서 사유 문자열로 그 차이를
+흘렸습니다. 그 성질은 유지합니다.
+
+### 첫 설계를 측정이 거부했습니다
+
+scope 없는 주체는 역할 검사에서 거부되므로 사유가 데이터셋에 의존하지 않을 것이라고
+가정하고 `decision.reason`을 그대로 공표했습니다. **틀렸습니다:**
+
+```
+anonymous POST .../crm-customer-master/publish  -> "tenant boundary denied"
+anonymous POST .../no-such-dataset/publish      -> "존재하지 않는 데이터셋입니다."
+```
+
+정책 엔진은 존재·테넌트를 역할보다 **먼저** 평가합니다(`policy.py`의 mutation 경로:
+`get_dataset` → 테넌트 → 민감도/목적 → 역할). 즉 404가 존재하는 이유가 바로 이것이고,
+제 첫 설계는 그 oracle을 되열었습니다. **제가 쓴 테스트가 그것을 잡았습니다** — 현재
+있는 것과 없는 것을 둘 다 몰아 상태와 본문을 비교하는 가드입니다.
+
+### 그래서: 데이터셋에 의존할 수 **없는** 사유
+
+scope 없는 주체에게는 `resource="catalog"`에 대한 discovery 거부를 답합니다. 그 사유는
+세 자원(카탈로그, 있는 dataset, 없는 dataset)에 대해 모두 동일하다고 측정했습니다 —
+`search` 분기가 데이터셋을 보기 전에 return하기 때문입니다. `_authorize_catalog_discovery`가
+공표하는 것과 **같은 결정**이므로, 읽기 라우트와 mutation 라우트가 문자열을 맞춰 두는
+방식이 아니라 **구성상** 한 답을 줍니다.
+
+사유 문구도 하나만 고쳤습니다: `목록 조회는 인증된 사용자만 가능합니다.` →
+`카탈로그 접근은 인증된 사용자만 가능합니다.` 이 분기가 거부하는 모든 호출자에게 참인
+문장입니다(목록 읽기에만 해당하는 문구는 mutation 호출자에게 틀린 동작을 지목했습니다).
+production 참조는 한 곳뿐이고, 테스트 두 곳의 언급은 docstring/주석이었습니다.
+
+또 세 라우트에 인라인 복사되어 있던 거부 분기를 `_catalog_mutation_refusal` 하나로
+합쳤습니다 — 사본 셋을 각각 고치는 것은 이 저장소가 대가를 기록한 형태입니다.
+
+### 선행 결정을 덮었으므로, 그 테스트와 근거를 같이 고쳤습니다
+
+`tests/test_api.py::test_catalog_mutation_guard_denies_non_admin_actors`가 scope 없는
+호출자에 대해 404를 **근거와 함께** 단언하고 있었습니다("403-for-foreign plus
+404-for-missing is an existence oracle"). 조용히 뒤집지 않고, 측정과 이유를 그 주석에
+적고 단언을 바꿨습니다. "a scope refusal must not explain itself"는 **유지**합니다 —
+사유는 호출자를 말할 수 있고 자산은 말할 수 없습니다(`tenant`·dataset id·`존재하지 않`
+모두 금지로 단언).
+
+역검증 넷: 인증 분기 제거(두 파일 red), 데이터셋 의존 사유 공표(oracle 가드까지 red —
+제 첫 실수를 막는 가드가 살아 있다는 증거), 외부 테넌트 숨김 제거(cross-tenant 가드 red),
+사유가 자산을 말하게(읽기·mutation 양쪽 red).
+
+### 닫지 않은 것: untyped 본문 라우트 다섯이 `actor`를 공표하지 않습니다
+
+같은 측정에서 나왔습니다. `additionalProperties: true`를 공표하는 라우트 열 중 **다섯**이
+인가 주체를 본문에서 읽습니다(`/catalog/datasets/{id}/publish`·`/deprecate`,
+`/enterprise/auth/oidc-preview`, `/ontology/patches`, `/ontology/patches/{id}/review`).
+공표된 스키마만 보고 만든 본문은 **유효하지만 호출을 성립시키지 못합니다** — 이것이
+`api_request_contract`의 자기 docstring이 경고하는 "a schema that cannot be used to make
+the call it describes"이고, untyped 문을 통해 들어옵니다. 그 모듈의 주석은 파생 가드가
+"so the next one cannot be forgotten"이라고 적지만, 가드는 `REQUEST_BODY_MODELS`에 있는
+라우트만 파라미터로 돕니다 — untyped 열 개는 범위 밖입니다(`test_the_untyped_bodies_that_
+remain_are_the_ones_with_no_model`이 그 경계를 의도적으로 측정합니다). 즉 **공표 주장이
+가드보다 넓습니다.** 다음 항목으로 처리합니다.
+
+이 절은 측정 기록이고 병합 허가가 아닙니다.
+
 ## 운영 메모
 
 - Database objects: 두 단어 이상 `snake_case`, 3NF. Catalog plane 테이블은 #73의 `migrations/0002_ontology_catalog_plane.sql`.

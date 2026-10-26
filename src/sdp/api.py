@@ -304,6 +304,55 @@ def _require_actor(payload: dict[str, Any]) -> str:
     return _actor(payload)
 
 
+def _catalog_mutation_refusal(
+    actor_id: str, dataset_id: str, decision: Any
+) -> HTTPException:
+    """The refusal a denied catalog mutation answers with.
+
+    Three routes (``publish``, ``deprecate``, ``PATCH``) had this block copied
+    inline, and it decided between two answers: 404 when the dataset is outside
+    the caller's tenant scope, otherwise 403 with the policy's reason. The 404
+    is deliberate - a *foreign* dataset must be indistinguishable from an absent
+    one, and an earlier version leaked the difference through the reason string
+    while both answered 403.
+
+    It was also answering the unauthenticated caller, who has no tenant scope at
+    all and therefore never has anything in scope. One subject asking about one
+    dataset got "authenticate" from ``GET /catalog/datasets/{id}`` and "dataset
+    not found" from all three mutations, for a dataset the catalogue serves to an
+    authorized reader in the same process. The mutation refusal named a false
+    cause, and a client follows a false cause to the wrong place - this
+    repository's own session log spent four reproduction attempts there.
+
+    The first attempt at this branch published ``decision.reason`` to that
+    caller, on the assumption that a scope-less subject is refused by the role
+    check before the dataset is consulted. Measured, that is false::
+
+        anonymous POST .../crm-customer-master/publish  -> "tenant boundary denied"
+        anonymous POST .../no-such-dataset/publish      -> "존재하지 않는 데이터셋입니다."
+
+    which is the oracle the 404 exists to close, re-opened. So the answer for a
+    scope-less subject is a reason that **cannot** depend on the dataset: the
+    discovery refusal, evaluated against the resource ``catalog``. That is the
+    same decision ``_authorize_catalog_discovery`` publishes, so the read route
+    and the mutation routes now give one subject one answer by construction
+    rather than by two strings being kept in step.
+
+    If that discovery decision ever allows - it must not for a subject with no
+    tenant - the dataset-scoped branch below is used instead, because a 403 is
+    not reported with the reason of an allow.
+    """
+    if accessible_tenant_ids(actor_id) == []:
+        unauthenticated = evaluate(
+            subject=actor_id, resource="catalog", action="search", purpose="discovery"
+        )
+        if unauthenticated.effect != "allow":
+            return HTTPException(status_code=403, detail=unauthenticated.reason)
+    if catalog.dataset_in_scope(dataset_id, accessible_tenant_ids(actor_id)) is None:
+        return HTTPException(status_code=404, detail="dataset not found")
+    return HTTPException(status_code=403, detail=decision.reason)
+
+
 def _missing_resource_detail(exc: KeyError) -> str:
     """The message a caught ``KeyError`` carries, without its repr quotes.
 
@@ -1274,9 +1323,7 @@ def publish_catalog_dataset(dataset_id: str, payload: dict[str, Any] | None = No
         # reason string carried the oracle even though the status matched. A
         # caller that cannot reach the dataset's tenant gets one answer; an
         # in-scope refusal (role, sensitivity, purpose) keeps its reason.
-        if catalog.dataset_in_scope(dataset_id, accessible_tenant_ids(actor_id)) is None:
-            raise HTTPException(status_code=404, detail="dataset not found")
-        raise HTTPException(status_code=403, detail=decision.reason)
+        raise _catalog_mutation_refusal(actor_id, dataset_id, decision)
 
     try:
         # Before the status change, for the reason the create route gives.
@@ -1328,9 +1375,7 @@ def patch_catalog_dataset(dataset_id: str, payload: dict[str, Any]) -> dict[str,
         # reason string carried the oracle even though the status matched. A
         # caller that cannot reach the dataset's tenant gets one answer; an
         # in-scope refusal (role, sensitivity, purpose) keeps its reason.
-        if catalog.dataset_in_scope(dataset_id, accessible_tenant_ids(actor_id)) is None:
-            raise HTTPException(status_code=404, detail="dataset not found")
-        raise HTTPException(status_code=403, detail=decision.reason)
+        raise _catalog_mutation_refusal(actor_id, dataset_id, decision)
 
     try:
         request = DatasetPatchRequest(**payload)
@@ -1424,9 +1469,7 @@ def deprecate_catalog_dataset(dataset_id: str, payload: dict[str, str] | None = 
         # reason string carried the oracle even though the status matched. A
         # caller that cannot reach the dataset's tenant gets one answer; an
         # in-scope refusal (role, sensitivity, purpose) keeps its reason.
-        if catalog.dataset_in_scope(dataset_id, accessible_tenant_ids(actor_id)) is None:
-            raise HTTPException(status_code=404, detail="dataset not found")
-        raise HTTPException(status_code=403, detail=decision.reason)
+        raise _catalog_mutation_refusal(actor_id, dataset_id, decision)
 
     payload = payload or {}
     try:
