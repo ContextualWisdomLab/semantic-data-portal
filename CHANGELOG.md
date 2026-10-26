@@ -30,26 +30,29 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 11
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                       1327 passed, 15 skipped
-    pytest (파일 순서 정/역/난수)  각 1327 passed, 15 skipped — 순서 무관
+    pytest                       1347 passed, 15 skipped
+    pytest (파일 순서 정/역/난수)  각 1347 passed, 15 skipped — 순서 무관
                                  (정순 · 역순 · seed 11/707/31337)
     pytest tests/fuzz            11 passed
     python -m sdp.demo_smoke     exit 0, "ready": true
 
 alert 전달 커밋이 테스트를 34건(새 파일 넷 33건 + `test_honest_metrics.py` 1건),
 pgvector 핀 커밋이 10건, event-loop 수리 커밋이 2건, 환경 변수 문서·gate 커밋이 8건
-(새 파일 둘), readiness 진단 커밋이 7건(새 파일 하나) 늘렸으므로 위 숫자는 앞서 적혀 있던
-1266 → 1300 → 1310 → 1312 → 1320 → 1327로 올라갔습니다. 다섯 순서 측정은 트리를 동결한 상태에서
+(새 파일 둘), readiness 진단 커밋이 7건(새 파일 하나) 늘렸고, 그 뒤 2026-10-26 적대적 리뷰
+수리 여섯 커밋이 3+3+3+4+4+3건을 더했으므로 위 숫자는 앞서 적혀 있던
+1266 → 1300 → 1310 → 1312 → 1320 → 1327 → 1330 → 1333 → 1336 → 1340 → 1344 → 1347로
+올라갔습니다. 다섯 순서 측정은 트리를 동결한 상태에서
 돌렸고, 그 뒤에 바뀐 파일은 이 CHANGELOG 하나입니다 — CHANGELOG 내용을 읽는 테스트는
 파일 순서와 무관한 산술 가드
 (`test_every_published_node_breakdown_sums_to_its_own_total`) 하나뿐이므로, 순서 성질을
 다시 재지 않고 전체 정순 실행으로만 확인합니다. 측정하고 쓴 뒤 커밋하는 순서상 이
 숫자가 자기 커밋 때문에 낡는 것은 위 off-by-one과 같은 종류입니다.
 
-위 다섯 순서 숫자는 `742b1e5` 시점의 측정입니다. 그 뒤에 들어온 커밋들(아래 2026-10-26
-적대적 리뷰 수리 항목들)은 각자 **전체 정순 1회**를 증거로 가지며, 다섯 순서는 그 묶음이
-끝난 뒤 한 번 다시 재서 이 블록을 갱신합니다. 끝나기 전의 중간 head에 대해 다섯 순서를
-주장하지 않습니다.
+위 다섯 순서 숫자는 2026-10-26 적대적 리뷰 수리 여섯 커밋이 모두 들어온 뒤의 측정입니다.
+각 중간 커밋은 **전체 정순 1회**만을 증거로 가졌고, 다섯 순서는 묶음이 끝난 뒤 한 번
+재서 이 블록을 갱신했습니다 — 중간 head에 대해 다섯 순서를 주장하지 않습니다. 이 커밋이
+바꾼 파일은 CHANGELOG와 gap 문서 둘뿐이고, CHANGELOG 내용을 읽는 테스트는 파일 순서와
+무관한 산술 가드 하나뿐이므로 순서 성질을 다시 재지 않고 전체 정순 실행으로만 확인합니다.
 
 skip 15건의 내역을 적어 둡니다 — 숫자만 적으면 읽는 사람이 해석할 수 없습니다:
 `SDP_DATABASE_DSN not set` 11건(Postgres 통합)과 `pyld is a dev-only dependency`
@@ -62,7 +65,7 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 아니라 동시 편집이었습니다. Atheris(`fuzz/fuzz_query_safety.py`)는 로컬에 wheel이 없어
 실행하지 않았습니다 — 같은 invariant의 Hypothesis 미러가 `tests/fuzz`에서 돕니다.
 
-### Fixed — 대문자 하나로 빠져나간 낡은 주장, 그리고 전달 표면의 절반만 보던 disclosure 스캔 (high)
+### Fixed — 대문자 하나로 빠져나간 낡은 주장, 그리고 전달 표면의 절반만 보던 disclosure 스캔 (high / 뒤 두 건은 low)
 
 **이 주기 다섯 번째 "자기 목록에 걸린 가드"의 다음 형태: 대소문자.**
 `observability.py:907`의 주석이 `"Nothing posts to it, so the capability is stated next to
@@ -103,6 +106,15 @@ module-level dict에 앉아 있습니다. `test_honest_metrics`의 one-way-read 
 그 대입의 우변은 지역 변수이고, 가드는 변수 **이름**을 grep합니다. 두 결과 모두에 대해
 parametrize하고, 각 분기가 실제로 그 분기였는지 `deliveries_failed`/`deliveries_succeeded`로
 단언합니다(그 단언이 없으면 한쪽이 조용히 다른 쪽을 돌 수 있습니다).
+
+**정정 — 뒤 두 건의 심각도.** 위 두 disclosure 항목을 처음 적을 때 리뷰의 high 등급을
+그대로 옮겨 적었는데, 그 두 건은 반박 판정을 받았고 반박이 맞습니다. 사실 하위 주장은
+양쪽 모두 확인됩니다(변형이 통과하고, 스캔이 절반만 봅니다). 다만 **지금 새고 있는 것은
+없습니다**: `_alert_payload`에는 규칙별 코드가 없으므로 배포된 probe 규칙 본문에
+caller 통제 내용이 없고, 성공 분기에 URL을 남기는 변형의 `_ALERT_ROUTING`은 게시 표면이
+아닙니다(`alert_routing_state()`가 고정 키만 열거합니다). 두 건은 **커버리지 비대칭**이고
+심각도는 low입니다. 고치는 비용이 parametrize 두 줄이라서 고쳤을 뿐, "누출을 막았다"가
+아닙니다.
 
 증거: 네 수리를 각각 되돌렸습니다. M1(문서의 낡은 문장 복원): 파생 가드 1건 red.
 M2(낡은 주석 복원): casefold 가드 1건 red — 같은 텍스트에 대해 대소문자 구분 가드는

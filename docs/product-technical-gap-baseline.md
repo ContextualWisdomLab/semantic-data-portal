@@ -3041,6 +3041,113 @@ SQL validator에 적용해 둡니다.
 이 절은 측정 기록이고 병합 허가가 아닙니다. PR을 닫거나 상태를 바꾸는 것은 owner 결정이며,
 이 세션은 어느 PR도 닫지 않았습니다.
 
+## 적대적 리뷰 6개 렌즈가 26건을 보고했습니다 — 그중 하나는 테스트가 한 건도 돌지 않게 만들고 있었습니다 (2026-10-26)
+
+`81752fc..88ae5d5` 범위에 6개 렌즈(tripwire 효능, 동시성, disclosure, probe 조건, 요청 경로,
+게시된 주장)를 돌렸습니다. 26건이 돌아왔고 중복을 묶으면 14개 결함입니다. 6개 렌즈가
+**독립적으로 같은 것을 1순위로 보고한** 한 건이 있습니다.
+
+### 전체 수집이 중단되고 있었습니다 (6개 렌즈가 독립 보고)
+
+`tests/test_build_input_pinning.py::_dockerfiles()`가 `.claude`/`.git` 제외를 후보의
+**절대 경로** 조각에 물었습니다. 제외의 목적은 에이전트 하네스가 `<repo>/.claude/worktrees/<id>`에
+남기는 사본을 건너뛰는 것인데, 체크아웃 자체가 그 경로에 있으면 저장소의 모든 파일이
+제외됩니다. 6개 렌즈 전부가 그런 worktree에서 돌았고, 거기서 이 저장소의 테스트는 한 건도
+실행되지 않았습니다:
+
+    tests/test_build_input_pinning.py:74: in _dockerfiles
+        assert found, "no Dockerfile was found; re-point this test"
+    !!!! Interrupted: 1 error during collection !!!!
+    no tests collected, 1 error
+
+모듈 수준 `assert`가 `@pytest.mark.parametrize` 인자를 평가하는 중에 터지므로 **파일 하나가
+아니라 세션 전체**가 끝납니다. 이것이 측정 환경에 대해 말해 주는 것: 이 브랜치의 리뷰·수리
+작업은 전부 worktree에서 돌고, 그 환경에서는 `647cc41` 이후 어떤 테스트도 돌지 않았습니다.
+주 체크아웃에서만 초록이었습니다.
+
+### 자격증명이 리다이렉트를 건너갔습니다
+
+두 http(s) 내보내기 경로(로그 싱크, alert webhook)가 설정 URL의 userinfo를 `Authorization`
+헤더로 옮깁니다. `urllib.request.urlopen`은 POST에 대한 302를 따라가고, GET으로 바꾸고,
+헤더를 전부 다시 보냅니다:
+
+    POST /webhook      Host 127.0.0.1:35661  Authorization: Basic c2VjcmV0...
+    GET  /exfiltrated  Host 127.0.0.2:39469  Authorization: Basic c2VjcmV0...
+
+운영자 자격증명이 두 번째 authority에 도착하고, 본문은 메서드와 함께 사라지고, 교환은
+204로 끝나므로 전달은 `succeeded`로 집계됩니다. 싱크 쪽이 더 오래된 경로이므로 alert만
+고치면 원래 누출이 남습니다. 둘 다 리다이렉트를 거부합니다.
+
+### "전달됨"이 시도 횟수였습니다
+
+`alerts_delivered`·`alerts_delivered_total`·`sdp_alerts_delivered_total`이 모두
+`attempted`를 읽었고, 정직한 숫자를 담은 `deliveries_succeeded`는 아무도 읽지 않았습니다.
+거부된 POST 한 번이 `alerts_delivered: 1` + `alerts_failed: 1`로 게시됩니다. gauge의 HELP는
+"attempted", 이름은 "delivered"였습니다. 실패 gauge는 아예 없었습니다.
+
+### probe 규칙이 `verdict_basis`의 세 conjunct 중 둘만 읽었습니다
+
+빠진 세 번째는 control의 **효과가 실제로 측정되는** 유일한 conjunct입니다. 핀 비교를 깨면:
+
+    probe status     contract_only
+    row verification proof_route_served    ← route는 서비스되므로 declared_only가 안 됩니다
+    failure_reason   ''
+    rule report      observed_total 0, firing False
+    gauge            0
+
+critical 규칙이 진짜 빌드 결함에 0을 보고하는 동안, 세 게시 표면이 이 규칙이 "빌드가
+소유하는 절반"을 덮는다고 주장했습니다. `demo_smoke`는 실패했으므로 피해 범위가 줄어든
+것이고 없어진 것은 아닙니다.
+
+### 요청 스레드에 가드가 없었습니다
+
+`_deliver_alert`의 넓은 `except`는 스폰된 스레드만 감쌉니다. 래치 뒤에 요청 스레드가 직접
+하는 일은 가드가 없었으므로, 거기서 raise가 나면 governed 요청이 500을 답하고 policy
+decision +1 / audit event +0을 남깁니다 — 그 `except`의 주석이 스스로 막는다고 적어 둔
+전례입니다.
+
+### 게시된 경계가 불변식이 아니었습니다
+
+`firing`을 lock 밖에서 읽고 결정을 lock 안에서 적용했으므로, "firing 아님"을 먼저 관찰하고
+lock을 나중에 잡은 평가가 그 사이에 세워진 래치를 지웁니다. "reset 사이 워커당 최대 2
+POST"는 성립하지 않았습니다.
+
+### 내 테스트의 구멍이 다섯 건 더 있었습니다
+
+이 라운드에서 **내가 쓴 테스트**가 자기 docstring이 약속한 것을 잡지 못한 경우:
+
+| 구멍 | 측정 |
+|---|---|
+| 미들웨어 지점의 핸드셰이크 예산 | 예산을 지우면 호출이 **5012.93 ms**, 스위트 초록 |
+| 미들웨어 지점의 join | join을 지우면 호출이 1 ms 미만, 스위트 초록 |
+| stash 검사의 질문 | `ast.Name` 전부 제외 → 모듈 수준 stash(자기 메시지가 두 번 부르는 경우)를 제외 |
+| disclosure payload 스캔 | routable 규칙 둘 중 하나만 몰았음 |
+| 자격증명 반사 스캔 | 실패 경로에서만 돌았음 |
+| ring generation 가드 테스트(첫 판) | stale generation을 처음부터 건네줘서 ring에 도달하지 않았음 |
+
+마지막 줄은 이 라운드에 내가 **직접** 만든 구멍입니다. 가드를 지우고도 초록이었고, reset이
+POST 비행 중에 들어와야 실패 경로가 stale generation으로 실행된다는 것을 보고 고쳤습니다.
+
+### 두 건은 반박을 받았고, 그 반박을 기록해 둡니다
+
+disclosure 두 건(규칙 하나만 모는 payload 스캔, 실패 경로만 보는 자격증명 스캔)은 재현
+에이전트가 "확실히 실재"로, 반박 에이전트가 "실재 아님(likely)"으로 판정했습니다. 사실
+하위 주장은 양쪽 모두 확인했습니다 — 변형이 통과하고, 스캔이 절반만 봅니다. 반박의
+요지는 심각도입니다: `_alert_payload`에는 규칙별 코드가 **없으므로** 배포된 본문에 누출이
+없고, 성공 분기에 URL을 남기는 변형의 `_ALERT_ROUTING`은 **게시 표면이 아닙니다**
+(`alert_routing_state()`가 고정 키만 열거합니다). 그 지적이 맞습니다. 이 두 건은 "지금
+새고 있는 것"이 아니라 **커버리지 비대칭**이고, 고치는 비용이 parametrize 두 줄이므로
+고쳤습니다. 심각도를 high로 적었던 CHANGELOG 항목을 그에 맞게 정정했습니다.
+
+### 산문 가드를 하나 더 만들지 않았습니다
+
+낡은 주장이 대문자 하나로 금지 목록을 빠져나간 것이 이 주기 다섯 번째 "자기 목록에 걸린
+가드"입니다. 열 번째 fragment를 추가하는 대신, 제품에서 값을 읽어 같은 키에 다른 값을 적은
+문서를 거부하는 **파생** 가드를 넣었습니다. 손으로 쓴 목록은 이 주기에 다섯 번 자기
+자신에게 걸렸습니다.
+
+이 절은 측정 기록이고 병합 허가가 아닙니다.
+
 ## 운영 메모
 
 - Database objects: 두 단어 이상 `snake_case`, 3NF. Catalog plane 테이블은 #73의 `migrations/0002_ontology_catalog_plane.sql`.
