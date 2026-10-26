@@ -333,17 +333,23 @@ def test_a_create_without_an_id_checks_the_id_the_catalog_will_assign() -> None:
     catalog name the dataset. It is now the registrar's ``before_commit`` hook,
     which runs after the id is resolved and before the first write.
 
-    The graph store singleton is deliberately outside ``conftest``'s restore
-    fixture (it has no snapshot API), so this test both cleans up after itself
-    and refuses to depend on what ran before it - it was written doing neither
-    and failed both ways. Leaving the parked concept behind made three tests in
-    ``test_change_reason_evidence`` answer this 409 while this file passed on
-    its own; assuming the id was free in the graph made the test itself fail in
-    reverse and one shuffled file order, because an earlier no-id registration
-    had left a ``dataset`` node there and parking a concept on it is exactly
-    what the rule under test refuses. Whatever sits at that id is an orphan -
-    ``catalog._DATA`` is restored per test, so no catalog row claims it - so it
-    is removed first and the id is left empty afterwards.
+    This test cleans up after itself and refuses to depend on what ran
+    before it, having been written doing neither and failed both ways. Leaving the
+    parked concept behind made three tests in ``test_change_reason_evidence``
+    answer this 409 while this file passed on its own; assuming the id was free
+    in the graph made the test itself fail in reverse and one shuffled file
+    order, because an earlier no-id registration had left a ``dataset`` node
+    there and parking a concept on it is exactly what the rule under test
+    refuses. Whatever sits at that id is an orphan - ``catalog._DATA`` is
+    restored per test, so no catalog row claims it - so it is removed first and
+    the id is left empty afterwards.
+
+    Both halves were originally justified by the graph store being outside
+    ``conftest``'s restore. It is inside it now, so neither half is load-bearing
+    for isolation any more; they are kept because the test reads as its own
+    statement either way, and because the id arithmetic
+    (``_next_generated_dataset_id``) is about the catalog rather than the
+    store.
     """
     generated = catalog._next_generated_dataset_id()
     graph_store.get_store().delete_node(generated)
@@ -628,7 +634,6 @@ def test_another_dataset_whose_id_starts_with_this_one_survives() -> None:
     child = store.get_node("부모셋:자식셋")
     assert child is not None and child.kind == "dataset"
     assert client.get("/catalog/datasets/부모셋:자식셋", params={"user": "admin"}).status_code == 200
-    seed_store(InMemoryGraphStore())
 
 
 def test_another_datasets_column_node_survives_even_with_the_right_kind() -> None:
@@ -711,25 +716,63 @@ def test_a_schema_less_patch_checks_the_stored_columns() -> None:
     assert ("dataset.patch", "denied") in actions, actions
 
 
-def test_the_published_409_description_names_the_duplicate_id_cause() -> None:
+# The Korean count words the opening sentence can use, by the number they mean.
+# Only as far as the enumeration plausibly grows; a seventh cause fails the
+# lookup rather than passing on a missing key.
+_COUNT_WORDS = {1: "한", 2: "두", 3: "세", 4: "네", 5: "다섯", 6: "여섯", 7: "일곱"}
+
+# One distinctive fragment per 409 the code can raise, and the exception or
+# route that raises it. ``api.py`` answers 409 at ten sites; these are the
+# distinct *causes* those sites report, which is what the document enumerates.
+_409_CAUSES = {
+    "가득 찼고": "the capped-vocabulary eviction refusal",
+    "content digest": "the ontology digest precondition",
+    "kind로 존재하는": "graph_store.NodeKindConflict",
+    "dataset id": "catalog.DatasetAlreadyExists",
+    "class 경계": "graph_store.HierarchyClassSeparationConflict (ONT-002)",
+    "포섭 순환": "graph_store.HierarchyCycleConflict (ONT-007)",
+}
+
+
+def test_the_published_409_description_enumerates_every_cause_the_code_raises() -> None:
     """``GET /openapi.json`` serves this string on every route declaring 409.
 
     The duplicate-dataset-id refusal was added as a fourth 409 cause while the
-    description still opened "충돌. 세 가지 경우다" and enumerated three - so a
+    description still opened "충돌. 세 가지 경우다" and enumerated three, so a
     client generated from the document saw an exhaustive enumeration that
-    excluded the refusal the same change introduced. The enumeration is only
-    honest if every cause the code can raise appears in it; this pins the one
-    that was missing, and the opening count that has to agree with it.
+    excluded the refusal the same change introduced. The round that fixed it
+    then pinned the literal word "네 가지" here - and the two hierarchy
+    refusals, ONT-002 and ONT-007, were already answering 409 and already
+    missing. An enumeration is only honest if every cause the code can raise
+    appears in it.
+
+    So this does not pin a count word. It reads the ``(n)`` markers, derives the
+    count from them, and requires the opening word to agree - the word and the
+    list can no longer drift, because only one of them is written down here. The
+    causes are named by fragment, so adding a seventh 409 to the code without
+    documenting it leaves this test naming what is missing.
     """
+    import re
+
     from sdp.api_error_contract import REFUSAL_DESCRIPTIONS
 
     description = REFUSAL_DESCRIPTIONS[409]
-    assert "네 가지" in description, description
-    assert "dataset id" in description, description
-    # And the refusal is really reachable, so the document is not describing a
-    # cause that cannot happen.
+    markers = [int(match) for match in re.findall(r"\((\d)\)", description)]
+    enumerated = sorted(set(markers))
+    assert enumerated == list(range(1, len(enumerated) + 1)), markers
+    assert f"{_COUNT_WORDS[len(enumerated)]} 가지" in description, description
+    missing = {
+        fragment: raiser
+        for fragment, raiser in _409_CAUSES.items()
+        if fragment not in description
+    }
+    assert not missing, missing
+    assert len(enumerated) == len(_409_CAUSES), (enumerated, sorted(_409_CAUSES))
+    # And the causes are really reachable, so the document is not describing
+    # something that cannot happen. Two of the six, end to end:
     assert client.post("/catalog/datasets", json=_payload("문서용중복셋")).status_code == 200
     assert client.post("/catalog/datasets", json=_payload("문서용중복셋")).status_code == 409
+    assert client.post("/catalog/datasets", json=_payload(SEEDED_CONCEPT)).status_code == 409
 
 
 def test_a_pinned_column_node_is_still_collected_when_its_owner_undeclares_it() -> None:

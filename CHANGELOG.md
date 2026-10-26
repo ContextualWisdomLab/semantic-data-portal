@@ -2,15 +2,15 @@
 
 이 문서는 `claude/semantic-portal-pr-merge-e5a48k` 브랜치(PR
 [#102](https://github.com/ContextualWisdomLab/semantic-data-portal/pull/102))가
-베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **216개** 커밋 중 122개는
-gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 94개입니다. 이 숫자는 **이
-줄을 담은 커밋을 포함한** 값입니다 — 측정 시점의 210에 이 커밋을 더한 것. 측정 명령:
+베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **218개** 커밋 중 122개는
+gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 96개입니다. 이 숫자는 **이
+줄을 담은 커밋을 포함한** 값입니다 — 측정 시점의 217에 이 커밋을 더한 것. 측정 명령:
 
     git rev-list --count origin/docs/product-technical-gap-baseline..HEAD
     git log --format=%H origin/docs/product-technical-gap-baseline..HEAD \
       --name-only -- docs/product-technical-gap-baseline.md | grep -c '^[0-9a-f]\{40\}$'
 
-앞서 적혀 있던 164/112, 186/113, 199/122/77, 203/122/81, 211/122/89, 212/122/90, 213/122/91, 214/122/92, 215/122/93은 각각 그 시점의 값이고 이후
+앞서 적혀 있던 164/112, 186/113, 199/122/77, 203/122/81, 211/122/89, 212/122/90, 213/122/91, 214/122/92, 215/122/93, 216/122/94는 각각 그 시점의 값이고 이후
 커밋을 반영하지 않은 숫자였습니다 — 자기 문서의 수치도 측정해서 맞춰 둡니다. 199는 이
 줄을 쓴 뒤 3개 커밋이 더 쌓여 낡아 203으로, 203은 다음 커밋에서 낡아 204로, 204는 또
 두 커밋 뒤에 206으로 다시 측정해 고쳤습니다. 206도 그 값을 담은 커밋 자신 때문에 도착
@@ -30,8 +30,8 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 94
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                       1257 passed, 15 skipped
-    pytest (파일 순서 정/역/난수)  각 1257 passed, 15 skipped — 순서 무관
+    pytest                       1259 passed, 15 skipped
+    pytest (파일 순서 정/역/난수)  각 1259 passed, 15 skipped — 순서 무관
                                  (정순 · 역순 · seed 11/707/31337)
     pytest tests/fuzz            11 passed
     python -m sdp.demo_smoke     exit 0, "ready": true
@@ -46,6 +46,94 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 백그라운드 측정 중에 트리를 고친 탓에 seed 11이 4건 실패로 나온 일이 있고, 그것은 결함이
 아니라 동시 편집이었습니다. Atheris(`fuzz/fuzz_query_safety.py`)는 로컬에 wheel이 없어
 실행하지 않았습니다 — 같은 invariant의 Hypothesis 미러가 `tests/fuzz`에서 돕니다.
+
+### Fixed — 5라운드: 4라운드가 남긴 결함 (high)
+
+직전 커밋(`3fe213c`)을 다시 공격해 다섯 건을 찾았습니다. **그중 둘은 4라운드가 "고쳤다"고
+적은 바로 그 항목이 덜 고쳐진 것이고, 하나는 4라운드가 추가한 테스트가 거짓 증거였습니다.**
+
+**1. 409 열거가 아직 두 사유를 빼먹었고, 새 테스트가 틀린 개수를 고정했습니다 (high).**
+3라운드가 "세 가지 → 네 가지"로 고쳤고 4라운드가 그 수리를 테스트로 묶었는데, 코드는
+그때 이미 **여섯 가지** 409를 던지고 있었습니다 — 계층 거부 둘(`ONT-002` class 경계,
+`ONT-007` 포섭 순환)이 처음부터 빠져 있었고, 두 라운드 모두 못 봤습니다. 그리고 새
+테스트가 `assert "네 가지" in description`으로 **틀린 개수를 고정**했으므로, 빠진 둘을
+채우려면 테스트부터 실패합니다.
+
+    api.py의 status_code=409 지점: 1222 1274 1350 1406 1550 1899 2180 2213 2271 2304
+    GraphIntegrityConflict 하위: NodeKindConflict ·
+        HierarchyClassSeparationConflict(ONT-002) · HierarchyCycleConflict(ONT-007)
+    문서가 열거한 사유: 4
+
+개수 단어를 고정하는 것이 낡는 방식 자체입니다 — 단어와 목록이 **고칠 곳 두 개**이고
+직전 라운드는 한쪽만 고쳤습니다. 지금 테스트는 개수를 적지 않습니다: `(n)` 마커를 읽어
+개수를 **파생**하고, 여는 단어가 그것과 일치하는지 보고, 사유 여섯 개를 각각 문구
+조각으로 호명합니다. 일곱 번째 409가 코드에 생기고 문서에 안 적히면 테스트가 빠진
+것을 이름으로 말합니다. README 행도 여섯으로 맞췄습니다.
+
+**2. "정리" 한 줄이 아무 일도 하지 않았고, 그래프 스토어 누출은 네 곳에 공표된
+사실이 틀어진 문제였습니다 (high).** 4라운드가 추가한 소유권 테스트 하나는
+`seed_store(InMemoryGraphStore())`로 끝났는데, `seed_store`는 **넘겨받은 스토어를 시드할
+뿐 설치하지 않습니다**(설치는 `graph_store.set_store`). 일회용 스토어를 만들어 버리는
+줄이 정리인 척 서 있었습니다.
+
+누출 자체를 측정했습니다(26노드 시드 baseline 기준, 복원 비활성 상태):
+
+    tests/test_catalog_mirror_kind_conflict.py 단독
+        노드 31건 누출 (dataset 18 · column 8 · concept 5), 간선 26건
+    전체 스위트
+        노드 277건 누출 (dataset 121 · column 129 · concept 25), 간선 233건
+
+**복원을 넣으면 0건·0건입니다.** 기존 테스트 중 어느 것도 이 누출로 실패하지 않았으므로
+(복원 비활성에서 정순·역순·seed 11, 활성에서 다섯 순서 전부) 잠재 결함이지 활성 결함은
+아닙니다. 그대로 두지 않은 이유는 잠재성의 **모양**입니다: 이번 사이클이 "노드의 기존
+kind"에 걸리는 거부를 추가했으므로, 데이터셋 shape의 id에 남은 `concept` 노드는 이제
+나중 테스트의 200을 409로 만들고, 남은 `dataset` 노드는 나중 `POST /ontology/concepts`를
+같은 식으로 만듭니다 — 누출이 실패로 바뀌는 경로가 kind 규칙과 함께 늘어났습니다.
+
+제외의 근거는 "snapshot API가 없고 테스트용으로 제품 API를 만들 수 없다"였습니다. 제품
+API에는 맞지만 fixture는 이미 `catalog._DATA`에 손을 넣고 있고 스토어의 backend
+collection은 같은 종류의 모듈 레벨 상태이므로, 복사를 fixture 안에 두었습니다.
+`PostgresGraphStore`에는 그 collection이 없고 그 백엔드로 도는 테스트도 없으므로
+snapshot은 추측하지 않고 건너뜁니다.
+
+**그리고 이것이 이 사이클에서 세 번째로 같은 모양의 결함입니다** — 사실 하나가 N곳에
+공표되어 있고 한 곳만 고치는 것. 제외는 네 곳에 적혀 있었습니다: fixture docstring,
+`CLAUDE.md` 컨벤션, **제품 코드**(`api_response_contract.py` — 비-GET 20개 operation의
+응답 스키마를 공표하지 않는 두 사유 중 하나), 그리고 자기 정리의 근거로 그것을 인용한
+테스트 주석 둘. fixture만 고치면 제품 코드와 에이전트용 컨벤션 파일이 이미 없는 제약을
+우회하라고 다음 독자에게 말합니다. 네 곳 모두 고치고, alert 문장과 같은 기계적 재발
+가드를 붙였습니다(README·`CLAUDE.md`·`docs/**.md`·`src/**.py`·`tests/**.py`). 가드 자체가
+자기 정의에 걸렸으므로 금지 문구는 조각으로 조립해 둡니다 — 4라운드의 README 가드가
+인용을 잡았을 때와 같은 함정, 반대 방향입니다.
+
+**3. AST 가드가 대소문자를 구별해 우회 가능했습니다 (medium).** 3라운드가 "문자열
+리터럴 자체 금지"로 넓혔지만 `"X-SDP-Evidence-Ids"`를 **정확히** 비교했습니다. HTTP
+헤더 이름은 대소문자 무관이고 Starlette `Headers.get`도, 이 저장소의 `_header_value`도
+소문자로 내려 훑으므로, `request.headers.get("x-sdp-evidence-ids")`는 **작동하는 읽기**인데
+가드는 녹색입니다. 지금은 양쪽을 소문자로 비교합니다.
+
+**4. 테스트 double이 호출되지 않는 메서드를 정의했습니다 (medium).** 증빙 id를 "스토어
+쓰기 **뒤에**" 기록하는 수리는 chokepoint 두 곳(`record_policy_decision`,
+`append_audit_event`) 각각의 성질인데, `_RefusingStore`는 `append_event`를 정의하고
+아무도 호출하지 않았습니다 — audit 쪽은 묶여 있지 않았습니다. 측정: `append_audit_event`의
+`note_request_evidence_id`를 쓰기 위로 되돌리고 테스트를 직전 형태로 두면 **21건 전부
+녹색**입니다. 두 번째 arm을 넣었고, 같은 변이가 이제 실패합니다.
+
+**5. 테스트 docstring이 그 테스트가 닿지 못하는 절을 주장했습니다 (low).**
+`..._that_did_record_evidence_is_not_counted`는 gap 조건의 "증빙을 하나도 남기지 않음"
+절에 대한 테스트인 것처럼 적혀 있었지만, 404는 **2xx 가드에서 먼저** 걸러지므로 그 절을
+지워도 녹색입니다. 측정: `not collected.ids`를 미들웨어에서 제거하면
+`test_the_gap_condition_is_zero_on_ordinary_governed_traffic`과
+`test_no_governed_get_route_reports_a_gap_on_seed_data`가 실패하고 이 테스트는 통과합니다.
+이름과 docstring을 실제로 증명하는 것(거부도 상관 키를 공표한다)으로 바꾸고, 그 절을
+묶는 테스트 둘을 docstring에서 이름으로 가리킵니다.
+
+역검증 6건, 각각 되돌려 실패를 확인했습니다: 개수 단어를 다섯으로 바꾸면 불일치로 실패 ·
+사유 (6)을 개수까지 맞춰 지우면 `포섭 순환`을 이름으로 말하며 실패 · audit chokepoint의
+기록을 쓰기 위로 올리면 새 arm이 실패(직전 테스트 형태에서는 21건 녹색) ·
+`not collected.ids`를 지우면 2xx 테스트 둘만 실패 · 제외 문구를 제품 코드에 줄바꿈된
+형태로 다시 넣으면 재발 가드가 그 파일을 이름으로 말하며 실패 · fixture에서
+`_graph_restore`를 지우면 baseline 가드가 실패.
 
 ### Fixed — 4라운드: 직전 수리가 만든 결함 (high)
 

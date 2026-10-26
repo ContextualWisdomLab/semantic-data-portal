@@ -51,11 +51,31 @@ store dirty - so this is latent fragility rather than a live defect, and the
 honest reason to move them here is that per-file cleanup is the arrangement
 whose failure this fixture exists to prevent.
 
-**Deliberately not covered: the graph store singleton.** Catalog mutations now
-mirror into it, so it does accumulate across tests, but it exposes no snapshot
-API and inventing one here would be a product change made for the test suite.
-A test that depends on graph-store counts must establish its own baseline; the
-limit is stated rather than papered over.
+**The graph store singleton is covered too**, as of the round that measured
+what it was accumulating. It was excluded on the grounds that it exposes no
+snapshot API and that inventing one would be a product change made for the test
+suite - true of a product API, but this fixture already reaches into
+``catalog._DATA`` and the store's backing collections are the same kind of
+module-level state, so the copy lives here instead. Measured against the
+26-node seeded baseline with the restore disabled::
+
+    tests/test_catalog_mirror_kind_conflict.py alone
+        leaked 31 nodes (18 dataset, 8 column, 5 concept), 26 edges
+    the whole suite
+        leaked 277 nodes (121 dataset, 129 column, 25 concept), 233 edges
+
+and with it enabled, 0 and 0. No pre-existing test failed on the leak in any
+order measured either way - forward, reverse and shuffled seed 11 with the
+restore disabled, all five with it - so this closed a latent leak, not a live
+one. The reason not to leave it latent: this cycle added refusals keyed on a
+node's existing kind, so a leaked ``concept`` node at an id a later test
+registers as a dataset now turns that 200 into a 409, and a leaked ``dataset``
+node does the same to a later ``POST /ontology/concepts``.
+``tests/test_state_isolation.py`` pins the restored baseline by deriving it from
+the catalog and the vocabulary rather than counting nodes.
+
+The ``PostgresGraphStore`` backend has no such collections and no test runs
+against it, so the snapshot is skipped rather than guessed when they are absent.
 """
 
 from __future__ import annotations
@@ -64,7 +84,29 @@ from copy import deepcopy
 
 import pytest
 
-from sdp import authz, catalog, evidence, observability, ontology, ontology_version
+from sdp import authz, catalog, evidence, graph_store, observability, ontology, ontology_version
+
+
+# The graph store's five collections, snapshotted and put back the same way the
+# module-level dicts above are.
+_GRAPH_COLLECTIONS = ("_nodes", "_edges", "_embeddings", "_concepts", "_alias_to_concept")
+
+
+def _graph_snapshot():
+    """Copy the graph store's collections, or ``None`` for a backend without them."""
+    store = graph_store.get_store()
+    if not all(hasattr(store, name) for name in _GRAPH_COLLECTIONS):
+        return None
+    return {name: deepcopy(getattr(store, name)) for name in _GRAPH_COLLECTIONS}
+
+
+def _graph_restore(snapshot) -> None:
+    """Put the graph store's collections back."""
+    if snapshot is None:
+        return
+    store = graph_store.get_store()
+    for name, value in snapshot.items():
+        setattr(store, name, deepcopy(value))
 
 
 @pytest.fixture(autouse=True)
@@ -87,6 +129,7 @@ def restore_in_memory_app_state():
     jwks_cache = dict(authz._JWKS_CACHE)
     sink_breaker = dict(observability._SINK_BREAKER)
     governed_evidence_gaps = dict(observability._GOVERNED_EVIDENCE_GAPS)
+    graph = _graph_snapshot()
     request_observations = observability.list_request_observations()
     export_errors = observability.list_observability_export_errors()
     try:
@@ -123,4 +166,5 @@ def restore_in_memory_app_state():
         # one test's deliberate gap must not be another test's reading.
         observability._GOVERNED_EVIDENCE_GAPS.clear()
         observability._GOVERNED_EVIDENCE_GAPS.update(governed_evidence_gaps)
+        _graph_restore(graph)
 

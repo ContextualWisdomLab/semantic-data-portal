@@ -438,11 +438,13 @@ def test_updating_an_existing_concepts_graph_edges_needs_no_definition() -> None
     which the graph store then stored, so one 200 body carried a graph
     definition the vocabulary never accepted.
     """
-    # A concept of this test's own, not a seeded one: the graph store singleton
-    # is deliberately outside conftest's restore (see its docstring), so
-    # mutating a seeded concept's graph record leaks into later tests - which is
+    # A concept of this test's own, not a seeded one. This was isolation when it
+    # was written - the graph store was then outside conftest's restore, so
+    # mutating a seeded concept's graph record leaked into later tests, which is
     # exactly how the divergence below was found, by a retained test failing in
-    # reversed file order.
+    # reversed file order. conftest restores the store now, so it is no longer
+    # isolation; it stays because a test that writes its own subject does not
+    # depend on what the seed happens to contain.
     first = client.post(
         "/ontology/concepts",
         json={

@@ -44,11 +44,14 @@ Derivation rules, chosen so a published schema cannot over-claim:
 
 What is **not** published, declared rather than left as a silent gap:
 
-* the 20 non-GET operations. Deriving their schemas means driving mutations, and
-  the validating test would then mutate catalog, ledger and graph state - the
-  graph store singleton is deliberately outside ``tests/conftest.py``'s
-  restoration, so a validating test for those routes would leak nodes between
-  tests. Their request bodies *are* published (``api_request_contract``).
+* the 20 non-GET operations. Deriving their schemas means driving mutations:
+  the validating test would have to perform every catalog, ontology and graph
+  write to observe a response, so what it published would be a schema for one
+  chosen request body rather than for the operation. Their request bodies *are*
+  published (``api_request_contract``). This used to carry a second reason -
+  that such a test would leak graph nodes, the graph store being outside
+  ``tests/conftest.py``'s restoration - and that reason is retracted: the
+  fixture restores the graph store too. The first reason is the whole of it.
 * ``GET /metrics``, which serves Prometheus text. Its content type is corrected
   here instead: the document claimed ``application/json`` with an empty schema,
   so a generated client would have tried to JSON-parse

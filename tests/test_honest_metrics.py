@@ -736,8 +736,8 @@ def test_the_log_correlation_key_is_not_read_from_a_request_header() -> None:
     are not in the AST at all, so parsing keeps them for free.
 
     What is banned is the header name appearing as a **string literal anywhere
-    in ``src``**, docstrings excepted. The first version of this guard banned
-    only passing it to a call, and justified that with "which is what reading it
+    in ``src``**, in any capitalisation, docstrings excepted. The first version
+    of this guard banned only passing it to a call, and justified that with "which is what reading it
     requires" - which is false. Two ordinary shapes evade it: hoisting the name
     to a module constant (``_HEADER = "X-SDP-Evidence-Ids"`` then
     ``_header_value(headers, _HEADER, "")``, whose call argument is an
@@ -750,10 +750,18 @@ def test_the_log_correlation_key_is_not_read_from_a_request_header() -> None:
     import pathlib
 
     source_root = pathlib.Path(obs.__file__).resolve().parents[1]
+    header = "x-sdp-evidence-ids"
     reads: list[str] = []
     for source_path in sorted(source_root.rglob("*.py")):
         text = source_path.read_text()
-        if "X-SDP-Evidence-Ids" not in text:
+        # Case-insensitively, because HTTP header names are. The first version
+        # of this guard compared the canonical spelling exactly, and
+        # ``request.headers.get("x-sdp-evidence-ids")`` is an ordinary working
+        # read of the same header - Starlette's ``Headers.get`` is
+        # case-insensitive and this repository's own ``_header_value`` falls
+        # back to a lowercasing scan - so the lowercase spelling restored
+        # caller control of the published correlation key with the guard green.
+        if header not in text.lower():
             continue
         tree = ast.parse(text)
         docstrings = set()
@@ -773,7 +781,8 @@ def test_the_log_correlation_key_is_not_read_from_a_request_header() -> None:
         for node in ast.walk(tree):
             if (
                 isinstance(node, ast.Constant)
-                and node.value == "X-SDP-Evidence-Ids"
+                and isinstance(node.value, str)
+                and node.value.lower() == header
                 and id(node) not in docstrings
             ):
                 reads.append(

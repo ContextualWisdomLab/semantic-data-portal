@@ -44,7 +44,7 @@ import pytest
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
-from sdp_core.contracts import PolicyDecision
+from sdp_core.contracts import AuditEvent, PolicyDecision
 
 from sdp import api, evidence, observability as obs
 from sdp.api import app
@@ -297,9 +297,20 @@ def test_a_refusal_that_recorded_nothing_is_still_not_counted_as_a_gap() -> None
     assert report["firing"] is False
 
 
-def test_a_refused_governed_request_that_did_record_evidence_is_not_counted() -> None:
-    """The other refusal shape: it recorded its decision, so it is correlatable
-    and is not a gap either."""
+def test_a_refusal_that_did_record_evidence_still_exports_that_correlation_key() -> None:
+    """The other refusal shape, and what it does and does not pin.
+
+    This 404 recorded its decision, so unlike the 400 above it exports a usable
+    correlation key - that is the assertion carrying weight here. It is *not* a
+    second test of the "recorded nothing" half of the gap condition: the 2xx
+    guard excludes a 404 before that half is consulted, so removing
+    ``not collected.ids`` from the middleware leaves this test green. That half
+    is pinned by the 2xx tests - ``test_the_gap_condition_is_zero_on_ordinary_governed_traffic``
+    and ``test_no_governed_get_route_reports_a_gap_on_seed_data`` - where a
+    successful governed request that recorded evidence would start counting
+    itself as a gap. Named here because the previous round's docstring claimed
+    this test covered the clause it cannot reach.
+    """
     response = client.post(
         "/browse/crm-customer-master/preview",
         headers={"X-SDP-Actor": "nobody@example.com", "X-SDP-Tenant": "demo"},
@@ -441,6 +452,11 @@ def test_an_id_is_published_only_after_the_store_accepted_the_row() -> None:
     previous = evidence._STORE
     evidence.configure_evidence_store(_RefusingStore())
     try:
+        # Both chokepoints, because the ordering is a property of each one. The
+        # previous round wrote ``append_event`` into the double and called only
+        # ``record_decision``, so the audit half of the fix was unpinned and
+        # moving its ``note_request_evidence_id`` back above the store write
+        # kept the suite green.
         with evidence.collect_request_evidence_ids() as collected:
             with pytest.raises(RuntimeError):
                 evidence.record_policy_decision(
@@ -452,6 +468,19 @@ def test_an_id_is_published_only_after_the_store_accepted_the_row() -> None:
                         purpose="analysis",
                         effect="allow",
                         reason="r",
+                    )
+                )
+        assert collected.ids == [], collected.ids
+
+        with evidence.collect_request_evidence_ids() as collected:
+            with pytest.raises(RuntimeError):
+                evidence.append_audit_event(
+                    AuditEvent(
+                        id="audit-never-persisted",
+                        actor="analyst",
+                        action="dataset.read",
+                        resource="x",
+                        result="success",
                     )
                 )
         assert collected.ids == [], collected.ids
