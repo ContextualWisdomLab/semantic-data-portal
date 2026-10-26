@@ -10,10 +10,20 @@ USER root
 # pgvector is pinned by COMMIT, not by the release tag it was pinned by before.
 # A tag is a mutable ref - one force-push re-points it, and
 # archive/refs/tags/v0.7.4.tar.gz then serves different bytes at the same URL -
-# and this was the only build input in the repository that was not
-# content-addressed. Everything else already is: the base image above carries a
-# digest, Python dependencies install with --require-hashes, GitHub Actions are
-# pinned by commit SHA.
+# and it was the only *source archive* this repository fetched and compiled
+# without naming its content. The other fetched inputs already name theirs: the
+# base image above carries a digest, Python dependencies install with
+# --require-hashes, GitHub Actions are pinned by commit SHA.
+#
+# It was not the only unpinned input, and saying so once was wrong: the RUN
+# layer below apt-installs build-essential, ca-certificates, git and
+# postgresql-server-dev-16 by name from a mutable Debian archive, as root, into
+# the layer that compiles this extension. Three of the four are purged
+# afterwards and ca-certificates stays. They are left unpinned deliberately: an
+# apt version pin breaks the build as soon as the mirror rotates the version out
+# of the archive, and a pin that has to be re-guessed on every mirror rotation
+# is the appearance of a pin again. The limit is recorded here rather than
+# claimed away.
 #
 # The pin is enforced by git itself, which is why this is a fetch and not a
 # download. ``git fetch <sha>`` verifies that the object it received hashes to

@@ -46,6 +46,11 @@ pgvector 핀 커밋이 10건, event-loop 수리 커밋이 2건, 환경 변수 �
 다시 재지 않고 전체 정순 실행으로만 확인합니다. 측정하고 쓴 뒤 커밋하는 순서상 이
 숫자가 자기 커밋 때문에 낡는 것은 위 off-by-one과 같은 종류입니다.
 
+위 다섯 순서 숫자는 `742b1e5` 시점의 측정입니다. 그 뒤에 들어온 커밋들(아래 2026-10-26
+적대적 리뷰 수리 항목들)은 각자 **전체 정순 1회**를 증거로 가지며, 다섯 순서는 그 묶음이
+끝난 뒤 한 번 다시 재서 이 블록을 갱신합니다. 끝나기 전의 중간 head에 대해 다섯 순서를
+주장하지 않습니다.
+
 skip 15건의 내역을 적어 둡니다 — 숫자만 적으면 읽는 사람이 해석할 수 없습니다:
 `SDP_DATABASE_DSN not set` 11건(Postgres 통합)과 `pyld is a dev-only dependency`
 4건입니다. `pyld`는 `requirements-dev.txt`에도 `pyproject.toml`에도 없으므로 CI도 같이
@@ -56,6 +61,54 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 백그라운드 측정 중에 트리를 고친 탓에 seed 11이 4건 실패로 나온 일이 있고, 그것은 결함이
 아니라 동시 편집이었습니다. Atheris(`fuzz/fuzz_query_safety.py`)는 로컬에 wheel이 없어
 실행하지 않았습니다 — 같은 invariant의 Hypothesis 미러가 `tests/fuzz`에서 돕니다.
+
+### Fixed — 전체 수집을 중단시키던 테스트, 비어 있던 stage 예외, 미고정 입력을 하나로 세었던 주장 (high)
+
+2026-10-26 적대적 리뷰 6개 렌즈가 **독립적으로 같은 결함을 보고했습니다.** 6개 렌즈 모두
+`<repo>/.claude/worktrees/<id>` 아래의 worktree에서 돌았고, 거기서는 이 저장소의 테스트가
+한 건도 실행되지 않았기 때문입니다.
+
+`tests/test_build_input_pinning.py::_dockerfiles()`가 `.claude`/`.git` 제외를 후보의
+**절대 경로** 조각에 물었습니다. 제외가 존재하는 이유는 에이전트 하네스가 남기는
+`<repo>/.claude/worktrees/<id>` 사본을 건너뛰는 것인데, 체크아웃 자체가 그 경로에 있으면
+`.claude`가 체크아웃 자신의 조각이 되어 **저장소의 모든 파일이 제외됩니다.** `found`가 `[]`가
+되고, 모듈 수준 `assert`가 `@pytest.mark.parametrize` 인자를 평가하는 중에 터지므로 pytest는
+이 파일 하나가 아니라 세션 전체를 끝냅니다. 이 파일과 Dockerfile 두 개만 담은 합성 트리에서
+재현했습니다:
+
+    $ cd .../.claude/checkout && pytest tests/test_build_input_pinning.py
+    tests/test_build_input_pinning.py:74: in <module>
+        @pytest.mark.parametrize("dockerfile", _dockerfiles(), ...)
+    E   AssertionError: no Dockerfile was found; re-point this test
+    !!!! Interrupted: 1 error during collection !!!!
+    no tests collected, 1 error in 0.33s
+
+제외를 `path.relative_to(root).parts`에 묻습니다. 중첩된 낡은 사본은 그대로 제외됩니다 —
+그것이 제외의 목적입니다. 합성 트리를 실제로 걷는 테스트로 고정했고, 술어만 보는 테스트도
+따로 두었습니다(결함은 술어가 아니라 **술어에 건네진 경로**에 있었습니다).
+
+같은 파일의 digest 게이트에는 다른 구멍이 있었습니다. `" AS " not in line.upper()`가
+`AS`를 포함한 모든 줄을 면제했으므로 `FROM python:3.12-slim AS builder` — 맨 `FROM`과 똑같이
+레지스트리에서 가져오는 줄 — 이 미고정으로 통과하고, 그 뒤에 교집합을 취하던 `named_stages`
+집합은 죽은 코드였습니다. 면제는 **앞선 `AS`가 선언한 이름**에만 줍니다. 지금 이 저장소에
+multi-stage 빌드가 없어서 산 피해자가 없었고, 첫 multi-stage 빌드가 조용히 물려받을
+것이었습니다.
+
+`docker/postgres-age-pgvector.Dockerfile`의 주석은 pgvector tarball이 "이 저장소에서
+content-addressed되지 않은 유일한 빌드 입력"이라고 적었습니다. 사실이 아닙니다. 같은 `RUN`
+레이어가 apt 패키지 네 개를 이름만으로 받습니다(세 개는 뒤에서 purge, `ca-certificates`는
+남습니다). 주석을 사실로 고치고, 그 네 개를 **일부러** 고정하지 않는 이유를 적었습니다 —
+apt 버전 핀은 미러가 그 버전을 아카이브에서 내리는 순간 빌드를 깨고, 미러 회전마다 다시
+추측해야 하는 핀은 다시 "핀의 외관"입니다. 한계를 주장으로 덮지 않고 기록했습니다.
+
+이 세 수리에는 산문 가드를 붙이지 않았습니다. 이번 주기에 산문을 매칭하는 가드가 자기
+목록에 걸려 실패한 것이 다섯 번이고, 바로 아래 항목이 여섯 번째이므로, 여기서 같은 장치를
+하나 더 만드는 것은 측정이 아니라 반복입니다.
+
+증거: 세 수리를 각각 결함 형태로 되돌려 해당 테스트가 빨개지는 것을 확인했습니다(M1
+`relative_to(root)` → `path.parts`: 새 테스트 2건 red. M2 `AS` 면제 복원: 1건 red. M3는
+주석이므로 되돌림 대상이 아닙니다). 전체 정순 `pytest` 1330 passed, 15 skipped
+(1327에서 +3).
 
 ### Fixed — 문서가 안내하는 readiness 명령이 진단 대신 traceback을 돌려줬습니다 (medium)
 
@@ -256,6 +309,11 @@ tarball URL에서 받아 체크섬 검증 없이 root로 컴파일해 `make inst
 content-addressed되지 않은 **유일한 빌드 입력**이고, 들어가는 곳이 governed 그래프와 증빙
 데이터를 담는 Postgres 서버입니다. 태그는 가변 ref이므로 force-push 한 번으로 같은 URL이
 다른 바이트를 서비스합니다.
+
+**이 문장은 그때 과장이었습니다** — "유일한"이 아니었습니다. 같은 `RUN` 레이어가
+`build-essential`·`ca-certificates`·`git`·`postgresql-server-dev-16` 네 개를 가변 Debian
+아카이브에서 이름만으로, root로 받습니다. 아래 "미고정 입력을 하나로 세었던 주장"
+항목에서 고쳤습니다.
 
 당시 기록한 이유는 정당했습니다 — tarball을 받을 수 없어(프록시 403) sha256을 계산할 수
 없고, **검증하지 않은 해시는 핀이 아니라 핀의 외관**입니다. 그런데 그 기록은 대안 두 가지를

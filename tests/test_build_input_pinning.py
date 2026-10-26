@@ -62,14 +62,29 @@ _MOVABLE_ARCHIVE = re.compile(
 _FORTY_HEX = re.compile(r"\b[0-9a-f]{40}\b")
 
 
-def _dockerfiles() -> list[Path]:
+def _outside_this_checkout(path: Path, root: Path) -> bool:
+    """Whether ``path`` sits in a nested copy rather than in ``root`` itself.
+
+    Asked of the **relative** parts, deliberately. Asked of the absolute ones -
+    as it was - this answered a different question: the agent worktrees the
+    exclusion exists for live at ``<repo>/.claude/worktrees/<id>``, so a checkout
+    *at* one of those paths carries ``.claude`` in its own ``parts`` and every
+    file in the repository was excluded. ``_dockerfiles()`` returned ``[]``, the
+    module-level assert fired inside the ``parametrize`` argument below, and
+    pytest ended the session with ``Interrupted: 1 error during collection`` -
+    zero tests ran, not just this file's.
+    """
+    return bool(_EXCLUDED_PARTS & set(path.relative_to(root).parts))
+
+
+def _dockerfiles(root: Path = REPO_ROOT) -> list[Path]:
     """Every Dockerfile this repository owns, found rather than listed."""
     found = [
         path
-        for path in REPO_ROOT.rglob("*")
+        for path in root.rglob("*")
         if path.is_file()
         and (path.name == "Dockerfile" or path.name.endswith(".Dockerfile"))
-        and not _EXCLUDED_PARTS & set(path.parts)
+        and not _outside_this_checkout(path, root)
     ]
     assert found, "no Dockerfile was found; re-point this test"
     return sorted(found)
@@ -99,6 +114,32 @@ def _logical_lines(text: str) -> list[str]:
     return [line for line in joined if line]
 
 
+def _unpinned_from_lines(text: str) -> list[str]:
+    """The ``FROM`` lines that fetch an image without naming its content.
+
+    A target that an **earlier** ``AS`` in the same file already declared is a
+    stage of this build, not a fetched input, so it is exempt. The order matters
+    and is the repair: the exemption was previously granted to any line
+    containing ``AS``, which exempted ``FROM <registry image> AS <stage>`` - a
+    fetch of exactly as much as a bare ``FROM`` - and left the ``named_stages``
+    set it then intersected with as dead code. No Dockerfile here is multi-stage
+    today, so the hole had no live subject; the first multi-stage build would
+    have inherited it silently.
+    """
+    declared: set[str] = set()
+    unpinned: list[str] = []
+    for line in _logical_lines(text):
+        if not line.upper().startswith("FROM "):
+            continue
+        target = line.split()[1]
+        if target.lower() not in declared and "@sha256:" not in line:
+            unpinned.append(line)
+        stage = re.search(r"\bAS\s+(\S+)\s*$", line, re.IGNORECASE)
+        if stage:
+            declared.add(stage.group(1).lower())
+    return unpinned
+
+
 @pytest.mark.parametrize("dockerfile", _dockerfiles(), ids=lambda p: p.name)
 def test_every_base_image_is_pinned_by_digest(dockerfile: Path) -> None:
     """``FROM`` must carry an ``@sha256:`` digest, not only a tag.
@@ -107,27 +148,7 @@ def test_every_base_image_is_pinned_by_digest(dockerfile: Path) -> None:
     already carried a digest; this holds that, over whatever ``FROM`` lines
     exist rather than the two that exist today.
     """
-    unpinned = [
-        line
-        for line in _logical_lines(dockerfile.read_text(encoding="utf-8"))
-        if line.upper().startswith("FROM ")
-        and "@sha256:" not in line
-        # A later stage may build on an earlier one by name, which is internal
-        # to this file and not a fetched input.
-        and not re.search(r"\bFROM\s+\S+\s+AS\s", line, re.IGNORECASE)
-        and " AS " not in line.upper()
-    ]
-    named_stages = {
-        match.group(1).lower()
-        for line in _logical_lines(dockerfile.read_text(encoding="utf-8"))
-        for match in [re.search(r"\bAS\s+(\S+)\s*$", line, re.IGNORECASE)]
-        if match and line.upper().startswith("FROM ")
-    }
-    unpinned = [
-        line
-        for line in unpinned
-        if line.split()[1].lower() not in named_stages
-    ]
+    unpinned = _unpinned_from_lines(dockerfile.read_text(encoding="utf-8"))
     assert unpinned == [], (
         f"{dockerfile.relative_to(REPO_ROOT)} builds on an image named by tag "
         f"alone, which the registry can re-point: {unpinned}"
@@ -216,3 +237,80 @@ def test_the_pgvector_pin_and_the_version_it_claims_are_checked_against_each_oth
         "curl is no longer needed and installing it leaves a fetch tool in a "
         "layer that compiles as root"
     )
+
+
+# --------------------------------------------------------------------------- #
+# The exclusion that excluded the repository.
+#
+# ``_EXCLUDED_PARTS`` exists to skip the stale copies an agent harness leaves
+# under ``.claude/worktrees/``. Applied to each candidate's absolute path it
+# also skipped the checkout itself whenever the checkout *was* one of those
+# worktrees, which is where every review of this branch ran. Reproduced before
+# the repair, in a tree holding a copy of this file and two Dockerfiles::
+#
+#     $ cd .../.claude/checkout && pytest tests/test_build_input_pinning.py
+#     tests/test_build_input_pinning.py:74: in <module>
+#         @pytest.mark.parametrize("dockerfile", _dockerfiles(), ...)
+#     E   AssertionError: no Dockerfile was found; re-point this test
+#     !!!! Interrupted: 1 error during collection !!!!
+#     no tests collected, 1 error
+#
+# The whole session, not this file: the assert runs while pytest evaluates the
+# parametrize argument, so collection ends there.
+# --------------------------------------------------------------------------- #
+
+
+def test_the_nested_copy_exclusion_is_measured_against_this_checkout(
+    tmp_path: Path,
+) -> None:
+    """Discovery must find a checkout's own recipes, wherever the checkout is.
+
+    Driven over a real tree rather than over the predicate alone, because the
+    defect was in which path the predicate was handed, not in the predicate.
+    The nested stale copy stays excluded - that is what the exclusion is for.
+    """
+    root = tmp_path / ".claude" / "worktrees" / "wf-1"
+    (root / "docker").mkdir(parents=True)
+    (root / "Dockerfile").write_text("FROM x@sha256:abc\n", encoding="utf-8")
+    (root / "docker" / "p.Dockerfile").write_text(
+        "FROM y@sha256:def\n", encoding="utf-8"
+    )
+    stale = root / ".claude" / "worktrees" / "older"
+    stale.mkdir(parents=True)
+    (stale / "Dockerfile").write_text("FROM tag-only\n", encoding="utf-8")
+    (root / ".git").mkdir()
+    (root / ".git" / "Dockerfile").write_text("FROM tag-only\n", encoding="utf-8")
+
+    found = [path.relative_to(root).as_posix() for path in _dockerfiles(root)]
+    assert found == ["Dockerfile", "docker/p.Dockerfile"], found
+
+
+def test_the_predicate_names_the_parts_of_the_relative_path() -> None:
+    """``.claude`` above the checkout is not ``.claude`` inside it."""
+    root = Path("/srv/agent/.claude/worktrees/wf-1")
+    assert not _outside_this_checkout(root / "Dockerfile", root)
+    assert not _outside_this_checkout(root / "docker" / "a.Dockerfile", root)
+    assert _outside_this_checkout(
+        root / ".claude" / "worktrees" / "older" / "Dockerfile", root
+    )
+    assert _outside_this_checkout(root / ".git" / "modules" / "Dockerfile", root)
+
+
+def test_a_registry_image_named_as_a_stage_is_still_a_fetched_input() -> None:
+    """``FROM <image> AS <stage>`` must be pinned; ``FROM <stage> AS ...`` need not.
+
+    The exemption is for a target an earlier ``AS`` declared. Granting it to any
+    line containing ``AS`` exempted the first half of every multi-stage build,
+    which is the half that fetches.
+    """
+    text = (
+        "FROM python:3.12-slim AS builder\n"
+        "RUN true\n"
+        "FROM builder AS final\n"
+        "FROM debian:bookworm\n"
+        "FROM alpine@sha256:beef AS trailer\n"
+    )
+    assert _unpinned_from_lines(text) == [
+        "FROM python:3.12-slim AS builder",
+        "FROM debian:bookworm",
+    ]
