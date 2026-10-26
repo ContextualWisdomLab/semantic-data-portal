@@ -6,7 +6,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
@@ -828,12 +828,24 @@ def _next_generated_dataset_id() -> str:
     return f"dataset-{index:03d}"
 
 
+class DatasetAlreadyExists(ValueError):
+    """A registration naming an id the catalog already holds.
+
+    A distinct type because the route has to tell this apart from a malformed
+    body: ``pydantic.ValidationError`` is also a ``ValueError``, so an
+    ``except ValueError`` arm cannot say which of the two it caught. A
+    duplicate id is the client asking for a second dataset under one name -
+    409 - while a malformed body is 400.
+    """
+
+
 def register_dataset(
     payload: DatasetCreateRequest,
     *,
     actor: str = "system",
     decision_id: str | None = None,
     change_reason: str | None = None,
+    before_commit: Callable[[str, List[str]], None] | None = None,
 ) -> Dataset:
     with _MUTATION_LOCK:
         return _register_dataset_locked(
@@ -841,6 +853,7 @@ def register_dataset(
             actor=actor,
             decision_id=decision_id,
             change_reason=change_reason,
+            before_commit=before_commit,
         )
 
 
@@ -850,12 +863,26 @@ def _register_dataset_locked(
     actor: str = "system",
     decision_id: str | None = None,
     change_reason: str | None = None,
+    before_commit: Callable[[str, List[str]], None] | None = None,
 ) -> Dataset:
-    """Register one dataset. Call with the mutation lock held."""
+    """Register one dataset. Call with the mutation lock held.
+
+    ``before_commit`` receives the id this call is about to take and the
+    column names it will declare, and may refuse the registration by raising.
+    It exists because the caller's own precondition - that the graph mirror
+    ``api`` writes next will not have to reclassify an existing node - cannot
+    be checked before this function runs: when the request omits ``id``, the
+    id is assigned *here*, and a check run outside against ``payload.id``
+    tests ``None``. Raising from the hook leaves nothing written, so a refused
+    registration is a refusal rather than a half-applied mutation.
+    """
     dataset_id = payload.id or _next_generated_dataset_id()
 
     if dataset_id in _DATA:
-        raise ValueError("dataset already exists")
+        raise DatasetAlreadyExists("dataset already exists")
+
+    if before_commit is not None:
+        before_commit(dataset_id, [column.name for column in payload.schema or []])
 
     now = datetime.now(timezone.utc)
     # Built from the request's own fields rather than a hand-written list of

@@ -215,6 +215,24 @@ def _lineage_edge_is_declared(dataset: Any, source_id: str, target_id: str) -> b
     return False
 
 
+def _owns_column_node(dataset_id: str, node_id: str) -> bool:
+    """Whether ``node_id`` is a column node this dataset generated.
+
+    ``seed_dataset`` writes column nodes under exactly one shape -
+    ``f"{dataset_id}:{column.name}"`` - so anything else reached through a
+    ``has_column`` edge was put there by some other writer (``POST
+    /graph/edges`` accepts a ``has_column`` edge to any node) and is not this
+    reconciliation's to destroy. Before this guard, an undeclared
+    ``has_column`` edge took its target node with it: pointing one at the
+    seeded ``고객`` concept and then patching the dataset's schema deleted
+    ``고객`` itself, together with every edge touching it, and the ontology
+    routes that resolve that term answered as if the concept had never been
+    defined. The edge is still removed in that case - it is this dataset's
+    edge - only the node someone else owns survives.
+    """
+    return node_id.startswith(f"{dataset_id}:") and len(node_id) > len(dataset_id) + 1
+
+
 def _reconcile_removed(
     dataset: Any,
     store: GraphStore,
@@ -235,7 +253,8 @@ def _reconcile_removed(
         if edge.target_id in declared_columns:
             continue
         store.delete_edge("has_column", dataset.id, edge.target_id)
-        store.delete_node(edge.target_id)
+        if _owns_column_node(dataset.id, edge.target_id):
+            store.delete_node(edge.target_id)
 
     for edge in store.edges_for(dataset.id, "mapping"):
         if edge.target_id not in declared_mappings:

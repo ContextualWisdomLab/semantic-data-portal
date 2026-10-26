@@ -231,16 +231,36 @@ def test_both_backends_reach_the_shared_hierarchy_rules() -> None:
     them. What *can* be asserted mechanically is that neither backend's
     ``upsert_edge`` has lost the call, which is the drift the shared rule exists
     to prevent. Source-level, because that is the honest level for it.
+
+    Parsed rather than searched. The first version of this test asked whether
+    the name appeared anywhere in ``inspect.getsource``, which a comment
+    satisfies: deleting the call and leaving ``# TODO: restore the
+    assert_hierarchy_stays_acyclic call`` behind kept the test green while the
+    rule was gone - and a commented-out call is exactly the shape a half-done
+    refactor leaves. The names are collected from ``ast.Call`` nodes, so only a
+    call counts.
     """
+    import ast
     import inspect
+    import textwrap
 
     for backend in (graph_store.InMemoryGraphStore, graph_store.PostgresGraphStore):
-        body = inspect.getsource(backend.upsert_edge)
-        assert "hierarchy_class_separation_refusal" in body or (
-            "assert_hierarchy_respects_class_separation" in body
-        ), f"{backend.__name__}.upsert_edge no longer applies the ONT-002 rule"
-        assert "assert_hierarchy_stays_acyclic" in body, (
-            f"{backend.__name__}.upsert_edge no longer applies the acyclicity rule"
+        tree = ast.parse(textwrap.dedent(inspect.getsource(backend.upsert_edge)))
+        called: set[str] = set()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if isinstance(func, ast.Name):
+                called.add(func.id)
+            elif isinstance(func, ast.Attribute):
+                called.add(func.attr)
+        assert called & {
+            "hierarchy_class_separation_refusal",
+            "assert_hierarchy_respects_class_separation",
+        }, f"{backend.__name__}.upsert_edge no longer calls the ONT-002 rule"
+        assert "assert_hierarchy_stays_acyclic" in called, (
+            f"{backend.__name__}.upsert_edge no longer calls the acyclicity rule"
         )
 
 

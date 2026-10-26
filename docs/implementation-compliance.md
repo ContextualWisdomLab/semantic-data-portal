@@ -146,6 +146,25 @@
     적용된 상태. 거부는 자기 사유로 감사 기록된다(허용 결정의 사유가 아니라).
     충돌은 `NodeKindConflict` 전용 타입이다 — `except ValueError`로 잡으면
     `pydantic.ValidationError`도 `ValueError`이므로 잘못된 본문이 409가 된다(측정).
+  - 위 가드는 네 개의 카탈로그 mutation 중 두 개만 덮었고, create 경로에서는
+    **엉뚱한 id를 검사**했다. 2라운드 적대적 검증 측정:
+    - `request.id`를 검사했으므로 id를 생략한 요청(카탈로그가 `dataset-NNN`을
+      배정)에서는 `None` 노드를 묻고 통과 → **500 + 행 생성 + 시딩 불능**이 그대로
+      남아 있었다. 지금은 `register_dataset`의 `before_commit` 훅으로 id가 확정된
+      뒤·첫 쓰기 전에 검사한다.
+    - `POST /catalog/datasets/{id}/publish`는 **400**, `.../deprecate`는 **500**인데
+      상태/버전 변경이 이미 적용되고 감사 행은 `result='success'`였다 — 호출자가 본
+      실패와 장부가 반대로 기록된다. 둘 다 저장된 행의 컬럼으로 사전 검사해 409.
+    - patch 가드가 `request.schema is not None`에 걸려 있어 제목만 바꾸는 patch는
+      검사를 건너뛰었다(데이터셋 **자기 노드**는 모든 미러가 다시 쓴다). 무조건 검사.
+    - 중복 dataset id는 잡히지 않는 bare `ValueError`로 **500**이었다 — 같은 성격의
+      거부(id가 이미 점유됨)이므로 `DatasetAlreadyExists` 전용 타입 + 409.
+  - 그래프 reconciliation이 선언되지 않은 `has_column` **대상 노드를 무조건 삭제**해
+    같은 손상 상태를 두 번의 정상 요청으로 만들 수 있었다 — `POST /graph/edges`로
+    개념 노드를 가리키는 `has_column` 간선을 만든 뒤 schema patch를 하면 그 개념
+    노드와 그에 닿는 모든 간선이 사라져, 용어 해석 경로가 정의되지 않은 개념처럼
+    응답했다. 지금은 `seed_dataset`이 직접 쓰는 `{dataset_id}:` 노드로만 범위를
+    좁힌다(간선은 그대로 제거 — 그것은 이 데이터셋의 간선이다).
   - `POST /graph/edges`, `POST /ontology/concepts` — `broader`/`narrower`의 끝점이
     이미 dataset/column 노드면 409. 개념 경로는 어휘 레코드가 먼저 기록되므로
     pre-write 검증기에서 막는다(스토어 게이트만 두면 같은 요청이 **500**이고
@@ -186,7 +205,8 @@
   - `tests/test_graph_hierarchy_class_separation.py` (ONT-002 계층 간선 거부 +
     ConceptHierarchyShape 평가·범위 선언)
   - `tests/test_catalog_mirror_kind_conflict.py` (카탈로그 미러 kind 충돌 409·
-    무기록·감사 사유·잘못된 본문은 400 유지)
+    무기록·감사 사유·잘못된 본문은 400 유지; 네 verb 전수 + 카탈로그가 배정한 id·
+    중복 id·reconciliation 범위)
   - `tests/test_graph_hierarchy_consistency.py` (ONT-007 순환 거부 +
     cyclic_group_count 공표·방향 정규화·종료성·선형 비용)
 

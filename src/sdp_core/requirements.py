@@ -349,6 +349,14 @@ REQUIREMENT_COVERAGE: dict[str, RequirementCoverage] = {
             "test:tests/test_catalog_mirror_kind_conflict.py::test_a_dataset_id_a_concept_node_holds_is_refused_with_nothing_written",
             "test:tests/test_catalog_mirror_kind_conflict.py::test_a_patch_whose_column_collides_is_refused_before_the_mutation",
             "test:tests/test_catalog_mirror_kind_conflict.py::test_a_malformed_patch_body_is_still_400_not_409",
+            "route:POST /catalog/datasets/{dataset_id}/publish",
+            "route:POST /catalog/datasets/{dataset_id}/deprecate",
+            "test:tests/test_catalog_mirror_kind_conflict.py::test_a_create_without_an_id_checks_the_id_the_catalog_will_assign",
+            "test:tests/test_catalog_mirror_kind_conflict.py::test_a_patch_that_declares_no_schema_is_checked_too",
+            "test:tests/test_catalog_mirror_kind_conflict.py::test_publish_refuses_the_conflict_instead_of_applying_it",
+            "test:tests/test_catalog_mirror_kind_conflict.py::test_deprecate_refuses_the_conflict_instead_of_applying_it",
+            "test:tests/test_catalog_mirror_kind_conflict.py::test_reconciliation_drops_a_foreign_has_column_edge_without_its_node",
+            "test:tests/test_catalog_mirror_kind_conflict.py::test_the_check_asks_about_every_node_the_mirror_actually_writes",
             "test:tests/test_graph_hierarchy_class_separation.py::test_a_hierarchy_edge_across_the_class_boundary_is_refused",
             "test:tests/test_graph_hierarchy_class_separation.py::test_the_rule_refuses_nothing_legitimate",
             "test:tests/test_graph_hierarchy_class_separation.py::test_a_concept_cannot_declare_a_data_asset_as_its_parent_or_child",
@@ -396,7 +404,28 @@ REQUIREMENT_COVERAGE: dict[str, RequirementCoverage] = {
             "now its own type, `NodeKindConflict`: a bare `except ValueError` "
             "arm for it turned a non-numeric `quality_score` into a 409, "
             "because `pydantic.ValidationError` is a `ValueError` too "
-            "(measured while adding that arm). `ConceptKindConflict` is a `ValueError` subclass, so "
+            "(measured while adding that arm). That first guard covered two "
+            "of the four catalog mutations and, on the create path, asked the "
+            "question about the wrong id: it ran against `request.id`, which "
+            "is `None` whenever the request lets the catalog assign the id, so "
+            "the 500 with the row created and seeding broken came back intact "
+            "for every such request. It is now the registrar's `before_commit` "
+            "hook, which runs after the id is resolved and before the first "
+            "write. `publish` and `deprecate` call the same mirror and asked "
+            "nothing: measured, publish answered **400** and deprecate **500** "
+            "with the status change already applied and an audit row reading "
+            "`result='success'` for a request the caller saw fail. The patch "
+            "guard was gated on a declared schema, so a title-only patch - "
+            "which still rewrites the dataset's own node - skipped it. All "
+            "four now refuse with 409 and write nothing. One more path led to "
+            "the same state from two authorized requests: graph "
+            "reconciliation deleted **any** undeclared `has_column` target, so "
+            "pointing such an edge at a concept and patching the schema "
+            "deleted that concept node outright; it is now scoped to the "
+            "`{dataset_id}:` nodes `seed_dataset` itself writes. A duplicate "
+            "dataset id, which answered **500** from an uncaught bare "
+            "`ValueError`, is the same refusal and now the same 409. "
+            "`ConceptKindConflict` is a `ValueError` subclass, so "
             "every existing handler still catches it while the routes that want "
             "the precise status answer 409 rather than 400. This note previously recorded that 200 as a modelling "
             "violation; measured, it was worse — `upsert_node` built a fresh node "

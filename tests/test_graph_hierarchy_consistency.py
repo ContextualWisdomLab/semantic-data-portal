@@ -498,10 +498,23 @@ def test_the_report_is_linear_rather_than_exponential() -> None:
     endpoints unresponsive without writing a single cycle. The replacement is
     Tarjan's SCC algorithm, which is linear; the same graph now measures ~0.001s.
 
-    The assertion is deliberately loose (a second for a graph 30x larger than
-    the one that took 45s) so it fails on a reintroduced blow-up rather than on
-    a slow machine.
+    The time assertion is deliberately loose (a second for a graph 30x larger
+    than the one that took 45s) so a reintroduced blow-up fails it rather than a
+    slow machine.
+
+    Called on a worker thread, because the bound alone cannot catch what it is
+    aimed at. This graph is a 600-level diamond ladder: 2**600 simple upward
+    paths. The version that enumerated them does not take 45 seconds here, it
+    does not return in any time this suite could wait out - so a straight
+    ``hierarchy_consistency(pairs)`` with the elapsed time checked *after* it
+    returns never reaches its assertion, and the test hangs instead of failing.
+    A hang is not a verdict: it is what pytest reports when nothing is wrong
+    with the machine and everything is wrong with the code. The join timeout
+    turns it into one. On the green path the call finishes in milliseconds and
+    the thread is joined; only a genuine regression leaves it running, and the
+    suite is already red by then.
     """
+    import threading
     import time
 
     pairs: list[tuple[str, str]] = []
@@ -510,9 +523,28 @@ def test_the_report_is_linear_rather_than_exponential() -> None:
         pairs.append((f"n{level}", f"b{level}"))
         pairs.append((f"a{level}", f"n{level + 1}"))
         pairs.append((f"b{level}", f"n{level + 1}"))
+
+    outcome: dict[str, object] = {}
+
+    def classify() -> None:
+        try:
+            outcome["report"] = sv.hierarchy_consistency(pairs)
+        except BaseException as exc:  # noqa: BLE001 - re-raised on the main thread
+            outcome["error"] = exc
+
+    worker = threading.Thread(target=classify, daemon=True)
     started = time.monotonic()
-    report = sv.hierarchy_consistency(pairs)
+    worker.start()
+    worker.join(timeout=30.0)
     elapsed = time.monotonic() - started
+    assert not worker.is_alive(), (
+        f"the acyclicity report had still not returned after {elapsed:.1f}s on "
+        f"{len(pairs)} pairs - that is the exponential path enumeration, not a slow machine"
+    )
+    if "error" in outcome:
+        raise outcome["error"]  # type: ignore[misc]
+    report = outcome["report"]
+    assert isinstance(report, dict)
     assert report["conforms"] is True
     assert report["subsumption_pair_count"] == len(pairs)
     assert elapsed < 1.0, f"the acyclicity report took {elapsed:.3f}s on {len(pairs)} pairs"

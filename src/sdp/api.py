@@ -1061,6 +1061,22 @@ def dataset_audit_events(
     ]
 
 
+def _assert_mirror_kinds_for_existing_dataset(dataset_id: str) -> None:
+    """Refuse a status change whose graph mirror would reclassify a node.
+
+    ``publish`` and ``deprecate`` carry no schema, so the column names come
+    from the stored row - exactly what ``seed_dataset`` will mirror. An absent
+    dataset is left to the mutation itself, which raises ``KeyError`` and
+    answers 404; this guard only refuses a conflict it can see.
+    """
+    dataset = catalog.get_dataset(dataset_id)
+    if dataset is None:
+        return
+    assert_dataset_mirror_kinds_are_available(
+        dataset_id, [column.name for column in dataset.schema or []]
+    )
+
+
 @app.post("/catalog/datasets")
 def create_dataset(payload: dict[str, Any]) -> dict[str, Any]:
     actor_id = _actor(payload)
@@ -1103,31 +1119,42 @@ def create_dataset(payload: dict[str, Any]) -> dict[str, Any]:
     # kind of graph node made this route answer 500 with the row created and
     # every later ``seed_store`` raising. See
     # ``assert_dataset_mirror_kinds_are_available``.
+    #
+    # Passed as ``register_dataset``'s ``before_commit`` hook rather than called
+    # here, because a ``POST`` that omits ``id`` has none to check yet: the id is
+    # assigned inside the registrar. Checked out here against ``request.id`` -
+    # ``None`` for that request - the guard tested a node named ``None``, passed,
+    # and the measured 500 with a row created and ``seed_store`` broken came
+    # back for every request that let the catalog name the dataset. The hook
+    # runs after the id is resolved and before the first write, so a refusal
+    # still leaves nothing written.
     try:
-        assert_dataset_mirror_kinds_are_available(
-            request.id, [column.name for column in request.schema or []]
-        )
-    except NodeKindConflict as conflict:
+        with catalog.catalog_mutation_lock():
+            dataset = register_dataset(
+                request,
+                actor=actor_id,
+                decision_id=decision.decision_id,
+                # CAT-005's acceptance criterion names a change reason. Read from
+                # the raw payload because it is metadata about the change, not
+                # dataset state: the request models' fields are a strict subset of
+                # ``Dataset``'s, and a ``reason`` field would break that.
+                change_reason=_change_reason(payload),
+                before_commit=assert_dataset_mirror_kinds_are_available,
+            )
+            seed_dataset(dataset)
+    except (NodeKindConflict, catalog.DatasetAlreadyExists) as conflict:
+        # Two refusals, one status: the id this registration wants is already
+        # taken - by another kind of graph node, or by a dataset. A duplicate id
+        # answered **500** before this arm, because ``_register_dataset_locked``
+        # raised a bare ``ValueError`` no route caught.
         _audit_refused_catalog_mutation(
-            event_type="dataset.create",
+            event_type="dataset.register",
             actor=actor_id,
-            dataset_id=request.id,
+            dataset_id=request.id or "new",
             decision=decision,
             reason=str(conflict),
         )
         raise HTTPException(status_code=409, detail=str(conflict)) from conflict
-    with catalog.catalog_mutation_lock():
-        dataset = register_dataset(
-            request,
-            actor=actor_id,
-            decision_id=decision.decision_id,
-            # CAT-005's acceptance criterion names a change reason. Read from
-            # the raw payload because it is metadata about the change, not
-            # dataset state: the request models' fields are a strict subset of
-            # ``Dataset``'s, and a ``reason`` field would break that.
-            change_reason=_change_reason(payload),
-        )
-        seed_dataset(dataset)
     return {"status": "created", "dataset": catalog.mutation_response_view(dataset)}
 
 
@@ -1152,6 +1179,12 @@ def publish_catalog_dataset(dataset_id: str, payload: dict[str, Any] | None = No
         raise HTTPException(status_code=403, detail=decision.reason)
 
     try:
+        # Before the status change, for the reason the create route gives.
+        # ``seed_dataset`` is called by all four mutations, and only two of them
+        # asked this question: publish answered **400** and deprecate **500**
+        # with the status and version already applied and an audit row claiming
+        # ``result='success'`` for a request the caller saw fail (measured).
+        _assert_mirror_kinds_for_existing_dataset(dataset_id)
         # Mutation and mirror in one critical section; see the create route.
         with catalog.catalog_mutation_lock():
             dataset = publish_dataset(
@@ -1163,6 +1196,17 @@ def publish_catalog_dataset(dataset_id: str, payload: dict[str, Any] | None = No
             seed_dataset(dataset)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+    except NodeKindConflict as conflict:
+        # Before the ``ValueError`` arm: ``NodeKindConflict`` is one, and this
+        # refusal is a conflict, not a malformed publish.
+        _audit_refused_catalog_mutation(
+            event_type="dataset.publish",
+            actor=actor_id,
+            dataset_id=dataset_id,
+            decision=decision,
+            reason=str(conflict),
+        )
+        raise HTTPException(status_code=409, detail=str(conflict)) from conflict
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return {"status": "published", "dataset": catalog.mutation_response_view(dataset)}
@@ -1196,10 +1240,15 @@ def patch_catalog_dataset(dataset_id: str, payload: dict[str, Any]) -> dict[str,
         # both the title and the schema change, so the caller was told the
         # request was rejected while it was kept. A conflict is now 409 and
         # nothing is written.
-        if request.schema is not None:
-            assert_dataset_mirror_kinds_are_available(
-                dataset_id, [column.name for column in request.schema]
-            )
+        # Unconditional, not ``if request.schema is not None``: the dataset's
+        # *own* node is rewritten by every mirror, so a patch declaring no
+        # schema at all still had to reclassify a colliding node - and answered
+        # 400 with the title change kept (measured). The columns are only the
+        # second half of what the mirror writes.
+        assert_dataset_mirror_kinds_are_available(
+            dataset_id,
+            [column.name for column in request.schema] if request.schema is not None else [],
+        )
         # Mutation and mirror in one critical section; see the create route.
         with catalog.catalog_mutation_lock():
             dataset = patch_dataset(
@@ -1253,6 +1302,8 @@ def deprecate_catalog_dataset(dataset_id: str, payload: dict[str, str] | None = 
 
     payload = payload or {}
     try:
+        # Before the status change; see the publish route.
+        _assert_mirror_kinds_for_existing_dataset(dataset_id)
         # Mutation and mirror in one critical section; see the create route.
         with catalog.catalog_mutation_lock():
             dataset = deprecate_dataset(
@@ -1271,6 +1322,15 @@ def deprecate_catalog_dataset(dataset_id: str, payload: dict[str, str] | None = 
         return {"status": "deprecated", "dataset": catalog.mutation_response_view(dataset)}
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+    except NodeKindConflict as conflict:
+        _audit_refused_catalog_mutation(
+            event_type="dataset.deprecate",
+            actor=actor_id,
+            dataset_id=dataset_id,
+            decision=decision,
+            reason=str(conflict),
+        )
+        raise HTTPException(status_code=409, detail=str(conflict)) from conflict
 
 
 def _authorize_evidence_read(user: str) -> tuple[Any, list[str] | None]:
