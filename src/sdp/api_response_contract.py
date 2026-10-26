@@ -44,14 +44,23 @@ Derivation rules, chosen so a published schema cannot over-claim:
 
 What is **not** published, declared rather than left as a silent gap:
 
-* the 20 non-GET operations. Deriving their schemas means driving mutations:
-  the validating test would have to perform every catalog, ontology and graph
-  write to observe a response, so what it published would be a schema for one
-  chosen request body rather than for the operation. Their request bodies *are*
-  published (``api_request_contract``). This used to carry a second reason -
-  that such a test would leak graph nodes, the graph store being outside
-  ``tests/conftest.py``'s restoration - and that reason is retracted: the
-  fixture restores the graph store too. The first reason is the whole of it.
+* the 20 non-GET operations, because **the generator drives GETs only**. The
+  derivation script executes each documented GET under three probes and unions
+  the observed shapes; it sends no request bodies, so a POST or PATCH is never
+  reached. That is a tooling boundary, not a property of these operations.
+
+  Two earlier reasons given here are retracted. One said the validating test
+  would leak graph nodes, the graph store being outside ``tests/conftest.py``'s
+  restoration - the fixture restores it now. The other said deriving these
+  schemas means driving mutations, and that is false for eleven of the twenty:
+  ``POST /browse/query``, ``/api/v1/browse/query``, ``/browse/{id}/preview``,
+  ``/graph/query``, ``/ontology/resolve``, ``/search/semantic``,
+  ``/policy/decision``, ``/llm/draft-query``, ``/llm/search``,
+  ``/enterprise/auth/oidc-preview`` and ``/enterprise/auth/oidc-verify`` are
+  **reads that take a query body** and write nothing. Nine do mutate, and for
+  those the published schema would also depend on which mutation was driven -
+  but that was never the reason the eleven are missing. Their request bodies
+  *are* published (``api_request_contract``).
 * ``GET /metrics``, which serves Prometheus text. Its content type is corrected
   here instead: the document claimed ``application/json`` with an empty schema,
   so a generated client would have tried to JSON-parse

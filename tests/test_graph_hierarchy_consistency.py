@@ -91,8 +91,8 @@ def _private_seeded_store() -> Iterator[InMemoryGraphStore]:
     """A freshly seeded store, swapped in for the body and restored after.
 
     Duplicated from ``tests/test_graph_hierarchy_class_separation.py``, whose
-    copy carries the reasoning: the autouse fixture does not restore the
-    graph-store singleton, so a test that asserts a count takes its own
+    copy carries the reasoning: the autouse fixture did not restore the
+    graph-store singleton when these were written, so a test that asserts a count takes its own
     baseline - and a test that left a cycle in the shared store would make every
     later assertion that the shipped hierarchy is acyclic depend on file order.
     """

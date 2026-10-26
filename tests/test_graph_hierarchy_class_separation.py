@@ -81,8 +81,8 @@ client = TestClient(app, raise_server_exceptions=False)
 def _private_seeded_store() -> Iterator[InMemoryGraphStore]:
     """A freshly seeded store, swapped in for the body and restored after.
 
-    ``tests/conftest.py``'s autouse fixture deliberately does not restore the
-    graph-store singleton - there is no snapshot API - and this repository's
+    ``tests/conftest.py``'s autouse fixture restores the graph-store singleton
+    now; it did not when this fixture was written, and this repository's
     standing rule is therefore that a test depending on graph counts takes its
     own baseline. Two reasons here, and the second is the stronger one:
 

@@ -62,7 +62,7 @@ module-level state, so the copy lives here instead. Measured against the
     tests/test_catalog_mirror_kind_conflict.py alone
         leaked 31 nodes (18 dataset, 8 column, 5 concept), 26 edges
     the whole suite
-        leaked 277 nodes (121 dataset, 129 column, 25 concept), 233 edges
+        leaked 277 nodes (121 dataset, 129 column, 25 concept, 2 service), 233 edges
 
 and with it enabled, 0 and 0. No pre-existing test failed on the leak in any
 order measured either way - forward, reverse and shuffled seed 11 with the

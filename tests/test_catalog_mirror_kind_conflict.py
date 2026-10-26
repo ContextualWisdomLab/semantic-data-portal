@@ -410,9 +410,9 @@ def _drifted_dataset_node(dataset_id: str) -> Iterator[None]:
     chain is pinned by
     ``test_reconciliation_drops_a_foreign_has_column_edge_without_its_node``.
 
-    The node is removed again afterwards. ``conftest`` rolls the catalog row
-    back but deliberately does not restore the graph store (it has no snapshot
-    API), so the first version of this helper left a ``concept`` node at each
+    The node is removed again afterwards. ``conftest`` restores the graph store
+    now, but it did not when this helper was written - and back then the first
+    version of it left a ``concept`` node at each
     caller's dataset id for the rest of the process - and the next test in that
     process to register a dataset at that id would be refused 409 by the very
     guard these tests are about. Leaving the id empty is the honest end state:
@@ -721,16 +721,36 @@ def test_a_schema_less_patch_checks_the_stored_columns() -> None:
 # lookup rather than passing on a missing key.
 _COUNT_WORDS = {1: "한", 2: "두", 3: "세", 4: "네", 5: "다섯", 6: "여섯", 7: "일곱"}
 
-# One distinctive fragment per 409 the code can raise, and the exception or
-# route that raises it. ``api.py`` answers 409 at ten sites; these are the
-# distinct *causes* those sites report, which is what the document enumerates.
+# One distinctive fragment per 409 a request can actually produce, and the
+# exception or route that produces it. ``api.py`` answers 409 at ten sites;
+# these are the distinct *causes* those sites report.
+#
+# **The capped-vocabulary refusal is not among them, because no request can
+# produce it.** The previous round published it as cause (1) - "a capped
+# resource is full and nothing is evictable (seeded concepts are never
+# evicted)" - and it is dead by construction.
+# ``_evict_one_registered_concept`` raises only when every entry at the cap is
+# seeded, and ``SEEDED_CONCEPTS`` is a fixed 5-entry frozenset against
+# ``MAX_REGISTERED_CONCEPTS = 500``, so the loop always finds a caller-added
+# concept to evict. Measured, 560 sequential registrations past the cap::
+#
+#     status counts    {200: 560}
+#     vocabulary size  500   (5 seeded present, 495 caller-added)
+#     first 409        none
+#
+# and re-measured independently at 1200 sequential and 1500 from 24 concurrent
+# threads, plus attempts to re-register each seeded name verbatim,
+# whitespace-padded and as an alias: no cap-full refusal, ever. The ``raise``
+# stays - it is the guard that stops the evictor deleting shipped vocabulary if
+# those constants ever cross - but a client cannot see it, and an enumeration
+# published to clients that names it is an enumeration that over-claims. No test
+# reaches it either.
 #
 # Exhaustive on the ordinary request path, which is what a published enumeration
 # is for, and **not** under concurrency. One site - the ``except ValueError``
-# around ``ontology.register_concept`` - answers 409 for the vocabulary cap (1)
-# and would also answer it for the alias conflict that function re-checks
-# *inside* its lock. On the ordinary path that conflict is caught above the lock
-# and answers 400, measured::
+# around ``ontology.register_concept`` - would also answer 409 for the alias
+# conflict that function re-checks *inside* its lock. On the ordinary path that
+# conflict is caught above the lock and answers 400, measured::
 #
 #     POST /ontology/concepts {"concept": "새로운개념하나", "aliases": ["customer"]}
 #       -> 400 "alias conflict: 'customer' already belongs to '고객'"
@@ -741,7 +761,6 @@ _COUNT_WORDS = {1: "한", 2: "두", 3: "세", 4: "네", 5: "다섯", 6: "여섯"
 # documented as 400 would mislead a client more than the omission does. The
 # status split itself is a code question, not a document one.
 _409_CAUSES = {
-    "가득 찼고": "the capped-vocabulary eviction refusal",
     "content digest": "the ontology digest precondition",
     "kind로 존재하는": "graph_store.NodeKindConflict",
     "dataset id": "catalog.DatasetAlreadyExists",
@@ -764,9 +783,18 @@ def test_the_published_409_description_enumerates_every_cause_the_code_raises() 
 
     So this does not pin a count word. It reads the ``(n)`` markers, derives the
     count from them, and requires the opening word to agree - the word and the
-    list can no longer drift, because only one of them is written down here. The
-    causes are named by fragment, so adding a seventh 409 to the code without
-    documenting it leaves this test naming what is missing.
+    enumeration can no longer drift, because only one of them is written down in
+    the document.
+
+    **What it does not do**, stated because the previous round's docstring
+    claimed it did: it cannot notice a *new* 409 in the code. The comparison is
+    between the published description and ``_409_CAUSES`` in this file, so a
+    sixth reachable cause added to ``api.py`` leaves both sides agreeing at five
+    and this test green. Catching that needs the causes derived from the code,
+    which they are not. A new 409 therefore needs a deliberate edit here - and
+    the round that published a cause **no request can produce** shows the
+    traffic goes both ways, so the entries carry the measurement that justifies
+    each one.
     """
     import re
 

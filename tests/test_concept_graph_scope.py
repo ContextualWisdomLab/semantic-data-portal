@@ -96,9 +96,9 @@ def test_a_tenant_scoped_caller_sees_its_own_and_is_told_what_is_withheld(
 ) -> None:
     """The withheld count is derived, not hardcoded.
 
-    ``tests/conftest.py`` deliberately does not restore the graph store - it has
-    no snapshot API - so mapping edges written by earlier tests persist and the
-    absolute number of mapped datasets varies with file order. An earlier
+    ``tests/conftest.py`` restores the graph store now, so mapping edges from
+    earlier tests no longer persist. It did not when this test was written, and
+    the absolute number of mapped datasets varied with file order. An earlier
     version asserted ``== 1`` and passed alone while failing in the full run.
     The invariant is the relationship between the two views, which holds at any
     baseline.

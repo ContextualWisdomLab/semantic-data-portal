@@ -59,6 +59,32 @@ def test_the_evidence_ledgers_start_empty_for_each_test() -> None:
     assert not evidence._AUDIT_EVENT_LOG
 
 
+def _seeded_edge_set() -> set[tuple[str, str, str]]:
+    """The edges the seed writes, derived by seeding a throwaway store.
+
+    Not a written-down list: ``seed_store`` is the function whose output the
+    restore has to reproduce, so asking it - against a store nobody else holds -
+    is the only baseline that cannot drift from the seed. It reads
+    ``catalog._DATA`` and ``ontology._CONCEPT_DEFINITIONS``, which the autouse
+    fixture has already restored when this runs, so the derivation sees the same
+    inputs the real store was seeded from.
+
+    ``InMemoryGraphStore()`` and not ``set_store``: the throwaway is never
+    installed, so seeding it cannot touch the singleton this test is about. That
+    distinction is the one a previous round got wrong in the other direction -
+    a line reading ``seed_store(InMemoryGraphStore())`` was positioned as
+    cleanup, and seeded a store it then discarded.
+    """
+    from sdp.graph_store import InMemoryGraphStore
+    from sdp.seed import seed_store
+
+    throwaway = InMemoryGraphStore()
+    seed_store(throwaway)
+    return {
+        (edge.edge_type, edge.source_id, edge.target_id) for edge in throwaway._edges
+    }
+
+
 def test_the_graph_store_starts_from_the_catalog_and_the_vocabulary() -> None:
     """The guard for the graph-store half of the restore.
 
@@ -74,9 +100,13 @@ def test_the_graph_store_starts_from_the_catalog_and_the_vocabulary() -> None:
         tests/test_catalog_mirror_kind_conflict.py alone
             leaked 31 nodes (18 dataset, 8 column, 5 concept), 26 edges
         the whole suite
-            leaked 277 nodes (121 dataset, 129 column, 25 concept), 233 edges
+            leaked 277 nodes (121 dataset, 129 column, 25 concept, 2 service), 233 edges
 
-    and with it enabled, 0 and 0.
+    and with it enabled, 0 and 0. The parenthetical summed to 275 against its
+    own headline of 277 for one round: two ``service`` nodes (``authz-node``,
+    ``svc-A``) were left out, and a breakdown that does not add up is the same
+    defect as a count that does not match - caught by a reviewer re-measuring
+    rather than by anything mechanical, because no test reads these figures.
 
     No **pre-existing** test failed on the leak in any order measured either
     way - forward, reverse and shuffled seed 11 with the restore disabled, all
@@ -97,6 +127,18 @@ def test_the_graph_store_starts_from_the_catalog_and_the_vocabulary() -> None:
     The baseline is derived, not counted, so changing the demo seed does not
     come back here: every node is a dataset the catalog holds, a column one of
     them declares, or a concept the vocabulary holds.
+
+    **Edges are asserted too**, because the first version of this test checked
+    nodes only while the restore's own justification is largely about edges.
+    Measured, with ``_edges`` dropped from ``_GRAPH_COLLECTIONS`` and the other
+    four kept::
+
+        leaked nodes 0   leaked edges 233   whole suite: 1265 passed, 15 skipped
+
+    so the half this test was written to hold could be removed with every test
+    green - a guard reporting success for the half it did not look at. The edge
+    set is derived the same way: every edge is one the seed writes, so the
+    assertion is that no test added or removed one.
     """
     store = graph_store.get_store()
     nodes = {node_id: node.kind for node_id, node in store._nodes.items()}
@@ -123,6 +165,17 @@ def test_the_graph_store_starts_from_the_catalog_and_the_vocabulary() -> None:
         },
     }
 
+    # The edges the seed writes, taken as the baseline the same way. Compared as
+    # a multiset-free set because the store holds at most one edge per
+    # (type, source, target) - ``upsert_edge`` merges properties into an
+    # existing match rather than appending a second.
+    edges = {(edge.edge_type, edge.source_id, edge.target_id) for edge in store._edges}
+    baseline_edges = _seeded_edge_set()
+    assert edges == baseline_edges, {
+        "added": sorted(edges - baseline_edges),
+        "removed": sorted(baseline_edges - edges),
+    }
+
 
 # The retracted claim, in both languages it was published in. Two reasons for
 # the shape of this:
@@ -141,6 +194,12 @@ _RETRACTED_EXCLUSION_CLAIMS = (
     "graph store singleton is " + "deliberately outside",
     "graph store is " + "deliberately outside",
     "그래프 스토어 싱글턴은 " + "의도적으로 제외",
+    # The fourth wording, added after the first three missed five live sites.
+    # Present tense only: the retractions deliberately keep the history in the
+    # past tense ("did not restore ... when this was written"), which is true
+    # and is how a reader learns why these tests clean up after themselves.
+    "does not " + "restore the graph",
+    "deliberately does not " + "restore the",
 )
 
 
@@ -163,6 +222,32 @@ def test_no_published_text_still_says_the_graph_store_is_excluded() -> None:
     round apart, so it gets the same mechanism. It is conditioned on the restore
     actually being in place: if the graph store is ever deliberately excluded
     again, the condition goes false and the claim is publishable once more.
+
+    **Two limits, stated rather than left to be discovered.**
+
+    *The enumeration is not the class.* The first version banned three wordings
+    and the retraction it protected had missed **five** live sites that used a
+    fourth - ``tests/test_catalog_mirror_kind_conflict.py``,
+    ``tests/test_concept_graph_scope.py``,
+    ``tests/test_graph_hierarchy_class_separation.py``,
+    ``tests/test_graph_hierarchy_consistency.py`` and
+    ``tests/test_graph_mirroring.py``, all five asserting in the present tense
+    that the autouse fixture leaves the graph-store singleton alone - one of
+    them 70 lines from the retraction in its own file. The wording is described
+    rather than quoted here: written out, it matched this very list, which is
+    the third time in this cycle a mechanical guard has flagged the text
+    explaining it. A phrase list catches recurrence
+    of the wordings it knows, which is worth having and is not the same as
+    closing the class. This is the 409 enumeration's defect in another costume:
+    a list compared against itself.
+
+    *The skip is a hole.* The condition looks for ``_graph_restore(`` in the
+    restore block, so renaming that helper while keeping the restore working
+    makes this test **skip** - with a reason that reads as "the claim is true
+    again" when it is not - and every protected site becomes republishable. A
+    behavioural condition would need the fixture's effect rather than its
+    source, and ``test_the_graph_store_starts_from_the_catalog_and_the_vocabulary``
+    is that test; this one is about the prose.
     """
     import pathlib
     import re
