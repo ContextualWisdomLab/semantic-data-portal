@@ -61,7 +61,7 @@ from .latency_budgets import latency_budget_report
 from .observability import (
     build_observability_manifest,
     build_request_observation,
-    note_governed_request_without_evidence,
+    note_governed_request_without_evidence_async,
     prometheus_metrics_text,
     record_request_observation_async,
     request_id_from_headers,
@@ -188,7 +188,15 @@ async def record_request_observability(request: Request, call_next):
                 and not collected.ids
                 and (request.method, route_template) in _POLICY_GATED_ROUTES
             ):
-                note_governed_request_without_evidence(
+                # Awaited, not called: the synchronous form waits for the
+                # alert delivery it starts, and this middleware is ``async``, so
+                # that wait ran on the loop thread. Measured against a wedged
+                # webhook at a 5000 ms alert timeout, a 10 ms asyncio ticker
+                # gapped to 261.26 ms (control, nothing configured: 10.50 ms) -
+                # every concurrent request serialized behind one firing request.
+                # That is the defect already fixed for the sink write two lines
+                # below, so it gets the same device.
+                await note_governed_request_without_evidence_async(
                     f"{request.method} {route_template}"
                 )
             if response is not None:

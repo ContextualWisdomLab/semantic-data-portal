@@ -2,15 +2,15 @@
 
 이 문서는 `claude/semantic-portal-pr-merge-e5a48k` 브랜치(PR
 [#102](https://github.com/ContextualWisdomLab/semantic-data-portal/pull/102))가
-베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **230개** 커밋 중 123개는
-gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 107개입니다. 이 숫자는 **이
-줄을 담은 커밋을 포함한** 값입니다 — 측정 시점의 229에 이 커밋을 더한 것. 측정 명령:
+베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **231개** 커밋 중 123개는
+gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 108개입니다. 이 숫자는 **이
+줄을 담은 커밋을 포함한** 값입니다 — 측정 시점의 230에 이 커밋을 더한 것. 측정 명령:
 
     git rev-list --count origin/docs/product-technical-gap-baseline..HEAD
     git log --format=%H origin/docs/product-technical-gap-baseline..HEAD \
       --name-only -- docs/product-technical-gap-baseline.md | grep -c '^[0-9a-f]\{40\}$'
 
-앞서 적혀 있던 164/112, 186/113, 199/122/77, 203/122/81, 211/122/89, 212/122/90, 213/122/91, 214/122/92, 215/122/93, 216/122/94, 218/122/96, 219/122/97, 220/122/98, 221/122/99, 222/122/100, 223/122/101, 224/122/102, 225/122/103, 226/122/104, 228/122/106은 각각 그 시점의 값이고 이후
+앞서 적혀 있던 164/112, 186/113, 199/122/77, 203/122/81, 211/122/89, 212/122/90, 213/122/91, 214/122/92, 215/122/93, 216/122/94, 218/122/96, 219/122/97, 220/122/98, 221/122/99, 222/122/100, 223/122/101, 224/122/102, 225/122/103, 226/122/104, 228/122/106, 230/123/107은 각각 그 시점의 값이고 이후
 커밋을 반영하지 않은 숫자였습니다 — 자기 문서의 수치도 측정해서 맞춰 둡니다. 199는 이
 줄을 쓴 뒤 3개 커밋이 더 쌓여 낡아 203으로, 203은 다음 커밋에서 낡아 204로, 204는 또
 두 커밋 뒤에 206으로 다시 측정해 고쳤습니다. 206도 그 값을 담은 커밋 자신 때문에 도착
@@ -30,15 +30,15 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 10
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                       1310 passed, 15 skipped
-    pytest (파일 순서 정/역/난수)  각 1310 passed, 15 skipped — 순서 무관
+    pytest                       1312 passed, 15 skipped
+    pytest (파일 순서 정/역/난수)  각 1312 passed, 15 skipped — 순서 무관
                                  (정순 · 역순 · seed 11/707/31337)
     pytest tests/fuzz            11 passed
     python -m sdp.demo_smoke     exit 0, "ready": true
 
 alert 전달 커밋이 테스트를 34건(새 파일 넷 33건 + `test_honest_metrics.py` 1건),
-pgvector 핀 커밋이 10건 늘렸으므로 위 숫자는 앞서 적혀 있던 1266 → 1300 → 1310으로
-올라갔습니다. 다섯 순서 측정은 트리를 동결한 상태에서
+pgvector 핀 커밋이 10건, event-loop 수리 커밋이 2건 늘렸으므로 위 숫자는 앞서 적혀 있던
+1266 → 1300 → 1310 → 1312로 올라갔습니다. 다섯 순서 측정은 트리를 동결한 상태에서
 돌렸고, 그 뒤에 바뀐 파일은 이 CHANGELOG 하나입니다 — CHANGELOG 내용을 읽는 테스트는
 파일 순서와 무관한 산술 가드
 (`test_every_published_node_breakdown_sums_to_its_own_total`) 하나뿐이므로, 순서 성질을
@@ -55,6 +55,56 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 백그라운드 측정 중에 트리를 고친 탓에 seed 11이 4건 실패로 나온 일이 있고, 그것은 결함이
 아니라 동시 편집이었습니다. Atheris(`fuzz/fuzz_query_safety.py`)는 로컬에 wheel이 없어
 실행하지 않았습니다 — 같은 invariant의 Hypothesis 미러가 `tests/fuzz`에서 돕니다.
+
+### Fixed — 제가 바로 전에 넣은 alert 전달이 event loop를 막았습니다 (high)
+
+alert 전달을 구현한 커밋(`8895868`)을 직접 다시 읽으면서 찾았습니다. 평가 지점 두 곳의
+실행 컨텍스트가 **다릅니다**:
+
+- `connectors.connector_probe`는 route handler가 `def`이므로 FastAPI가 `anyio` worker
+  스레드에서 돌립니다 — bounded join이 그 스레드를 막는 것은 맞습니다.
+- `note_governed_request_without_evidence`는 `sdp.api`의 **`async` 미들웨어**
+  `finally` 블록에서 호출됩니다 — 같은 join이 **loop 스레드**를 막습니다.
+
+그 요청 자신의 지연은 budget 이상으로 늘지 않습니다. 문제는 **그 사이 다른 모든 요청이
+직렬화된다**는 것입니다. 10 ms asyncio ticker로 측정했습니다(handshake를 받고 응답하지
+않는 소켓, `SDP_ALERT_TIMEOUT_MS=5000`):
+
+```
+loop 위의 sync 호출 (결함)     call= 251.15 ms   최악 tick gap= 261.61 ms
+async 진입점 (수리)            call= 252~263 ms  최악 tick gap=  11.50~20.69 ms (8회)
+webhook 미설정 (대조군)        call=   0.10 ms   최악 tick gap=  11.82 ms
+```
+
+**새로운 위험이 아닙니다.** 이 저장소는 같은 결함을 log sink에 대해 이미 한 번 고쳤고
+(gap-baseline 감사 7번: "동기 sink export가 event loop를 막아 요청을 직렬화했습니다"),
+미들웨어에는 alert 호출에서 **두 줄 아래**에 "The sink write is blocking, so it is awaited
+off the event loop"라는 주석이 그대로 적혀 있습니다. 그 주석 두 줄 위에 같은 결함을
+넣었습니다.
+
+**수리는 새 장치가 아니라 같은 장치입니다.** `_begin_alert_delivery`가 latch 처리(lock 안의
+dict 쓰기 몇 번)를 하고 기다릴 스레드를 돌려주고, 동기 형태는 그 스레드를 직접 join하고,
+`_route_alert_async`는 `anyio.to_thread.run_sync`로 **loop 밖에서 await**합니다 —
+`record_request_observation_async`가 sink의 blocking write에 하는 것과 같은 분할입니다.
+미들웨어는 `note_governed_request_without_evidence_async`를 await합니다. 동기 형태는
+worker 스레드에서 도는 probe 경로와 직접 호출자(테스트)용으로 남습니다. 카운팅 절반은
+`_count_governed_request_without_evidence` 하나로 공유해 두 진입점이 세는 것이 갈라질 수
+없게 했습니다.
+
+**가드 둘, 각각 다른 절반을 잡습니다.** 하나는 async 진입점을 직접 호출해 ticker gap이
+100 ms 미만임을 단언하고(측정값과 결함 사이에서 양쪽으로 최소 2.6배 여유), 다른 하나는
+**미들웨어가 그것을 await하는지**를 소스에서 확인합니다. 둘이 필요한 이유를 역검증이
+보여줍니다 — 함수 안의 join만 loop 위로 되돌리면 전자만 실패하고, 호출 지점만 동기
+형태로 되돌리면(함수는 그대로 둔 채) **후자만** 실패합니다. 타이밍 테스트 하나로는 호출
+지점 회귀를 못 잡습니다. 이 사이클이 반복해서 배운 구분입니다.
+
+`TestClient`로는 이 결함을 관측할 수 없습니다 — 요청을 한 번에 하나씩 보내므로 직렬화 자체가
+드러나지 않습니다. 그래서 ticker이고, 그래서 호출 지점은 소스로 확인합니다.
+
+`test_the_alert_webhook_value_is_read_one_way_and_stashed_nowhere`가 이 변경을 **스스로
+보고했습니다** — webhook을 읽는 함수 집합에 `_route_alert`가 아니라
+`_begin_alert_delivery`가 들어왔다고 실패했습니다. 전달 결정이 옮겨 간 것을 통과시키지 않고
+알려 준 것이므로, 기대 집합을 고치고 그 사실을 테스트 메시지에 적었습니다.
 
 ### Fixed — 하나 남아 있던 미고정 빌드 입력을 닫았습니다. 막고 있던 것은 환경이 아니었습니다 (medium)
 

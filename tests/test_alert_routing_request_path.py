@@ -99,7 +99,9 @@ as "no alert latency was added".
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
+import re
 import socket
 import sys
 import time
@@ -110,7 +112,7 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from sdp import catalog, connectors as conn, evidence, observability as obs  # noqa: E402
+from sdp import api, catalog, connectors as conn, evidence, observability as obs  # noqa: E402
 from sdp.api import app  # noqa: E402
 
 # The repo-default client re-raises a server exception into the test; the second
@@ -145,6 +147,15 @@ REQUEST_LATENCY_BOUND_MS = 1000.0
 # value is irrelevant to the response. A 5x gap is the margin that makes the
 # test a measurement rather than a race.
 ALERT_TIMEOUT_MS = "5000"
+
+# The event loop's own responsiveness, as the gap between successive 10 ms
+# ticks. Measured with a wedged webhook at the timeout above: the repaired path
+# gapped 11.50-20.69 ms over eight runs, the defect 262.00 ms, and the control
+# with no webhook configured 11.82 ms. The bound sits ~5x above the worst
+# repaired measurement and ~2.6x below the defect, so it cannot fail on
+# scheduling noise and cannot pass if the wait is back on the loop.
+TICK_INTERVAL_S = 0.01
+LOOP_BLOCK_BOUND_MS = 100.0
 
 
 @pytest.fixture(autouse=True)
@@ -452,6 +463,114 @@ def test_a_misconfigured_alert_webhook_never_becomes_the_requests_response(
     assert _alert_errors(), (
         "the refused scheme must be retained as an alert-routing failure, so an "
         "operator can see the alert did not leave"
+    )
+
+
+def test_the_alert_wait_does_not_block_the_event_loop(
+    monkeypatch: pytest.MonkeyPatch, black_hole_webhook: str
+) -> None:
+    """The one evaluation site that runs on the loop must not wait on it.
+
+    ``sdp.api``'s observability middleware is ``async``, and
+    ``note_governed_request_without_evidence`` - called from its ``finally``
+    block - waits for the alert delivery it starts. So the first implementation
+    put a bounded join on the loop thread, which does not slow the request that
+    triggered it any more than the budget allows but **serializes every other
+    request behind it**. Measured against a socket that accepts the handshake
+    and never answers, at a 5000 ms alert timeout, with a 10 ms asyncio ticker:
+
+        async entry point (the repair)    worst tick gap  11.50-20.69 ms (8 runs)
+        sync entry point on a loop        worst tick gap         262.00 ms
+        no webhook configured (control)   worst tick gap          11.82 ms
+
+    This is not a new hazard. ``docs/product-technical-gap-baseline.md`` records
+    it as audit finding 7 against the log sink - a synchronous export on the
+    loop serializing every request - and the middleware carries the comment
+    "The sink write is blocking, so it is awaited off the event loop" two lines
+    below the alert call. The repair is the same device, not a new one:
+    ``anyio.to_thread.run_sync`` around the join, with the latch bookkeeping
+    (a few dict writes under a lock) left inline.
+
+    The ticker is what makes this a measurement of the loop rather than of the
+    request: the call's own duration is ~255 ms either way, because the request
+    does pay the handshake budget. What distinguishes repair from defect is
+    whether anything else could run while it waited.
+    """
+    monkeypatch.setenv("SDP_ALERT_WEBHOOK_URL", black_hole_webhook)
+    monkeypatch.setenv("SDP_ALERT_TIMEOUT_MS", ALERT_TIMEOUT_MS)
+
+    async def _tick_until(stop: asyncio.Event, gaps: list[float]) -> None:
+        """Record the gap between successive ticks; a large gap is a blocked loop."""
+        last = time.perf_counter()
+        while not stop.is_set():
+            await asyncio.sleep(TICK_INTERVAL_S)
+            now = time.perf_counter()
+            gaps.append((now - last) * 1000)
+            last = now
+
+    async def _drive() -> tuple[list[float], float]:
+        """Fire the rule through the async entry point while the ticker runs."""
+        stop: asyncio.Event = asyncio.Event()
+        gaps: list[float] = []
+        ticker = asyncio.create_task(_tick_until(stop, gaps))
+        await asyncio.sleep(0.05)
+        started = time.perf_counter()
+        await obs.note_governed_request_without_evidence_async(
+            "GET /catalog/datasets/{dataset_id}"
+        )
+        elapsed = (time.perf_counter() - started) * 1000
+        await asyncio.sleep(0.05)
+        stop.set()
+        await ticker
+        return gaps, elapsed
+
+    gaps, elapsed = asyncio.run(_drive())
+
+    assert gaps, "the ticker recorded nothing, so this measured no loop at all"
+    assert max(gaps) < LOOP_BLOCK_BOUND_MS, (
+        f"the alert wait blocked the event loop for {max(gaps):.2f} ms (the call "
+        f"itself took {elapsed:.2f} ms); every concurrent request serializes "
+        "behind one firing request, which is the defect already fixed for the "
+        "sink write in the same middleware function"
+    )
+
+    snapshot = _wait_for_alert("deliveries_attempted")
+    assert snapshot["deliveries_attempted"] >= 1, snapshot.get(
+        "reason",
+        f"no alert was attempted, so the unblocked loop above measures nothing: {snapshot}",
+    )
+
+
+def test_the_middleware_awaits_the_alert_instead_of_calling_it_inline() -> None:
+    """The site, not only the function - the half a timing test cannot reach.
+
+    ``test_the_alert_wait_does_not_block_the_event_loop`` calls the async entry
+    point directly, so it proves that function keeps the wait off the loop and
+    says nothing about what the middleware calls. Reverting the call site to the
+    synchronous form would leave that test green and restore the defect, which
+    is the shape this repository keeps finding: a guard checked against
+    something adjacent to the thing it describes.
+
+    Read from the source because the middleware is a decorated closure: the call
+    is a fact about the code, and asserting it here is cheaper and more direct
+    than driving concurrent requests through ``TestClient``, which issues them
+    one at a time and therefore cannot observe serialization at all.
+    """
+    source = Path(api.__file__).read_text(encoding="utf-8")
+    assert "await note_governed_request_without_evidence_async(" in source, (
+        "the observability middleware no longer awaits the async alert entry "
+        "point; a synchronous call there puts the delivery wait back on the "
+        "event loop"
+    )
+    inline = [
+        line.strip()
+        for line in source.splitlines()
+        if re.search(r"(?<!_async)note_governed_request_without_evidence\(", line)
+    ]
+    assert inline == [], (
+        f"sdp.api calls the synchronous gap-counting entry point: {inline}. It "
+        "waits for the alert it starts, and every call site in this module is "
+        "on the event loop."
     )
 
 

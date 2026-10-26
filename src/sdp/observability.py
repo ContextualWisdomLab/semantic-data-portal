@@ -305,12 +305,14 @@ _OTHER_GAP_ROUTES = "...[other routes]"
 _GOVERNED_EVIDENCE_GAPS: dict[str, int] = {}
 
 
-def note_governed_request_without_evidence(route: str) -> None:
-    """Count one policy-gated 2xx that recorded no correlatable evidence.
+def _count_governed_request_without_evidence(route: str) -> None:
+    """Add one to the bounded per-route gap counter.
 
-    Bounded by route, like every other map this module publishes: past the cap
-    the counts collapse into one declared bucket rather than letting a caller
-    that can reach many templates grow the manifest without limit.
+    Separated from routing so the synchronous and the async entry points share
+    one counter and cannot drift in what they count. Bounded by route, like
+    every other map this module publishes: past the cap the counts collapse into
+    one declared bucket rather than letting a caller that can reach many
+    templates grow the manifest without limit.
     """
     if route in _GOVERNED_EVIDENCE_GAPS:
         _GOVERNED_EVIDENCE_GAPS[route] += 1
@@ -320,6 +322,16 @@ def note_governed_request_without_evidence(route: str) -> None:
         _GOVERNED_EVIDENCE_GAPS[_OTHER_GAP_ROUTES] = (
             _GOVERNED_EVIDENCE_GAPS.get(_OTHER_GAP_ROUTES, 0) + 1
         )
+
+
+def note_governed_request_without_evidence(route: str) -> None:
+    """Count one policy-gated 2xx that recorded no correlatable evidence.
+
+    Bounded by route, like every other map this module publishes: past the cap
+    the counts collapse into one declared bucket rather than letting a caller
+    that can reach many templates grow the manifest without limit.
+    """
+    _count_governed_request_without_evidence(route)
     # The evaluation event is the send site. Not the read path: this counter is
     # published by two anonymous routes, so routing from there would turn any
     # anonymous GET into an outbound POST at the operator's endpoint. The three
@@ -327,6 +339,19 @@ def note_governed_request_without_evidence(route: str) -> None:
     # from only one of them would deliver for a first-seen route and stay silent
     # once the map was full, which is the arrangement the branch shape invited.
     _route_alert("policy_audit_gap", observed_increment=True)
+
+
+async def note_governed_request_without_evidence_async(route: str) -> None:
+    """The same, for callers already on an event loop.
+
+    ``sdp.api``'s observability middleware is ``async``, so the synchronous
+    form's bounded join ran on the loop thread and serialized every concurrent
+    request behind one firing request - measured, a 10 ms ticker gapped to
+    261.26 ms. See :func:`_route_alert_async`. The counting half is identical
+    and inline; only the wait moves.
+    """
+    _count_governed_request_without_evidence(route)
+    await _route_alert_async("policy_audit_gap", observed_increment=True)
 
 
 def governed_evidence_gap_report() -> dict[str, Any]:
@@ -627,8 +652,14 @@ def _deliver_alert(rule_id: str, webhook_url: str, payload: bytes, generation: i
         _bump_alert_counter("succeeded", rule_id, generation)
 
 
-def _route_alert(rule_id: str, *, observed_increment: bool) -> None:
-    """Deliver at most one alert for this rule's current firing episode.
+def _begin_alert_delivery(
+    rule_id: str, *, observed_increment: bool
+) -> threading.Thread | None:
+    """Advance the latch and start delivery; return the thread left to settle.
+
+    Returns ``None`` when there is nothing to wait for - the rule is not firing,
+    it was already firing, or no webhook is configured - so both call shapes
+    below share one definition of "is this a transition".
 
     ``observed_increment`` says whether the caller's own observation moved the
     rule's counter. It is what keeps the suppression count honest: every
@@ -641,12 +672,12 @@ def _route_alert(rule_id: str, *, observed_increment: bool) -> None:
         latched = _ALERT_ROUTING["latched"]
         if not firing:
             latched.discard(rule_id)
-            return
+            return None
         if rule_id in latched:
             if observed_increment:
                 suppressed = _ALERT_ROUTING["suppressed"]
                 suppressed[rule_id] = suppressed.get(rule_id, 0) + 1
-            return
+            return None
         latched.add(rule_id)
         transitions = _ALERT_ROUTING["transitions"]
         transitions[rule_id] = transitions.get(rule_id, 0) + 1
@@ -659,7 +690,7 @@ def _route_alert(rule_id: str, *, observed_increment: bool) -> None:
         # is skipped. An unset variable has to make routing a no-op rather than
         # a failed POST - the test suite itself drives this condition, so a rule
         # that posts when unconfigured is a rule that posts from CI.
-        return
+        return None
     worker = threading.Thread(
         target=_deliver_alert,
         args=(rule_id, webhook_url, _alert_payload(rule_id), generation),
@@ -667,7 +698,45 @@ def _route_alert(rule_id: str, *, observed_increment: bool) -> None:
         daemon=True,
     )
     worker.start()
-    worker.join(ALERT_HANDSHAKE_BUDGET_SECONDS)
+    return worker
+
+
+def _route_alert(rule_id: str, *, observed_increment: bool) -> None:
+    """Deliver at most one alert for this rule's episode, from a plain thread.
+
+    The join is what makes "exactly one POST" observable at the evaluation site,
+    and it blocks the calling thread for at most the handshake budget. Correct
+    for ``connectors.connector_probe``, which FastAPI runs in an ``anyio``
+    worker thread because its route handler is ``def``, and for every direct
+    caller. **Not** correct on an event loop: use
+    :func:`_route_alert_async` there.
+    """
+    worker = _begin_alert_delivery(rule_id, observed_increment=observed_increment)
+    if worker is not None:
+        worker.join(ALERT_HANDSHAKE_BUDGET_SECONDS)
+
+
+async def _route_alert_async(rule_id: str, *, observed_increment: bool) -> None:
+    """The same, with the wait awaited off the loop instead of blocking it.
+
+    The transition bookkeeping is a few dict writes under a lock and stays
+    inline; only the join is offloaded, which is the same split
+    ``record_request_observation_async`` makes for the sink's blocking write.
+
+    Measured on the first implementation, which joined inline from the async
+    middleware: against a socket that accepts the handshake and never answers,
+    at a 5000 ms alert timeout, a 10 ms asyncio ticker gapped to **261.26 ms**
+    while the call itself took 252.52 ms - the loop was blocked for the whole
+    budget, so every concurrent request serialized behind one firing request.
+    The control, with no webhook configured, gapped 10.50 ms.
+
+    That is the defect this repository already fixed once for the log sink, in
+    the same middleware function, two lines above the comment that records it -
+    which is why the fix here is the same device rather than a new one.
+    """
+    worker = _begin_alert_delivery(rule_id, observed_increment=observed_increment)
+    if worker is not None:
+        await to_thread.run_sync(worker.join, ALERT_HANDSHAKE_BUDGET_SECONDS)
 
 
 def alert_routing_state() -> dict[str, Any]:

@@ -570,10 +570,13 @@ def test_the_alert_webhook_value_is_read_one_way_and_stashed_nowhere() -> None:
         if isinstance(node, ast.FunctionDef)
         and any(id(inner) in reading_nodes for inner in ast.walk(node))
     }
-    assert enclosing == {"_sink_status", "alert_routing_state", "_route_alert"}, (
+    assert enclosing == {"_sink_status", "alert_routing_state", "_begin_alert_delivery"}, (
         "the alert webhook is read outside the three functions that need it - "
         "the two published status fields and the delivery decision - so there is "
-        f"a fourth consumer to account for: {sorted(enclosing)}"
+        f"a fourth consumer to account for: {sorted(enclosing)}. The decision "
+        "moved from _route_alert to _begin_alert_delivery when the wait was "
+        "split into a synchronous and an awaited form, and this assertion is "
+        "what reported the move rather than letting it pass."
     )
     assert len(getenv_reads) == len(enclosing), (
         "one of those functions reads the variable more than once; a second read "
