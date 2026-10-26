@@ -642,13 +642,22 @@ def _alert_payload(rule_id: str) -> bytes:
     return json.dumps(body, ensure_ascii=False, sort_keys=True).encode("utf-8")
 
 
-def _bump_alert_counter(kind: str, rule_id: str, generation: int) -> None:
-    """Add one to a per-rule routing counter, unless the episode has been reset."""
+def _bump_alert_counter(kind: str, rule_id: str, generation: int) -> bool:
+    """Add one to a per-rule routing counter, unless the episode has been reset.
+
+    Returns whether the write applied, so a caller with a *second* thing to
+    record for the same outcome can drop that too. The retained failure ring had
+    no such guard: a thread still waiting on a webhook from a reset episode kept
+    its counter write discarded and appended its failure anyway, so the
+    published ``alert_delivery`` block showed ``deliveries_failed: 0`` beside a
+    retained failure for a rule whose counters were all zero.
+    """
     with _ALERT_ROUTING_LOCK:
         if generation != _ALERT_ROUTING["generation"]:
-            return
+            return False
         bucket = _ALERT_ROUTING[kind]
         bucket[rule_id] = bucket.get(rule_id, 0) + 1
+        return True
 
 
 def record_alert_routing_error(rule_id: str, stage: str, error_type: str) -> None:
@@ -682,7 +691,12 @@ def _deliver_alert(rule_id: str, webhook_url: str, payload: bytes, generation: i
     is counted after, and discarded if the episode was reset while this thread
     was waiting.
     """
-    _bump_alert_counter("attempted", rule_id, generation)
+    if not _bump_alert_counter("attempted", rule_id, generation):
+        # The episode was reset while this thread was starting. The POST has not
+        # been sent yet and belongs to an episode nothing is counting, so it is
+        # not sent at all - in the test suite it would otherwise arrive at the
+        # next case's double.
+        return
     stage = "configuration"
     try:
         url, headers = _alert_request_parts(webhook_url)
@@ -699,8 +713,8 @@ def _deliver_alert(rule_id: str, webhook_url: str, payload: bytes, generation: i
         # ``OSError`` from inside ``connector_probe`` - the governed probe
         # answered 500 through a real worker and left +1 policy decision with
         # +0 audit events: a decision it never audited.
-        _bump_alert_counter("failed", rule_id, generation)
-        record_alert_routing_error(rule_id, stage, type(exc).__name__)
+        if _bump_alert_counter("failed", rule_id, generation):
+            record_alert_routing_error(rule_id, stage, type(exc).__name__)
     else:
         _bump_alert_counter("succeeded", rule_id, generation)
 
@@ -820,13 +834,22 @@ def alert_routing_state() -> dict[str, Any]:
 
 
 def _alert_delivery_fields(rule_id: str) -> dict[str, Any]:
-    """The per-rule delivery facts the manifest publishes next to the condition."""
+    """The per-rule delivery facts the manifest publishes next to the condition.
+
+    Each key names the counter it reads. ``alerts_delivered`` did not: it read
+    ``attempted``, so a webhook that refused every POST published
+    ``alerts_delivered: 1`` next to ``alerts_failed: 1`` for the same single
+    POST, and ``deliveries_succeeded`` - which did hold the honest number - was
+    read by nothing. An attempt is not a delivery, and a published name that
+    says otherwise is the one defect class this product exists to refuse.
+    """
     if rule_id not in _ROUTABLE_ALERT_RULES:
         return {"routable": False}
     with _ALERT_ROUTING_LOCK:
         return {
             "routable": True,
-            "alerts_delivered": _ALERT_ROUTING["attempted"].get(rule_id, 0),
+            "alerts_attempted": _ALERT_ROUTING["attempted"].get(rule_id, 0),
+            "alerts_succeeded": _ALERT_ROUTING["succeeded"].get(rule_id, 0),
             "alerts_failed": _ALERT_ROUTING["failed"].get(rule_id, 0),
             "increments_suppressed": _ALERT_ROUTING["suppressed"].get(rule_id, 0),
         }
@@ -1260,6 +1283,10 @@ def build_observability_manifest() -> dict[str, Any]:
     controls = enterprise_controls_manifest()
     request_observations = list_request_observations(limit=25)
     export_errors = list_observability_export_errors()
+    # One snapshot, read twice: the three alert gauges below and the
+    # ``alert_delivery`` block are the same numbers, and taking them separately
+    # let one document disagree with itself across a concurrent delivery.
+    _alert_state = alert_routing_state()
 
     return {
         "service": "semantic-data-portal",
@@ -1315,7 +1342,9 @@ def build_observability_manifest() -> dict[str, Any]:
             "connector_probe_failures_total": connector_probe_failure_report()[
                 "observed_total"
             ],
-            "alerts_delivered_total": alert_routing_state()["deliveries_attempted"],
+            "alerts_attempted_total": _alert_state["deliveries_attempted"],
+            "alerts_succeeded_total": _alert_state["deliveries_succeeded"],
+            "alerts_failed_total": _alert_state["deliveries_failed"],
         },
         # No per-request feed on an unauthenticated manifest. Each observation
         # carries the caller's actor and tenant plus the route - which embeds the
@@ -1345,7 +1374,7 @@ def build_observability_manifest() -> dict[str, Any]:
         # published, redacted or otherwise: the hostname of the operator's
         # paging endpoint is not a fact about this service's governance, and
         # this surface answers anonymously.
-        "alert_delivery": alert_routing_state(),
+        "alert_delivery": _alert_state,
         "alerts": [
             {
                 "id": "policy_audit_gap",
@@ -1459,9 +1488,15 @@ def prometheus_metrics_text() -> str:
         "# HELP sdp_connector_probe_failures_total Connector probes whose verdict basis failed for a reason this build owns.",
         "# TYPE sdp_connector_probe_failures_total gauge",
         f"sdp_connector_probe_failures_total {metrics['connector_probe_failures_total']}",
-        "# HELP sdp_alerts_delivered_total Alert deliveries attempted at the configured webhook, one per firing episode per rule.",
-        "# TYPE sdp_alerts_delivered_total gauge",
-        f"sdp_alerts_delivered_total {metrics['alerts_delivered_total']}",
+        "# HELP sdp_alerts_attempted_total Alert deliveries attempted at the configured webhook, one per firing episode per rule.",
+        "# TYPE sdp_alerts_attempted_total gauge",
+        f"sdp_alerts_attempted_total {metrics['alerts_attempted_total']}",
+        "# HELP sdp_alerts_succeeded_total Attempted deliveries the webhook accepted. Page on attempted minus this, not on attempted.",
+        "# TYPE sdp_alerts_succeeded_total gauge",
+        f"sdp_alerts_succeeded_total {metrics['alerts_succeeded_total']}",
+        "# HELP sdp_alerts_failed_total Attempted deliveries that failed before or during the POST.",
+        "# TYPE sdp_alerts_failed_total gauge",
+        f"sdp_alerts_failed_total {metrics['alerts_failed_total']}",
         "",
     ]
     return "\n".join(lines)

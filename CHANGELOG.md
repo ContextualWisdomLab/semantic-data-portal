@@ -62,6 +62,45 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 아니라 동시 편집이었습니다. Atheris(`fuzz/fuzz_query_safety.py`)는 로컬에 wheel이 없어
 실행하지 않았습니다 — 같은 invariant의 Hypothesis 미러가 `tests/fuzz`에서 돕니다.
 
+### Fixed — 실패한 alert를 "전달됨"으로 게시했습니다. 이름이 읽는 카운터와 달랐습니다 (high)
+
+`_alert_delivery_fields`가 게시 키 `alerts_delivered`를 `_ALERT_ROUTING["attempted"]`에
+물렸고, `metrics.alerts_delivered_total`과 `sdp_alerts_delivered_total` gauge도 같은 시도
+횟수를 읽었습니다. 정직한 숫자를 담고 있던 `deliveries_succeeded`는 **아무도 읽지
+않았습니다.** 그래서 webhook이 거부한 POST 한 번이 `alerts_delivered: 1`과
+`alerts_failed: 1`로 **같은 POST를 두 번** 게시하고, gauge는 1을 내보냈습니다. gauge의 HELP
+문구는 "attempted"라고 적혀 있었고 이름은 "delivered"였으며, per-rule JSON 키에는 그런
+단서조차 없었습니다.
+
+이름을 읽는 카운터로 고쳤습니다: per-rule은 `alerts_attempted`·`alerts_succeeded`·
+`alerts_failed`, metrics는 `alerts_attempted_total`·`alerts_succeeded_total`·
+`alerts_failed_total`, gauge는 셋 모두 내보냅니다(이전에는 실패 gauge가 아예 없어서
+운영자가 gauge만 보고는 거부된 전달을 알 수 없었습니다). `succeeded` gauge의 HELP에
+"attempted에서 이 값을 빼서 페이지하라"고 적었습니다.
+
+매니페스트는 `alert_routing_state()`를 **한 번만** 읽고 세 gauge와 `alert_delivery` 블록이
+그 한 snapshot을 공유합니다. 두 번 읽으면 전달이 진행되는 동안 한 문서가 자기와 다른 숫자를
+담을 수 있습니다.
+
+같은 bookkeeping의 두 번째 결함: 보존 실패 ring에 generation 가드가 없었습니다. 카운터
+쓰기는 reset된 episode의 것을 버리는데 ring은 그대로 append했으므로, 게시된
+`alert_delivery`가 `deliveries_failed: 0` 옆에 그 rule의 보존 실패를 함께 들고 있을 수
+있었습니다 — 문서가 자기와 어긋나는 것, 이 필드가 존재하는 이유 그 자체입니다.
+`_bump_alert_counter`가 적용 여부를 돌려주고 ring append가 그것을 따릅니다. 시작 시점에
+이미 stale한 스레드는 **POST 자체를 하지 않습니다**: POST는 아직 프로세스를 떠나지 않았고,
+아무도 세지 않는 episode의 전달이며, 이 스위트에서는 다음 테스트의 double에 도착합니다.
+
+**내 테스트에 또 구멍이 있었습니다(이 주기 네 번째).** ring 가드 테스트의 첫 판은 stale
+generation을 처음부터 건네줬고, 가드를 지워도 초록이었습니다 — 시작 시점 stale 스레드는
+ring까지 가지도 않으므로 그 테스트는 가드를 전혀 지나지 않았습니다. reset이 **POST가
+비행 중일 때** 들어와야 실패 경로가 stale generation으로 실행됩니다. webhook double이
+`reset_alert_routing()`을 호출한 뒤 거부하도록 고쳤고, 그 뒤에 가드를 지우면 빨개집니다.
+
+증거: 세 수리를 각각 되돌렸습니다. M1(이름을 `alerts_delivered`로 복원): firing-discipline
+2건 + 응답 계약 1건 red. M2(ring 가드 제거): 고친 테스트 1건 red(고치기 전에는 green —
+위 문단). M3(stale 스레드도 POST): 1건 red. 전체 정순 `pytest` 1336 passed, 15 skipped
+(1333에서 +3).
+
 ### Security — 리다이렉트를 따라가며 운영자 자격증명을 다른 authority로 다시 보냈습니다 (high)
 
 `sdp.observability`의 http(s) 내보내기 경로 **둘 다** — 로그 싱크와 alert webhook — 설정된
@@ -461,6 +500,9 @@ control 행 중 19개가 `proof_route_served`에 기대고 있다는 사실을 `
 `alert_delivery`가 실측 전이·전달·억제 횟수를 게시하고, 규칙마다 `routable`·
 `alerts_delivered`·`alerts_failed`·`increments_suppressed`가 붙고, `/metrics`가
 `sdp_connector_probe_failures_total`·`sdp_alerts_delivered_total`을 내보냅니다.
+(뒤 항목에서 `alerts_delivered`/`sdp_alerts_delivered_total`은 **시도** 횟수를 읽고
+있었으므로 이름을 고쳤습니다 — 지금 이름은 `alerts_attempted`/`alerts_succeeded`/
+`alerts_failed`와 세 gauge입니다.)
 alert **대상 호스트는 redact해서도 게시하지 않습니다** — log sink가 redacted `target`을
 게시하는 이유(설정 오류와 미설정을 구별)는 `invalid_configuration`과
 `alert_webhook_routing`으로 이미 충족되고, 운영자의 paging endpoint 호스트는 이 서비스의

@@ -554,6 +554,125 @@ def test_the_manifest_publishes_delivery_rather_than_claiming_it(
         alert for alert in manifest["alerts"] if alert["id"] == "policy_audit_gap"
     )
     assert gap["routable"] is True
-    assert gap["alerts_delivered"] == 1
+    assert gap["alerts_attempted"] == 1
+    assert gap["alerts_succeeded"] == 1
+    assert gap["alerts_failed"] == 0
     assert gap["increments_suppressed"] == 24
     assert len(configured_webhook) == 1
+
+
+def test_a_refused_post_is_not_published_as_a_delivered_alert(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The counter a published name reads has to be the counter it names.
+
+    ``alerts_delivered`` read ``attempted``, so one POST the webhook refused
+    published ``alerts_delivered: 1`` beside ``alerts_failed: 1`` - the same
+    single POST counted as both - while ``deliveries_succeeded``, which held the
+    honest number, was read by nothing. ``metrics.alerts_delivered_total`` and
+    the ``sdp_alerts_delivered_total`` gauge read the same attempt count, so an
+    operator paging on the gauge's absence of movement had no signal at all.
+
+    Driven against a webhook that refuses every POST, which is the state the
+    old names could not express.
+    """
+
+    def _refuse(request, timeout=None):
+        """Refuse the POST the way an unreachable webhook does."""
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(obs, "alert_urlopen", _refuse)
+    monkeypatch.setenv("SDP_ALERT_WEBHOOK_URL", "https://alerts.example.net/hook")
+    _drive_gap_increments(1)
+
+    manifest = obs.build_observability_manifest()
+    gap = next(
+        alert for alert in manifest["alerts"] if alert["id"] == "policy_audit_gap"
+    )
+    assert gap["alerts_attempted"] == 1
+    assert gap["alerts_succeeded"] == 0, (
+        "the webhook refused the POST; nothing was delivered"
+    )
+    assert gap["alerts_failed"] == 1
+    assert "alerts_delivered" not in gap, (
+        "a key named for a delivery must not be published from the attempt count"
+    )
+
+    metrics = manifest["metrics"]
+    assert metrics["alerts_attempted_total"] == 1
+    assert metrics["alerts_succeeded_total"] == 0
+    assert metrics["alerts_failed_total"] == 1
+    assert "alerts_delivered_total" not in metrics
+
+    exported = obs.prometheus_metrics_text()
+    assert "sdp_alerts_attempted_total 1" in exported
+    assert "sdp_alerts_succeeded_total 0" in exported
+    assert "sdp_alerts_failed_total 1" in exported
+    assert "sdp_alerts_delivered_total" not in exported, (
+        "a gauge whose HELP text said attempted and whose name said delivered"
+    )
+
+
+def test_a_reset_episodes_thread_writes_into_neither_ring(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A delivery whose episode was reset mid-flight records nothing.
+
+    The counter writes were already guarded by the generation; the retained
+    failure ring was not, so a thread still waiting on a webhook from a reset
+    episode had its counter write discarded and appended its failure anyway. The
+    published block then held ``deliveries_failed: 0`` beside a retained failure
+    for a rule whose counters were all zero - a document disagreeing with
+    itself, which is the shape this field exists to refuse.
+
+    The reset has to land **while the POST is in flight**, which is the only
+    way the failure path is reached with a stale generation: the attempt is
+    counted before the POST, and a thread that is already stale at that point
+    returns without sending. A first attempt at this test passed a stale
+    generation in from the start and was green with the guard deleted - it never
+    reached the ring at all. The webhook double resets the episode and then
+    refuses, which is exactly the race.
+    """
+
+    def _reset_then_refuse(request, timeout=None):
+        """Reset the episode mid-flight, then refuse the POST."""
+        obs.reset_alert_routing()
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(obs, "alert_urlopen", _reset_then_refuse)
+    obs.reset_alert_routing()
+    current = obs._ALERT_ROUTING["generation"]
+
+    obs._deliver_alert(
+        "policy_audit_gap", "https://alerts.example.net/hook", b"{}", current
+    )
+
+    state = obs.alert_routing_state()
+    assert state["deliveries_attempted"] == 0, (
+        "the reset cleared the attempt, so nothing from that episode is counted"
+    )
+    assert state["deliveries_failed"] == 0
+    assert state["retained_failures"] == 0, (
+        "the failure ring kept a row for an episode whose counters were "
+        f"discarded: {obs.list_alert_routing_errors()}"
+    )
+
+
+def test_a_stale_thread_does_not_post_at_all(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Nothing is sent for an episode nothing is counting.
+
+    The POST has not left the process when the generation is first checked, so
+    the honest outcome is not to send it. In this suite the alternative is
+    visible: the POST arrives at the *next* test's double.
+    """
+    posts = _alert_seam(monkeypatch)
+    obs.reset_alert_routing()
+    stale = obs._ALERT_ROUTING["generation"] - 1
+
+    obs._deliver_alert(
+        "policy_audit_gap", "https://alerts.example.net/hook", b"{}", stale
+    )
+
+    assert posts == [], f"a reset episode's thread still POSTed: {posts}"
