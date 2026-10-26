@@ -801,17 +801,59 @@ def test_the_published_409_description_enumerates_every_cause_the_code_raises() 
     from sdp.api_error_contract import REFUSAL_DESCRIPTIONS
 
     description = REFUSAL_DESCRIPTIONS[409]
-    markers = [int(match) for match in re.findall(r"\((\d)\)", description)]
-    enumerated = sorted(set(markers))
-    assert enumerated == list(range(1, len(enumerated) + 1)), markers
-    assert f"{_COUNT_WORDS[len(enumerated)]} 가지" in description, description
-    missing = {
-        fragment: raiser
-        for fragment, raiser in _409_CAUSES.items()
-        if fragment not in description
-    }
-    assert not missing, missing
-    assert len(enumerated) == len(_409_CAUSES), (enumerated, sorted(_409_CAUSES))
+    pieces = re.split(r"\((\d)\)", description)
+    # pieces = [preamble, "1", text1, "2", text2, ...]; the numbered items are
+    # the pairs after the preamble.
+    numbered = [
+        (int(pieces[index]), pieces[index + 1])
+        for index in range(1, len(pieces) - 1, 2)
+    ]
+    expected_count = len(_409_CAUSES)
+    causes = numbered[:expected_count]
+    back_references = numbered[expected_count:]
+
+    assert [number for number, _ in causes] == list(range(1, expected_count + 1)), (
+        "the numbered items do not run 1..n before the back-references",
+        numbered,
+    )
+    assert f"{_COUNT_WORDS[expected_count]} 가지" in description, description
+
+    # **Positional.** Fragment k must land in item k, not merely somewhere in the
+    # string. Checked only for membership, the document could be reordered or a
+    # cause swapped out with every assertion satisfied - demonstrated twice
+    # against the previous version, both with the whole suite green:
+    #
+    #   * the causes reordered so the digest cause became (6), leaving the
+    #     trailing "(2)에서 형식이 잘못된 digest는 ... 400이다" pointing at the
+    #     node-kind conflict instead - a published cross-reference naming the
+    #     wrong cause, served by GET /openapi.json;
+    #   * cause (4) replaced by the alias conflict while cause (3) was reworded
+    #     to carry the fragment "dataset id", so a documented cause vanished and
+    #     the fragment census still passed.
+    #
+    # Nothing tied fragment k to marker k, which is the same shape as comparing
+    # a list against itself.
+    for index, (fragment, raiser) in enumerate(_409_CAUSES.items()):
+        number, text = causes[index]
+        assert fragment in text, (
+            f"cause ({number}) should be {raiser} and does not contain "
+            f"{fragment!r}: {text.strip()!r}"
+        )
+
+    # And the back-reference points at the digest cause, which is the one whose
+    # malformed-input case is a 400 rather than a 409. Renumbering the list
+    # without moving this is how it goes stale.
+    digest_number = next(
+        number
+        for (number, text) in causes
+        if "content digest" in text
+    )
+    assert back_references, "the 400-vs-409 back-reference is gone"
+    assert [number for number, _ in back_references] == [digest_number], (
+        "the back-reference does not point at the digest cause",
+        back_references,
+        digest_number,
+    )
     # And the causes are really reachable, so the document is not describing
     # something that cannot happen. Two of the six, end to end:
     assert client.post("/catalog/datasets", json=_payload("문서용중복셋")).status_code == 200
