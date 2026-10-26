@@ -73,6 +73,7 @@ adds none. That is also what keeps them meaningful after the feature lands.
 
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 import pytest
@@ -676,3 +677,73 @@ def test_a_stale_thread_does_not_post_at_all(
     )
 
     assert posts == [], f"a reset episode's thread still POSTed: {posts}"
+
+
+def test_a_stale_not_firing_observation_cannot_unlatch_a_live_episode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The decision has to be applied in the order the observations were taken.
+
+    ``firing`` was read **outside** the lock that acts on it. So an evaluation
+    that observed "not firing" first and acquired the lock second discarded a
+    latch a later observation had just set, and the next increment re-latched
+    and sent a second POST for the same episode. The published bound - at most
+    one POST per firing episode per rule, so at most two per worker between
+    resets - was therefore not an invariant.
+
+    Made deterministic by a report double that blocks inside the read: the
+    stale observer is in the middle of its report when the live one evaluates.
+    With the read inside the lock the stale observer holds the lock while it
+    waits, so the live evaluation cannot interleave at all; with the read
+    outside it, the discard lands after the latch.
+    """
+    posts = _alert_seam(monkeypatch)
+    monkeypatch.setenv("SDP_ALERT_WEBHOOK_URL", "https://alerts.example.net/hook")
+    obs.reset_alert_routing()
+    obs._count_governed_request_without_evidence("GET /catalog/datasets/{id}")
+
+    live = obs._ROUTABLE_ALERT_RULES["policy_audit_gap"]
+    entered = threading.Event()
+    released = threading.Event()
+    seen: list[int] = []
+
+    def _report() -> dict[str, Any]:
+        """Answer "not firing" slowly the first time, honestly afterwards."""
+        seen.append(1)
+        if len(seen) == 1:
+            entered.set()
+            released.wait(1.0)
+            return {
+                "observed_total": 0,
+                "firing": False,
+                "routes": {},
+                "measurement_window": "this worker, since start",
+            }
+        return live()
+
+    monkeypatch.setitem(obs._ROUTABLE_ALERT_RULES, "policy_audit_gap", _report)
+
+    stale = threading.Thread(
+        target=obs._route_alert,
+        args=("policy_audit_gap",),
+        kwargs={"observed_increment": False},
+        daemon=True,
+    )
+    stale.start()
+    assert entered.wait(2.0), "the stale observer never reached its report"
+
+    def _live_evaluation() -> None:
+        """The observation that finds the rule firing and latches it."""
+        obs._route_alert("policy_audit_gap", observed_increment=True)
+
+    latcher = threading.Thread(target=_live_evaluation, daemon=True)
+    latcher.start()
+    released.set()
+    latcher.join(5)
+    stale.join(5)
+
+    assert "policy_audit_gap" in obs._ALERT_ROUTING["latched"], (
+        "a not-firing observation taken before the latch discarded it after, so "
+        "the next increment will send a second POST for the same episode; "
+        f"posts so far: {len(posts)}"
+    )

@@ -505,6 +505,10 @@ _ALERT_ROUTING: dict[str, Any] = {
     "attempted": {},
     "succeeded": {},
     "failed": {},
+    # Not per-rule and not a delivery count: an evaluation that raised on the
+    # request thread attempted no POST, so it belongs beside the delivery
+    # counts rather than inside them. The retained ring carries the rule id.
+    "evaluation_failures": 0,
 }
 _ALERT_ROUTING_LOCK = threading.Lock()
 
@@ -642,6 +646,12 @@ def _alert_payload(rule_id: str) -> bytes:
     return json.dumps(body, ensure_ascii=False, sort_keys=True).encode("utf-8")
 
 
+def _count_alert_evaluation_failure() -> None:
+    """Count one alert evaluation that raised on the request thread."""
+    with _ALERT_ROUTING_LOCK:
+        _ALERT_ROUTING["evaluation_failures"] += 1
+
+
 def _bump_alert_counter(kind: str, rule_id: str, generation: int) -> bool:
     """Add one to a per-rule routing counter, unless the episode has been reset.
 
@@ -722,7 +732,36 @@ def _deliver_alert(rule_id: str, webhook_url: str, payload: bytes, generation: i
 def _begin_alert_delivery(
     rule_id: str, *, observed_increment: bool
 ) -> threading.Thread | None:
-    """Advance the latch and start delivery; return the thread left to settle.
+    """Advance the latch and start delivery, absorbing anything that raises.
+
+    This runs on the **request** thread. ``_deliver_alert``'s broad ``except``
+    covers only the body of the spawned thread, which cannot reach the request
+    anyway; everything done here - the rule's own report call, building the
+    payload, starting the thread - was unguarded, so a raise escaped into a
+    governed request and reproduced the precedent that docstring says it
+    forecloses: the governed probe answered 500 through a real worker and left
+    +1 policy decision with +0 audit events, because ``api.py`` records the
+    audit event only after ``connector_probe`` returns.
+
+    An evaluation that raises is retained with stage ``evaluation`` and counted
+    in ``evaluation_failures`` rather than in ``deliveries_failed``: no POST was
+    attempted, and counting one would publish ``failed`` without a matching
+    ``attempted``.
+    """
+    try:
+        return _begin_alert_delivery_locked(
+            rule_id, observed_increment=observed_increment
+        )
+    except Exception as exc:  # noqa: BLE001 - see the docstring above
+        _count_alert_evaluation_failure()
+        record_alert_routing_error(rule_id, "evaluation", type(exc).__name__)
+        return None
+
+
+def _begin_alert_delivery_locked(
+    rule_id: str, *, observed_increment: bool
+) -> threading.Thread | None:
+    """Decide the transition and start delivery; return the thread to settle.
 
     Returns ``None`` when there is nothing to wait for - the rule is not firing,
     it was already firing, or no webhook is configured - so both call shapes
@@ -733,9 +772,19 @@ def _begin_alert_delivery(
     connector probe calls ``note_connector_probe``, most of them reporting no
     failure, and counting those as suppressed increments would publish a
     "thousand gap events suppressed" figure made of healthy traffic.
+
+    The rule's own report is read **inside** the lock. Read outside it, the
+    observation and the decision it drives could be applied out of order: a
+    thread that observed "not firing" first and acquired the lock second
+    discarded a latch a later observation had just set, and the next increment
+    re-latched and sent a second POST. The published bound - at most one POST
+    per firing episode per rule, so at most two per worker between resets - was
+    therefore not an invariant. Both reports are in-memory dict reads with no
+    I/O and no locks of their own, so serializing them costs a few microseconds
+    and buys the ordering.
     """
-    firing = bool(_ROUTABLE_ALERT_RULES[rule_id]()["firing"])
     with _ALERT_ROUTING_LOCK:
+        firing = bool(_ROUTABLE_ALERT_RULES[rule_id]()["firing"])
         latched = _ALERT_ROUTING["latched"]
         if not firing:
             latched.discard(rule_id)
@@ -813,6 +862,7 @@ def alert_routing_state() -> dict[str, Any]:
             kind: sum(_ALERT_ROUTING[kind].values())
             for kind in ("transitions", "suppressed", "attempted", "succeeded", "failed")
         }
+        evaluation_failures = _ALERT_ROUTING["evaluation_failures"]
     return {
         "webhook_configured": bool(os.getenv("SDP_ALERT_WEBHOOK_URL", "").strip()),
         "routable_rules": len(ROUTABLE_ALERT_RULE_IDS),
@@ -829,6 +879,10 @@ def alert_routing_state() -> dict[str, Any]:
         "deliveries_attempted": counts["attempted"],
         "deliveries_succeeded": counts["succeeded"],
         "deliveries_failed": counts["failed"],
+        "evaluation_failures": evaluation_failures,
+        # Rows, not outcomes: this ring is bounded at 50 and holds both the
+        # delivery failures and the evaluation failures above, so it is the
+        # smaller of their sum and its own cap.
         "retained_failures": len(_ALERT_ERRORS),
     }
 
@@ -867,6 +921,7 @@ def reset_alert_routing() -> None:
         _ALERT_ROUTING["latched"] = set()
         for kind in ("transitions", "suppressed", "attempted", "succeeded", "failed"):
             _ALERT_ROUTING[kind] = {}
+        _ALERT_ROUTING["evaluation_failures"] = 0
     _ALERT_ERRORS.clear()
     _CONNECTOR_PROBE_FAILURES.clear()
     _CONNECTOR_PROBE_VERIFICATIONS.clear()

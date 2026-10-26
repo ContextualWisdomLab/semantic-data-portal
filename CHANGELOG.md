@@ -62,6 +62,54 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 아니라 동시 편집이었습니다. Atheris(`fuzz/fuzz_query_safety.py`)는 로컬에 wheel이 없어
 실행하지 않았습니다 — 같은 invariant의 Hypothesis 미러가 `tests/fuzz`에서 돕니다.
 
+### Fixed — alert 경로의 예외 가드가 요청 스레드에 없었고, 래치 결정이 관찰 순서를 지키지 않았습니다 (high)
+
+**가드가 엉뚱한 스레드에 있었습니다.** `_deliver_alert`의 넓은 `except Exception`은 스폰된
+스레드의 본문만 감쌉니다 — 그 스레드는 애초에 요청에 닿을 수 없습니다. 래치 뒤에 **요청
+스레드가 직접** 하는 일(rule의 report 호출, payload 생성, `worker.start()`)은 가드가
+없었으므로, 거기서 raise가 나면 governed 요청으로 빠져나가 그 `except`의 주석이 스스로
+"막는다"고 적어 둔 전례를 그대로 재현합니다: governed probe가 실제 워커를 통해 500을
+답하고 **policy decision +1, audit event +0** — 감사하지 않은 결정. `api.py`가
+`connector_probe`가 돌아온 **뒤에** audit event를 기록하기 때문입니다.
+
+`_begin_alert_delivery`가 `_begin_alert_delivery_locked`를 감싸고 아무것도 요청으로 새지
+않습니다. 평가 단계에서 raise한 것은 stage `evaluation`으로 보존되고
+`evaluation_failures`에 셉니다 — `deliveries_failed`가 아닙니다. POST를 시도하지 않았으므로
+`failed`에 세면 `attempted` 없는 `failed`를 게시하게 되고, 그것이 바로 위 항목에서 닫은
+자기모순입니다.
+
+**래치 결정이 관찰 순서를 지키지 않았습니다.** `firing`을 lock **밖에서** 읽고 그 결정을
+lock 안에서 적용했으므로, "firing 아님"을 먼저 관찰하고 lock을 나중에 잡은 평가가 그
+사이에 세워진 래치를 지웠습니다. 다음 increment가 다시 래치하고 **같은 episode에 두 번째
+POST**를 보냅니다. 게시된 경계 — rule당 firing episode 하나에 POST 하나, 그래서 reset
+사이에 워커당 최대 둘 — 은 불변식이 아니었습니다. report를 lock **안에서** 읽습니다. 두
+report 모두 I/O도 자체 lock도 없는 메모리 dict 읽기이므로 직렬화 비용은 마이크로초
+단위이고, 사는 것은 순서입니다.
+
+**핸드셰이크 예산과 join이 미들웨어 지점에서 전혀 고정돼 있지 않았습니다.**
+`ALERT_HANDSHAKE_BUDGET_SECONDS`는 firing 요청이 wedged webhook 값을 치르는 **유일한**
+이유인데, 미들웨어 평가 지점의 비용에 대한 단언이 없었습니다. 예산을 지우고(`worker.join()`)
+측정하면 그 호출이 5000 ms alert 타임아웃에 대해 **5012.93 ms**가 걸리고 전체 스위트는
+초록이었습니다 — loop-block 테스트는 tick 간격을 재고, probe-route 테스트는 이 평가 지점이
+있지도 않은 라우트를 잽니다. 바닥도 없었습니다: join이 없으면 호출이 1 ms 안에 돌아오고,
+join이 존재하는 이유인 "평가 지점에서 episode당 POST 하나가 관측 가능하다"는 뒷받침이 없는
+주장이 됩니다. 천장(1000 ms)과 바닥(예산의 60%)을 양쪽 지점에 모두 걸었습니다. sync 지점의
+기존 테스트는 다섯 요청의 최댓값만 재는데 그중 전이는 첫 번째 하나뿐이므로, 바닥은 전이
+요청 단독으로 읽어야 합니다.
+
+`test_the_alert_webhook_value_is_read_one_way_and_stashed_nowhere`의 stash 검사는 **범위**가
+아니라 대상 종류를 물었습니다. 모든 `ast.Name` 대상을 제외했으므로 자기 메시지가 두 번
+이름을 부르는 바로 그 경우 — 모듈 수준 `_WEBHOOK = os.environ.get("SDP_ALERT_WEBHOOK_URL", "")`
+— 를 제외했습니다. 측정: `os.environ.get`을 쓰는 모듈 수준 stash는 위쪽 `os.getenv` 읽기
+집계에도 걸리지 않아 테스트 전체가 초록이었습니다(`os.getenv` 쪽 stash는 읽기/함수 개수
+단언에 걸립니다 — 검사 하나가 멀었던 것이고 테스트 전체가 멀었던 것은 아닙니다. 그렇게
+적습니다). 이제 모듈 수준 `Name`도 stash입니다.
+
+증거: 네 수리를 각각 되돌렸습니다. M1(요청 스레드 가드 제거): 1건 red. M2(양쪽 join에서
+예산 제거): 3건 red(25.99 s). M3(join 자체 제거): 2건 red. M4(`firing`을 lock 밖에서 읽기):
+1건 red. stash 검사는 `os.environ.get` 모듈 stash로 red, 예전 검사로 되돌리면 같은 변형에
+green. 전체 정순 `pytest` 1340 passed, 15 skipped (1336에서 +4).
+
 ### Fixed — 실패한 alert를 "전달됨"으로 게시했습니다. 이름이 읽는 카운터와 달랐습니다 (high)
 
 `_alert_delivery_fields`가 게시 키 `alerts_delivered`를 `_ALERT_ROUTING["attempted"]`에

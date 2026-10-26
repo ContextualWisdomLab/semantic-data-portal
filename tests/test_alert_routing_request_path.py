@@ -628,3 +628,138 @@ def test_alert_latency_cannot_hide_outside_the_published_latency_report(
         "reason",
         f"no alert was routed, so the empty window above is absence, not a bound: {snapshot}",
     )
+
+
+def test_the_handshake_budget_bounds_the_middleware_site_and_the_join_happens(
+    monkeypatch: pytest.MonkeyPatch, black_hole_webhook: str
+) -> None:
+    """Both halves of the wait, at the site that had neither pinned.
+
+    ``ALERT_HANDSHAKE_BUDGET_SECONDS`` is the whole reason a firing request can
+    be charged for a wedged webhook at all, and no test asserted on the cost at
+    the middleware site. Measured with the budget deleted - ``worker.join()``
+    with no argument - this call took **5012.93 ms** against the 5000 ms alert
+    timeout and the whole suite stayed green, because the loop-block test above
+    measures tick gaps and the probe-route test measures a route this evaluation
+    site is not on.
+
+    The floor is the other half. Without the join the call returns in under a
+    millisecond, and "exactly one POST per episode is observable at the
+    evaluation site" - the property the join exists for - would be a claim with
+    nothing behind it. Against a socket that accepts and never answers, the
+    worker cannot finish, so the join waits the whole budget and the measured
+    cost is the budget.
+    """
+    monkeypatch.setenv("SDP_ALERT_WEBHOOK_URL", black_hole_webhook)
+    monkeypatch.setenv("SDP_ALERT_TIMEOUT_MS", ALERT_TIMEOUT_MS)
+    budget_ms = obs.ALERT_HANDSHAKE_BUDGET_SECONDS * 1000
+
+    async def _drive() -> float:
+        """Fire the rule through the async entry point once, timed."""
+        started = time.perf_counter()
+        await obs.note_governed_request_without_evidence_async(
+            "GET /catalog/datasets/{dataset_id}"
+        )
+        return (time.perf_counter() - started) * 1000
+
+    elapsed = asyncio.run(_drive())
+
+    assert elapsed < REQUEST_LATENCY_BOUND_MS, (
+        f"the middleware-site wait cost {elapsed:.2f} ms against a "
+        f"{ALERT_TIMEOUT_MS} ms alert timeout and a {budget_ms:.0f} ms handshake "
+        "budget, so the budget is not bounding this site"
+    )
+    assert elapsed >= budget_ms * 0.6, (
+        f"the middleware-site wait cost {elapsed:.2f} ms against a "
+        f"{budget_ms:.0f} ms budget on a webhook that cannot answer, so the "
+        "delivery was not joined at all and nothing makes one POST per episode "
+        "observable here"
+    )
+
+    snapshot = _wait_for_alert("deliveries_attempted")
+    assert snapshot["deliveries_attempted"] >= 1, snapshot.get(
+        "reason", f"no alert was attempted, so the timing above measures nothing: {snapshot}"
+    )
+
+
+def test_the_probe_routes_first_firing_request_also_waits_for_its_delivery(
+    monkeypatch: pytest.MonkeyPatch, black_hole_webhook: str
+) -> None:
+    """The sync site's join, measured on the transition rather than the burst.
+
+    ``test_a_wedged_alert_webhook_does_not_slow_a_governed_request`` fires five
+    requests and bounds the slowest; only the first is a transition, so four of
+    the five pay nothing and the ceiling holds whether or not the first one
+    waited. The floor has to be read off the transition alone.
+    """
+    monkeypatch.setenv("SDP_ALERT_WEBHOOK_URL", black_hole_webhook)
+    monkeypatch.setenv("SDP_ALERT_TIMEOUT_MS", ALERT_TIMEOUT_MS)
+    budget_ms = obs.ALERT_HANDSHAKE_BUDGET_SECONDS * 1000
+
+    started = time.perf_counter()
+    response = _fire_probe()
+    first_ms = (time.perf_counter() - started) * 1000
+    assert response.status_code == 200, response.text
+
+    started = time.perf_counter()
+    assert _fire_probe().status_code == 200
+    second_ms = (time.perf_counter() - started) * 1000
+
+    assert first_ms >= budget_ms * 0.6, (
+        f"the transition request cost {first_ms:.2f} ms against a "
+        f"{budget_ms:.0f} ms budget on a webhook that cannot answer: the "
+        "delivery was not joined"
+    )
+    assert first_ms < REQUEST_LATENCY_BOUND_MS, f"{first_ms:.2f} ms"
+    assert second_ms < PROBE_BASELINE_MAX_MS * 10, (
+        f"the suppressed request cost {second_ms:.2f} ms; only the transition "
+        "may be charged for the webhook"
+    )
+
+
+def test_an_alert_evaluation_that_raises_leaves_the_governed_request_audited(
+    monkeypatch: pytest.MonkeyPatch, refused_webhook: str
+) -> None:
+    """The guard has to sit on the thread the request is on.
+
+    ``_deliver_alert``'s broad ``except`` wraps the spawned thread's body, which
+    cannot reach the request anyway. Everything the request thread itself does
+    after latching - the rule's report, building the payload, starting the
+    thread - was unguarded, so a raise there escaped into the governed request
+    and reproduced the precedent that ``except``'s own comment says it
+    forecloses: a 500 with +1 policy decision and +0 audit events, because
+    ``api.py`` records the audit event only after ``connector_probe`` returns.
+
+    Driven by making ``_alert_payload`` raise, which is evaluated on the request
+    thread inside the ``args`` tuple of the delivery thread's constructor.
+    """
+
+    def _raise(rule_id: str) -> bytes:
+        """Fail where the request thread builds the payload."""
+        raise OSError("payload serialisation failed")
+
+    monkeypatch.setattr(obs, "_alert_payload", _raise)
+    monkeypatch.setenv("SDP_ALERT_WEBHOOK_URL", refused_webhook)
+    before_audit, before_decisions = _evidence_counts()
+
+    response = _fire_probe(using=raw_client)
+
+    assert response.status_code == 200, response.text
+    after_audit, after_decisions = _evidence_counts()
+    assert (after_audit - before_audit, after_decisions - before_decisions) == (1, 1), (
+        "a governed request that answered through the alert path recorded a "
+        "policy decision it never audited"
+    )
+
+    snapshot = obs.alert_routing_state()
+    assert snapshot["evaluation_failures"] == 1, snapshot
+    assert snapshot["deliveries_attempted"] == 0, (
+        "no POST was attempted, so counting one would publish a delivery that "
+        "did not happen"
+    )
+    assert snapshot["deliveries_failed"] == 0, (
+        "an evaluation failure is not a delivery failure: failed without a "
+        "matching attempted is a document disagreeing with itself"
+    )
+    stages = [row["stage"] for row in obs.list_alert_routing_errors()]
+    assert stages == ["evaluation"], stages

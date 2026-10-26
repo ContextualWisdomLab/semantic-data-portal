@@ -570,31 +570,48 @@ def test_the_alert_webhook_value_is_read_one_way_and_stashed_nowhere() -> None:
         if isinstance(node, ast.FunctionDef)
         and any(id(inner) in reading_nodes for inner in ast.walk(node))
     }
-    assert enclosing == {"_sink_status", "alert_routing_state", "_begin_alert_delivery"}, (
+    assert enclosing == {
+        "_sink_status",
+        "alert_routing_state",
+        "_begin_alert_delivery_locked",
+    }, (
         "the alert webhook is read outside the three functions that need it - "
         "the two published status fields and the delivery decision - so there is "
         f"a fourth consumer to account for: {sorted(enclosing)}. The decision "
         "moved from _route_alert to _begin_alert_delivery when the wait was "
-        "split into a synchronous and an awaited form, and this assertion is "
-        "what reported the move rather than letting it pass."
+        "split into a synchronous and an awaited form, and again into "
+        "_begin_alert_delivery_locked when the request-thread guard was added "
+        "around it. This assertion is what reported each move rather than "
+        "letting it pass."
     )
     assert len(getenv_reads) == len(enclosing), (
         "one of those functions reads the variable more than once; a second read "
         "in the same function is a second chance for the two to drift apart"
     )
 
+    # A stash is about **scope**, not about the kind of target. The first
+    # version of this check excluded every ``ast.Name`` target, which excluded
+    # the one case its own message names twice: a module-level
+    # ``_WEBHOOK = os.environ.get("SDP_ALERT_WEBHOOK_URL", "")`` is a Name, and
+    # it is exactly the module-level store that would put an operator
+    # credential in the set ``GET /enterprise/observability`` answers from. A
+    # function-local Name is a transient and is fine. Measured: that stash
+    # through ``os.environ.get`` - which the ``os.getenv`` read count above does
+    # not see - left the whole test green.
+    module_level = {id(node) for node in tree.body if isinstance(node, ast.Assign)}
     stashes = [
         ast.unparse(target)
         for node in ast.walk(tree)
         if isinstance(node, ast.Assign)
         and "SDP_ALERT_WEBHOOK_URL" in ast.unparse(node.value)
         for target in node.targets
-        if not isinstance(target, ast.Name)
+        if not isinstance(target, ast.Name) or id(node) in module_level
     ]
     assert stashes == [], (
-        "the alert webhook value is assigned into a container or an attribute "
-        f"({stashes}); a module-level store puts an operator credential in the "
-        "set GET /enterprise/observability answers from"
+        "the alert webhook value is stashed outside the function that read it "
+        f"({stashes}); a module-level store, a container or an attribute puts "
+        "an operator credential in the set GET /enterprise/observability "
+        "answers from"
     )
 
 
