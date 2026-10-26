@@ -30,7 +30,7 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 11
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                       1372 passed, 16 skipped
+    pytest                       1392 passed, 23 skipped
     pytest (파일 순서 정/역/난수)  각 1347 passed, 15 skipped — 순서 무관
                                  (정순 · 역순 · seed 11/707/31337; 트리거 가드 커밋 이전 head)
     pytest tests/fuzz            11 passed
@@ -64,6 +64,59 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 백그라운드 측정 중에 트리를 고친 탓에 seed 11이 4건 실패로 나온 일이 있고, 그것은 결함이
 아니라 동시 편집이었습니다. Atheris(`fuzz/fuzz_query_safety.py`)는 로컬에 wheel이 없어
 실행하지 않았습니다 — 같은 invariant의 Hypothesis 미러가 `tests/fuzz`에서 돕니다.
+
+### Fixed — 아무도 계산하지 않는 숫자를 target으로 걸고 `implemented`로 게시했습니다 (medium)
+
+`nl_catalog_search_success`가 `status="implemented"`, `target=">=80 percent"`,
+`cadence="golden set review"`로 게시되고 있었습니다. 측정: 그 식별자는 `src/` 전체에서
+**정확히 한 번** 나옵니다 — 자기 선언입니다. curated question set도, eval harness도, 어떤
+엔드포인트의 값도, 80과 비교하는 코드도 없습니다. 제품이 diligence 독자를 바로 그 표면으로
+안내합니다 — `/enterprise/evidence-pack`이 `/enterprise/kpis`를 `open_proof_endpoints`에
+싣고 이 KPI를 `guardrail_kpis`로 이름까지 부르며, 그 엔드포인트는 미인증 200입니다.
+
+이 저장소는 이 결함군을 **이미 글로 판정해 두었습니다** — README의 `metadata_completeness`
+항목("비교하지 않는 target은 게이트가 아닙니다")과
+`tests/test_catalog_field_forwarding.py::test_the_metadata_completeness_target_is_compared`.
+**그 가드는 `item.id == "metadata_completeness"` 한 건에 묶여 있고 일반화되지 않았습니다.**
+다음 사례가 빠져나간 경로가 정확히 그것입니다. 그래서 이번 수리의 핵심은 KPI 하나가 아니라
+**가드의 일반화**입니다.
+
+적대적 검증이 두 가지를 정정했습니다. (1) 처음 보고는 이것을 "hallucinated dataset 결과를
+묶는 유일한 KPI"라고 불렀는데 **틀렸습니다** — `/llm/search`는 결정적 alias 조회이고
+`dataset_ids`가 카탈로그 인덱스에서 오므로 존재하지 않는 dataset은 **구성상** 나올 수
+없습니다(측정: 해결 불가 질문 → `{"error": "No resolvable ontology term."}`). 측정되지 않는
+양은 **recall**입니다. (2) `status`를 `planned`로 내리는 것도 **틀렸습니다** — 이 KPI가
+가리키는 표면은 출시돼 200을 답하고, 이 저장소는 이미
+"a stale 'this is not implemented' misleads the same buyer as a premature 'this is'"를
+적어 두었습니다. 반대 방향의 같은 결함입니다.
+
+그래서 **feature 상태와 측정 상태를 분리**했습니다. `status`는 표면이 출시됐는지,
+`measured`는 그 숫자를 계산하는지입니다. `measured: true`는 `measurement_surface`
+(`endpoint#key`)로 숫자가 게시되는 위치를 가리키고, 그 포인터는 **라이브 응답에 대해
+해석됩니다** — 해석되지 않는 포인터는 없는 것보다 나쁩니다. `measured: false`이면서
+`status: implemented`이고 target이 숫자를 약속하면 `measurement_gap`이 필수입니다.
+
+"gate가 있으면 measured"라는 단순 규칙은 쓰지 않았습니다. 그 규칙은
+`policy_audit_coverage`와 `validation_pass_rate`를 미측정으로 표시하는데, 둘은 **다른
+이름으로** 게시됩니다(각각 `governed_requests_without_evidence_total` gauge,
+`saleability_gates.metadata_validation_pass_rate`) — 검증이 경고한 "stale denial"을 제가
+그대로 만들 뻔한 지점입니다. 그래서 KPI마다 선언하고 **테스트가 제품에 대해 확인**합니다.
+
+부수로 적어 둡니다: `validation_pass_rate`의 게이트는 비교를 수행하지만 **판정만** 게시하고
+그 뒤의 비율은 게시하지 않습니다(`shacl_validation.validation_pass_rate`는 `None`).
+더 작은 정직성 갭이고 gap 문서에 기록합니다.
+
+**내 테스트가 또 한 번 주장과 부정을 구별하지 못했습니다.** 공개 문구가 "측정되지 않는 것은
+recall이며 hallucination rate가 **아닙니다**"라고 적는데, 제 단언은
+`"hallucination" not in gap`이었으므로 그 **부정문 자체**에 걸려 빨개졌습니다. substring은
+주장과 부정을 구별할 수 없습니다 — 산문에서 숫자를 찾는 것과 같은 실수입니다. 어휘 대신
+**행동**으로 전제를 확인하도록 고쳤습니다(해결 불가 질문이 자산을 지어내지 않는지 실제로
+호출해 봅니다).
+
+증거: 세 변형을 각각 되돌렸습니다. M1(공개를 지우고 `implemented` 유지): 3건 red.
+M2(measured KPI를 해석되지 않는 surface로 지정): 1건 red. M3(measured와 gap을 동시에
+주장): 4건 red. 전체 정순 `pytest` 1392 passed, 23 skipped (1372 passed, 16 skipped에서
++20 통과, skip +7 — 새 가드가 해당 없는 KPI를 skip합니다).
 
 ### Security — `GET /graph/stats`가 인증 없이 다른 테넌트의 스키마 폭을 알려 줬습니다 (high)
 

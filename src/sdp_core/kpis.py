@@ -13,7 +13,28 @@ class SaleabilityKPI(BaseModel):
     source_endpoints: list[str]
     owner: str
     guardrails: list[str] = Field(default_factory=list)
+    # ``status`` is about the **feature**: are the surfaces this KPI names
+    # shipped. It is not about whether anyone computes the number.
     status: str = Field(pattern="^(implemented|planned|external)$")
+    # ``measured`` is the other half, and it was missing. A KPI published
+    # ``implemented`` with a numeric target reads as a measured result, and
+    # ``nl_catalog_search_success`` shipped that way with ``>=80 percent``
+    # while its identifier occurred exactly once in all of ``src/`` - its own
+    # declaration. No golden set, no eval harness, no value on any endpoint.
+    #
+    # Flipping that KPI to ``planned`` would have been the same defect from the
+    # other side: its surfaces are shipped and answer 200, and this repository
+    # already wrote down that "a stale 'this is not implemented' misleads the
+    # same buyer as a premature 'this is'". So feature status and measurement
+    # status are separate fields now.
+    measured: bool = False
+    # Where this KPI's own figure is published, as ``endpoint#key``. Empty when
+    # ``measured`` is false, and checked against the live response - a pointer
+    # that does not resolve is worse than none.
+    measurement_surface: str = ""
+    # Required when the feature is ``implemented``, the target carries a number
+    # and nothing computes it. This is the disclosure that was absent.
+    measurement_gap: str = ""
 
 
 class KPIFramework(BaseModel):
@@ -65,6 +86,10 @@ def enterprise_kpi_framework() -> KPIFramework:
                 owner="data steward",
                 guardrails=["Completeness must not hide failed validation.", "Deprecated datasets stay visible with status."],
                 status="implemented",
+                measured=True,
+                measurement_surface=(
+                    "/enterprise/evidence-pack#saleability_gates.metadata_completeness"
+                ),
             ),
             SaleabilityKPI(
                 id="policy_audit_coverage",
@@ -77,6 +102,11 @@ def enterprise_kpi_framework() -> KPIFramework:
                 owner="security",
                 guardrails=["No preview or query path may bypass policy.", "Audit payloads must not contain secrets."],
                 status="implemented",
+                measured=True,
+                measurement_surface=(
+                    "/enterprise/observability#metrics."
+                    "governed_requests_without_evidence_total"
+                ),
             ),
             SaleabilityKPI(
                 id="demo_setup_minutes",
@@ -103,6 +133,16 @@ def enterprise_kpi_framework() -> KPIFramework:
                 owner="ontology engineer",
                 guardrails=["Hallucinated table or column count must be zero in demo scripts."],
                 status="implemented",
+                measured=False,
+                measurement_gap=(
+                    "이 KPI의 값은 어디에서도 계산되지 않습니다. 선언된 target "
+                    ">=80 percent와 비교되는 코드가 없고, curated question set도 "
+                    "eval harness도 트리에 없습니다(PRD epic E5-S4, 미구현). "
+                    "feature는 동작합니다 — /llm/search는 결정적 alias 조회이고 "
+                    "해결되지 않는 질문에는 자산을 지어내지 않습니다. 측정되지 "
+                    "않는 것은 recall(실제 구매자 질문이 얼마나 해결되는가)이며 "
+                    "hallucination rate가 아닙니다."
+                ),
             ),
             SaleabilityKPI(
                 id="ontology_mapping_coverage",
@@ -134,6 +174,10 @@ def enterprise_kpi_framework() -> KPIFramework:
                 owner="ontology engineer",
                 guardrails=["Proposed mappings are not treated as approved mappings."],
                 status="implemented",
+                measured=True,
+                measurement_surface=(
+                    "/enterprise/evidence-pack#saleability_gates.ontology_mapping_coverage"
+                ),
             ),
             SaleabilityKPI(
                 id="validation_pass_rate",
@@ -150,6 +194,14 @@ def enterprise_kpi_framework() -> KPIFramework:
                 owner="data steward",
                 guardrails=["Critical validation failures block publish."],
                 status="implemented",
+                measured=True,
+                # The comparison runs and its verdict is published; the raw
+                # rate behind it is not, which is a smaller honesty gap
+                # recorded in the gap baseline rather than closed here.
+                measurement_surface=(
+                    "/enterprise/evidence-pack#saleability_gates."
+                    "metadata_validation_pass_rate"
+                ),
             ),
             SaleabilityKPI(
                 id="clean_pr_queue",

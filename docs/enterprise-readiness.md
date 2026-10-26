@@ -38,7 +38,16 @@
 
 - `GET /enterprise/readiness`: 본 문서 기준의 manifest
 - `GET /enterprise/demo-plan`: buyer priority domain, connector 선택, seed dataset, analyst/governance question, 10일 활성화 workflow, acceptance criteria
-- `GET /enterprise/kpis`: 20억 판매 가능성 판단용 primary KPI, guardrail KPI, 목표, 측정 원천
+- `GET /enterprise/kpis`: 20억 판매 가능성 판단용 primary KPI, guardrail KPI, 목표, 측정 원천.
+  각 KPI는 **feature 상태와 측정 상태를 따로** 공표한다 — `status`는 이 KPI가 가리키는
+  표면이 출시됐는지, `measured`는 그 숫자를 실제로 계산하는지이다. `measured: true`는
+  `measurement_surface`(`endpoint#key`)로 그 숫자가 게시되는 위치를 함께 가리키고,
+  `measured: false`이면서 `status: implemented`이고 target이 숫자를 약속하는 KPI는
+  `measurement_gap`으로 **무엇이 측정되지 않는지**를 공표해야 한다. 지금 그런 KPI는
+  `nl_catalog_search_success` 하나다 — feature(`/llm/search`)는 동작하지만 `>=80 percent`와
+  비교되는 코드도, curated question set도 없다(PRD epic `E5-S4`, 미구현).
+  `tests/test_kpi_measurement_disclosure.py`가 **모든 KPI에 대해** 이 규칙을 강제한다 —
+  이전 가드는 `metadata_completeness` 한 건에만 묶여 있어서 다음 사례가 그대로 빠져나갔다.
 - `GET /enterprise/controls`: `sdp_enterprise` feature gate 아래 retention, SSO/OIDC, RBAC, deployment, 중앙 workflow diligence 상태
 - `GET /enterprise/rbac-matrix`: role/action/tenant-scope permission matrix
 - `GET /enterprise/observability`: health, metrics, evidence count, request observation, bodyless structured log sink, alert condition·전달 실측(`alert_delivery`) 운영 증빙

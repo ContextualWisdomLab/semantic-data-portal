@@ -564,7 +564,7 @@ SDP_CONNECTOR_TIMEOUT_MS='2s'          gate 통과, probe 라우트 400
 - `POST /llm/draft-query`
 - `GET /enterprise/readiness`
 - `GET /enterprise/demo-plan`
-- `GET /enterprise/kpis`
+- `GET /enterprise/kpis` — KPI별 `status`(feature 출시 여부)와 `measured`(숫자를 계산하는지)를 따로 공표. `measured: false`인데 `status: implemented`이고 target이 숫자면 `measurement_gap` 필수
 - `GET /enterprise/controls`
 - `GET /enterprise/rbac-matrix`
 - `GET /enterprise/observability`
