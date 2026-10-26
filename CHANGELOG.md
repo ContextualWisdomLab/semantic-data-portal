@@ -2,15 +2,15 @@
 
 이 문서는 `claude/semantic-portal-pr-merge-e5a48k` 브랜치(PR
 [#102](https://github.com/ContextualWisdomLab/semantic-data-portal/pull/102))가
-베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **215개** 커밋 중 122개는
-gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 93개입니다. 이 숫자는 **이
+베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **216개** 커밋 중 122개는
+gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 94개입니다. 이 숫자는 **이
 줄을 담은 커밋을 포함한** 값입니다 — 측정 시점의 210에 이 커밋을 더한 것. 측정 명령:
 
     git rev-list --count origin/docs/product-technical-gap-baseline..HEAD
     git log --format=%H origin/docs/product-technical-gap-baseline..HEAD \
       --name-only -- docs/product-technical-gap-baseline.md | grep -c '^[0-9a-f]\{40\}$'
 
-앞서 적혀 있던 164/112, 186/113, 199/122/77, 203/122/81, 211/122/89, 212/122/90, 213/122/91, 214/122/92는 각각 그 시점의 값이고 이후
+앞서 적혀 있던 164/112, 186/113, 199/122/77, 203/122/81, 211/122/89, 212/122/90, 213/122/91, 214/122/92, 215/122/93은 각각 그 시점의 값이고 이후
 커밋을 반영하지 않은 숫자였습니다 — 자기 문서의 수치도 측정해서 맞춰 둡니다. 199는 이
 줄을 쓴 뒤 3개 커밋이 더 쌓여 낡아 203으로, 203은 다음 커밋에서 낡아 204로, 204는 또
 두 커밋 뒤에 206으로 다시 측정해 고쳤습니다. 206도 그 값을 담은 커밋 자신 때문에 도착
@@ -30,8 +30,8 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 93
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                       1252 passed, 15 skipped
-    pytest (파일 순서 정/역/난수)  각 1252 passed, 15 skipped — 순서 무관
+    pytest                       1257 passed, 15 skipped
+    pytest (파일 순서 정/역/난수)  각 1257 passed, 15 skipped — 순서 무관
                                  (정순 · 역순 · seed 11/707/31337)
     pytest tests/fuzz            11 passed
     python -m sdp.demo_smoke     exit 0, "ready": true
@@ -46,6 +46,66 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 백그라운드 측정 중에 트리를 고친 탓에 seed 11이 4건 실패로 나온 일이 있고, 그것은 결함이
 아니라 동시 편집이었습니다. Atheris(`fuzz/fuzz_query_safety.py`)는 로컬에 wheel이 없어
 실행하지 않았습니다 — 같은 invariant의 Hypothesis 미러가 `tests/fuzz`에서 돕니다.
+
+### Fixed — 4라운드: 직전 수리가 만든 결함 (high)
+
+직전 커밋(`36a9407`)의 아홉 개 수리를 다시 공격했습니다. 리뷰어는 각자 자기 git worktree
+에서 작업했습니다 — 3라운드에서 에이전트들이 공유 트리를 동시에 수정하는 레이스가 있었기
+때문입니다. **직전 수리 중 둘이 결함이었고, 하나는 고치려던 노출을 다시 열었습니다.**
+
+**1. 소유권 추론이 세 번째로 틀렸고, 이번에는 누출입니다 (high).** 3라운드에서 추가한
+세 번째 조건("다른 `has_column` 간선이 이 노드를 가리키지 않음")은 **누가 썼는지가 아니라
+누가 관심있는지**를 묻습니다. 인증된 `POST /graph/edges` 한 번으로 컬럼 노드를 영구히
+고정할 수 있습니다.
+
+    데이터셋 leakowner가 pii: true 컬럼 customer_email 선언
+    POST /graph/edges  has_column  leakother -> leakowner:customer_email
+    PATCH /catalog/datasets/leakowner  (컬럼 내림)        -> 200
+      -> 노드 생존(leakother의 간선이 남아 있어서)
+    PATCH /catalog/datasets/leakother {"title": ...}       -> 200
+      -> 그 간선도 사라지지만 leakother 쪽에서는 모양 검사에 탈락
+    최종: pii: true · 간선 0개 · 어떤 카탈로그 행도 선언하지 않는 고아 column 노드.
+          `/search/semantic`과 `/graph/query`가 계속 서빙한다.
+
+선언된 컬럼은 정책 게이트가 걸린 `/browse`가 마스킹하지만 고아 노드는 아무것도 지배하지
+않습니다 — reconciliation이 존재하는 이유가 정확히 그 노출이고, 그것을 다시 열었습니다.
+
+**2. 같은 규칙이 남의 노드를 여전히 파괴했습니다 (medium).** `POST /graph/nodes`는 간선을
+만들지 않으므로, 다른 writer가 `kind: "column"`으로 쓴 노드가 이 데이터셋 접두사 아래
+있으면 세 조건을 모두 통과하고 title만 바꾸는 patch에 삭제됩니다(닿는 간선까지).
+`POST /graph/nodes`의 계약은 다른 writer가 노드의 거버닝 속성을 파괴하지 않는다는 것입니다.
+
+**그래서 소유권을 추론하지 않고 기록합니다.** 모양 → 모양+kind → 모양+kind+간선, 세 번의
+추론이 모두 한쪽으로 틀렸습니다. 지금은 `seed_dataset`이 쓰는 모든 컬럼 노드에 그 미러의
+데이터셋 id를 `mirrored_from`으로 찍고, reconciliation은 **자기 도장이 찍힌 노드만**
+수거합니다. 여섯 경우 전부 재측정했습니다: concept 생존 · 다른 데이터셋의 자기 노드 생존 ·
+다른 데이터셋이 소유한 컬럼 노드 생존 · 고정된 pii 노드 수거(누출 해소) · 남의
+`POST /graph/nodes` 노드 생존 · 자기 고아 컬럼은 여전히 수거. 선언된 경계 둘: 도장 이전에
+쓰인 노드(영속 Postgres 그래프)는 다시 미러될 때까지 건드리지 않고(파괴가 아니라 보존
+방향), 자기 노드에 남의 id를 일부러 찍는 writer는 그 미러의 산출물로 취급되기를 요청한
+것입니다.
+
+**3. 직전의 문서 수리가 한 단계 아래에서 같은 결함을 반복했습니다 (high).**
+readiness 문서는 "규칙 자체가 `not_covered`로 공표한다"고 적는데, 3라운드가 그 괄호 안에
+두 번째 사각지대("decision은 있고 audit 행만 없는 경우")를 **문서에만** 추가하고 필드는
+넓히지 않았습니다. 미인증 조달 표면(`GET /enterprise/observability`)에서 규칙의 사각지대를
+열거하는 감사자는 둘 중 하나만 보고 나머지는 덮인다고 결론 내립니다 — 그리고 빠진 쪽이
+측정상 **정상 상태**입니다(호출 가능한 governed GET 18건 중 16건). 필드를 넓혔고,
+테스트가 두 사각지대가 모두 공표되는지 단언합니다.
+
+**4. README가 여전히 "alert 조건을 평가하는 코드가 없다"고 공표했습니다 (high).**
+3라운드가 `observability.py`의 주석을, 4라운드가 `production.py`의 주석을, 그리고 README를
+각각 한 라운드 뒤에 찾았습니다 — 같은 문장이 세 곳에 있었고 README는 이 저장소의 1차 공표
+문서입니다. README를 믿은 운영자는 이 서비스가 실제로 계산하는 **단 하나의** 규칙에
+모니터링을 붙이지 않게 됩니다(계산을 추가한 이유의 정반대). 세 번 재발했으므로
+`tests/test_honest_metrics.py`가 그 문장을 README·`docs/**.md`·`src/**.py` 전체에서
+기계적으로 금지합니다 — 평가에 대한 주장만 금지하고 "전달되지 않는다"는 참인 주장은
+그대로 둡니다. (이 가드는 추가 직후 제 README 정정문이 그 문장을 **인용**하는 것을 잡아냈고,
+가드를 약화시키는 대신 인용을 풀었습니다.)
+
+역검증: 추론으로 되돌리면 누출 테스트와 남의 노드 테스트가 실패하고, 미러가 도장을 멈추면
+4건이 실패하며, `not_covered`를 좁히면 사각지대 테스트가, README 문장을 되돌리면 재발
+가드가 실패합니다.
 
 ### Fixed — 3라운드 적대적 검증: 직전 세 커밋에서 찾은 결함 (high)
 

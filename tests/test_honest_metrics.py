@@ -780,3 +780,76 @@ def test_the_log_correlation_key_is_not_read_from_a_request_header() -> None:
                     f"{source_path.relative_to(source_root).as_posix()}:{node.lineno}"
                 )
     assert reads == [], f"the log's evidence ids are named in src as a literal: {reads}"
+
+
+def test_no_published_text_still_says_the_alert_conditions_are_unevaluated() -> None:
+    """The recurrence guard for a claim that has now gone stale three times.
+
+    ``policy_audit_gap`` is computed in process. The sentence "no code evaluates
+    the published alert conditions" was true before that and false after, and it
+    survived the change in three separate places, each found one round later
+    than the last: the comment above the alert block in ``observability.py``, the
+    comment justifying ``declared_unimplemented_environment`` in
+    ``production.py``, and - the one that matters to a reader - the paragraph in
+    ``README.md``, the repository's primary published document. An operator who
+    believes it wires no monitoring to the single rule this service does compute,
+    which is the inverse of the mistake that adding the computation set out to
+    fix.
+
+    Prose, so this matches the exact recurring sentences rather than trying to
+    parse meaning. It is scoped to the claim about *evaluation*: "nothing is
+    routed" remains true and is deliberately still published in all three places.
+    """
+    import pathlib
+
+    repo_root = pathlib.Path(obs.__file__).resolve().parents[2]
+    evaluated = [
+        alert
+        for alert in obs.build_observability_manifest()["alerts"]
+        if alert.get("evaluated")
+    ]
+    assert evaluated, "if no rule is evaluated any more, this guard is the wrong one"
+
+    stale = (
+        "no code evaluates the published alert conditions",
+        "No code computes any of them",
+        "alert 조건을 평가하는 코드도 없",
+        "어떤 조건도 계산하지 않",
+    )
+    searched = [repo_root / "README.md"]
+    searched += sorted((repo_root / "docs").rglob("*.md"))
+    searched += sorted((repo_root / "src").rglob("*.py"))
+    offenders = []
+    for candidate in searched:
+        if not candidate.is_file():
+            continue
+        text = candidate.read_text(encoding="utf-8")
+        for phrase in stale:
+            if phrase in text:
+                offenders.append(f"{candidate.relative_to(repo_root).as_posix()}: {phrase!r}")
+    assert offenders == [], (
+        "these published texts say nothing evaluates the alert conditions, while "
+        f"{[alert['id'] for alert in evaluated]} is evaluated: {offenders}"
+    )
+
+
+def test_the_rule_publishes_both_of_its_blind_spots() -> None:
+    """``not_covered`` must hold what the docs say it holds.
+
+    The readiness document says the rule itself publishes its narrowings as
+    ``not_covered``. A round of fixes widened that sentence to name a second
+    narrowing - a governed 2xx that recorded a decision but no audit event -
+    without widening the field, so an auditor enumerating the rule's declared
+    blind spots from ``GET /enterprise/observability`` found one of the two and
+    would conclude the other was covered. Measured, the omitted one is the
+    *normal* state: 16 of the 18 probeable governed GET routes record a decision
+    and no audit event.
+    """
+    gap = next(
+        alert
+        for alert in obs.build_observability_manifest()["alerts"]
+        if alert["id"] == "policy_audit_gap"
+    )
+    not_covered = gap["not_covered"]
+    assert "out of band" in not_covered, not_covered
+    assert "audit event" in not_covered and "BOTH" in not_covered, not_covered

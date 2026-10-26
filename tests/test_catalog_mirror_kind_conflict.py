@@ -50,6 +50,7 @@ from fastapi.testclient import TestClient
 from sdp import api, catalog, graph_store
 from sdp.api import app
 from sdp.graph_store import InMemoryGraphStore, NodeKindConflict
+from sdp import seed
 from sdp.seed import assert_dataset_mirror_kinds_are_available, seed_dataset, seed_store
 
 
@@ -633,10 +634,10 @@ def test_another_dataset_whose_id_starts_with_this_one_survives() -> None:
 def test_another_datasets_column_node_survives_even_with_the_right_kind() -> None:
     """Shape and kind both match here, and ownership still says no.
 
-    Dataset ``부모셋:자식셋`` owns the column node ``부모셋:자식셋:컬럼``, whose id
-    starts with ``부모셋:`` and whose kind *is* ``column``. Only the owner's own
-    ``has_column`` edge distinguishes it, which is the third question the guard
-    asks.
+    Dataset ``소유자셋:자식`` owns the column node ``소유자셋:자식:컬럼``, whose id
+    starts with ``소유자셋:`` and whose kind *is* ``column``, so neither the shape
+    nor the kind distinguishes it. What does is the stamp ``seed_dataset`` wrote
+    on it, which names ``소유자셋:자식`` as the mirror that produced it.
     """
     assert client.post("/catalog/datasets", json=_payload("소유자셋")).status_code == 200
     assert (
@@ -668,6 +669,7 @@ def test_another_datasets_column_node_survives_even_with_the_right_kind() -> Non
     assert [edge.source_id for edge in store.edges_for(owned, "has_column", direction="in")] == [
         "소유자셋:자식"
     ]
+    assert (survivor.properties or {}).get(seed.MIRROR_OWNER_PROPERTY) == "소유자셋:자식"
 
 
 # ------------- the columns the mirror writes, not the ones declared ----------
@@ -728,3 +730,116 @@ def test_the_published_409_description_names_the_duplicate_id_cause() -> None:
     # cause that cannot happen.
     assert client.post("/catalog/datasets", json=_payload("문서용중복셋")).status_code == 200
     assert client.post("/catalog/datasets", json=_payload("문서용중복셋")).status_code == 409
+
+
+def test_a_pinned_column_node_is_still_collected_when_its_owner_undeclares_it() -> None:
+    """The leak the "no other has_column edge" rule opened.
+
+    That rule asked the **graph** who else was interested rather than who wrote
+    the node, so one extra authorized ``POST /graph/edges`` pinned a column node
+    forever. Measured against it: dataset ``leakowner`` declares a ``pii: true``
+    column, another dataset borrows a ``has_column`` edge to its node, and
+    dropping the column answered 200 with the node surviving - then the
+    borrowing dataset's own reconciliation could not collect it either (the
+    shape test fails there), leaving an orphan ``column`` node with
+    ``pii: true``, zero edges and no catalog row declaring it, still served by
+    ``/search/semantic`` and ``/graph/query``. That is the exposure the
+    reconciliation exists to prevent: a declared PII column is masked by the
+    policy-gated ``/browse`` path, an orphan node is governed by nothing.
+    """
+    assert (
+        client.post(
+            "/catalog/datasets", json=_payload("고정소유셋", ("고객_이메일",))
+        ).status_code
+        == 200
+    )
+    store = graph_store.get_store()
+    assert store.get_node("고정소유셋:고객_이메일") is not None
+    assert client.post("/catalog/datasets", json=_payload("빌려가는셋")).status_code == 200
+    assert (
+        client.post(
+            "/graph/edges",
+            json={
+                **ADMIN,
+                "edge_type": "has_column",
+                "source_id": "빌려가는셋",
+                "target_id": "고정소유셋:고객_이메일",
+            },
+        ).status_code
+        == 200
+    )
+    assert (
+        client.patch(
+            "/catalog/datasets/고정소유셋", json={**ADMIN, "schema": []}
+        ).status_code
+        == 200
+    )
+    assert store.get_node("고정소유셋:고객_이메일") is None, (
+        "an undeclared column node survived because another dataset had borrowed an edge"
+    )
+
+
+def test_a_node_another_writer_created_under_this_prefix_survives() -> None:
+    """``POST /graph/nodes`` writes no edge, so three questions let it through.
+
+    Shape, ``column`` kind and "no other ``has_column`` edge" were all satisfied
+    by a node that ``seed_dataset`` never wrote - another writer's node under an
+    id that happens to start with this dataset's id and a colon. A title-only
+    patch then deleted it and, through ``delete_node``, every edge it
+    participated in. ``POST /graph/nodes`` is a first-class authorized write
+    surface whose own contract is that another writer must not destroy a node's
+    governed properties.
+    """
+    assert client.post("/catalog/datasets", json=_payload("접두사셋")).status_code == 200
+    assert (
+        client.post(
+            "/graph/nodes",
+            json={
+                **ADMIN,
+                "node_id": "접두사셋:남의노드",
+                "kind": "column",
+                "label": "다른 writer의 노드",
+                "properties": {"classification": "secret"},
+            },
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            "/graph/edges",
+            json={
+                **ADMIN,
+                "edge_type": "has_column",
+                "source_id": "접두사셋",
+                "target_id": "접두사셋:남의노드",
+            },
+        ).status_code
+        == 200
+    )
+    assert client.patch("/catalog/datasets/접두사셋", json={**ADMIN, "title": "바꿈"}).status_code == 200
+    store = graph_store.get_store()
+    survivor = store.get_node("접두사셋:남의노드")
+    assert survivor is not None, "a node this mirror never wrote was destroyed"
+    assert (survivor.properties or {}).get("classification") == "secret"
+    assert seed.MIRROR_OWNER_PROPERTY not in (survivor.properties or {})
+
+
+def test_the_mirror_stamps_every_column_node_it_writes() -> None:
+    """The recorded half of recorded ownership.
+
+    Three attempts to infer ownership from the id and the graph were each wrong
+    in one direction or the other, so the mirror records it. If it ever stops
+    stamping, reconciliation silently collects nothing - which this asserts
+    rather than leaves to the behaviour tests.
+    """
+    assert (
+        client.post(
+            "/catalog/datasets", json=_payload("도장셋", ("첫컬럼", "둘째컬럼"))
+        ).status_code
+        == 200
+    )
+    store = graph_store.get_store()
+    for column in ("첫컬럼", "둘째컬럼"):
+        node = store.get_node(f"도장셋:{column}")
+        assert node is not None and node.kind == "column"
+        assert (node.properties or {}).get(seed.MIRROR_OWNER_PROPERTY) == "도장셋"

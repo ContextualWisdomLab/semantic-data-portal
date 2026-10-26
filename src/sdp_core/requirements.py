@@ -361,6 +361,9 @@ REQUIREMENT_COVERAGE: dict[str, RequirementCoverage] = {
             "test:tests/test_catalog_mirror_kind_conflict.py::test_a_concept_whose_id_has_the_column_shape_survives_reconciliation",
             "test:tests/test_catalog_mirror_kind_conflict.py::test_another_dataset_whose_id_starts_with_this_one_survives",
             "test:tests/test_catalog_mirror_kind_conflict.py::test_another_datasets_column_node_survives_even_with_the_right_kind",
+            "test:tests/test_catalog_mirror_kind_conflict.py::test_a_pinned_column_node_is_still_collected_when_its_owner_undeclares_it",
+            "test:tests/test_catalog_mirror_kind_conflict.py::test_a_node_another_writer_created_under_this_prefix_survives",
+            "test:tests/test_catalog_mirror_kind_conflict.py::test_the_mirror_stamps_every_column_node_it_writes",
             "test:tests/test_graph_hierarchy_class_separation.py::test_a_hierarchy_edge_across_the_class_boundary_is_refused",
             "test:tests/test_graph_hierarchy_class_separation.py::test_the_rule_refuses_nothing_legitimate",
             "test:tests/test_graph_hierarchy_class_separation.py::test_a_concept_cannot_declare_a_data_asset_as_its_parent_or_child",
@@ -440,8 +443,16 @@ REQUIREMENT_COVERAGE: dict[str, RequirementCoverage] = {
             "- a `concept` at that id was still destroyed, and so was another "
             "dataset's own node when its id began with the reconciling "
             "dataset's id and a colon, leaving a catalog row whose graph node "
-            "was gone. Ownership is now shape **and** `column` kind **and** no "
-            "other `has_column` edge still pointing at the node. "
+            "was gone. Two further inference attempts also failed - shape plus "
+            "`column` kind still destroyed another dataset's own column node, "
+            "and adding \"no other `has_column` edge points at it\" asked the "
+            "graph who was interested rather than who wrote the node, so one "
+            "extra authorized edge pinned a `pii: true` column node forever and "
+            "it ended as an orphan no catalog row declared, still served by "
+            "`/search/semantic`. Ownership is therefore **recorded**: the mirror "
+            "stamps every column node it writes with the dataset whose mirror "
+            "wrote it, and reconciliation collects only nodes carrying its own "
+            "stamp. "
             "`ConceptKindConflict` is a `ValueError` subclass, so "
             "every existing handler still catches it while the routes that want "
             "the precise status answer 409 rather than 400. This note previously recorded that 200 as a modelling "

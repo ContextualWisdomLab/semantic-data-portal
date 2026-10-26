@@ -786,8 +786,13 @@ def build_observability_manifest() -> dict[str, Any]:
                     "preview/query count exceeds policy decision or audit event count"
                 ),
                 "not_covered": (
-                    "evidence rows removed out of band after the request; this counts "
-                    "at request time, on the governed surface the refusal contract declares"
+                    "evidence rows removed out of band after the request (this counts at "
+                    "request time, on the governed surface the refusal contract declares); "
+                    "and a governed 2xx that recorded a policy decision but no audit event, "
+                    "or an audit event but no policy decision - the count rises only when "
+                    "BOTH are absent, and measured, 16 of the 18 probeable governed GET "
+                    "routes record a decision and no audit event while this rule correctly "
+                    "reports 0"
                 ),
                 "severity": "critical",
                 "evaluated": True,

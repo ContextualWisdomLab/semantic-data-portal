@@ -193,9 +193,11 @@ def production_integration_registry() -> list[ProductionIntegration]:
             # Same reasoning as SDP_EVIDENCE_RETENTION_DAYS: the only read of
             # this variable is ``observability._sink_status`` taking ``bool()`` of
             # it for the ``alert_webhook_configured`` field. No code posts to the
-            # URL and no code evaluates the published alert conditions, so a
-            # readiness gate it could clear would measure a capability that does
-            # not exist. Declared rather than deleted, so an operator who sets it
+            # URL, so a readiness gate it could clear would measure a capability
+            # that does not exist. Routing is the missing half, not evaluation -
+            # ``policy_audit_gap`` IS computed in process (this entry's own
+            # ``buyer_risk`` says so); this comment read "and no code evaluates
+            # the published alert conditions" after that stopped being true. Declared rather than deleted, so an operator who sets it
             # can learn from the readiness document itself that nothing honours it.
             declared_unimplemented_environment=["SDP_ALERT_WEBHOOK_URL"],
             acceptance_criteria=[

@@ -17,6 +17,10 @@ from typing import Any, Iterable, Optional
 from . import catalog, ontology
 from .graph_store import GraphStore, get_store
 
+# The property ``seed_dataset`` stamps on every column node it writes, naming the
+# dataset whose mirror wrote it. ``_owns_column_node`` reads it; nothing else does.
+MIRROR_OWNER_PROPERTY = "mirrored_from"
+
 
 def seed_store(store: Optional[GraphStore] = None) -> dict:
     """Load catalog + ontology seed data into ``store`` (idempotent)."""
@@ -154,7 +158,16 @@ def seed_dataset(dataset: Any, store: Optional[GraphStore] = None) -> None:
             column_id,
             "column",
             label=column.name,
-            properties={"datatype": column.datatype, "pii": column.pii},
+            properties={
+                "datatype": column.datatype,
+                "pii": column.pii,
+                # Which dataset's mirror wrote this node. Reconciliation deletes
+                # only the column nodes it wrote itself, and three attempts to
+                # *infer* that from the id and the graph were all wrong in one
+                # direction or the other - see ``_owns_column_node``. Recorded
+                # here instead of inferred there.
+                MIRROR_OWNER_PROPERTY: dataset.id,
+            },
             text=f"{column.name} {column.datatype}",
         )
         store.upsert_edge("has_column", dataset.id, column_id)
@@ -216,52 +229,64 @@ def _lineage_edge_is_declared(dataset: Any, source_id: str, target_id: str) -> b
 
 
 def _owns_column_node(dataset_id: str, node_id: str, store: GraphStore) -> bool:
-    """Whether this dataset is the sole owner of ``node_id`` as a column node.
+    """Whether this dataset's own mirror wrote ``node_id`` as a column node.
 
     Reconciliation used to delete **any** undeclared ``has_column`` target.
     ``POST /graph/edges`` accepts that edge to any node, so two authorized
     requests destroyed a node this dataset does not own: pointing one at the
     seeded ``고객`` concept and then patching the dataset's schema deleted
-    ``고객`` itself with every edge touching it, and the routes that resolve
-    that term answered as if the concept had never been defined.
+    ``고객`` itself with every edge touching it.
 
-    The first repair asked only for the **shape** ``seed_dataset`` writes,
-    ``f"{dataset_id}:{column.name}"``, and a shape is not ownership. Measured
-    against that version, both of these still destroyed someone else's node:
+    Three attempts to **infer** ownership from the id and the graph followed,
+    and each was wrong in one direction or the other - every one measured:
 
-        POST /ontology/concepts {"concept": "g1:개념"}
-        POST /graph/edges  has_column  g1 -> g1:개념
-        PATCH /catalog/datasets/g1 {"title": "바꿈"}      -> 200
-          -> the concept node is gone and GET /ontology/terms/g1:개념 -> 404
+    * the shape ``f"{dataset_id}:{column.name}"`` alone: a ``concept`` named
+      ``g1:개념`` was still destroyed, and so was dataset ``f2:child``'s own
+      node when ``f2`` reconciled, leaving a catalog row whose graph node was
+      gone;
+    * shape plus ``kind == "column"``: dataset ``부모셋:자식셋``'s own column
+      node ``부모셋:자식셋:컬럼`` matches both and was still destroyed by
+      ``부모셋``;
+    * shape plus kind plus "no other ``has_column`` edge points at it": that
+      asks the **graph** who else is interested rather than who wrote the node,
+      so one extra authorized ``POST /graph/edges`` pinned a node forever. A
+      ``pii: true`` column node survived its owner undeclaring the column, then
+      survived the borrowing dataset's own reconciliation (the shape test fails
+      there), ending as an orphan ``column`` node with ``pii: true``, zero
+      edges, no catalog row declaring it - and still served by
+      ``/search/semantic`` and ``/graph/query``, which is the exposure the
+      reconciliation exists to prevent. The same rule also still destroyed a
+      ``column``-kind node another writer created with ``POST /graph/nodes``
+      under this dataset's prefix, because that route writes no edge.
 
-        POST /catalog/datasets {"id": "f2:child", ...}     (a *dataset*)
-        POST /graph/edges  has_column  f2 -> f2:child
-        PATCH /catalog/datasets/f2 {"title": "x"}          -> 200
-          -> dataset f2:child's own node is gone while
-             GET /catalog/datasets/f2:child still answers 200 - the exact
-             catalog/graph drift the kind guard exists to refuse, now reachable
+    So ownership is **recorded** rather than inferred: ``seed_dataset`` stamps
+    every column node it writes with ``MIRROR_OWNER_PROPERTY``, and this asks
+    for that stamp and this dataset's id. A node without the stamp was not
+    written by any mirror and is left alone; a node stamped for another dataset
+    belongs to that dataset's mirror. The kind is checked too, because a node's
+    kind is immutable here and a non-column node cannot be a column node this
+    function wrote.
 
-    So ownership is asked three ways, and all three are needed:
+    Two boundaries, declared rather than hidden:
 
-    * the shape ``seed_dataset`` writes - a node outside it was never this
-      function's to write, so it is not its to delete;
-    * the node is a ``column`` node - ``seed_dataset`` writes column nodes with
-      that kind, so a ``concept`` or ``dataset`` sitting at that id belongs to
-      another writer (this is what saves ``g1:개념`` and ``f2:child``);
-    * no other ``has_column`` edge still points at it - dataset ``f2:child``
-      owns the column node ``f2:child:c``, whose id also starts with ``f2:``
-      and whose kind *is* ``column``, and its owner's edge is what says so.
+    * a persistent graph (the Postgres backend) can hold column nodes written
+      before the stamp existed. They are left alone until their dataset is
+      mirrored again - which happens on any mutation of it and on startup
+      seeding - so the gap leaves nodes alive rather than destroying them.
+    * a writer who deliberately stamps its own node with another dataset's id,
+      under that dataset's prefix and with kind ``column``, gets it collected.
+      That is a writer asking to be treated as that mirror's output; it cannot
+      reach a node it does not itself write, because ``upsert_node`` refuses to
+      change an existing node's kind and the stamp is only read, never trusted
+      for anything else.
 
-    Called after this dataset's own edge is removed, so the incoming-edge
-    question sees only other owners. The edge is still removed in every case -
-    it is this dataset's edge - only the node someone else owns survives.
+    The edge is still removed in every case - it is this dataset's edge - only
+    the node someone else wrote survives.
     """
-    if not (node_id.startswith(f"{dataset_id}:") and len(node_id) > len(dataset_id) + 1):
-        return False
     node = store.get_node(node_id)
     if node is None or node.kind != "column":
         return False
-    return not store.edges_for(node_id, "has_column", direction="in")
+    return (node.properties or {}).get(MIRROR_OWNER_PROPERTY) == dataset_id
 
 
 def _reconcile_removed(
