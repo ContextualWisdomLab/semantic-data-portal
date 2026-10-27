@@ -102,6 +102,46 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 고치기 전까지 ClusterFuzzLite 이미지에서 **import에서 죽고 있었고** 입력을 하나도 퍼징하지
 않았습니다. "미러가 있으니 됐다"는 커버리지 주장이 아닙니다.
 
+### Measured — 중앙 **Security Scan** 게이트가 체크 목록에 **아예 없습니다.** 실패가 아니라 미생성입니다
+
+`coderabbitai[bot]`가 지적하고(comment 6434387988) 제가 1차 출처로 확인했습니다. `AGENTS.md`
+13–14행은 모든 PR에 중앙 Security Scan(`osv-scan` + diff-scoped `dependency-review` +
+repo-wide `trivy-fs`)을 **필수**로 요구합니다. 현재 head `06b26be`의 체크는 **4건**입니다 —
+`API integration suite`·`Hypothesis`·`Atheris`(셋 다 과금 거절)와 `CodeRabbit`(skipped).
+Security Scan 세 체크는 **실패한 것이 아니라 생성되지 않았습니다.**
+
+**원인은 stacked base가 아닙니다.** 다른 열린 PR의 체크 목록을 재서 분리했습니다:
+
+| PR | base | Security Scan | 시점 |
+|---|---|---|---|
+| `#107` | main | `osv-scan`·`trivy-fs`·`dependency-review` **success** | 2026-10-02 05:48Z |
+| `#104` | main | 세 건 모두 **skipped** | 2026-09-19 19:48Z |
+| `#111` | main | **없음** | updated 2026-10-08 |
+| `#112` | main | **없음** | updated 2026-10-14 |
+| `#102` | `docs/product-technical-gap-baseline` | **없음** | — |
+
+즉 `main`을 target하는 PR에서도 **2026-10-02 이후로는 생성되지 않습니다.** 이 문서가 기록한
+마지막 저장소 워크플로 성공(2026-10-02T09:03:05Z)과 하드 잠금(2026-10-02 18:44Z)과 같은
+경계입니다. 그러므로 이것은 `88c39a3`이 고친 `tests.yml` base 필터와 **다른** 결함이고 —
+그건 stacked PR 한정이었습니다 — 같은 과금 잠금의 **다른 증상**입니다: 로컬 워크플로는
+`failure` 행을 남기고, 조직 중앙 워크플로는 **행을 남기지 않습니다.**
+
+**읽는 규칙 하나를 더합니다: 실패한 Security Scan이 없다는 것을 통과로 읽지 마십시오.**
+이 head에서 그 게이트는 판정이 없습니다. 이 저장소에서 고칠 수 있는 것이 아닙니다(중앙
+워크플로는 `ContextualWisdomLab/.github`의 ruleset이 주입합니다).
+
+### 정정 — `mergeable_state: unstable`을 제가 과하게 읽었습니다
+
+앞 라운드에서 "세 체크는 필수가 아니고 과금 잠금은 병합 블로커가 아니다"로 적었습니다.
+`coderabbitai[bot]`의 반론이 맞습니다: **`mergeable: true`는 "충돌 없이 병합 가능"이라는
+판단이며 "병합 허가"와 같지 않습니다.** 그리고 `unstable` 하나로 세 체크가 모두 비필수라고,
+또는 조직의 병합 요건이 충족됐다고 **확정할 수 없습니다** — 특히 이 세션은 base의 branch
+protection을 읽을 수 없습니다(`/branches/*/protection` → 403).
+
+측정으로 말할 수 있는 것은 거기까지입니다: GitHub이 이 PR을 `blocked`이 아니라 `unstable`로
+보고하고 충돌은 없다. 그것이 병합해도 된다는 뜻은 아니며, 위의 Security Scan 미생성은 오히려
+**판정이 없는 필수 게이트가 하나 더 있다**는 사실을 더합니다.
+
 ### Verified — ClusterFuzzLite 엔트리포인트가 **처음으로 실제 퍼징**됐습니다. 그리고 현재 head가 CI의 인터프리터에서 돌았습니다
 
 `5607d8c`가 고친 하네스(`fuzz/fuzz_query_safety.py`)는 그때까지 import에서 죽어 **한 입력도

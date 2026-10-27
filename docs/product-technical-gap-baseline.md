@@ -3704,6 +3704,52 @@ counts: {'고객': number, '고객행동': number, '매출': number, '온톨로�
 
 이 절은 측정 기록이고 병합 허가가 아닙니다.
 
+## 중앙 Security Scan 게이트가 체크 목록에 **아예 없습니다** (2026-10-27 05:25Z)
+
+`AGENTS.md` 13–14행은 모든 PR에 중앙 Security Scan(`osv-scan` + diff-scoped
+`dependency-review` + repo-wide `trivy-fs`)을 필수로 요구합니다. 현재 head `06b26be`의
+체크는 4건뿐이고(로컬 셋 + CodeRabbit skipped) **Security Scan 세 건은 실패가 아니라
+생성되지 않았습니다.**
+
+`coderabbitai[bot]`가 먼저 지적했고(comment 6434387988) 1차 출처로 확인했습니다.
+
+### stacked base 때문이 아닙니다 — 2026-10-02에 저장소 전체에서 멈췄습니다
+
+| PR | base | Security Scan | 시점 |
+|---|---|---|---|
+| `#107` | main | 세 건 **success** | 2026-10-02 05:48Z |
+| `#104` | main | 세 건 **skipped** | 2026-09-19 19:48Z |
+| `#111` | main | **없음** | updated 2026-10-08 |
+| `#112` | main | **없음** | updated 2026-10-14 |
+| `#102` | `docs/product-technical-gap-baseline` | **없음** | — |
+
+`main`을 target하는 PR에서도 2026-10-02 이후 생성되지 않습니다. 이 문서의 마지막 저장소
+워크플로 성공(2026-10-02T09:03:05Z)과 하드 잠금(2026-10-02 18:44Z)과 같은 경계입니다.
+
+### `88c39a3`의 결함과 다릅니다
+
+그것은 `tests.yml`의 `pull_request: branches: [main]` 필터가 **stacked PR에서만** 게이트를
+없앴던 것이고 이 저장소에서 고칠 수 있었습니다. 이것은 같은 과금 잠금의 **다른 증상**입니다
+— 로컬 워크플로는 `failure` 행을 남기고, 중앙 워크플로는 **행을 남기지 않습니다.** 중앙
+워크플로는 `ContextualWisdomLab/.github`의 ruleset이 주입하므로 이 저장소에서 고칠 수 없습니다.
+
+### 판정을 읽는 규칙에 추가
+
+**실패한 Security Scan이 없다는 것을 통과로 읽지 마십시오.** 이 head에서 그 게이트는 판정이
+없습니다. 이 문서의 기존 규칙("queued는 통과가 아니다", "다른 check의 초록은 trivy-fs의
+판정을 대신하지 못한다")과 같은 계열이고, 더 약한 형태입니다 — **행 자체가 없는 것**은
+queued보다 읽기 쉽게 오해됩니다.
+
+### 같은 라운드의 정정: `mergeable_state`를 과하게 읽었습니다
+
+직전 기록에서 "세 체크는 필수가 아니고 과금 잠금은 병합 블로커가 아니다"로 적었습니다.
+`mergeable: true`는 **충돌 없음**이고 병합 허가가 아니며, `unstable` 하나로 비필수 여부나
+조직 요건 충족을 확정할 수 없습니다(base branch protection은 403으로 읽을 수 없음).
+측정이 지지하는 것은 "GitHub이 `blocked`이 아니라 `unstable`로 보고하고 충돌이 없다"까지이고,
+위 Security Scan 미생성은 **판정 없는 필수 게이트가 하나 더 있다**는 사실을 더합니다.
+
+이 절은 측정 기록이고 병합 허가가 아닙니다.
+
 ## ClusterFuzzLite 엔트리포인트가 처음으로 실제 퍼징됐습니다 (2026-10-27 05:20Z)
 
 `5607d8c`가 고친 `fuzz/fuzz_query_safety.py`는 그때까지 import에서 죽어 한 입력도 퍼징하지
