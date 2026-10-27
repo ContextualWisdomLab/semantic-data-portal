@@ -233,6 +233,13 @@ def evaluate(
     """Evaluate one policy question and record the decision.
 
     ``provenance``, when given, is merged into the recorded row's obligations.
+    **Every** branch must pass it. Three did not, and they were reachable:
+    measured as ``analyst`` asking about ``external-analyst``, the hypothetical
+    answers for ``discover_catalog`` (allow), ``register_dataset`` (deny) and
+    ``search`` (allow) landed in the other tenant's ledger with no label at all,
+    so that tenant's steward read a question about their user as an event and
+    nothing recorded who asked. ``tests/test_hypothetical_decisions_are_labelled.py``
+    walks this function's AST so a new branch cannot omit the argument.
     It exists for ``POST /policy/decision``, whose whole purpose is answering
     "what would policy say for this subject" - a question whose answer is
     **hypothetical** and was being persisted into the compliance ledger
@@ -320,6 +327,7 @@ def evaluate(
         if not _is_admin(subject):
             return _decision(
                 **decision_base,
+                provenance=provenance,
                 effect="deny",
                 reason="create 작업은 admin 권한만 가능",
                 obligations={"required_role": "admin"},
@@ -332,6 +340,7 @@ def evaluate(
         if target_tenant_id and not can_access_tenant(subject, target_tenant_id):
             return _decision(
                 **decision_base,
+                provenance=provenance,
                 effect="deny",
                 reason="tenant boundary denied",
                 obligations={
@@ -351,6 +360,7 @@ def evaluate(
         if _has_reader_role(subject):
             return _decision(
                 **decision_base,
+                provenance=provenance,
                 effect="allow",
                 reason="카탈로그 발견 정책 통과",
                 obligations={"masking": []},
