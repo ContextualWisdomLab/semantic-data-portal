@@ -43,8 +43,10 @@ gap-baseline 문서를 건드렸고, 나머지 126개는 건드리지 않았습�
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                       1698 passed, 31 skipped
+    pytest (3.11)                1698 passed, 31 skipped
+    pytest (3.12, tests.yml의 핀) 1698 passed, 31 skipped — CI가 쓰는 인터프리터
     pytest (파일 순서 정/역/난수)  각 1698 passed, 31 skipped — 순서 무관
+    atheris 하네스 5개            616,943 inputs, crash 0 (3.12, 20~31초 예산)
                                  (정순 · 역순 · seed 11/707/31337; 이 커밋의 트리에서
                                   측정. 이 라운드의 테스트가 데이터셋을 온보딩하므로
                                   격리를 다시 쟀습니다)
@@ -99,6 +101,47 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 **이 문장이 결함을 가려 줬습니다**: 미러가 돈다는 것은 참이지만, 그 하네스는 아래 항목이
 고치기 전까지 ClusterFuzzLite 이미지에서 **import에서 죽고 있었고** 입력을 하나도 퍼징하지
 않았습니다. "미러가 있으니 됐다"는 커버리지 주장이 아닙니다.
+
+### Verified — ClusterFuzzLite 엔트리포인트가 **처음으로 실제 퍼징**됐습니다. 그리고 현재 head가 CI의 인터프리터에서 돌았습니다
+
+`5607d8c`가 고친 하네스(`fuzz/fuzz_query_safety.py`)는 그때까지 import에서 죽어 **한 입력도
+퍼징하지 못했고**, 그 수리를 import 통과까지만 확인해 뒀습니다(gap 문서에 "coverage-guided
+실행은 로컬 증거가 아니다"로 기록). 이제 실행으로 확인됐습니다:
+
+    PYTHONPATH=src python fuzz/fuzz_query_safety.py -max_total_time=30 -close_fd_mask=3
+      ->  79,381 inputs / 31s, cov: 91 ft: 229 corp: 54, crash 0, reproducer 0건
+
+`declared_relation` near-miss 모드까지 그 안에서 돌았습니다. 이 하네스는
+`tests/fuzz/run_atheris.sh`의 목록에 **없으므로**(이 라운드에서 기록한 사실) 그 스크립트를
+돌려 온 과거 실행에는 포함된 적이 없습니다.
+
+**이것이 "저장소 최초의 Atheris 실행"은 아닙니다.** 아래 2026-10-03 절이 이미 head `2bdd3c6`
+에서 CI와 같은 방식(Python 3.12, `requirements-test.txt` + `fuzz-requirements.txt`,
+`FUZZ_SECONDS=60`)으로 `run_atheris.sh`의 **네 하네스**를 돌려 두었고, 실행량은 이번보다
+훨씬 큽니다(`fuzz_draft_sql` 2,276,110회 대 이번 306,785회). 처음인 것은 **다섯 번째
+하네스**뿐입니다. 이번에 네 하네스도 같이 돌렸고(합계 537,562 inputs, 각 21초, exit 0,
+reproducer 0건) 그것은 재확인입니다.
+
+### 현재 head의 3.12 실행 — 최초가 아니라 **갱신**입니다
+
+2026-10-03 절의 3.12 재현은 head `2bdd3c6`, 스위트 **258 passed, 8 skipped** 시점입니다.
+스위트는 그 뒤 **1698**로 자랐으므로 그 측정은 현재 head에 대해 아무것도 말하지 않습니다.
+지금 head에서 CI의 인터프리터와 핀으로 다시 돌렸습니다:
+
+    python3.12 -m venv …; pip install --require-hashes -r requirements-test.txt
+    PYTHONPATH=src python -m pytest   ->  1698 passed, 31 skipped   (3.11과 동일)
+
+`requirements-dev.txt`가 아니라 `requirements-test.txt`입니다 — `tests.yml`이 읽는 파일이고,
+두 lock이 다른 버전을 핀할 수 있습니다(README가 `constraints-dev.txt`로 그 함정을 적어 둠).
+
+**제 쪽 오류 하나를 적습니다.** 이 세션은 "로컬에 Atheris wheel이 없다"를 여러 번 적었고 그
+근거는 3.11 venv 하나였습니다. 저장소 문서에는 **3.12에서 설치해 돌린 기록이 이미 있었고**,
+읽기 전에 그 가정을 반복했습니다. 환경 가정은 문서를 먼저 확인하는 것보다 오래 살아남습니다.
+
+여전히 닫히지 않은 것: **CI 자체는 돌지 않았습니다.** 같은 인터프리터·같은 핀이지만 같은
+러너가 아니며, 러너 이미지·네트워크·동시성에서 오는 실패는 보이지 않습니다. 그리고 이번
+퍼징 예산은 20~31초로 CI의 PR 예산(60초)보다 짧고 nightly(300초)보다 훨씬 짧습니다 —
+crash 0은 그 예산 안에서의 결과입니다.
 
 ### Fixed — 계약 테스트가 **어떻게 호출됐는지**에 의존해 수집됐습니다 (low)
 
