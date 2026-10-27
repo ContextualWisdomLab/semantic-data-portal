@@ -431,24 +431,44 @@ def _refuse_mutation_on_unreachable_dataset(
 ) -> None:
     """Refuse a mutation on an unreachable dataset without evaluating against it.
 
-    Raises before any per-id policy evaluation. The 404 case still files both
-    halves of the governance invariant - a policy decision and an audit event -
-    but outside the caller's readable scope, so the owning tenant's auditor sees
-    the attempt on its own asset and the caller learns nothing about whether the
-    id is free. The 403 case has already filed its row against the resource
-    ``catalog``, which carries no information about the id.
+    Raises before any per-id policy evaluation. **Both** refusal branches file
+    both halves of the governance invariant - a policy decision and an audit
+    event - outside the caller's readable scope, so the owning tenant's auditor
+    sees the attempt on its own asset and the caller learns nothing about whether
+    the id is free.
+
+    The 403 branch did not, and the reason recorded here was that it "has
+    already filed its row against the resource ``catalog``, which carries no
+    information about the id". That is true about **the caller's** side and says
+    nothing about the owner's: a decision row against ``catalog`` tells the
+    owning tenant's auditor nothing about an attempt on *its* dataset. It was
+    harmless while the three verbs audited *after* evaluating; they now call this
+    helper first, so the post-evaluation audit never runs. Measured as
+    ``anonymous`` against a real dataset, before the repair::
+
+        publish / patch / deprecate  -> 403   audit +0   decision +2
+        the owner's own audit route, rows naming 'anonymous':  0 -> 0
+
+    ``POST /catalog/datasets``, the one mutation verb not reordered, kept both
+    halves for the same caller - which is what makes this an asymmetry the
+    reordering introduced rather than a standing design.
+
+    Filing is routed through ``evaluate_dataset_scope_refusal`` in both branches
+    because that is what keeps filing from becoming the leak: it lands in the
+    owning tenant's scope or the reserved ``unresolved`` scope. The 403 fires
+    before existence is known, and one row is filed either way, so the row count
+    cannot answer what the status code refuses.
     """
     unreachable = _unreachable_dataset_refusal(actor_id, dataset_id)
     if unreachable is None:
         return
-    if unreachable.status_code == 404:
-        refusal = evaluate_dataset_scope_refusal(actor_id, dataset_id)
-        _audit_refused_catalog_mutation(
-            event_type=event_type,
-            actor=actor_id,
-            dataset_id=dataset_id,
-            decision=refusal,
-        )
+    refusal = evaluate_dataset_scope_refusal(actor_id, dataset_id)
+    _audit_refused_catalog_mutation(
+        event_type=event_type,
+        actor=actor_id,
+        dataset_id=dataset_id,
+        decision=refusal,
+    )
     raise unreachable
 
 
