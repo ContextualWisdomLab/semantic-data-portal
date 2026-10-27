@@ -54,9 +54,9 @@ gap-baseline 문서를 건드렸고, 나머지 138개는 건드리지 않았습�
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest (3.11)                1698 passed, 31 skipped
-    pytest (3.12, tests.yml의 핀) 1698 passed, 31 skipped — CI가 쓰는 인터프리터
-    pytest (파일 순서 정/역/난수)  각 1698 passed, 31 skipped — 순서 무관
+    pytest (3.11)                1837 passed, 31 skipped
+    pytest (3.12, tests.yml의 핀) 1837 passed, 31 skipped — CI가 쓰는 인터프리터
+    pytest (파일 순서 정/역/난수)  각 1837 passed, 31 skipped — 순서 무관
     atheris 하네스 5개            616,943 inputs, crash 0 (3.12, 20~31초 예산)
                                  (정순 · 역순 · seed 11/707/31337; 이 커밋의 트리에서
                                   측정. 이 라운드의 테스트가 데이터셋을 온보딩하므로
@@ -77,7 +77,9 @@ pgvector 핀 커밋이 10건, event-loop 수리 커밋이 2건, 환경 변수 �
 문서 가드 34건으로 1481에, 콘솔 chip 색 가드 8건으로 1489에, relation 해석 가드 28건으로 1517에, 응답 계약 생성기 가드 3건으로 1520에,
 ClusterFuzzLite 하네스 import 가드 3건으로 1523에,
 테이블 allow-list 가드 25건 + near-miss 성질 1건으로 1549에,
-존재 oracle 가드 82건으로 1631에, 콘솔 sink 감사 2건으로 1633에, `union` 가드 6건으로 1639에, 선언 relation 정직성 가드 26건으로 1665에, 공표 한도 가드 10건으로 1675에, 공표 설명 가드 12건으로 1687에, map 노드·obligations 가드 2건으로 1689에, sentinel·nullability 가드 9건으로 1698에 와 있습니다(skip이
+존재 oracle 가드 82건으로 1631에, 콘솔 sink 감사 2건으로 1633에, `union` 가드 6건으로 1639에, 선언 relation 정직성 가드 26건으로 1665에, 공표 한도 가드 10건으로 1675에, 공표 설명 가드 12건으로 1687에, map 노드·obligations 가드 2건으로 1689에, sentinel·nullability 가드 9건으로 1698에 왔고, 구성된 구매자 여정 라운드의 네 수리
+(행 레벨 필터 정직성 9건, 드래프트 거부 증빙 페어링 11건, 참된 거부 이유 14건, 배포
+endpoint 자격증명·patch 계약 10건)로 **1837**에 와 있습니다(skip이
 23 → 31로 는 것은 새 가드 둘이 `measured`가 아닌 KPI 넷에
 대해 skip하기 때문입니다 — 그 skip 자체가 분기가 측정된 증거이고, 같은 파일의
 `test_at_least_one_kpi_exercises_each_branch`가 양쪽 분기에 사례가 있음을 단언합니다)
@@ -112,6 +114,217 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 **이 문장이 결함을 가려 줬습니다**: 미러가 돈다는 것은 참이지만, 그 하네스는 아래 항목이
 고치기 전까지 ClusterFuzzLite 이미지에서 **import에서 죽고 있었고** 입력을 하나도 퍼징하지
 않았습니다. "미러가 있으니 됐다"는 커버리지 주장이 아닙니다.
+
+### Security — 선언만 되고 **집행되지 않는 행 레벨 필터**를 "적용됐다"고 공표했고, 증빙 원장에도 그렇게 적었습니다 (high, 구매자 체감)
+
+구성된 구매자 여정(온보딩→발견→preview)을 끝까지 몰아 본 라운드의 첫 발견입니다. 표면별
+감사에서는 매번 "obligation이 있다"만 확인되고 **그 obligation이 무엇을 했는지**는 아무도
+묻지 않았습니다.
+
+`crm-event`는 이 엔진에서 obligation이 닿는 유일한 `sensitivity: high` 데이터셋입니다.
+그 하나를 재면:
+
+```
+published columns              ['event_id', 'customer_id', 'event_timestamp', 'device_id']
+'business_unit' among them     False
+purpose='analysis'   applied_row_filter=['business_unit = current_user_unit']  row_count=2
+purpose='marketing'  applied_row_filter=None                                   row_count=2
+rows byte-identical            True
+audit details                  {'row_filter': [...], 'returned_rows': 2, ...}
+draft assumptions              ['행 레벨 필터 적용: business_unit = current_user_unit']
+drafted SQL                    SELECT count(*) ... WHERE event_timestamp >= current_date - 90 LIMIT 1000
+'business_unit' in that SQL    False
+```
+
+술어는 데이터셋이 **선언하지 않은 컬럼**을 가리키고, "필터가 적용된" 행은 필터 없는 행과
+**같은 바이트**이며, 분석가가 실제 창고에 대고 실행하라고 받은 SQL은 자기 assumption이
+주장하는 술어를 **담고 있지 않고**, 컴플라이언스 원장은 그 주장을 `returned_rows: 2` 옆에
+저장합니다. 코드에도 적용 단계가 없습니다 — `browse.py`는 `rows[offset : offset + limit]`로
+자르고 `"applied_row_filter": decision.obligations.get("row_filter")`를 공표합니다.
+
+행 레벨 집행이 없는 것은 **의도된 범위**입니다(`docs/prd-trd.md` §6.2가 Phase 2로 둡니다).
+의도되지 않은 것은 **`applied_`라는 필드 이름**과, 감사자가 `decision_id`로 join하면
+"부서 범위로 좁혀진 조회가 있었다"로 읽히는 원장 행입니다. 같은 응답의 masking은 실제로
+집행되고(측정: `customer_email`이 `***`로 돌아옵니다) 설명 형제(`masking_rules`의
+`bases`/`action`)까지 가지는데, 집행되지 않는 쪽은 둘 다 없이 같은 모양으로 공표됩니다.
+이 브랜치의 이전 수리가 이 obligation의 **공백 민감성**을 보안 결함으로 기록하고 고쳤다는
+점이 그 자체로 증거입니다 — 집행되지 않는 주장을 **살려 두는 데** 노력이 들어갔습니다.
+
+수리는 **술어가 공표되는 모든 곳에 집행 상태를 같이 공표하는 것**입니다. 성질로 적었으므로
+다섯 번째 표면이 술어만 echo할 수 없습니다:
+
+* `policy.evaluate`: obligation에 `row_filter_enforcement: "declared_not_enforced"`.
+  decision 자체가 들고 다니므로 decision을 읽는 모든 소비자가 같이 받습니다.
+* `browse.preview`: `applied_row_filter`를 지우고 `masking_summary`와 같은 모양의
+  `row_filter_summary`(`declared_predicates`/`filter_enforced`/`enforcement_note`)를
+  **모든 읽기에** 공표합니다 — 필드가 없는 것이 "선언된 조건이 없다"로 읽히지 않게.
+* 감사 details: `row_filter` → `declared_row_filter` + `row_filter_enforced: false`.
+* `orchestrator.draft_sql`: "행 레벨 필터 적용: X" → "행 레벨 조건(X)은 이 SQL에
+  포함되지 않았습니다" + 같은 안내문.
+
+같은 저장소의 선례를 그대로 따릅니다 —
+`test_honest_metrics.py::test_each_published_alert_rule_says_whether_it_is_evaluated`가
+alert 규칙에 같은 계약을 걸고 있고, `SDP_EVIDENCE_RETENTION_DAYS`는
+`unimplemented_environment`로 공표됩니다.
+
+**변이 다섯, 전부 red:**
+
+| 변이 | red |
+|---|---|
+| obligation에서 enforcement 상태 제거 | 공표-동반 가드 + decision 전수 가드 |
+| `applied_row_filter`를 다시 공표 | 이름 가드 + 공표-동반 가드 |
+| `filter_enforced: True` | 공표-동반 가드 |
+| 원장에 `row_filter`를 그대로 | 원장 가드 |
+| draft assumption을 "적용"으로 되돌림 | assumption-SQL 합치 가드(세 철자 전부) |
+
+**제 가드가 작성 중에 두 번 반응했습니다.** (1) 공표-동반 가드가 `enforcement_note`를
+**상태 마커로 오인**해 한국어 산문 안에서 `not_enforced` 토큰을 찾다가 정직한 구현에
+실패했습니다 — 가드의 전제가 가드 대상보다 넓었던 것이고, 상태와 산문을 이름으로
+분리했습니다. (2) 원장 가드가 `event_type`을 읽었는데 기록되는 필드 이름은 `action`이라
+"감사 행이 없다"로 실패했습니다. 측정한 것이 없는데 실패로 보인 경우입니다.
+
+**닫지 않은 것.** 행 레벨 집행은 여전히 없습니다 — 이 수리는 **공표의 정직성**이고 Phase 2
+기능이 아닙니다. 그리고 `obligations`가 왜 그 술어를 냈는지(`purpose`)는 decision 행에
+여전히 없습니다(POL-005). 그 비고의 "unexplained"는 이제 사실이 아니므로
+`src/sdp_core/requirements.py`에서 고쳐 재생성했지만, purpose 부재 자체는 열려 있습니다.
+
+### Security — 거부된 SQL 드래프트가 **decision은 남기고 감사 이벤트는 남기지 않았습니다**. NFR-SEC-005의 "100% 기록"이 네 경로에서 거짓이었습니다 (high)
+
+`_audit_draft`의 docstring이 **바로 이 모양을 닫기 위해 존재한다**고 적고 있습니다("Measured
+before this change: `decisions +1  audits +0`"). `docs/requirements-coverage.md:559`는
+NFR-SEC-005를 `implemented`로 공표하며 "두 구멍을 가정하지 않고 찾아 닫았다"고 적습니다.
+한 라우트에 네 개가 더 열려 있었습니다. 공표된 프로브 데이터셋에 대고 호출당
+`/policy/decisions`·`/audit/events` 델타로 재면:
+
+```
+success                      decisions +1  audits +1
+policy_denied (purpose)      decisions +1  audits +1
+policy_denied (keyword)      decisions +1  audits +0   <- 구멍
+invalid_columns              decisions +1  audits +0   <- 구멍
+invalid_group_by             decisions +1  audits +0   <- 구멍
+draft_rejected_by_validator  decisions +1  audits +0   <- 구멍
+dataset_not_found            decisions +0  audits +0
+invalid_date_window          decisions +0  audits +0
+```
+
+마지막 둘은 decision이 생기기 **전에** 거부되므로 대칭이고 구멍이 아닙니다 — 이 라우트의
+가드가 반드시 지켜야 하는 구분입니다. "감사를 더 하라"만 요구하는 가드는 이 둘까지 기록하는
+수리를 통과시킵니다.
+
+AST로 세면 decision 이후의 종료점은 **여덟 개**였고 그중 넷은 HTTP로 닿지 않습니다
+(`ambiguous_identifier`, `unquotable_source_table`, `invalid_row_limit`/`invalid_timeout` —
+요청 계약이 입력을 먼저 거부합니다). **에러 코드 목록을 손으로 적는 수리라면 그 넷을
+놓쳤을 것입니다.** 그래서 형제 라우트 `execute_query`의 모양을 그대로 씁니다: 모든 종료를
+감사하는 지역 헬퍼(`refuse`) 하나로 모으고, **decision 이후의 모든 `return`이 그 헬퍼를
+지나는지**를 AST 가드가 단언합니다.
+
+**변이 셋, 전부 red:** 거부 하나를 dict로 되돌림 → 행동 가드 + AST 가드 / 헬퍼가 감사를
+멈춤 → 네 케이스 전부 + AST 가드 / **decision 이전 경로가 감사를 시작** → 대칭 가드.
+
+**닫지 않은 것.** `/browse/query`는 pre-policy 거부도 감사하고 `policy_stage`로 구분합니다
+(decisions +0, audits +1). 드래프트 라우트는 그 경로를 **아무것도 기록하지 않습니다**. 어느
+쪽이 옳은지는 결정하지 않았고, 이 수리는 "decision이 있으면 감사도 있다"만 집행합니다.
+
+### Fixed — 깨끗한 데이터셋의 드래프트가 **"허가되지 않은 테이블"로 거부**됐습니다. source_system 끝 segment가 숫자로 시작하면 (high, 구매자 체감)
+
+`source_system`의 마지막 path segment만 다른 두 데이터셋:
+
+```
+s3://analytics/events/2024    GET /validate -> is_valid=true missing=[]
+                              POST /policy/decision -> effect=allow
+                              POST /llm/draft-query -> 400 draft_rejected_by_validator
+                                "... SQL 안전성 게이트를 통과하지 못했습니다: unauthorized_table_reference"
+s3://analytics/events/orders  POST /llm/draft-query -> 200  SELECT count(*) ... FROM orders ...
+```
+
+허가되지 않은 것은 없습니다. 같은 tenant이고 published이며 `/validate`가 `is_valid: true`,
+`POST /policy/decision`이 같은 subject/resource/action에 `allow`를 답합니다. 질의가 지목하는
+유일한 테이블은 **제품이 그 데이터셋의 source_system에서 직접 파생한 이름**입니다. 기구는
+이렇습니다 — `_source_table_name('s3://analytics/events/2024')` → `'2024'`,
+`_reads_back_as_one_table('2024')` → `False`. 선행 숫자는 식별자가 아니므로 allow-list의
+파서가 테이블 참조를 **찾지 못하고**(`2024`) 또는 **다른 것을 찾고**(`2024_q1`은 `_q1`로
+읽힙니다), validator는 "허가된 테이블이 지목되지 않았다"에 해당하는 유일한 경고를 냅니다.
+그래서 이유는 거짓이고, 동시에 **실행 불가능**합니다: 메시지는 파생된 이름도, locator도,
+선행 숫자라는 원인도, 수리 방법도 말하지 않습니다. 날짜로 파티션된 레이크 prefix가 바로 이
+모양입니다.
+
+이 계열의 **두 번째 사례**입니다. 첫 번째(테이블 이름이 SQL 절 키워드와 충돌하는 `FROM
+order`)는 참된 이유 `unquotable_source_table`로 거부하도록 이미 고쳐져 있고 24개 키워드를
+열거해 고정돼 있습니다. `source_relation_name`의 docstring은 **선언된** 이름에 대해 이
+계열을 이미 알아보고 "security-shaped reason for a naming problem"이라고 적어 두었지만, 그
+`None` 반환은 **locator 파생 이름으로 되돌아가고** 그 이름이 바로 그 모양일 수 있습니다 —
+기록된 추론이 남은 구멍을 예고하고 있었습니다.
+
+수리는 열거가 아니라 **파서에게 묻는 것**입니다: `_reads_back_as_one_table(table_name)`이
+거짓이면 참된 이유로 거부하고, 파생된 이름·(자격증명을 지운) locator·`postgresql.table`
+distribution이라는 수리 방법을 **메시지에 담습니다**. 두 번째 의견을 새로 만들면 그것이
+바로 어긋난 것이기 때문입니다 — 드래프터는 테이블을 emit했다고 믿었고 게이트는 아니라고
+답했습니다.
+
+**변이 넷, 전부 red:** 식별자 검사 제거 / 수리 방법 문구 제거 / 코드를
+`unauthorized_table_reference`로 되돌림 / 메시지에 **원본 locator**를 넣음(DSN 자격증명 echo).
+
+**닫지 않은 것.** 컬럼 이름이 절 키워드인 경우는 열려 있습니다 — `select`라는 컬럼을
+`group_by`로 주면 `SELECT select, count(*) ... FROM orders`를 200으로 받습니다. 대상 엔진이
+거부할 SQL이고, 이 게이트의 키워드 목록에 `select`가 없어 자기 검사도 통과합니다. 테이블
+이름 쪽만 닫았습니다.
+
+### Security — `source_system`의 자격증명은 모든 경로에서 지워지는데, **배포(distribution) endpoint의 자격증명은 아무 데서도 지워지지 않았습니다**. 그리고 PATCH는 그 필드를 조용히 버렸습니다 (high + medium)
+
+위 거부가 가리키는 **수리 방법이 실제로 동작하는지** 확인하다 나왔습니다. 거부는
+"`postgresql.table` distribution을 선언하라"고 말하고, 그 선언을 PATCH로 보내 봤습니다.
+
+```
+POST  /catalog/datasets      distributions: [csv]      -> 200, 저장됨
+PATCH /catalog/datasets/{id} distributions: [pg.table] -> 200
+저장된 distributions                                   -> [csv]  (변화 없음)
+source_relation_name(dataset)                          -> None
+POST  /llm/draft-query                                 -> 400 (그대로)
+```
+
+`DatasetPatchRequest`에 `distributions`가 **없습니다**. 다른 모든 컬렉션 필드(`schema`,
+`mappings`, `terms`, `tags`, `lineage_*`, `profile`)는 있습니다. `license`가 **같은 결함의
+첫 사례**였고 `DatasetCreateRequest`의 주석이 그것을 기록합니다("a supplied value was
+silently dropped") — 한 필드 뒤의 같은 누락이고, 하필 거부가 추가하라고 말하는 그 필드입니다.
+
+같은 경로를 몰면서 더 무거운 것이 나왔습니다. `endpoint`에 자격증명을 담아 등록하면:
+
+```
+POST /catalog/datasets           -> 200, 응답에 secret: True
+GET  /catalog/datasets/{id}      -> 응답에 secret: True, query token: True
+redacted_source_system(endpoint) -> 'https://files.internal/x.csv'
+```
+
+`redacted_source_system`의 docstring이 이 제품의 규칙을 적고 있습니다 — 자격증명은
+"**on every path - including the authorized one, since no caller needs the credential**"
+지워집니다. `mutation_view`는 네 mutation 응답이 DSN을 되돌려 주던 것을 고치려고 존재합니다.
+`DatasetDistribution.endpoint`는 **같은 모양의 URL**이고 그 전부를 비켜 갔습니다. 리댁터는
+그 URL을 이미 올바르게 처리하므로, 이 필드에는 **라우팅이 없었을 뿐**입니다.
+
+수리 셋:
+
+* `catalog.published_distribution`/`published_distributions` 하나를 만들어 `discovery_view`,
+  `mutation_view`, `audited_patch_values`, JSON-LD 노드에 모두 적용. locator 자체는 계속
+  공표합니다 — 소비자가 데이터를 가져오는 경로입니다.
+* `DatasetPatchRequest`에 `distributions`를 더하고, create/patch 두 계약의 차집합이
+  **선언된 면제 셋**(`id`·`tenant_id`·`owner`, 각각 이유와 함께)과 정확히 같은지를 구조
+  가드로 단언합니다. `license`도 `distributions`도 이 가드가 있었으면 조용할 수 없었습니다.
+* patch 루프의 **죽은 분기** 제거. 컬렉션 일곱 개를 열거해 `None`을 skip하던 분기는 바로
+  다음 `if value is not None`과 **결과가 같아** 아무 일도 하지 않으면서, 그 일곱 필드에만
+  적용되는 규칙처럼 읽혔습니다.
+
+**변이 여섯, 전부 red** — 그리고 **둘은 처음에 green으로 돌아왔습니다.**
+(1) "`None`이 컬렉션을 지운다" 변이가 green이었던 것은 제가 죽은 분기를 측정하고 있었기
+때문입니다(그래서 분기를 지웠습니다). (2) 그 다음 판본에서 "`None`을 그대로 쓴다" 변이가
+green이었던 것은 제 가드가 `status_code in {200, 400}`을 받아들여 **"요청이 에러났으니 아무것도
+바뀌지 않았다"를 "필드를 건드리지 않았다"와 같은 것으로 취급**했기 때문입니다. 실제 변경
+하나를 null들과 같이 보내 200을 요구하도록 고쳤습니다. (3) "빈 컬렉션이 지우지 않는다" 변이가
+green이었던 것은 프로브 데이터셋이 **tags 없이** 등록돼 "지워졌다"와 "애초에 없었다"가 같은
+관측이었기 때문입니다.
+
+**닫지 않은 것.** `owner`는 여전히 패치할 수 없고, 이 수리는 그 결정을 **선언**했을 뿐
+바꾸지 않았습니다(소유권 이전에 검토된 경로가 없습니다). endpoint 자격증명이 **저장**되는
+것 자체도 그대로입니다 — 공표에서만 지웁니다. `source_system`도 같습니다.
 
 ### Fixed — 공표된 `maxLength` 다섯 중 **하나를 아무도 밀어 보지 않았습니다** (medium)
 

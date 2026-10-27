@@ -3760,6 +3760,117 @@ counts: {'고객': number, '고객행동': number, '매출': number, '온톨로�
 
 이 절은 측정 기록이고 병합 허가가 아닙니다.
 
+## 선언만 되고 집행되지 않는 행 레벨 필터를 "적용됐다"고 공표했습니다 (2026-10-27 10:15Z)
+
+구성된 구매자 여정(온보딩 → 발견 → preview)을 `TestClient`로 끝까지 몰아 본 라운드에서
+나왔습니다. 표면별 감사는 이 obligation을 여러 번 지나쳤고, 매번 "있다"만 확인했습니다.
+
+`crm-event`(이 엔진에서 obligation이 닿는 유일한 `sensitivity: high` 데이터셋):
+
+```
+published columns              ['event_id', 'customer_id', 'event_timestamp', 'device_id']
+'business_unit' among them     False
+purpose='analysis'   applied_row_filter=['business_unit = current_user_unit']  row_count=2
+purpose='marketing'  applied_row_filter=None                                   row_count=2
+rows byte-identical            True
+audit details                  {'row_filter': [...], 'returned_rows': 2, ...}
+draft assumptions              ['행 레벨 필터 적용: business_unit = current_user_unit']
+'business_unit' in drafted SQL False
+```
+
+술어는 선언되지 않은 컬럼을 가리키고, 행은 필터 없는 행과 같은 바이트이며, 감사자가
+`decision_id`로 join하면 부서 범위 조회로 읽힙니다. 행 레벨 집행이 없는 것은 PRD §6.2가
+Phase 2로 둔 **의도된 범위**입니다 — 결함은 `applied_`라는 이름과 원장 행입니다.
+
+**수리:** 술어가 공표되는 모든 곳에 집행 상태를 같이 공표합니다 — obligation에
+`row_filter_enforcement: declared_not_enforced`, preview에 `row_filter_summary`
+(`declared_predicates`/`filter_enforced`/`enforcement_note`), 원장에
+`declared_row_filter` + `row_filter_enforced: false`, draft assumption은 SQL에 없다는 사실.
+`tests/test_row_filter_is_declared_not_applied.py`가 이것을 성질로 고정합니다(변이 5건 red).
+
+### 닫지 않은 것
+
+행 레벨 집행은 없습니다. `PolicyDecision`에 `purpose`가 없다는 POL-005의 본래 지적도
+그대로입니다 — 그 비고에서 사실이 아니게 된 "unexplained" 한 단어만 고쳐 재생성했습니다.
+
+## 거부된 SQL 드래프트가 decision은 남기고 감사 이벤트는 남기지 않았습니다 (2026-10-27 10:15Z)
+
+`docs/requirements-coverage.md:559`가 NFR-SEC-005를 `implemented`로, "두 구멍을 찾아
+닫았다"고 공표합니다. 한 라우트에 네 개가 더 열려 있었습니다. 호출당 델타:
+
+```
+success / policy_denied(purpose)                 decisions +1  audits +1
+policy_denied(keyword) / invalid_columns
+  / invalid_group_by / draft_rejected_by_validator  decisions +1  audits +0
+dataset_not_found / invalid_date_window           decisions +0  audits +0   (대칭, 구멍 아님)
+```
+
+AST로 세면 decision 이후 종료점은 여덟 개이고 넷은 요청 계약이 먼저 거부해 HTTP로 닿지
+않습니다. **수리:** 형제 라우트 `execute_query`처럼 모든 거부를 감사하는 지역 헬퍼로 모으고,
+decision 이후의 모든 `return`이 그 헬퍼를 지나는지를 AST 가드가 단언합니다.
+
+### 닫지 않은 것
+
+`/browse/query`는 pre-policy 거부도 `policy_stage`를 붙여 감사하고, 드래프트 라우트는 그
+경로를 기록하지 않습니다. 어느 쪽이 옳은지는 결정하지 않았습니다.
+
+## 깨끗한 데이터셋의 드래프트가 "허가되지 않은 테이블"로 거부됐습니다 (2026-10-27 10:15Z)
+
+`source_system`의 마지막 segment만 다른 두 데이터셋:
+
+```
+s3://analytics/events/2024    /validate is_valid=true · /policy/decision allow
+                              /llm/draft-query -> 400 unauthorized_table_reference
+s3://analytics/events/orders  /llm/draft-query -> 200  FROM orders
+```
+
+허가되지 않은 것은 없습니다. 질의가 지목하는 유일한 테이블은 제품이 그 데이터셋의
+`source_system`에서 파생한 이름이고, 선행 숫자는 식별자가 아니므로 allow-list의 파서가
+테이블을 찾지 못합니다(`2024`) 또는 다른 것을 찾습니다(`2024_q1` → `_q1`). 날짜로 파티션된
+레이크 prefix가 이 모양입니다. 이유가 거짓이고, 파생 이름·locator·원인·수리 방법 중 아무것도
+말하지 않습니다.
+
+**수리:** 열거가 아니라 파서에 묻습니다 — `_reads_back_as_one_table`이 거짓이면 참된 이유
+(`unquotable_source_table`)로 거부하고 파생 이름·(자격증명을 지운) locator·
+`postgresql.table` distribution 선언을 메시지에 담습니다. 24개 절 키워드를 열거한 선행
+수리와 같은 계열이고, 이쪽은 열거 없이 둘 다 덮습니다.
+
+### 닫지 않은 것
+
+컬럼 이름이 절 키워드인 경우는 열려 있습니다 — `select`라는 컬럼을 `group_by`로 주면
+`SELECT select, count(*) ... FROM orders`를 200으로 받습니다. 대상 엔진이 거부할 SQL이고,
+이 게이트의 키워드 목록에 `select`가 없어 자기 검사도 통과합니다.
+
+## 배포 endpoint의 자격증명은 어디에서도 지워지지 않았고, PATCH는 그 필드를 조용히 버렸습니다 (2026-10-27 10:15Z)
+
+위 거부가 가리키는 수리 방법이 실제로 동작하는지 확인하다 나왔습니다.
+
+```
+PATCH /catalog/datasets/{id} distributions: [postgresql.table] -> 200
+저장된 distributions                                            -> [csv]  (변화 없음)
+POST  /llm/draft-query                                          -> 400 (그대로)
+
+endpoint에 자격증명을 담아 등록하면
+POST /catalog/datasets      -> 200, 응답에 secret: True
+GET  /catalog/datasets/{id} -> 응답에 secret: True, query token: True
+```
+
+`DatasetPatchRequest`에 `distributions`가 없습니다 — 다른 모든 컬렉션 필드는 있고, `license`가
+같은 결함의 첫 사례로 이미 기록돼 있습니다. 그리고 `redacted_source_system`의 규칙("모든
+경로에서, 인가된 경로에서도 지운다")을 같은 모양의 URL인 `endpoint`가 전부 비켜 갔습니다.
+리댁터는 그 URL을 이미 올바르게 처리하므로 라우팅이 없었을 뿐입니다.
+
+**수리:** `published_distribution` 하나를 `discovery_view`·`mutation_view`·
+`audited_patch_values`·JSON-LD 노드에 적용(locator 자체는 계속 공표), `distributions`를 patch
+계약에 추가, create/patch 차집합이 선언된 면제 셋(`id`·`tenant_id`·`owner`)과 같은지를 구조
+가드로 단언. patch 루프의 죽은 분기(컬렉션 일곱을 열거해 `None`을 skip — 바로 다음 조건과
+결과가 같아 아무 일도 하지 않으면서 그 일곱에만 적용되는 규칙처럼 읽혔습니다)도 제거했습니다.
+
+### 닫지 않은 것
+
+`owner`는 여전히 패치할 수 없고, 이 수리는 그 결정을 선언만 했습니다. endpoint 자격증명이
+**저장**되는 것도 그대로입니다 — 공표에서만 지웁니다(`source_system`도 같습니다).
+
 ## 중앙 Security Scan 게이트가 체크 목록에 **아예 없습니다** (2026-10-27 05:25Z)
 
 `AGENTS.md` 13–14행은 모든 PR에 중앙 Security Scan(`osv-scan` + diff-scoped
