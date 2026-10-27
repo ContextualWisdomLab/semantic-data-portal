@@ -2,14 +2,14 @@
 
 이 문서는 `claude/semantic-portal-pr-merge-e5a48k` 브랜치(PR
 [#102](https://github.com/ContextualWisdomLab/semantic-data-portal/pull/102))가
-베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **262개** 커밋 중 136개가
+베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **263개** 커밋 중 137개가
 gap-baseline 문서를 건드렸고, 나머지 126개는 건드리지 않았습니다. 이 숫자는 **이 줄을 담은
-커밋을 포함한** 값입니다 — 측정 시점의 261에 이 커밋을 더한 것.
+커밋을 포함한** 값입니다 — 측정 시점의 262에 이 커밋을 더한 것.
 
-**그 136/126 분할은 "제품 변경 126건"을 뜻하지 않습니다.** 측정 명령이 세는 것은 "그 문서를
+**그 137/126 분할은 "제품 변경 126건"을 뜻하지 않습니다.** 측정 명령이 세는 것은 "그 문서를
 건드렸는가"뿐이고, 이 브랜치의 수리 커밋은 거의 전부 같은 커밋에서 코드와 기록을 같이
-바꿉니다. 136개 중 **17개는 코드도 함께** 바꿨습니다. 그래서 실제 분할은 코드가 바뀐 커밋
-**143개**, 문서만 바꾼 커밋 **119개**입니다. 앞서 이 자리에 적혀 있던 "제품 동작이 바뀐
+바꿉니다. 137개 중 **18개는 코드도 함께** 바꿨습니다. 그래서 실제 분할은 코드가 바뀐 커밋
+**144개**, 문서만 바꾼 커밋 **119개**입니다. 앞서 이 자리에 적혀 있던 "제품 동작이 바뀐
 나머지 126개"는 17건을 문서 작업으로 분류해 **적게 센 값**이었습니다 — 같은 결함이 위의
 낡은 숫자 목록 전체에 걸쳐 있습니다. 측정 명령:
 
@@ -23,7 +23,7 @@ gap-baseline 문서를 건드렸고, 나머지 126개는 건드리지 않았습�
         | grep -qE '^(src/|tests/|fuzz/|\.github/|\.clusterfuzzlite/|scripts/)' \
         && echo "$c"; done | wc -l
 
-앞서 적혀 있던 164/112, 186/113, 199/122/77, 203/122/81, 211/122/89, 212/122/90, 213/122/91, 214/122/92, 215/122/93, 216/122/94, 218/122/96, 219/122/97, 220/122/98, 221/122/99, 222/122/100, 223/122/101, 224/122/102, 225/122/103, 226/122/104, 228/122/106, 230/123/107, 231/123/108, 233/124/109, 235/125/110, 252/128/124, 253/129/124, 254/130/124, 255/130/125, 256/131/125, 257/132/125, 258/133/125, 260/134/126, 261/135/126는 각각 그 시점의 값이고 이후
+앞서 적혀 있던 164/112, 186/113, 199/122/77, 203/122/81, 211/122/89, 212/122/90, 213/122/91, 214/122/92, 215/122/93, 216/122/94, 218/122/96, 219/122/97, 220/122/98, 221/122/99, 222/122/100, 223/122/101, 224/122/102, 225/122/103, 226/122/104, 228/122/106, 230/123/107, 231/123/108, 233/124/109, 235/125/110, 252/128/124, 253/129/124, 254/130/124, 255/130/125, 256/131/125, 257/132/125, 258/133/125, 260/134/126, 261/135/126, 262/136/126는 각각 그 시점의 값이고 이후
 커밋을 반영하지 않은 숫자였습니다 — 자기 문서의 수치도 측정해서 맞춰 둡니다. 199는 이
 줄을 쓴 뒤 3개 커밋이 더 쌓여 낡아 203으로, 203은 다음 커밋에서 낡아 204로, 204는 또
 두 커밋 뒤에 206으로 다시 측정해 고쳤습니다. 206도 그 값을 담은 커밋 자신 때문에 도착
@@ -43,12 +43,12 @@ gap-baseline 문서를 건드렸고, 나머지 126개는 건드리지 않았습�
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                       1523 passed, 31 skipped
-    pytest (파일 순서 정/역/난수)  각 1523 passed, 31 skipped — 순서 무관
+    pytest                       1549 passed, 31 skipped
+    pytest (파일 순서 정/역/난수)  각 1549 passed, 31 skipped — 순서 무관
                                  (정순 · 역순 · seed 11/707/31337; 이 커밋의 트리에서
                                   측정. 이 라운드의 테스트가 데이터셋을 온보딩하므로
                                   격리를 다시 쟀습니다)
-    pytest tests/fuzz            12 passed
+    pytest tests/fuzz            13 passed
                                  (앞서 11로 적혀 있었습니다 — `declared_relation`
                                   property 하나가 더해졌는데 이 숫자를 다시 재지
                                   않았습니다. Atheris 쪽은 아래 하네스 항목 참조)
@@ -62,7 +62,8 @@ pgvector 핀 커밋이 10건, event-loop 수리 커밋이 2건, 환경 변수 �
 올라갔고, 그 뒤 수리들을 거쳐 1397에, 새 파일 24건으로 1421에, KPI 포인터 가드 8건으로
 1429에, 404 detail 가드 7건으로 1436에, 거부 사유 가드 11건으로 1447에, 요청 본문
 문서 가드 34건으로 1481에, 콘솔 chip 색 가드 8건으로 1489에, relation 해석 가드 28건으로 1517에, 응답 계약 생성기 가드 3건으로 1520에,
-ClusterFuzzLite 하네스 import 가드 3건으로 1523에 와 있습니다(skip이
+ClusterFuzzLite 하네스 import 가드 3건으로 1523에,
+테이블 allow-list 가드 25건 + near-miss 성질 1건으로 1549에 와 있습니다(skip이
 23 → 31로 는 것은 새 가드 둘이 `measured`가 아닌 KPI 넷에
 대해 skip하기 때문입니다 — 그 skip 자체가 분기가 측정된 증거이고, 같은 파일의
 `test_at_least_one_kpi_exercises_each_branch`가 양쪽 분기에 사례가 있음을 단언합니다)
@@ -97,6 +98,82 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 **이 문장이 결함을 가려 줬습니다**: 미러가 돈다는 것은 참이지만, 그 하네스는 아래 항목이
 고치기 전까지 ClusterFuzzLite 이미지에서 **import에서 죽고 있었고** 입력을 하나도 퍼징하지
 않았습니다. "미러가 있으니 됐다"는 커버리지 주장이 아닙니다.
+
+### Security — 테이블 allow-list가 **정규화로 일치를 만들어** 다른 relation을 통과시켰습니다 (high)
+
+`validate_sql_query`의 source-table allow-list는 손으로 쓴 statement가 창고를 건드려도
+되는지를 정하는 **유일한** 관문입니다. 그 비교가 각 테이블 참조를 `_safe_identifier`로
+**정규화한 뒤** 선언된 relation과 맞춰 봤습니다. `_safe_identifier`는 영숫자가 아닌 모든
+바이트를 `_`로 바꾸고, 이 카탈로그의 relation은 전부 `_`를 담고 있습니다. 그래서 정규화가
+일치를 **제거한 게 아니라 만들어 냈습니다**.
+
+선언 relation `crm_customer_master`에 대해 측정한 것 — 서로 **다른 relation 아홉 개**가 전부
+경고 0건으로 통과했습니다:
+
+    select id from crm_customer_master   []  <- 진짜
+    select id from crm.customer_master   []  <- 다른 schema
+    select id from crm$customer_master   []  <- identifier도 아님
+    select id from crm_customer.master   []  <- schema crm_customer의 table master
+    select id from crm_customer$master   []
+    select id from crm.customer.master   []  <- 3단
+    select id from crm.customer$master   []
+    select id from crm·customer_master   []  <- U+00B7, Postgres identifier 문자
+    select id from crm․customer_master   []  <- U+2024, "." confusable
+    select id from crm．customer_master   []  <- U+FF0E, 또 하나
+
+내부 헬퍼의 문제가 아닙니다. `POST /browse/query`가 시드 데이터셋 `crm-customer-master`에
+대해 두 번째 statement에 **200**을 답했습니다 — 거버넌스 게이트가 다른 schema를 읽는
+쿼리를 인증한 것입니다.
+
+**비교 위의 주석이 같은 메커니즘에서 반대 결론을 주장하고 있었습니다**: "`_safe_identifier`가
+dot을 `_`로 바꾸므로 qualified name이 bare name과 충돌할 수 없다." 그 추론은 정규화가
+expected에 **없는** 문자를 *더하는* 경우(`pg_catalog.customer` → `pg_catalog_customer` ≠
+`customer`)에만 맞습니다. 선언된 이름이 정규화 결과 문자를 **이미 담고 있으면** 같은 매핑이
+충돌 생성기가 되고, `_`는 이 카탈로그의 모든 relation이 담고 있는 바로 그 문자입니다.
+
+고친 것: 참조를 **raw로** 비교합니다. 참조는 호출자의 신뢰할 수 없는 텍스트이고, 선언
+relation은 `source_relation_name`이 이미 sanitise하고 "한 테이블로 읽히는지"까지 확인해
+넘긴 값입니다. **신뢰할 수 없는 쪽을 신뢰하는 쪽에 맞춰 rewrite하는 것이 거꾸로입니다.**
+raw 비교는 엄격하게 더 좁고, 드래프터는 선언 이름을 그대로 emit하므로 자기 출력은 그대로
+통과합니다(전체 스위트에 느슨한 동작에 의존한 테스트는 없었습니다 — 1523 → 1549, 실패 0).
+
+### 두 엔진이 그 영역에 **구성으로** 도달해야 합니다
+
+공유 oracle에 일반 성질을 더했습니다: 참조가 인증된 이름과 **문자 단위로** 같지 않으면
+반드시 `unauthorized_table_reference`가 나온다. 예시 목록이 아니라 성질이므로 두 엔진이
+같은 것을 봅니다.
+
+그런데 **그것만으로는 vacuous였습니다.** Hypothesis는 `query`와 `declared_relation`을
+독립적으로 뽑으므로, "정규화하면 선언 이름이 되지만 raw로는 다른" 쌍에 결코 도달하지
+않습니다 — 수리를 되돌려도 green이었습니다. 그래서 그 우연을 **만드는** 전략을 더했습니다:
+underscore로 이어진 이름을 뽑고, 그 `_` 하나를 충돌 문자로 바꿔 참조를 만듭니다. 변이하면
+Hypothesis가 최소 반례 `a.a` vs `a_a`로 falsify합니다.
+
+충돌 문자 집합도 **측정했습니다.** 첫 목록에는 `crm customer_master`,
+`crm-customer_master`, `crm/customer_master`가 있었고 제 충돌 가드가 거절했습니다 —
+`_TABLE_LIST_TOKEN`이 `[A-Za-z_\u0080-\uffff][\w.$\u0080-\uffff]*`이므로 공백·하이픈·슬래시는
+토큰을 끝내고 그 셋은 테이블 `crm`으로 파싱되어 이미 다른 이유로 거부됩니다. 토큰 안에
+남으면서 `_safe_identifier`가 바꾸는 문자만 충돌합니다: ASCII `.`와 `$`, 그리고 U+007F
+위의 영숫자 아닌 문자.
+
+near-miss 구성은 oracle 모듈이 소유합니다(`COLLIDING_SEPARATORS`,
+`near_miss_reference`) — 두 엔진이 각자 사본을 들면 어긋날 수 있는 것이 하나 더
+늘어납니다. Atheris 하네스에도 같은 모드를 넣었고, 로컬에 Atheris wheel이 없으므로
+하네스 **본문을** 가짜 provider로 직접 구동하는 테스트를 더해 그 분기가 실제로 실행되고
+아무것도 raise하지 않음을 확인합니다. 첫 판 가짜 provider는 `a-z`만 내서 인증 이름에
+`_`가 한 번도 없었고, 분기에 들어가도 `near_miss_reference`가 64번 전부 `None`을 돌려
+**아무 일도 하지 않았습니다** — 진짜 provider는 임의 유니코드를 내고 `_safe_identifier`가
+거기서 `_`를 만들어 내므로 이미지에서는 이 모드가 계속 발화합니다. 알파벳을 섞어 고쳤습니다.
+
+변이 4건으로 확인했습니다: 정규화 비교 복원 → 예시 가드 9건 + 라우트 가드 + Hypothesis
+성질 red, 하네스의 near-miss 모드 제거 → 본문 가드 red, `near_miss_reference`가 이름을
+그대로 반환 → "underscore 없으면 거절" 가드 red, 하네스 import 형태 변경 → import 가드가
+먼저 red(그 가드가 line regex였고, 괄호 import로 줄바꿈되자 "oracle을 import하지 않는다"고
+보고했습니다 — `ast`로 바꿨습니다).
+
+`requirements.py`의 "qualified name도 막는다"는 주장이 바로 이 구멍만큼 틀려 있었으므로
+같은 커밋에서 고쳤고(줄 참조 `293-302`도 낡아 `353-397`로), `docs/requirements-coverage.md`를
+재생성했습니다.
 
 ### Fixed — ClusterFuzzLite 하네스가 **한 입력도 퍼징하지 못하고** import에서 죽었습니다 (high)
 

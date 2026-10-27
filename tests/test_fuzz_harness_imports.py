@@ -36,6 +36,7 @@ reddens.
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 import shutil
@@ -146,10 +147,23 @@ def oracle_module() -> str:
     imports is inside the image. Parsing the import keeps that invariant true
     without this guard naming a path that can go stale.
     """
-    source = HARNESS.read_text()
-    match = re.search(r"^\s*from\s+([\w.]+)\s+import\s+check_validate_sql_query", source, re.M)
-    assert match, "the harness no longer imports the shared query-safety oracle"
-    return match.group(1)
+    tree = ast.parse(HARNESS.read_text())
+    modules = {
+        node.module
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        and node.module
+        and any(alias.name == "check_validate_sql_query" for alias in node.names)
+    }
+    assert len(modules) == 1, (
+        "the harness no longer imports the shared query-safety oracle from "
+        f"exactly one module: {sorted(modules)}"
+    )
+    # Parsed, not matched with a line regex. The first version used one, and it
+    # failed the moment the harness grew a second name and the import wrapped
+    # across lines - reporting "no longer imports the oracle" about an import
+    # that was right there.
+    return modules.pop()
 
 
 def test_the_image_contains_the_oracle_the_harness_imports() -> None:

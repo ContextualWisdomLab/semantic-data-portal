@@ -125,6 +125,34 @@ def check_draft_sql(req: QueryDraftRequest) -> None:
             check_safe_identifier(col)
 
 
+# A character the table-list tokeniser keeps inside one token *and*
+# ``_safe_identifier`` rewrites to "_". Both properties together are what let a
+# reference collide with an authorised name that already contains "_" - and
+# every relation in this catalogue contains one. ASCII "." and "$"; above
+# U+007F, any non-alphanumeric character, of which these three are real "."
+# confusables a warehouse would read as separators.
+COLLIDING_SEPARATORS = (".", "$", "\u00b7", "\u2024", "\uff0e")
+
+
+def near_miss_reference(name: str, separator: str, seam: int) -> str | None:
+    """Rewrite one ``_`` of ``name`` into a character that normalises back to it.
+
+    Returns ``None`` when ``name`` has no underscore to rewrite, so a caller
+    that cannot build a near miss can say so rather than quietly testing the
+    authorised name against itself.
+
+    This lives with the oracle rather than in either engine because it is what
+    *defines* the region the allow-list was weakest in: both the Hypothesis
+    strategy and the Atheris harness have to reach it by construction, and a
+    second copy of the separator set is one more thing that can drift.
+    """
+    seams = [index for index, character in enumerate(name) if character == "_"]
+    if not seams:
+        return None
+    index = seams[seam % len(seams)]
+    return name[:index] + separator + name[index + 1 :]
+
+
 def check_validate_sql_query(
     query: str, source_system: str, declared_relation: str | None
 ) -> None:
@@ -172,6 +200,30 @@ def check_validate_sql_query(
                 f"the declared relation {relation!r} was refused as unauthorized: "
                 f"{authorized}"
             )
+
+    # The converse, and the stronger half: anything the query references that is
+    # not character-for-character the authorised name must be refused. The
+    # allow-list used to normalise each reference through ``_safe_identifier``
+    # before comparing, which manufactured matches wherever the authorised name
+    # already contained the character normalisation produces - so against
+    # declared ``crm_customer_master``, the references ``crm.customer_master``,
+    # ``crm$customer_master``, ``crm_customer.master`` and the non-ASCII "."
+    # confusables were all certified clean. Expressing the allow-list as a
+    # property rather than a list of examples is what makes that a crash for
+    # both engines; ``expected`` is computed exactly as production computes it,
+    # including the fact that a supplied ``declared_relation`` is *not*
+    # re-sanitised.
+    authorized_name = (
+        declared_relation
+        if declared_relation
+        else orchestrator._source_table_name(source_system)
+    ).lower()
+    references = orchestrator._referenced_source_tables(query)
+    if references and any(table.lower() != authorized_name for table in references):
+        assert "unauthorized_table_reference" in warnings, (
+            f"{references!r} is not {authorized_name!r}, yet the allow-list did "
+            f"not refuse it: {warnings}"
+        )
 
 
 def check_execute_query(req: QueryExecutionRequest) -> None:

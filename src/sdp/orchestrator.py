@@ -366,14 +366,33 @@ def validate_sql_query(
     # ``fuzz/fuzz_query_safety.py`` and its Hypothesis mirror call this with a
     # bare locator and no dataset to resolve against.
     expected = (declared_relation or _source_table_name(source_system)).lower()
-    # Compare the WHOLE reference. Taking only the last dot-separated component
-    # made any qualification whose leaf matched pass the allow-list:
+    # Compare the WHOLE reference, RAW. Taking only the last dot-separated
+    # component made any qualification whose leaf matched pass the allow-list:
     # pg_catalog.customer, otherdb.otherschema.customer and
     # information_schema.customer all reduce to "customer". The drafter emits the
-    # bare name (_source_table_name), so a qualified reference is one the
-    # allow-list cannot prove. _safe_identifier maps the dot to "_", so a
-    # qualified name can never collide with the bare one.
-    referenced_tables = {_safe_identifier(table).lower() for table in referenced}
+    # declared name verbatim, so a qualified reference is one the allow-list
+    # cannot prove.
+    #
+    # It used to normalise each reference through _safe_identifier first, on the
+    # argument that "the dot becomes _, so a qualified name can never collide
+    # with the bare one". That holds only where normalisation *adds* a character
+    # the expected name lacks (pg_catalog.customer -> pg_catalog_customer, which
+    # is not "customer"). Where the declared name already contains the character
+    # normalisation produces - and every relation in this catalogue contains an
+    # underscore - the mapping manufactures matches instead of preventing them.
+    # Against declared crm_customer_master, nine references naming nine
+    # different relations were certified clean: crm.customer_master,
+    # crm$customer_master, crm_customer.master, crm.customer.master and the
+    # non-ASCII "." confusables the token regex keeps (U+00B7, U+2024, U+FF0E).
+    # _TABLE_LIST_TOKEN is [A-Za-z_\u0080-\uffff][\w.$\u0080-\uffff]*, so those
+    # characters stay inside one token and reach the comparison.
+    #
+    # The reference is untrusted text; the declared relation arrives from
+    # source_relation_name, already sanitised and already checked to read back as
+    # one table. Rewriting the untrusted side to match the trusted one is
+    # backwards. Raw comparison is strictly tighter and still accepts the
+    # drafter's own output, which emits the declared name unchanged.
+    referenced_tables = {table.lower() for table in referenced}
     if referenced_tables != {expected}:
         warnings.append("unauthorized_table_reference")
 

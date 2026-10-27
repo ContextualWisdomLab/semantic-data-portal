@@ -22,7 +22,11 @@ import atheris
 
 with atheris.instrument_imports():
     from sdp.orchestrator import _source_table_name, validate_sql_query
-    from tests.fuzz.invariants import check_validate_sql_query
+    from tests.fuzz.invariants import (
+        COLLIDING_SEPARATORS,
+        check_validate_sql_query,
+        near_miss_reference,
+    )
 
 
 def _text(provider: atheris.FuzzedDataProvider, max_length: int = 96) -> str:
@@ -37,12 +41,31 @@ def TestOneInput(data: bytes) -> None:
     prefix = provider.PickValueInList(["SELECT", "select", "DELETE", "UPDATE", ""])
     projection = provider.PickValueInList(["*", "count(*)", "customer_id", _text(provider, 32) or "*"])
     suffix = _text(provider)
-    query = f"{prefix} {projection} FROM {table_name} {suffix}"
 
     # ``declared_relation`` became a live input when the allow-list stopped
     # guessing the relation from the connection locator; ``None`` keeps the
     # locator fallback - which this harness is the only caller of - covered.
     declared_relation = provider.PickValueInList([None, _text(provider, 48), table_name])
+
+    # Drawing the FROM target and the declared relation independently never
+    # lands on a reference that differs from the authorised name *only* by a
+    # character that normalises back onto it - the region where the allow-list
+    # certified nine different relations as the declared one. So one mode builds
+    # that coincidence instead of waiting for the engine to find it. One
+    # separator per input: two "$" would trip the dollar-quote guard first and
+    # the refusal would not be the one under test.
+    authorised = declared_relation if declared_relation else table_name
+    from_target = table_name
+    if provider.PickValueInList([True, False]):
+        from_target = (
+            near_miss_reference(
+                authorised,
+                provider.PickValueInList(list(COLLIDING_SEPARATORS)),
+                provider.ConsumeIntInRange(0, 8),
+            )
+            or table_name
+        )
+    query = f"{prefix} {projection} FROM {from_target} {suffix}"
 
     warnings = validate_sql_query(
         query, source_system=source_system, declared_relation=declared_relation

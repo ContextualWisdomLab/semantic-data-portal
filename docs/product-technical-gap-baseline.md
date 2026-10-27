@@ -3704,6 +3704,63 @@ counts: {'고객': number, '고객행동': number, '매출': number, '온톨로�
 
 이 절은 측정 기록이고 병합 허가가 아닙니다.
 
+## 테이블 allow-list가 **정규화로 일치를 만들어** 다른 relation을 통과시켰습니다 (2026-10-27 02:50Z)
+
+`validate_sql_query`의 source-table allow-list가 각 테이블 참조를 `_safe_identifier`로
+정규화한 뒤 선언 relation과 비교했습니다. 그 함수는 영숫자가 아닌 모든 바이트를 `_`로
+바꾸고, 이 카탈로그의 relation은 전부 `_`를 담습니다 — 정규화가 일치를 **만들어 냈습니다**.
+
+선언 `crm_customer_master`에 대해 서로 다른 relation **아홉 개**가 경고 0건:
+`crm.customer_master`, `crm$customer_master`, `crm_customer.master`,
+`crm_customer$master`, `crm.customer.master`, `crm.customer$master`, 그리고 토큰 안에 남는
+비ASCII `.` confusable 셋(U+00B7, U+2024, U+FF0E). `POST /browse/query`는 시드 데이터셋
+`crm-customer-master`에 대해 `select customer_id from crm.customer_master limit 10`에
+**200**을 답했습니다.
+
+### 주석이 같은 메커니즘에서 반대 결론을 적고 있었습니다
+
+"`_safe_identifier`가 dot을 `_`로 바꾸므로 qualified name이 bare name과 충돌할 수 없다" —
+정규화가 expected에 **없는** 문자를 더하는 경우(`pg_catalog.customer`)에만 맞는 추론입니다.
+선언 이름이 그 문자를 이미 담고 있으면 매핑은 충돌 생성기입니다.
+
+### raw 비교
+
+참조는 호출자의 신뢰할 수 없는 텍스트, 선언 relation은 `source_relation_name`이 이미
+sanitise하고 한 테이블로 읽히는지 확인한 값입니다. 신뢰할 수 없는 쪽을 신뢰하는 쪽에 맞춰
+rewrite하는 것이 거꾸로입니다. raw 비교는 엄격하게 더 좁고(거부만 늘고 수락은 늘지 않음),
+드래프터는 선언 이름을 그대로 emit하므로 자기 출력은 통과합니다. 전체 스위트에 느슨한
+동작에 의존한 테스트는 **없었습니다**: 1523 → 1549, 실패 0.
+
+### 성질을 더했는데 vacuous였습니다
+
+공유 oracle에 "참조가 인증 이름과 문자 단위로 같지 않으면 반드시 거부"를 더했습니다. 그런데
+Hypothesis가 `query`와 `declared_relation`을 독립적으로 뽑으므로 충돌 쌍에 도달하지 않고,
+수리를 되돌려도 green이었습니다. 우연을 **만드는** 전략(underscore 이름 → `_` 하나를 충돌
+문자로 치환)을 더하자 최소 반례 `a.a` vs `a_a`로 falsify합니다. 성질을 적는 것과 성질이
+발화하는 입력에 도달하는 것은 다릅니다.
+
+충돌 문자 집합은 측정했습니다. 첫 목록의 `crm customer_master`, `crm-customer_master`,
+`crm/customer_master`는 제 충돌 가드가 거절했습니다 — `_TABLE_LIST_TOKEN`이
+`[A-Za-z_\u0080-\uffff][\w.$\u0080-\uffff]*`이므로 공백·하이픈·슬래시는 토큰을 끝내고 테이블
+`crm`으로 파싱되어 이미 다른 이유로 거부됩니다.
+
+### 하네스 본문을 로컬에서 구동합니다
+
+near-miss 구성은 oracle 모듈이 소유합니다(`COLLIDING_SEPARATORS`, `near_miss_reference`).
+Atheris 하네스에 같은 모드를 넣었고, wheel이 없으므로 본문을 가짜 provider로 직접
+구동하는 테스트를 더했습니다. 첫 판 가짜 provider는 `a-z`만 내서 인증 이름에 `_`가 없었고
+분기에 들어가도 64번 전부 `None`이었습니다 — 진짜 provider는 임의 유니코드를 내고
+`_safe_identifier`가 거기서 `_`를 만들므로 이미지에서는 계속 발화합니다.
+
+### 닫지 않은 것
+
+Atheris **coverage-guided 실행**은 여전히 로컬 증거가 아닙니다 — 확인한 것은 본문이 가짜
+provider 64입력에서 실행되고 oracle이 성립한다는 것까지입니다. 그리고 컬럼 쪽에는 여전히
+allow-list가 없습니다: `requirements.py`가 적어 둔 대로 선언 컬럼의 rewrite를 다시 검사하는
+경로가 없습니다(별도 항목).
+
+이 절은 측정 기록이고 병합 허가가 아닙니다.
+
 ## ClusterFuzzLite 하네스가 **한 입력도 퍼징하지 못하고** import에서 죽었습니다 (2026-10-27 02:20Z)
 
 `a2f50c2`가 두 엔진의 oracle을 하나로 모으면서 `fuzz/fuzz_query_safety.py`에
