@@ -144,6 +144,17 @@ _DATA_READER_ROLES = ("data-analyst", "admin", "platform-admin")
 _METADATA_READER_ROLES = (*_DATA_READER_ROLES, "security")
 
 # Actions that release rows, versus actions that release only metadata.
+# The status every surface must publish beside the row-level predicate, and the
+# wording that tells a caller what to do about it. One definition, read by
+# ``browse.preview`` and ``orchestrator.draft_sql``, so the three cannot drift
+# into saying different things about the same obligation.
+ROW_FILTER_ENFORCEMENT_STATUS = "declared_not_enforced"
+ROW_FILTER_ENFORCEMENT_NOTE = (
+    "선언된 행 레벨 조건이며 이 응답의 행에는 적용되지 않았습니다. "
+    "행 레벨 집행은 Phase 2 범위이므로, 이 조건이 필요한 조회는 원본 시스템에서 직접 적용해야 합니다."
+)
+ROW_FILTER_ABSENT_NOTE = "이 조회에 선언된 행 레벨 조건이 없습니다."
+
 _DATA_READ_ACTIONS = {"query", "preview"}
 _METADATA_READ_ACTIONS = {"schema", "search", "list"}
 
@@ -442,6 +453,25 @@ def evaluate(
     }
     if row_filter:
         obligations["row_filter"] = row_filter
+        # And what the engine does with it, because the answer is "nothing".
+        # ``docs/prd-trd.md`` §6.2 puts row-level filtering in Phase 2, so the
+        # absence of enforcement is the intended scope - but every surface
+        # published the predicate as though it had governed the read. Measured on
+        # ``crm-event``, the only ``sensitivity: high`` dataset this reaches::
+        #
+        #     published columns           ['event_id', 'customer_id',
+        #                                  'event_timestamp', 'device_id']
+        #     'business_unit' among them  False
+        #     purpose='analysis'   applied_row_filter=[...]  row_count=2
+        #     purpose='marketing'  applied_row_filter=None   row_count=2
+        #     rows byte-identical         True
+        #
+        # The predicate names a column the dataset does not declare, and the rows
+        # returned "with the filter" are the same bytes as the rows returned
+        # without it. Carrying the status in the obligation itself - rather than at
+        # each publishing surface - is what keeps a fifth consumer of the decision
+        # from echoing the predicate bare.
+        obligations["row_filter_enforcement"] = ROW_FILTER_ENFORCEMENT_STATUS
 
     return _decision(
         **decision_base,

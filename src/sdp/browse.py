@@ -6,7 +6,12 @@ from .authz import can_access_tenant
 from .catalog import get_dataset, get_dataset_profile, ingest_event
 from .domain import ColumnMetadata, Dataset
 from sdp_core.contracts import masked_column_rules
-from .policy import evaluate, evaluate_dataset_scope_refusal
+from .policy import (
+    ROW_FILTER_ABSENT_NOTE,
+    ROW_FILTER_ENFORCEMENT_NOTE,
+    evaluate,
+    evaluate_dataset_scope_refusal,
+)
 from .quality_warnings import quality_warning_summary
 
 # Demo sample values, keyed by the column they belong to. The preview rows are
@@ -207,6 +212,9 @@ def preview(
     declared = [rule["column"] for rule in masked_column_rules(dataset.schema)]
     masked_columns = list(dict.fromkeys([*obligated, *declared]))
 
+    # Declared, not applied: the rows below are sliced by offset/limit alone.
+    declared_row_filter = decision.obligations.get("row_filter") or []
+
     selected = rows[offset : offset + limit]
     masked = [apply_mask(row.copy(), masked_columns) for row in selected]
     ingest_event(
@@ -222,7 +230,13 @@ def preview(
             "requested_limit": limit,
             "returned_rows": len(masked),
             "masked_columns": masked_columns,
-            "row_filter": decision.obligations.get("row_filter"),
+            # ``row_filter`` stood here, beside ``returned_rows``, and nothing
+            # applied it: an auditor joining this row to its decision read a
+            # department-scoped read of 2 rows that never happened. The predicate
+            # stays recorded - it is the obligation the policy declared - under a
+            # name that says what it is, with the enforcement fact beside it.
+            "declared_row_filter": declared_row_filter,
+            "row_filter_enforced": False,
             "policy_decision_id": decision.decision_id,
         },
     )
@@ -237,7 +251,18 @@ def preview(
         "has_more": offset + len(masked) < len(rows),
         "sampling_note": "샘플 결과이며 전체 데이터 대표성을 보장하지 않습니다.",
         "policy_decision_id": decision.decision_id,
-        "applied_row_filter": decision.obligations.get("row_filter"),
+        # ``applied_row_filter`` stood here. The name was the defect: it asserted
+        # that a row-level control governed the rows above, and the slice above
+        # applies no predicate at all. Grouped like ``masking_summary``, and
+        # published for every read so that silence cannot be read as "no
+        # row-level obligation was declared" either.
+        "row_filter_summary": {
+            "declared_predicates": declared_row_filter,
+            "filter_enforced": False,
+            "enforcement_note": (
+                ROW_FILTER_ENFORCEMENT_NOTE if declared_row_filter else ROW_FILTER_ABSENT_NOTE
+            ),
+        },
     }
 
 

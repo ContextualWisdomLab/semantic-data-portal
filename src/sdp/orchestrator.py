@@ -10,7 +10,7 @@ from sdp_core.demo_seed import classify_source_type
 from .authz import can_access_tenant
 from .catalog import get_dataset, ingest_event
 from .domain import QueryDraftRequest
-from .policy import evaluate
+from .policy import ROW_FILTER_ENFORCEMENT_NOTE, evaluate
 from .domain import QueryExecutionRequest
 from .domain import QueryExecutionResponse
 
@@ -963,7 +963,19 @@ def draft_sql(req: QueryDraftRequest) -> dict:
 
     row_filter = decision.obligations.get("row_filter")
     if row_filter:
-        assumptions.append(f"행 레벨 필터 적용: {', '.join(row_filter)}")
+        # "행 레벨 필터 적용" stood here, in the assumption list beside a statement
+        # that does not contain the predicate: measured on ``crm-event``, the
+        # drafted SQL was ``SELECT count(*) ... WHERE event_timestamp >=
+        # current_date - 90 LIMIT 1000`` while this line told the analyst a
+        # department filter had been applied to it. The analyst runs this SQL
+        # against the real warehouse, where the scoping the assumption promised
+        # would be the only thing keeping the read inside their unit.
+        predicates = ", ".join(row_filter)
+        assumptions.append(
+            f"행 레벨 조건({predicates})은 이 SQL에 포함되지 않았습니다. "
+            + ROW_FILTER_ENFORCEMENT_NOTE
+        )
+
 
     if not req.group_by:
         assumptions.append("기본 집계는 건수 카운트 기반으로 반환")

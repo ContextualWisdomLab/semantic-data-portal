@@ -172,10 +172,18 @@ def test_the_row_filter_obligation_survives_purpose_spelling(purpose: str) -> No
         "/browse/crm-event/preview", json={"user": "admin", "purpose": purpose, "limit": 2}
     )
     assert response.status_code == 200, response.text
-    assert response.json()["applied_row_filter"] == ["business_unit = current_user_unit"], (
+    # The field this read was ``applied_row_filter``, which asserted the predicate
+    # governed the rows; nothing applies it, so the claim moved to
+    # ``row_filter_summary`` with its enforcement status beside it (see
+    # ``tests/test_row_filter_is_declared_not_applied.py``). What this test is
+    # about - that the obligation survives the spelling of ``purpose`` - is
+    # unchanged, and is now read where the obligation is actually published.
+    summary = response.json()["row_filter_summary"]
+    assert summary["declared_predicates"] == ["business_unit = current_user_unit"], (
         purpose,
-        response.json().get("applied_row_filter"),
+        summary,
     )
+    assert summary["filter_enforced"] is False, summary
 
 
 def test_purpose_is_normalized_once_at_the_entry_point() -> None:
