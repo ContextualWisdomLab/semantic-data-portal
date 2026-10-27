@@ -663,18 +663,26 @@ def test_the_data_keyed_nodes_are_the_ones_the_prose_names() -> None:
 
 
 def test_the_obligations_node_is_a_map_because_its_keys_vary() -> None:
-    """A node the product fills from nine keys must not publish four of them.
+    """A node the product fills from eleven keys must not publish five of them.
 
-    What achieves it is the ledger page size in ``REQUIRED_QUERY``: the probe
-    sequence files more than a hundred decisions before this path is read, so
-    the refusal branches' rows were off the end of the default page. Dropping
-    that one query parameter republishes the four-key struct, which is the
-    mutation this assertion answers.
+    What achieves it is ``DATA_KEYED_BY_DECLARATION`` in the generator: this
+    node is declared data-keyed and checked against the obligation keys
+    ``sdp/policy.py``'s own source names, so the shape no longer depends on
+    which sampled state happened to observe more. Removing the declaration, or
+    reversing its ``declared - observed`` comparison, republishes the struct -
+    those are the mutations this assertion answers.
 
-    A helper that deliberately drove those branches was written first and then
-    removed - regenerating with and without it gave byte-identical output. This
-    docstring claimed the helper was what held the property up; it was not, and
-    the mutation that deleted it came back green rather than red.
+    Two earlier claims about this property were wrong and are kept because the
+    error repeated. The first named a helper that drove the refusal branches;
+    regenerating with and without it gave byte-identical output. The second
+    named the ledger page size in ``REQUIRED_QUERY`` - measured after the
+    declaration landed, **removing that query parameter changes the generated
+    contract not at all** and this file stays green, so it was not holding the
+    property either. What had actually been holding it was an accident: the
+    first state observed no obligation keys, so the second state's keys were
+    all "new". The moment the connector probe's 404 refusal began recording its
+    decision, the first state saw five and the rule went silent. A guard that
+    fires on a sampling difference reports on the sample, not the node.
     """
     obligations = RESPONSE_SCHEMAS[("GET", "/policy/decisions")]["items"]["properties"][
         "obligations"

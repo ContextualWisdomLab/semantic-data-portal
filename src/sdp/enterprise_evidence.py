@@ -235,8 +235,15 @@ def build_enterprise_evidence_pack() -> dict[str, Any]:
         "actor_scoped_proof_endpoints": ACTOR_SCOPED_PROOF_ENDPOINTS,
         "actor_scoped_proof_note": (
             "이 경로들은 거버닝 읽기이므로 actor가 필요합니다. "
-            "`?user=<actor>`를 붙이지 않으면 403으로 거부되며, 그 거부 자체가 "
-            "접근 통제가 동작한다는 증거입니다."
+            "`?user=<actor>`를 붙이지 않으면 거부되며, 그 거부 자체가 접근 통제가 "
+            "동작한다는 증거입니다 — 거부는 정책 결정 원장에 행을 남기므로 "
+            "`/policy/decisions?user=<actor>`로 확인할 수 있습니다. 거부 코드는 "
+            "두 가지이고 그 차이가 설계입니다. 원장 읽기 셋은 403으로 거부합니다. "
+            "connector probe는 404 `dataset not found`로 거부합니다 — 권한 없는 "
+            "호출자에게는 지목한 데이터셋이 존재하는지 자체를 알리지 않으므로, "
+            "다른 tenant의 데이터셋과 없는 데이터셋이 한 가지 답으로 합쳐집니다. "
+            "403보다 강한 통제이며, 합쳐진 두 사유는 응답이 아니라 원장에 "
+            "남습니다(감사 행의 `reason`과 `response_status`)."
         ),
         "saleability_gates": {
             "metadata_validation_pass_rate": "pass" if _metadata_validation_pass_rate() >= 0.95 else "gap",

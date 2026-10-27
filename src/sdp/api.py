@@ -793,9 +793,35 @@ def enterprise_connector_probe(
     # denied" for a foreign dataset and 404 "dataset not found" for an absent
     # one. Resolving it in the caller's scope makes both answers the same, before
     # the policy evaluation below can produce a distinguishing reason.
-    if catalog.dataset_in_scope(dataset_id, accessible_tenant_ids(user)) is None:
-        raise HTTPException(status_code=404, detail="dataset not found")
+    # One decision for the whole read, taken **before** the existence check.
+    # The 404 above is deliberate and stays: merging "foreign" and "absent" into
+    # one answer is what keeps an unauthorized caller from enumerating dataset
+    # existence. But it used to ``raise`` before any recording, so of this
+    # route's three exits the one an unauthorized caller actually reaches was
+    # the only one that filed neither a policy decision nor an audit event -
+    # while ``/enterprise/evidence-pack`` published this very link under a note
+    # saying "그 거부 자체가 접근 통제가 동작한다는 증거입니다". The refusal was
+    # not evidence; it left none. ``evaluate`` already separates the two causes
+    # in its reason ("tenant boundary denied" vs "존재하지 않는 데이터셋입니다."),
+    # so the ledger keeps the cause the response is allowed to withhold.
     decision = evaluate(subject=user, resource=dataset_id, action="schema", purpose=purpose)
+    if catalog.dataset_in_scope(dataset_id, accessible_tenant_ids(user)) is None:
+        catalog.ingest_event(
+            event_type="enterprise.connector_probe",
+            actor=user,
+            dataset_id=dataset_id,
+            decision="denied",
+            reason=decision.reason,
+            decision_id=decision.decision_id,
+            details={
+                "connector_id": connector_id,
+                "policy_decision_id": decision.decision_id,
+                # What the caller was told, beside the reason they were not.
+                "response_status": 404,
+                "existence_distinction_withheld": True,
+            },
+        )
+        raise HTTPException(status_code=404, detail="dataset not found")
     if decision.effect != "allow":
         catalog.ingest_event(
             event_type="enterprise.connector_probe",

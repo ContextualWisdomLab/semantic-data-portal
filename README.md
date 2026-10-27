@@ -605,7 +605,12 @@ SDP_CONNECTOR_TIMEOUT_MS='2s'          gate 통과, probe 라우트 400
 - `GET /enterprise/console`
 - `POST /enterprise/auth/oidc-preview`
 - `POST /enterprise/auth/oidc-verify`
-- `GET /enterprise/connectors/{connector_id}/probe`
+- `GET /enterprise/connectors/{connector_id}/probe` — 권한 없는 호출자에게는
+  403이 아니라 **404 `dataset not found`**로 거부한다. 다른 tenant의 데이터셋과
+  없는 데이터셋이 한 가지 답으로 합쳐지므로 존재 여부를 열거할 수 없다(403보다
+  강한 통제이며, `/enterprise/evidence-pack`의 `actor_scoped_proof_note`가 이
+  차이를 설명한다). 합쳐진 두 사유는 감사 행의 `reason`과 `response_status`에
+  남는다 — 이 거부도 다른 두 exit과 같이 정책 결정 1건 + 감사 행 1건을 남긴다
 
 ## 테스트
 

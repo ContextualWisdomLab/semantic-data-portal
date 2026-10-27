@@ -44,6 +44,7 @@ where they are implemented):
 
 from __future__ import annotations
 
+import ast
 import json
 import pprint
 import sys
@@ -134,17 +135,18 @@ REQUIRED_QUERY = {
     "/enterprise/connectors/{connector_id}/probe": {"dataset_id": "crm-customer-master"},
     # The ledger is newest-first and the default page is 100 rows, and the
     # probe sequence itself files far more than 100 decisions before this path
-    # is read. So the rows carrying the *refusal* branches' obligations keys -
+    # is read, so the rows carrying the *refusal* branches' obligations keys -
     # ``refusal_cause``, ``known_actions``, ``unmapped_published_action``,
-    # ``actor_tenant_id``, ``redact`` - were off the end of the page, and
-    # ``obligations`` was published as a closed four-key struct for a node the
-    # product fills from nine. 500 is the route's own ceiling.
+    # ``actor_tenant_id``, ``redact`` - were off the end of the page. 500 is the
+    # route's own ceiling, and a complete page is worth having on its own.
     #
-    # This one line is the whole repair. A helper that deliberately drove those
-    # branches was written first and removed: regenerating with and without it
-    # produced byte-identical output, because the ordinary probing already
-    # triggers every one of them - they were observed, just not on page one.
-    # A mutation that deleted the helper came back green, which is what said so.
+    # It is **not** what keeps ``obligations`` published as a map. This comment
+    # used to say it was ("this one line is the whole repair"), as did the
+    # matching test docstring; measured after ``DATA_KEYED_BY_DECLARATION``
+    # landed, removing this parameter changes the generated contract not at all.
+    # A third claim before it named a helper that drove those branches, also
+    # wrong. Three guesses at one mechanism, each written as settled fact -
+    # which is why the shape is now read off a declaration that can be checked.
     "/policy/decisions": {"limit": "500"},
 }
 PROBES: tuple[dict[str, str], ...] = ({}, {"user": "admin"}, {"actor": "admin"})
@@ -438,6 +440,114 @@ def as_map_where_keys_are_data(
     return {**schema, "properties": properties}
 
 
+# One node's keys are data by the product's own construction, and no two-state
+# diff can see it. ``policy.evaluate`` selects obligations per branch, so one
+# recorded decision shows the keys *that* branch emitted and says nothing about
+# the rest. ``as_map_where_keys_are_data`` can only fire on "the second state
+# has a key the first lacks", which makes the published shape a function of
+# which sample happened to see more - so a **more complete** first observation
+# silently narrows the claim. This file already records two attempts reverted
+# for exactly that reason (see ``generate``); the third arrived from production
+# code, when the connector probe's 404 refusal began recording its decision and
+# the first state's observed obligation keys went from none to five. The node
+# did not become less variadic. The sampling accident the rule depended on
+# disappeared.
+#
+# So this node is declared, and checked against the key set the product's own
+# source says it can emit. The test is ``declared - observed`` rather than
+# ``observed ⊆ declared``: an incomplete derivation of the vocabulary can then
+# only make the rule fire less often, never claim a map the product denies, and
+# the rule is monotone - observing more can close the gap but never reopen it.
+DATA_KEYED_BY_DECLARATION: dict[tuple[str, str], tuple[str, ...]] = {
+    ("GET", "/policy/decisions"): ("items", "obligations"),
+}
+
+POLICY_SOURCE = REPO_ROOT / "src" / "sdp" / "policy.py"
+
+
+def declared_obligation_keys() -> set[str]:
+    """Every obligation key ``sdp.policy``'s source puts in a decision row.
+
+    Derived, not listed: a hand-kept list beside the module it describes is the
+    drift this generator exists to refuse. Four spellings are read - the
+    ``obligations={...}`` keyword at each ``_decision`` call, the local
+    ``obligations = {...}`` literal, ``obligations["key"] = ...``, and
+    ``obligations.setdefault("key", ...)``. Keys a caller merges in through
+    ``provenance`` are **not** derived here and do not need to be; see the
+    comment above ``DATA_KEYED_BY_DECLARATION`` for why the direction of the
+    comparison makes an undercount safe.
+    """
+    tree = ast.parse(POLICY_SOURCE.read_text(encoding="utf-8"))
+    keys: set[str] = set()
+
+    def record(node: ast.AST) -> None:
+        if isinstance(node, ast.Dict):
+            keys.update(
+                key.value
+                for key in node.keys
+                if isinstance(key, ast.Constant) and isinstance(key.value, str)
+            )
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.keyword) and node.arg == "obligations":
+            record(node.value)
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == "obligations":
+                    record(node.value)
+                if (
+                    isinstance(target, ast.Subscript)
+                    and isinstance(target.value, ast.Name)
+                    and target.value.id == "obligations"
+                    and isinstance(target.slice, ast.Constant)
+                    and isinstance(target.slice.value, str)
+                ):
+                    keys.add(target.slice.value)
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "setdefault"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "obligations"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
+        ):
+            keys.add(node.args[0].value)
+    return keys
+
+
+def as_map_where_the_product_declares_more_keys(
+    schema: dict[str, Any], route: tuple[str, str], declared: set[str]
+) -> dict[str, Any]:
+    """Republish a declared node as a map while the product can still surprise it.
+
+    Walks the one declared path and, if the product's source names a key the
+    observation never produced, collapses that node's ``properties`` into
+    ``additionalProperties`` over the union of the value types observed - the
+    same shape ``as_map_where_keys_are_data`` produces, reached from a
+    declaration instead of a diff.
+    """
+    path = DATA_KEYED_BY_DECLARATION.get(route)
+    if path is None:
+        return schema
+    node: Any = schema
+    for step in path:
+        if not isinstance(node, dict):
+            return schema
+        node = node.get("items") if step == "items" else (node.get("properties") or {}).get(step)
+    if not isinstance(node, dict) or "properties" not in node:
+        return schema
+    if not declared - set(node["properties"]):
+        return schema
+    values = NOTHING_OBSERVED
+    for item in node["properties"].values():
+        values = union(values, item)
+    node.clear()
+    node.update({"type": "object", "additionalProperties": union(values, values)})
+    return schema
+
+
 def _child(other: Any, key: str) -> Any:
     """This key's value in the second state: one node, or every element's."""
     if isinstance(other, dict):
@@ -599,6 +709,11 @@ def generate() -> str:
         # has already fired cannot do that.
         for payload in third_state.get(path, []):
             schema = union(schema, derive(payload))
+        # Last, like the third state and for the same reason: it reads the
+        # finished node rather than feeding the comparison the map rule makes.
+        schema = as_map_where_the_product_declares_more_keys(
+            schema, ("GET", path), declared_obligation_keys()
+        )
         schemas[("GET", path)] = schema
 
     text = TARGET.read_text()
