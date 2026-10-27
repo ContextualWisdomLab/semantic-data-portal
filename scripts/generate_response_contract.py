@@ -279,7 +279,16 @@ def union(left: dict[str, Any] | None, right: dict[str, Any] | None) -> dict[str
             return merged
         properties = dict(left["properties"])
         for key, item in right["properties"].items():
-            properties[key] = union(properties.get(key, {}), item)
+            # ``NOTHING_OBSERVED``, not ``{}``. The distinction above is the
+            # whole point of the sentinel, and this line used to supply ``{}``
+            # as the default - which says "observed, and any type fits" about a
+            # key the left observation never carried. ``union({}, typed)``
+            # collapses to ``{}``, so every field a *second* probe introduced
+            # lost its measured type and was published untyped. Measured:
+            # union({"a": string}, {"a": string, "b": integer}) put ``b`` at
+            # ``{}``. The same default is used recursively, so nested objects
+            # lost theirs too.
+            properties[key] = union(properties.get(key, NOTHING_OBSERVED), item)
         merged["properties"] = properties
     elif left.get("type") == "array":
         merged["items"] = union(left.get("items") or {}, right.get("items") or {})

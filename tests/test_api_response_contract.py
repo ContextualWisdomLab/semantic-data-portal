@@ -73,6 +73,7 @@ client = TestClient(app)
 # had since been hand-edited (two mis-indented regions gave it away). The script
 # is now at ``scripts/generate_response_contract.py`` and this file holds it to
 # its output.
+from scripts import generate_response_contract as generator  # noqa: E402
 from scripts.generate_response_contract import (  # noqa: E402
     PATH_SUBSTITUTIONS,
     PROBES,
@@ -408,3 +409,79 @@ def test_a_new_domain_does_not_break_the_published_facets_schema() -> None:
     assert _violations(response.json(), published) == [], _violations(
         response.json(), published
     )
+
+
+# ---------------------------------------------------------------------------
+# ``union`` is the generator's whole merge rule, and it drew a careful
+# distinction in its docstring - ``None`` is "nothing observed yet", ``{}`` is
+# "observed, and any type fits" - then violated it one paragraph later:
+#
+#     properties[key] = union(properties.get(key, {}), item)
+#
+# ``.get(key, {})`` says "observed, any type fits" about a key the left
+# observation never carried, and ``union({}, typed)`` collapses to ``{}``. So
+# every field a *second* probe introduced lost its measured type and was
+# published as untyped. The default has to be ``NOTHING_OBSERVED``.
+# ---------------------------------------------------------------------------
+
+
+def _object(**properties: dict) -> dict:
+    """One observed object schema, spelled the way ``derive`` spells it."""
+    return {"type": "object", "properties": dict(properties)}
+
+
+def test_a_field_only_the_second_observation_carries_keeps_its_type() -> None:
+    """The defect. ``b`` was published untyped despite being measured once."""
+    merged = generator.union(
+        _object(a={"type": "string"}),
+        _object(a={"type": "string"}, b={"type": "integer"}),
+    )
+    assert merged["properties"]["b"] == {"type": "integer"}, merged["properties"]
+
+
+def test_a_field_only_the_first_observation_carries_keeps_its_type() -> None:
+    """The mirror case, which already worked - asserted so a fix cannot trade one for the other."""
+    merged = generator.union(
+        _object(a={"type": "string"}, b={"type": "integer"}),
+        _object(a={"type": "string"}),
+    )
+    assert merged["properties"]["b"] == {"type": "integer"}, merged["properties"]
+
+
+def test_a_field_observed_as_null_still_collapses_to_any() -> None:
+    """The distinction must survive the fix: observed-and-untypable is not unobserved.
+
+    This is the case the generator was built for - ``steward`` is ``None`` on
+    one dataset and a string on another - so a repair that made ``{}`` yield to
+    a type would republish the claim that broke the live-match test.
+    """
+    merged = generator.union(
+        _object(steward={}),
+        _object(steward={"type": "string"}),
+    )
+    assert merged["properties"]["steward"] == {}, merged["properties"]
+
+
+def test_two_conflicting_types_still_collapse_to_any() -> None:
+    """Picking one would publish a claim the other probe contradicted."""
+    merged = generator.union(
+        _object(value={"type": "string"}),
+        _object(value={"type": "integer"}),
+    )
+    assert merged["properties"]["value"] == {}, merged["properties"]
+
+
+def test_the_sentinel_for_nothing_observed_is_not_the_empty_schema() -> None:
+    """The premise the two cases above rest on, asserted rather than assumed."""
+    assert generator.NOTHING_OBSERVED is None
+    assert generator.union(generator.NOTHING_OBSERVED, {"type": "integer"}) == {"type": "integer"}
+    assert generator.union({}, {"type": "integer"}) == {}
+
+
+def test_nesting_does_not_lose_a_second_observation_either() -> None:
+    """The same default is used recursively, so the fix has to hold at depth."""
+    merged = generator.union(
+        {"type": "object", "properties": {"outer": _object(a={"type": "string"})}},
+        {"type": "object", "properties": {"outer": _object(a={"type": "string"}, b={"type": "boolean"})}},
+    )
+    assert merged["properties"]["outer"]["properties"]["b"] == {"type": "boolean"}
