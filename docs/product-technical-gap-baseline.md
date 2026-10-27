@@ -3769,6 +3769,28 @@ counts: {'고객': number, '고객행동': number, '매출': number, '온톨로�
 
 이 절은 측정 기록이고 병합 허가가 아닙니다.
 
+## preview가 합성 행을 아무 표시 없이 내보냈습니다 (2026-10-27 15:55Z)
+
+```
+crm-customer-master  has_more False  row_count 2  profile row_count 1,200,000
+crm-event            has_more False  row_count 2  profile row_count 54,000,000
+응답의 provenance 키: ['sampling_note'] (한국어 문장 하나)
+double로 선언된 컬럼의 값: "touch_revenue_krw-sample-1"
+```
+
+형제 라우트 `/browse/query`는 자기 mock을 `measurement_status`·`rows_source`·
+`row_count_source`로 전부 라벨하므로, 거기서 규칙을 배운 통합자는 preview 행을 실데이터로
+읽습니다. 그리고 fallback 값이 자기 선언 타입으로 파싱되지 않습니다.
+
+**수리:** 같은 어휘로 `sample_provenance`를 공표하고, `has_more` 옆에
+`declared_source_row_count`를 놓고, 선언 철자를 family로 정규화하고, 모양을 맞출 수 없는
+타입은 `untyped_sample_columns`로 이름을 공표합니다.
+
+### 닫지 않은 것
+
+값은 여전히 전부 문자열입니다(`decimal`도 `'129000.00'`) — JSON 숫자로 바꾸는 것은 별개 계약
+변경입니다. 2행 고정 샘플 자체도 그대로입니다(BRW-002).
+
 ## 호출자가 자기 200이 알려 준 증빙 행에 도달할 수 없었습니다 (2026-10-27 15:30Z)
 
 ```

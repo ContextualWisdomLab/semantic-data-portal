@@ -55,9 +55,9 @@ gap-baseline 문서를 건드렸고, 나머지 148개는 건드리지 않았습�
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest (3.11)                1920 passed, 31 skipped
-    pytest (3.12, tests.yml의 핀) 1920 passed, 31 skipped — CI가 쓰는 인터프리터
-    pytest (파일 순서 정/역/난수)  각 1920 passed, 31 skipped — 순서 무관
+    pytest (3.11)                1931 passed, 31 skipped
+    pytest (3.12, tests.yml의 핀) 1931 passed, 31 skipped — CI가 쓰는 인터프리터
+    pytest (파일 순서 정/역/난수)  각 1931 passed, 31 skipped — 순서 무관
                                  (이 head의 열 번은 전부 깨끗합니다. 앞선 head
                                   `c4ac6b5`의 트리에서는 3.11 shuffled-31337 1회차가
                                   1848 + 실패 1건이었습니다 —
@@ -91,7 +91,7 @@ ClusterFuzzLite 하네스 import 가드 3건으로 1523에,
 (행 레벨 필터 정직성 9건, 드래프트 거부 증빙 페어링 11건, 참된 거부 이유 14건, 배포
 endpoint 자격증명·patch 계약 10건)로 1837에, 같은 라운드의 뒤이은 두 수리(patch
 confidence 정직성 5건, facet 어휘 공표 7건)로 1849에, 가정 결정 라벨 42건과 완전성 숫자 합치 5건으로
-1896에, 발견 가능성 6건으로 1902에, 쓰기 에코 재전송 8건으로 1910에, 증빙 도달성 10건으로 **1920**에 와 있습니다(skip이
+1896에, 발견 가능성 6건으로 1902에, 쓰기 에코 재전송 8건으로 1910에, 증빙 도달성 10건으로 1920에, preview 출처 공표 11건으로 **1931**에 와 있습니다(skip이
 23 → 31로 는 것은 새 가드 둘이 `measured`가 아닌 KPI 넷에
 대해 skip하기 때문입니다 — 그 skip 자체가 분기가 측정된 증거이고, 같은 파일의
 `test_at_least_one_kpi_exercises_each_branch`가 양쪽 분기에 사례가 있음을 단언합니다)
@@ -126,6 +126,54 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 **이 문장이 결함을 가려 줬습니다**: 미러가 돈다는 것은 참이지만, 그 하네스는 아래 항목이
 고치기 전까지 ClusterFuzzLite 이미지에서 **import에서 죽고 있었고** 입력을 하나도 퍼징하지
 않았습니다. "미러가 있으니 됐다"는 커버리지 주장이 아닙니다.
+
+### Fixed — preview가 **합성 행을 아무 표시 없이** 내보냈고, 형제 라우트는 자기 mock을 전부 라벨합니다 (medium, 구매자 체감)
+
+`POST /browse/{id}/preview`는 구매자가 **자기 데이터셋을 처음 보는 자리**입니다. 행은 선언
+스키마에 투영한 고정 2행 합성 샘플이고, 유일한 공개는 한국어 문장 하나(`sampling_note`)
+였습니다. 형제 데이터 라우트는 자기 mock을 끝까지 라벨합니다 — `/browse/query`는
+`execution.measurement_status: "mock_execution_no_real_data"`와 `rows_source:
+"fixed_mock_sample"`, `row_count_source: "mock_row_cap_below_catalog_profile_estimate"`를
+공표합니다. 거기서 "시뮬레이션 수치는 라벨된다"를 배운 통합자는 **이 행을 실데이터로 읽을
+이유가 충분했습니다.** 측정:
+
+```
+crm-customer-master  has_more False  row_count 2   profile row_count  1,200,000
+crm-event            has_more False  row_count 2   profile row_count 54,000,000
+sales-order          has_more False  row_count 2   profile row_count  8,700,000
+응답의 provenance 키: ['sampling_note']
+```
+
+`has_more: false`에 2행은 **"preview가 전부를 보여 줬다"**는 말이고, 같은 제품의 profile
+라우트는 같은 데이터셋에 대해 다른 말을 합니다.
+
+그리고 fallback이 자기가 투영되는 스키마와 **모순**됩니다. `_SAMPLE_DATATYPE_VALUES`는
+boolean/date/decimal/integer/iri/timestamp 여섯 철자만 들고 있어서 `double`이나 `bigint`로
+선언된 컬럼은 `f"{column.name}-sample-{n}"`으로 떨어집니다 — `touch_revenue_krw: double`
+데이터셋은 문자열 `"touch_revenue_krw-sample-1"`을 받습니다. 합성인 것을 넘어 **자기 선언
+타입으로 파싱되지 않는 값**이고, 공표 스키마에 바인딩하는 소비자는 바로 여기서 깨집니다.
+
+수리 셋: (1) 형제 라우트와 **같은 어휘**로 `sample_provenance`(`rows_source`·
+`measurement_status`·`row_count_source`)를 공표하고, (2) `has_more` 옆에 카탈로그가 선언한
+`declared_source_row_count`를 같이 놓아 "이게 전부"로 읽히지 않게 하고, (3) 선언 철자를
+family로 정규화해(`DOUBLE PRECISION`·`numeric(18,2)`도) 값이 최소한 그 타입 모양이 되게
+합니다. family가 없는 타입(예: `geography`)은 **이름을 공표합니다**
+(`untyped_sample_columns`) — 모양을 맞출 수 없다는 사실을 소비자가 파싱 실패로 발견하게 두지
+않습니다.
+
+**변이 여섯, 전부 red** — M3(선언된 행 수가 없을 때 `0`을 공표)은 처음 green이었습니다. 제
+프로브가 전부 행 수를 선언하고 있었기 때문입니다. `0`은 **"원본이 비어 있다"**는 데이터에
+대한 주장이고 `null`은 메타데이터의 부재이므로, 그 구분을 세 가지 모양(profile 없음·해석
+불가 문자열·boolean)으로 재는 케이스를 더했습니다.
+
+**제 새 상수가 저장소의 모듈-상태 가드에 걸렸습니다.** `_SAMPLE_DATATYPE_FAMILIES`를
+`NOT_RUNTIME_MUTATED`에 분류해 넣어야 통과합니다 — CLAUDE.md가 경고하는 그 자리이고,
+가드가 제 일을 했습니다.
+
+**닫지 않은 것.** 값은 여전히 **전부 문자열**입니다(`decimal`도 `'129000.00'`) — 그것은 이
+라우트의 기존 공표 관례이고, JSON 숫자로 바꾸는 것은 이 발견과 별개의 계약 변경입니다. 수리가
+하는 일은 선언 타입과 **모순되지 않게** 만드는 것까지입니다. 그리고 2행 고정 샘플 자체도
+그대로입니다(BRW-002가 기록).
 
 ### Fixed — 호출자가 **자기 200이 알려 준 증빙 행에 도달할 수 없었습니다** (high, 구매자 체감)
 
