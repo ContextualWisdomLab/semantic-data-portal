@@ -113,7 +113,15 @@ _TABLE_CLAUSE_TERMINATORS = frozenset(
 # ``customer`` really does resolve to a different table holding different rows.
 # Nothing executes in *this* repository - ``execute_query`` is a mock engine -
 # which is why the gate's own verdict is what the tests above measure.
-_TABLE_LIST_TOKEN = re.compile(r",|[A-Za-z_\u0080-\uffff][\w.$\u0080-\uffff]*")
+_TABLE_LIST_TOKEN = re.compile(r"[(),]|[A-Za-z_\u0080-\uffff][\w.$\u0080-\uffff]*")
+
+# Keywords that qualify the table item following them rather than being it.
+# ``FROM ONLY customer`` and ``FROM a, LATERAL (...)`` both name a relation
+# after the keyword; reading the keyword as the relation hid the real one from
+# the allow-list entirely (``FROM ONLY customer`` was read as the table
+# ``ONLY``, so ``customer`` was never checked - it failed closed only because
+# no catalog relation is named ``only``).
+_TABLE_ITEM_PREFIXES = frozenset({"lateral", "only"})
 
 # A read-only certification cannot be given to a function it does not know.
 # The literal guard already stops an argument-bearing call
@@ -334,6 +342,111 @@ def _reads_back_as_one_table(name: str) -> bool:
     return _referenced_source_tables(f"select 1 from {name}") == [name]
 
 
+def _matching_paren(tokens: list[str], open_index: int) -> int | None:
+    """Index of the ``)`` closing the ``(`` at ``open_index``, or ``None``."""
+    depth = 0
+    for index in range(open_index, len(tokens)):
+        if tokens[index] == "(":
+            depth += 1
+        elif tokens[index] == ")":
+            depth -= 1
+            if depth == 0:
+                return index
+    return None
+
+
+def _read_table_items(
+    tokens: list[str], index: int, tables: list[str]
+) -> tuple[int, bool]:
+    """Read one comma-separated table-item list, appending the relations named.
+
+    Returns where reading stopped and whether the list was readable. An item
+    may be parenthesised, and the contents are handed to
+    ``_collect_region_relations`` rather than refused: a derived table
+    ``(SELECT ...) t`` and a parenthesised join ``(a JOIN b ON ...) j`` both
+    name relations, and skipping the region would hide them from the allow-list.
+    Reading resumes *after* the closing parenthesis, which is what lets a
+    trailing ``, customer`` still be seen - a flat scan that stopped at the
+    region's own ``SELECT`` never came back for it, and that is the shape #35
+    records as a nested ``WHERE`` truncating the outer relation list.
+    """
+    expect_table = True
+    while index < len(tokens):
+        token = tokens[index]
+        lowered = token.lower()
+        if token == ",":
+            index += 1
+            if expect_table:
+                return index, False
+            expect_table = True
+            continue
+        if token == ")":
+            break
+        if token == "(" and expect_table:
+            close = _matching_paren(tokens, index)
+            if close is None:
+                return index, False
+            if not _collect_region_relations(tokens[index + 1 : close], tables):
+                return index, False
+            index = close + 1
+            expect_table = False
+            continue
+        if lowered in _TABLE_ITEM_PREFIXES and expect_table:
+            index += 1
+            continue
+        if lowered in _TABLE_CLAUSE_TERMINATORS or token == "(":
+            break
+        index += 1
+        if expect_table:
+            tables.append(token)
+            expect_table = False
+    return index, not expect_table
+
+
+def _collect_region_relations(region: list[str], tables: list[str]) -> bool:
+    """Append the relations named inside one parenthesised table item.
+
+    The two shapes differ in where their first relation sits. A derived table
+    opens with ``SELECT``, so its relations come from its own FROM/JOIN
+    clauses. A parenthesised join opens with the relation itself, so the region
+    *is* a table-item list and its remainder still has to be walked for the
+    further JOIN clauses after it - ``((a JOIN b)) j`` nests both facts.
+    """
+    if not region:
+        return False
+    leading_items = region[0].lower() != "select"
+    collected = _collect_relations(region, leading_items=leading_items)
+    if collected is None:
+        return False
+    tables.extend(collected)
+    return True
+
+
+def _collect_relations(
+    tokens: list[str], *, leading_items: bool = False
+) -> list[str] | None:
+    """Every relation named by the FROM/JOIN clauses in ``tokens``.
+
+    ``leading_items`` reads a table-item list before the first keyword, which is
+    what a parenthesised join's contents are.
+    """
+    tables: list[str] = []
+    index = 0
+    if leading_items:
+        index, readable = _read_table_items(tokens, index, tables)
+        if not readable:
+            return None
+    while index < len(tokens):
+        keyword = tokens[index].lower()
+        index += 1
+        if keyword not in {"from", "join"}:
+            continue
+        index, readable = _read_table_items(tokens, index, tables)
+        if not readable:
+            return None
+    return tables
+
+
 def _referenced_source_tables(sql: str) -> list[str] | None:
     """List every table identifier that a FROM or JOIN clause references.
 
@@ -342,33 +455,24 @@ def _referenced_source_tables(sql: str) -> list[str] | None:
     leaves every table after the first comma invisible to the allow-list check.
     Returns ``None`` when a clause cannot be read as a table list, so the caller
     refuses the query instead of guessing what it touches.
+
+    Parenthesised table items are read rather than refused. They used to be
+    refused because parentheses were not tokens at all: a derived table's inner
+    ``SELECT`` landed where a table name was expected, which is the
+    unreadable-list branch. Six ordinary single-source shapes were refused that
+    way - ``SELECT count(*) FROM (SELECT customer_id FROM customer) t`` among
+    them - and the caller's reason, ``unauthorized_table_reference``, was false:
+    the only relation named was the authorised one, and no spelling of the
+    question got through.
+
+    Unbalanced parentheses are refused outright. That used to happen by
+    accident for an unclosed ``(``, and not at all for a stray ``)``:
+    ``select * from crm)`` read back as the authorised table and passed. A
+    statement whose shape cannot be read is one this function cannot speak for.
     """
-    tokens = _TABLE_LIST_TOKEN.findall(sql)
-    tables: list[str] = []
-    index = 0
-    while index < len(tokens):
-        keyword = tokens[index].lower()
-        index += 1
-        if keyword not in {"from", "join"}:
-            continue
-        expect_table = True
-        while index < len(tokens):
-            token = tokens[index]
-            if token == ",":
-                index += 1
-                if expect_table:
-                    return None
-                expect_table = True
-                continue
-            if token.lower() in _TABLE_CLAUSE_TERMINATORS:
-                break
-            index += 1
-            if expect_table:
-                tables.append(token)
-                expect_table = False
-        if expect_table:
-            return None
-    return tables
+    if sql.count("(") != sql.count(")"):
+        return None
+    return _collect_relations(_TABLE_LIST_TOKEN.findall(sql))
 
 
 def _matched_forbidden_keyword(text: str) -> str | None:
