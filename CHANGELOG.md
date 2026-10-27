@@ -54,9 +54,9 @@ gap-baseline 문서를 건드렸고, 나머지 138개는 건드리지 않았습�
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest (3.11)                1902 passed, 31 skipped
-    pytest (3.12, tests.yml의 핀) 1902 passed, 31 skipped — CI가 쓰는 인터프리터
-    pytest (파일 순서 정/역/난수)  각 1902 passed, 31 skipped — 순서 무관
+    pytest (3.11)                1910 passed, 31 skipped
+    pytest (3.12, tests.yml의 핀) 1910 passed, 31 skipped — CI가 쓰는 인터프리터
+    pytest (파일 순서 정/역/난수)  각 1910 passed, 31 skipped — 순서 무관
                                  (이 head의 열 번은 전부 깨끗합니다. 앞선 head
                                   `c4ac6b5`의 트리에서는 3.11 shuffled-31337 1회차가
                                   1848 + 실패 1건이었습니다 —
@@ -90,7 +90,7 @@ ClusterFuzzLite 하네스 import 가드 3건으로 1523에,
 (행 레벨 필터 정직성 9건, 드래프트 거부 증빙 페어링 11건, 참된 거부 이유 14건, 배포
 endpoint 자격증명·patch 계약 10건)로 1837에, 같은 라운드의 뒤이은 두 수리(patch
 confidence 정직성 5건, facet 어휘 공표 7건)로 1849에, 가정 결정 라벨 42건과 완전성 숫자 합치 5건으로
-1896에, 발견 가능성 6건으로 **1902**에 와 있습니다(skip이
+1896에, 발견 가능성 6건으로 1902에, 쓰기 에코 재전송 8건으로 **1910**에 와 있습니다(skip이
 23 → 31로 는 것은 새 가드 둘이 `measured`가 아닌 KPI 넷에
 대해 skip하기 때문입니다 — 그 skip 자체가 분기가 측정된 증거이고, 같은 파일의
 `test_at_least_one_kpi_exercises_each_branch`가 양쪽 분기에 사례가 있음을 단언합니다)
@@ -125,6 +125,52 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 **이 문장이 결함을 가려 줬습니다**: 미러가 돈다는 것은 참이지만, 그 하네스는 아래 항목이
 고치기 전까지 ClusterFuzzLite 이미지에서 **import에서 죽고 있었고** 입력을 하나도 퍼징하지
 않았습니다. "미러가 있으니 됐다"는 커버리지 주장이 아닙니다.
+
+### Security — 쓰기 응답이 **재전송 가능**했고, 재전송하면 저장된 locator가 지워졌습니다 (medium, 데이터 손실 + 거짓 원장)
+
+`source_system`은 모든 공표 경로에서 가려지고, 연결 문자열 구조가 없는 문자열에 대해
+리댁터는 **fail closed**로 마커를 돌려줍니다 — 그 자체가 비밀번호일 수 있기 때문이고
+(`PW123`이 측정표에 있습니다), 그 판단은 옳습니다. 예견되지 않은 것은 **마커가 평범한
+read-modify-write로 되돌아온다**는 것입니다. 측정:
+
+```
+declared 'warehouse-postgres'                         -> echo 'redacted'
+declared 'snowflake'                                  -> echo 'redacted'
+declared 'postgresql://warehouse.dw:5432/mkt'         -> 그대로 echo
+declared 'postgresql://u:PW123@warehouse.dw:5432/mkt' -> 비밀번호만 제거해 echo
+
+create 후 저장값                                       -> 'warehouse-postgres'
+PATCH {title: ..., source_system: 'redacted'}          -> 200
+그 뒤 저장값                                           -> 'redacted'
+audit details -> before.source_system == after.source_system == 'redacted'
+```
+
+즉 **자격증명이 아예 없는 가장 덜 민감한 값**(평범한 시스템 라벨)이 제품이 가장 완전하게
+파괴하는 값이고, 거버넌스 원장은 그 파괴를 **변경 없음**으로 기록합니다 — 비교의 양쪽을
+같은 lossy 투영에 통과시킨 뒤 적기 때문입니다. 하류도 영향을 받습니다: 드래프트 라우트는
+`source_system`에서 `source_kind`를 분류하므로(`warehouse-postgres` → file_lake,
+`postgresql://...` → sql) 망가진 locator는 데이터셋 취급 자체를 조용히 바꿉니다.
+
+**수리 둘.** (1) 쓰기는 마커를 저장하지 않습니다 — create와 patch 양쪽에서 거절하고, 이유가
+필드와 해법을 말합니다. 조용히 무시하는 쪽은 선택하지 않았습니다: 조용한 drop은 이 저장소가
+이미 두 번(`license`, `distributions`) 수리한 결함입니다. 거절은 **typed**입니다 —
+blanket `ValueError` arm은 정밀한 거절을 "request body is not valid"로 보고하고
+`pydantic.ValidationError`도 `ValueError`이므로 사후에 구분할 수 없습니다(라우트 주석이 그
+측정을 이미 담고 있습니다). (2) 원장은 투영이 보여 줄 수 없을 때도 **필드가 바뀌었는지**를
+말합니다(`source_system_changed`, 원시 값으로 계산).
+
+**변이 여섯, 전부 red** — 하나는 처음 green이었습니다. "flag를 항상 True로" 변이가 잡히지
+않은 것은 제 반대 케이스가 `source_system`을 **보내지 않는** 패치였기 때문입니다(그때는 flag
+자체가 없습니다). 같은 값을 재전송하는 케이스를 더했고, 그것이 바로 평범한
+read-modify-write입니다.
+
+**제 structural 가드가 네 번째로 자기 설명문에 걸렸습니다.** `"redacted"` 리터럴이 하나뿐인지
+보는 가드가 docstring의 인용을 세었습니다 — `"""`를 담은 **줄**만 버리면 인용 본문은 남습니다.
+AST로 문자열 표현식을 보고 각 스코프의 첫 문장(docstring)만 제외하도록 고쳤습니다.
+
+**닫지 않은 것.** `redacted`라는 이름을 실제 locator로 쓰는 데이터셋은 등록할 수 없고, 거부가
+그것을 말합니다. 그리고 리댁터가 평범한 라벨을 마커로 바꾸는 것 자체는 그대로입니다 — 쓰기
+경로만 막았고, 라벨과 비밀번호를 구조로 구분하는 일은 하지 않았습니다.
 
 ### Fixed — 게시한 데이터셋이 **발견 라우트 둘에 보이지 않으면서**, 그 둘은 아무것도 withheld하지 않았다고 공표했습니다 (high, 구매자 체감)
 

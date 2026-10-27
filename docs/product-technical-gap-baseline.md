@@ -3760,6 +3760,27 @@ counts: {'고객': number, '고객행동': number, '매출': number, '온톨로�
 
 이 절은 측정 기록이고 병합 허가가 아닙니다.
 
+## 쓰기 응답이 재전송 가능했고, 재전송하면 저장된 locator가 지워졌습니다 (2026-10-27 14:15Z)
+
+```
+POST {source_system: 'warehouse-postgres'}    -> 200, echo 'redacted', 저장 'warehouse-postgres'
+PATCH {title: ..., source_system: 'redacted'} -> 200, 저장 'redacted'
+audit details -> before == after == 'redacted'  (파괴가 "변경 없음"으로 기록)
+```
+
+자격증명이 없는 가장 덜 민감한 값이 가장 완전하게 파괴됩니다. 하류의 `source_kind` 분류도
+`source_system`에서 나오므로 데이터셋 취급 자체가 조용히 바뀝니다.
+
+**수리:** 쓰기는 마커를 저장하지 않습니다(create·patch 양쪽, typed 거절, 이유가 필드와 해법을
+말함). 그리고 원장은 투영이 보여 줄 수 없을 때도 필드가 바뀌었는지 말합니다
+(`source_system_changed`, 원시 값으로 계산).
+
+### 닫지 않은 것
+
+`redacted`를 실제 locator 이름으로 쓰는 데이터셋은 등록할 수 없습니다(거부가 그것을 말합니다).
+리댁터가 평범한 라벨을 마커로 바꾸는 것 자체도 그대로입니다 — 라벨과 비밀번호를 구조로
+구분하는 일은 하지 않았고, 쓰기 경로만 막았습니다.
+
 ## 게시한 데이터셋이 발견 라우트 둘에 보이지 않으면서 둘 다 withheld 0을 공표했습니다 (2026-10-27 13:45Z)
 
 `고객`을 term으로 선언한 데이터셋을 온보딩·게시한 뒤 `user=data-admin`으로:
