@@ -186,6 +186,55 @@ def test_every_published_schema_matches_the_live_response(path: str) -> None:
     assert not violations, f"{path} published schema disagrees with the response: {violations}"
 
 
+def test_the_profile_route_publishes_the_nullability_it_actually_returns() -> None:
+    """A dataset onboarded without a profile timestamp is a reachable state.
+
+    ``catalog.py`` reads the field with ``dataset.profile.get("updated_at")``,
+    so it is ``None`` whenever the profile carries no timestamp, and
+    ``profile_provenance`` publishes ``metric_timestamp_available`` **because**
+    its ``declared`` value can be absent - a companion flag is self-evidence
+    that the field it describes is optional. The published contract declared
+    both as a non-nullable ``string``, so a client generated from the document
+    broke on the first dataset onboarded without one.
+
+    The generator's third probe state exists for exactly this class (it was
+    added for ``demo_context``), and its dataset was built from a seed - which
+    carries a profile. So the state that makes this observable was one field
+    away and never reached.
+
+    Measured before the repair, on a dataset onboarded through the public API
+    with no ``profile``::
+
+        profile_updated_at                 = None
+        metric_provenance.metric_timestamp = None
+        metric_timestamp_available         = False
+    """
+    body = generator.non_demo_dataset_body()
+    body["id"] = "contract-probe-no-profile"
+    body.pop("profile", None)
+    created = client.post("/catalog/datasets", json=body)
+    assert created.status_code in {200, 201}, created.text
+
+    response = client.get(
+        f"/catalog/datasets/{body['id']}/profile", params={"user": "admin"}
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    # The premise: this really is the null state, so the check below is not
+    # vacuous.
+    assert payload["profile_updated_at"] is None, payload["profile_updated_at"]
+    assert payload["metric_provenance"]["metric_timestamp"] is None
+    assert payload["metric_provenance"]["metric_timestamp_available"] is False
+
+    violations = _violations(
+        payload, RESPONSE_SCHEMAS[("GET", "/catalog/datasets/{dataset_id}/profile")]
+    )
+    assert not violations, (
+        "the published profile schema disagrees with a reachable response: "
+        f"{violations}"
+    )
+
+
 def test_every_json_get_operation_is_covered() -> None:
     """Enumerated from the route table, so a new route cannot slip through.
 

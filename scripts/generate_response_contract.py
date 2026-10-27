@@ -473,10 +473,24 @@ def render_block(name: str, annotation: str, entries: dict[Any, Any]) -> str:
 def non_demo_dataset_body() -> dict[str, Any]:
     """An onboarding body for a dataset belonging to no buyer-demo domain.
 
-    Built from a seed dataset, keeping its domain so no key set moves. The only
-    property that matters is that this id is in none of
-    ``buyer_demo_domains()``'s ``dataset_ids``, which is what makes
-    ``demo_context`` observable as ``null``.
+    Built from a seed dataset, keeping its domain so no key set moves. Two
+    properties matter, and both are about what this state makes **observable**:
+
+    * the id is in none of ``buyer_demo_domains()``'s ``dataset_ids``, which is
+      what makes ``demo_context`` observable as ``null``;
+    * it carries **no profile**, which is what makes ``profile_updated_at`` and
+      ``metric_provenance.metric_timestamp`` observable as ``null``.
+      ``catalog.py`` reads the first with ``dataset.profile.get("updated_at")``
+      and ``profile_provenance`` publishes ``metric_timestamp_available``
+      *because* its declared value can be absent - a companion flag is
+      self-evidence that the field it describes is optional. Both were published
+      as non-nullable ``string`` because this body copied a seed's profile, so
+      the state that reveals them was one field away from a probe that already
+      existed for exactly this class.
+
+    A dataset onboarded through the public API with no profile is an ordinary
+    state, not a contrived one: the profile is what a later profiling run fills
+    in.
     """
     from sdp.catalog import get_dataset
 
@@ -487,6 +501,7 @@ def non_demo_dataset_body() -> dict[str, Any]:
     body["id"] = NON_DEMO_DATASET_ID
     body["title"] = "generator nullability probe"
     body["actor"] = "admin"
+    body.pop("profile", None)
     return body
 
 
