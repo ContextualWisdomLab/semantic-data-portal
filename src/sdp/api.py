@@ -2755,11 +2755,18 @@ def get_graph_node(
     actor: str = Query(default="anonymous"),
     user: str | None = Query(default=None),
 ) -> dict[str, Any]:
-    # This was the only route in the catalog/browse/ontology/graph surface
-    # spelling the caller `actor` as a *query* parameter; 21 others spell it
-    # `user`. An integrator using the common spelling got the anonymous default
-    # and an unactionable refusal. Both are accepted, `user` wins when supplied,
-    # and `actor` stays valid so existing callers keep working.
+    # An integrator using the common spelling got the anonymous default and an
+    # unactionable refusal. Both are accepted, `user` wins when supplied, and
+    # `actor` stays valid so existing callers keep working.
+    #
+    # This comment used to call itself "the only route in the
+    # catalog/browse/ontology/graph surface" spelling the caller `actor` as a
+    # query parameter. It was not: `GET /graph/stats` was the second, and the
+    # census that sentence cited (21 `user` routes) had not been derived from
+    # anything. Measured from the served OpenAPI document: 25 operations take
+    # only `user`, two take both, and none takes only `actor`.
+    # `tests/test_caller_spelling_is_the_documented_one.py` derives that census
+    # on every run.
     _authorize_graph_node_read(user or actor, node_id)
     node = get_store().get_node(node_id)
     if node is None:
@@ -2807,7 +2814,10 @@ def semantic_search(payload: SemanticSearchRequest) -> dict[str, Any]:
 
 
 @app.get("/graph/stats")
-def graph_stats(actor: str = Query(default="anonymous")) -> dict[str, Any]:
+def graph_stats(
+    actor: str = Query(default="anonymous"),
+    user: str | None = Query(default=None),
+) -> dict[str, Any]:
     """Graph store counts, behind the same gate as every other graph read.
 
     This route took no actor, evaluated no policy and recorded no evidence,
@@ -2833,7 +2843,16 @@ def graph_stats(actor: str = Query(default="anonymous")) -> dict[str, Any]:
     and an instance-wide count published as scoped would be worse than an
     authenticated one labelled honestly.
     """
-    _authorize_graph_read(actor, "graph")
+    # Both spellings, ``user`` winning when supplied, exactly as
+    # ``GET /graph/nodes/{node_id}`` does. That route's comment claimed to be
+    # "the only route in the catalog/browse/ontology/graph surface spelling the
+    # caller ``actor`` as a query parameter" - this one was the second, and an
+    # authenticated caller using the spelling every document writes was refused
+    # as anonymous with a message about authentication that named nothing they
+    # could fix. ``tests/test_caller_spelling_is_the_documented_one.py`` derives
+    # the census from the served OpenAPI document, so "the only route" cannot be
+    # asserted again without being true.
+    _authorize_graph_read(user or actor, "graph")
     store = get_store()
     return {
         "backend": store.readiness().get("backend"),

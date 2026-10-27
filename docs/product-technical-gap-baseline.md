@@ -3769,6 +3769,38 @@ counts: {'고객': number, '고객행동': number, '매출': number, '온톨로�
 
 이 절은 측정 기록이고 병합 허가가 아닙니다.
 
+## 공표된 걸음의 주장 셋을 제품이 반박합니다 (2026-10-27 23:05Z)
+
+```
+1) docs/enterprise-readiness.md 표: "blocker 0건"
+   GET /enterprise/production-readiness -> paid_pilot_ready False · blockers 4 ·
+                                            configured_integrations [] · status 넷 다 implemented
+   (형제 문서 docs/implementation-compliance.md가 같은 문장을 이미 정정해 두었습니다)
+2) README의 /audit/events 항목이 /policy/decisions 설명을 그대로 담음
+   /audit/events 1행 · /policy/decisions 13행(evidence 12) · ?resource=evidence 0행
+3) GET /graph/stats가 ?actor=만 받음 (openapi 파생 census: actor만 1 · user만 25 · 둘 다 1)
+   ?user=admin -> 403 · ?actor=admin -> 200
+```
+
+셋째의 형제(`GET /graph/nodes/{node_id}`)가 바로 이것 때문에 수리됐고 그 주석은 자신을
+"the only route … 21 others spell it user"라고 적었습니다 — 아니었고, 인용된 census는
+어디에서도 파생된 적이 없습니다.
+
+**수리:** 셋 다 사실을 적고, 셋째는 형제와 같은 관용구로 두 표기를 받습니다. census는
+서비스되는 OpenAPI 문서에서 파생하므로 "the only route"를 다시 주장하려면 참이어야 합니다.
+가드 셋은 고정 문장이 아니라 제품(라우트 응답)에 묶여 있습니다. 변이 다섯 전부 red.
+
+제가 쓴 정정이 자기 가드를 두 번 걸었습니다 — 금지한 문자열을 정정문이 인용했기 때문이고,
+이 저장소가 같은 함정을 기록한 다섯 번째입니다. 역사를 지우지 않고 바꿔 적었습니다.
+
+### 닫지 않은 것
+
+`paid_pilot_blockers`를 0으로 만드는 것은 배포 설정이고 코드가 아닙니다.
+`configured_integrations`가 빈 이유는 환경이 설정되지 않았기 때문이며, 그 **공표 자체**의
+결함(설정되지 않은 통합을 configured로 공표하는 쪽)은 별개 항목입니다.
+
+이 절은 측정 기록이고 병합 허가가 아닙니다.
+
 ## `/catalog/search`가 한 페이지를 전체 답처럼 공표했고 101번째 일치는 받을 수 없었습니다 (2026-10-27 22:20Z)
 
 ```

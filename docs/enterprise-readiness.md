@@ -31,7 +31,7 @@
 | Buyer demo activation | 2주 안에 SQL/RDF/REST/file 중 하나로 priority domain 온보딩 | demo SQL/RDF/file fixture 구현됨, REST adapter는 env secret reference가 있으면 ready_for_demo |
 | Query safety | dataset-bound governed query만 허용하고 literal tautology/comment/multi-statement/forbidden keyword를 fail-closed 처리 | 구현됨 |
 | OIDC preview/JWKS guardrail | 만료/subject/tenant claim shape 검증, issuer/audience/JWKS 서명 검증, tenant scoped group-to-role mapping, group별 binding audit event, 직접 roles claim 무시 | 구현됨 |
-| Production integration | paid pilot 전 Postgres evidence store, OIDC JWKS verification, connector credential vault, request observability export 필요 항목을 숨기지 않고 manifest로 추적 | Postgres evidence store, OIDC JWKS verification, request observability export, connector credential vault 구현됨, paid pilot blocker 0건 |
+| Production integration | paid pilot 전 Postgres evidence store, OIDC JWKS verification, connector credential vault, request observability export 필요 항목을 숨기지 않고 manifest로 추적 | 네 통합의 **코드는 구현됨**(각 `status: implemented`). **blocker 수는 0이 아니라 배포에 따라 달라집니다** — 기본 배포에서 `GET /enterprise/production-readiness`는 `paid_pilot_ready: false`, `paid_pilot_blockers` 4건(`connector_credential_vault`·`oidc_jwks_verification`·`postgres_evidence_store`·`request_observability_export`), `configured_integrations: []`를 보고합니다. 이 칸은 남은 blocker가 **0건이라고** 적고 있었고 그것은 거짓이었습니다 — 같은 정정이 `docs/implementation-compliance.md`에 이미 있었는데 이 표에는 반영되지 않았습니다. 현재 수는 그 라우트에서 읽으십시오 |
 | Operational diligence | 중앙 required workflow, security scan, coverage evidence, OSSF baseline 통과 | PR #2/#4 병합됨, PR #5 보안 보강 후 중앙 체크 대기 |
 
 ## API 증빙

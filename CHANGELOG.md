@@ -136,6 +136,75 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 고치기 전까지 ClusterFuzzLite 이미지에서 **import에서 죽고 있었고** 입력을 하나도 퍼징하지
 않았습니다. "미러가 있으니 됐다"는 커버리지 주장이 아닙니다.
 
+### Fixed — 공표된 걸음의 주장 **셋**을 제품이 반박합니다 (medium x3, 실사 경로)
+
+문서를 구매자가 하라는 대로 걸어서 찾은 셋입니다. 셋 다 **고정된 문장이 아니라 제품에**
+묶어 두었으므로 가드가 제품과 함께 움직입니다.
+
+**1. `docs/enterprise-readiness.md`의 판매 가능성 표가 "blocker 0건"이라고 적었습니다.**
+
+```
+GET /enterprise/production-readiness
+  paid_pilot_ready        False
+  paid_pilot_blockers     ['connector_credential_vault', 'oidc_jwks_verification',
+                           'postgres_evidence_store', 'request_observability_export']
+  configured_integrations []
+  통합 넷의 status         전부 "implemented"
+```
+
+그 칸의 **구현됨 절반은 참이고 개수는 거짓**이며, 개수는 **배포 의존**입니다 — 코드는
+들어 있고 설정은 들어 있지 않습니다. 형제 문서가 **이미 같은 문장을 정정**해 두었습니다
+(`docs/implementation-compliance.md`에 "정정: 이 항목은 … blocker는 0개다라고 적고
+있었습니다 … 따라서 blocker 수는 배포에 따라 달라지며, 설정되지 않은 배포에서 0이
+아닙니다") — 표에만 반영되지 않았습니다. `GET /enterprise/demo-plan`이 이 파일을
+`handoff_artifacts`로 이름 짓습니다. 제품이 지목하는 구매자 산출물입니다.
+
+**2. README의 `GET /audit/events` 항목이 `/policy/decisions` 설명을 그대로 담고 있었고,
+세 문장 모두 그 라우트에 대해서는 거짓입니다.**
+
+```
+preview 1회 + 원장 읽기 10회 뒤
+GET /audit/events?user=admin&limit=500            1행   {'crm-customer-master': 1}
+GET /policy/decisions?user=admin&limit=500        13행  {'evidence': 12, 'crm-customer-master': 1}
+GET /audit/events?user=admin&resource=evidence    0행
+```
+
+감사 원장은 데이터셋으로 키가 잡히고(`catalog.ingest_event(resource=<dataset_id>)`)
+증빙 읽기는 데이터셋이 없는 plane 읽기이므로, **어떤 코드 경로도** 그 원장에 증빙 행을
+넣을 수 없습니다. "원장 접근 자체가 감사되는가"를 README가 지목한 라우트에서 확인하러 온
+독자는 빈 피드를 받습니다 — 답은 한 항목 위에 있습니다.
+
+**3. `GET /graph/stats`가 호출자를 `?actor=`로만 받습니다 — 어떤 문서도 쓰지 않는 표기입니다.**
+
+```
+/openapi.json에서 파생한 census:
+  actor만 받는 operation: [('GET', '/graph/stats')]
+  user만 받는 operation : 25
+  둘 다 받는 operation  : [('GET', '/graph/nodes/{node_id}')]
+
+GET /graph/stats?user=admin  -> 403 지식 그래프 접근은 인증된 사용자만 가능합니다.
+GET /graph/stats?actor=admin -> 200
+```
+
+`GET /graph/nodes/{node_id}`가 **바로 이것 때문에** 수리됐고, 그 주석은 자신을 "the **only**
+route … spelling the caller `actor` as a query parameter; 21 others spell it `user`"라고
+적었습니다. **아니었습니다** — 이 라우트가 두 번째이고, 인용된 census(21)는 어디에서도
+파생된 적이 없습니다. 문서가 쓰는 표기를 쓴 인증된 호출자가 익명으로 거부되고, 받은 메시지는
+그가 고칠 수 있는 것을 하나도 이름 짓지 않습니다.
+
+**수리:** 셋 다 사실을 적고, 셋째는 형제와 **같은 관용구**로 두 표기를 받습니다
+(`user`가 주어지면 우선). census는 **서비스되는 OpenAPI 문서에서 파생**하므로 "the only
+route"를 다시 주장하려면 참이어야 합니다. 형제의 과잉 주장도 측정과 함께 정정했습니다.
+
+**변이 다섯, 전부 red.**
+
+**제가 쓴 정정이 자기 가드를 두 번 걸었습니다** — 금지한 문자열을 정정문이 그대로 인용했기
+때문입니다(이 저장소가 같은 함정을 기록한 다섯 번째입니다). 역사를 지우지 않고 바꿔 적었습니다.
+
+**닫지 않은 것.** `paid_pilot_blockers`를 **0으로 만드는** 것은 배포 설정이고 코드가 아닙니다 —
+`configured_integrations`가 빈 이유는 환경이 설정되지 않았기 때문이며 별개 항목으로 남습니다
+(그 공표 자체의 결함은 다음 항목에서 다룹니다).
+
 ### Fixed — `GET /catalog/search`가 **한 페이지를 전체 답처럼** 공표했고, 101번째 일치는 어떤 요청으로도 받을 수 없었습니다 (high, 구매자 체감)
 
 라우트가 `limit`을 100으로 묶고 `catalog.search_catalog`가 `by_token[:limit]`을 돌려주며,
