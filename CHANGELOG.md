@@ -100,6 +100,18 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 고치기 전까지 ClusterFuzzLite 이미지에서 **import에서 죽고 있었고** 입력을 하나도 퍼징하지
 않았습니다. "미러가 있으니 됐다"는 커버리지 주장이 아닙니다.
 
+### Fixed — 계약 테스트가 **어떻게 호출됐는지**에 의존해 수집됐습니다 (low)
+
+`tests/test_api_response_contract.py`가 `from scripts.generate_response_contract import ...`
+하면서, 저장소 루트가 **작업 디렉터리라는 이유로** 경로에 있는 것에 의존했습니다. 루트에서
+`python -m pytest`로 돌리면 그렇고, 그때만 그렇습니다. 다른 곳에서 수집하면
+`ModuleNotFoundError: No module named 'scripts'`로 **수집 자체가 error**입니다 — 측정했습니다.
+같은 파일이 `src`에는 이미 명시 경로를 넣고 있었으므로 루트도 같은 방식으로 넣었습니다.
+
+가드는 두지 않았습니다. 다른 cwd에서 수집해 보는 테스트는 이 모듈이 앱 전체를 import하므로
+매 실행 6초 가까이 들고, 한 줄 수리가 막는 것보다 비쌉니다 — 대신 그 줄 위에 실패 양상을
+적어 두어, 지우려는 사람이 이유를 보게 했습니다. **가드를 두지 않은 선택도 기록합니다.**
+
 ### Fixed — 같은 sentinel 혼동이 `union`에 **세 군데** 있었고, `demo_context`는 non-nullable로 공표됐습니다 (high)
 
 `union`의 docstring이 세우는 구분 — `None`은 "아직 관찰 없음", `{}`는 "관찰했고 아무 타입이나

@@ -56,6 +56,13 @@ from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+# The repository root too, for ``scripts.generate_response_contract``. It used
+# to rely on the root being on the path by virtue of being the working
+# directory, which it is under ``python -m pytest`` from the root - and only
+# then. Collected from anywhere else the module raised
+# ``ModuleNotFoundError: No module named 'scripts'``, so the contract tests
+# depended on how they were invoked rather than on the tree.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sdp.api import app  # noqa: E402
 from sdp.api_response_contract import (  # noqa: E402
