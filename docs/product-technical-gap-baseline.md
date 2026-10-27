@@ -3760,6 +3760,39 @@ counts: {'고객': number, '고객행동': number, '매출': number, '온톨로�
 
 이 절은 측정 기록이고 병합 허가가 아닙니다.
 
+## 가정 질문의 답이 다른 tenant의 원장에 라벨 없이 기록됐습니다 (2026-10-27 13:30Z)
+
+`POST /policy/decision`의 행은 subject의 tenant 원장에 들어가고, `provenance` 라벨은
+감사자가 질문을 사건으로 읽지 않게 하려고 있습니다. `policy.evaluate`의 세 분기가 그 인자를
+받지 못했습니다 — `analyst`가 `external-analyst`에 대해 물으면:
+
+```
+discover_catalog allow · register_dataset deny · search allow  -> 라벨 없음
+preview deny -> evaluation_mode/asked_by/subject_is_caller 있음
+```
+
+**수리:** 세 분기에 인자를 넘기고, 엔진의 action 어휘에서 파생한 전수 가드와 AST 가드
+(이 함수의 모든 `_decision` 호출이 인자를 넘기는지)를 더했습니다.
+
+### 닫지 않은 것
+
+`subject`를 호출자가 주는 설계 자체는 그대로입니다 — 라벨은 읽을 수 있게 할 뿐 막지 않으며,
+그 경계는 Keyverse 소관입니다.
+
+## 한 payload가 `missing: []`와 `completeness_score: 0.909`를 함께 공표했습니다 (2026-10-27 13:30Z)
+
+`recompute_scores`에 `required_total = 11`짜리 세 번째 집계가 남아 있었고, 거기에 validator가
+요구하지 않는 `tags`가 들어 있었습니다. `tags`만 다른 두 데이터셋이 각각 1.0과 0.909(=10/11)를
+공표하면서 둘 다 `missing: []`·`is_valid: true`입니다. 공표 위치는 `/catalog/search` 행,
+데이터셋 상세, JSON-LD이고 KPI 게이트는 `metadata_completeness`만 읽습니다.
+
+**수리:** `REQUIRED_METADATA_FIELDS`에서 파생. 태그는 `recommended_score`에서만 셉니다.
+
+### 닫지 않은 것
+
+두 필드가 항상 같은 값이 되었으므로 `completeness_score`는 중복입니다. 공표된 필드를 지우는
+것은 JSON-LD 매핑까지 건드리는 별개 변경입니다.
+
 ## 리뷰 큐의 `confidence`가 제안문의 글자 수였습니다 (2026-10-27 13:00Z)
 
 `POST /ontology/patches`, `GET /ontology/patches`, 그리고 자격증명 없이 읽히는

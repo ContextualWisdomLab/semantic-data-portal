@@ -54,17 +54,18 @@ gap-baseline 문서를 건드렸고, 나머지 138개는 건드리지 않았습�
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest (3.11)                1849 passed, 31 skipped
-    pytest (3.12, tests.yml의 핀) 1849 passed, 31 skipped — CI가 쓰는 인터프리터
-    pytest (파일 순서 정/역/난수)  각 1849 passed, 31 skipped — 순서 무관
-                                 (3.11 shuffled-31337 1회차만 1849가 아니라 1848 +
-                                  실패 1건이었습니다. `test_the_alert_wait_does_not_
-                                  block_the_event_loop`가 event loop 차단 상한
-                                  100ms에 대해 177.88ms를 측정했고, 같은 순서를 유휴
-                                  상태에서 다시 돌리면 1849로 통과합니다. 벽시계
-                                  민감 테스트의 부하 flake이며, 이 라운드의 변경은
-                                  alert 경로를 건드리지 않습니다 — 순서 성질이 아니라
-                                  부하라고 적어 둡니다)
+    pytest (3.11)                1896 passed, 31 skipped
+    pytest (3.12, tests.yml의 핀) 1896 passed, 31 skipped — CI가 쓰는 인터프리터
+    pytest (파일 순서 정/역/난수)  각 1896 passed, 31 skipped — 순서 무관
+                                 (이 head의 열 번은 전부 깨끗합니다. 앞선 head
+                                  `c4ac6b5`의 트리에서는 3.11 shuffled-31337 1회차가
+                                  1848 + 실패 1건이었습니다 —
+                                  `test_the_alert_wait_does_not_block_the_event_loop`가
+                                  event loop 차단 상한 100ms에 대해 177.88ms를
+                                  측정했고, 같은 순서를 유휴 상태에서 다시 돌리면
+                                  통과했습니다. 벽시계 민감 테스트의 부하 flake이고
+                                  이 브랜치의 변경은 alert 경로를 건드리지 않습니다 —
+                                  순서 성질이 아니라 부하로 기록해 둡니다)
     atheris 하네스 5개            616,943 inputs, crash 0 (3.12, 20~31초 예산)
                                  (정순 · 역순 · seed 11/707/31337; 이 커밋의 트리에서
                                   측정. 이 라운드의 테스트가 데이터셋을 온보딩하므로
@@ -88,7 +89,8 @@ ClusterFuzzLite 하네스 import 가드 3건으로 1523에,
 존재 oracle 가드 82건으로 1631에, 콘솔 sink 감사 2건으로 1633에, `union` 가드 6건으로 1639에, 선언 relation 정직성 가드 26건으로 1665에, 공표 한도 가드 10건으로 1675에, 공표 설명 가드 12건으로 1687에, map 노드·obligations 가드 2건으로 1689에, sentinel·nullability 가드 9건으로 1698에 왔고, 구성된 구매자 여정 라운드의 네 수리
 (행 레벨 필터 정직성 9건, 드래프트 거부 증빙 페어링 11건, 참된 거부 이유 14건, 배포
 endpoint 자격증명·patch 계약 10건)로 1837에, 같은 라운드의 뒤이은 두 수리(patch
-confidence 정직성 5건, facet 어휘 공표 7건)로 **1849**에 와 있습니다(skip이
+confidence 정직성 5건, facet 어휘 공표 7건)로 1849에, 가정 결정 라벨 42건과 완전성 숫자 합치 5건으로
+**1896**에 와 있습니다(skip이
 23 → 31로 는 것은 새 가드 둘이 `measured`가 아닌 KPI 넷에
 대해 skip하기 때문입니다 — 그 skip 자체가 분기가 측정된 증거이고, 같은 파일의
 `test_at_least_one_kpi_exercises_each_branch`가 양쪽 분기에 사례가 있음을 단언합니다)
@@ -123,6 +125,73 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 **이 문장이 결함을 가려 줬습니다**: 미러가 돈다는 것은 참이지만, 그 하네스는 아래 항목이
 고치기 전까지 ClusterFuzzLite 이미지에서 **import에서 죽고 있었고** 입력을 하나도 퍼징하지
 않았습니다. "미러가 있으니 됐다"는 커버리지 주장이 아닙니다.
+
+### Security — 가정 질문의 답이 **다른 tenant의 원장에 라벨 없이** 기록됐습니다. 세 분기 (high)
+
+`POST /policy/decision`는 "이 subject에 대해 정책이 뭐라고 할까"에 답하고 `subject`는
+설계상 호출자가 줍니다. 그 행은 **subject의 tenant 원장**에 들어가므로, `provenance`
+라벨(`evaluation_mode: hypothetical`·`asked_by`·`subject_is_caller`)은 감사자가 질문을
+사건으로 읽지 않도록 하기 위해 존재합니다. CHANGELOG가 그 추가를 기록하고 있습니다.
+
+`policy.evaluate`의 **세 분기**가 그 인자를 받지 못했습니다. `analyst`가
+`external-analyst`에 대해 물었을 때 가정 답 행에 붙은 라벨:
+
+```
+discover_catalog  allow  labels: []                                        <- 라벨 없음
+register_dataset  deny   labels: []                                        <- 라벨 없음
+search            allow  labels: []                                        <- 라벨 없음
+preview           deny   labels: ['asked_by', 'evaluation_mode', 'subject_is_caller']
+```
+
+즉 외부 tenant의 스튜어드는 자기 사용자가 subject인 카탈로그 발견 `allow`와 데이터셋
+등록 `deny`를 읽고, **다른 tenant의 분석가가 물었다는 기록은 어디에도 없습니다.** 분기는
+`create`의 거부 둘(`policy.py:321`, `:333`)과 `search`/`search_catalog`/`discover`의
+**allow**(`:352`)였습니다.
+
+가드는 엔진의 `KNOWN_ACTIONS`와 `CATALOG_ACTION_ALIASES`에서 **파생**됩니다 — 찾은 세
+분기를 손으로 적으면 다음 분기가 같은 자리에 들어앉습니다. 그리고 AST로 이 함수의 모든
+`_decision` 호출이 인자를 넘기는지 단언합니다(열다섯 중 셋이 빠져 있었습니다).
+
+**변이 넷, 전부 red.** 그중 둘(`_decision`이 모든 행에 기본 라벨을 찍음, `subject_is_caller`
+상수 True)은 **이전 라운드의 기존 가드**가 같이 잡았습니다 — 그 가드들은 `preview` 경로만
+보고 있어서 세 분기를 놓쳤을 뿐, 과잉 라벨은 이미 막고 있었습니다.
+
+**닫지 않은 것.** 이 라우트가 `subject`를 호출자가 주도록 하는 것 자체는 그대로입니다 —
+라벨은 그것을 **읽을 수 있게** 만들 뿐, 다른 tenant의 사용자 이름으로 질문하는 것을 막지
+않습니다. 그 경계는 Keyverse 소관입니다.
+
+### Fixed — 한 payload가 `missing: []`·`is_valid: true`·`0.909`를 **동시에** 공표했습니다 (medium, 실사 체감)
+
+`metadata_completeness`와 `catalog.validate_metadata`는 이미 한 목록
+(`REQUIRED_METADATA_FIELDS`, 열 개)으로 통합돼 있고 그 위의 주석이 이유를 적고 있습니다 —
+"두 목록의 길이가 달라서, validator가 critically invalid라고 부르는 데이터셋이 1.0을 공표할
+수 있었다". `recompute_scores`에 **세 번째** 집계가 남아 있었습니다: `required_total = 11`과
+손으로 쓴 열한 개 분기이고, 거기에 validator가 요구하지 않는 `tags`가 들어 있습니다.
+`tags`만 다른 두 데이터셋:
+
+```
+probe-with-tags  /validate -> required_fields(10) missing: [] is_valid: True
+                              completeness_score 1.0    metadata_completeness 1.0
+probe-no-tags    /validate -> required_fields(10) missing: [] is_valid: True
+                              completeness_score 0.909  metadata_completeness 1.0
+```
+
+0.909는 10/11입니다. 실사 독자는 **빠진 것이 없는데 90.9% 완전한** 데이터셋을 보고, 같은
+payload의 형제 필드는 100%라고 말합니다. `completeness_score`는 `/catalog/search` 행과
+데이터셋 상세와 JSON-LD(`sdp:completenessScore`)에 공표되고, KPI 게이트가 읽는 쪽은
+`metadata_completeness`이므로 **공표된 두 숫자가 공개적으로 어긋나는 동안 게이트는 한쪽만
+보고 있었습니다.**
+
+수리는 같은 목록에서 파생시키는 것입니다. 태그는 태그가 속한 곳(`recommended_score`)에서만
+셉니다 — 변이 "recommendation에서도 tags를 뺀다"가 red인 것이 그 경계입니다.
+
+**변이 셋, 전부 red.** 그리고 제 structural 가드가 **세 번째로** 자기 설명문에 걸렸습니다:
+`required_total`이 없어야 한다고 단언했는데 그 측정을 기록한 docstring이 그 문자열을 담고
+있습니다. 주석만 벗기던 것을 docstring까지 벗기도록 고쳤습니다 — 이 라운드에서 같은 함정이
+세 번(행 레벨 `enforcement_note`, patch `len(suggestion)`, 여기) 반복됐습니다.
+
+**닫지 않은 것.** 두 필드가 이제 항상 같은 값이므로 `completeness_score`는 중복입니다.
+공표된 필드를 지우는 것은 JSON-LD 매핑까지 건드리는 별개 변경이라 하지 않았습니다.
 
 ### Security — 리뷰 큐의 `confidence`가 **제안문의 글자 수**였습니다 (high, 무자격 공개 표면)
 
