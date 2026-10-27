@@ -86,6 +86,7 @@ def build_steward_review_summary(tenant_ids: list[str] | None = None) -> dict[st
             "status": patch["status"],
             "concept": patch["concept"],
             "confidence": patch["confidence"],
+            "confidence_basis": patch["confidence_basis"],
         }
         for patch in open_patches
     ]

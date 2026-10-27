@@ -247,7 +247,14 @@ class OntologyPatch(BaseModel):
     concept: str
     requestor: str = "anonymous"
     suggestion: str
-    confidence: float = Field(default=0.0, ge=0, le=1)
+    # Nullable, because the product has no basis for a confidence on a proposal:
+    # ``POST /ontology/patches`` reads ``concept`` and ``suggestion`` and nothing
+    # else. It used to be computed as ``len(suggestion) / 220.0``, so 300 repeated
+    # characters outranked an 8-character definition on the unauthenticated
+    # readiness queue. ``None`` plus ``confidence_basis`` says that, and the field
+    # stays settable for a value that is actually measured.
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    confidence_basis: str = "not_measured"
     status: str = "proposed"
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     reviewed_by: str | None = None

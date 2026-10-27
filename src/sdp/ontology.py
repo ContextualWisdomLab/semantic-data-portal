@@ -1044,12 +1044,26 @@ def propose_patch(concept: str, suggestion: str, *, requestor: str = "anonymous"
         concept=concept.strip() or "unknown",
         suggestion=suggestion.strip(),
         requestor=requestor,
-        confidence=min(max(len(suggestion) / 220.0, 0.3), 0.95),
+        # No confidence is computed. ``min(max(len(suggestion) / 220.0, 0.3),
+        # 0.95)`` stood here and published the proposal's character count as its
+        # quality: measured, the same meaning padded to 208 characters scored
+        # 0.94 against the precise 8-character form's 0.3, and 300 repeated
+        # characters scored 0.95 - the top row of the unauthenticated
+        # ``GET /enterprise/steward-review`` queue. Nothing here can know a
+        # proposal's quality, so the row says so.
+        confidence=None,
+        confidence_basis=PATCH_CONFIDENCE_BASIS,
     )
     _ONTOLOGY_PATCHES.append(patch)
     if len(_ONTOLOGY_PATCHES) > MAX_ONTOLOGY_PATCHES:
         del _ONTOLOGY_PATCHES[:-MAX_ONTOLOGY_PATCHES]
     return patch.model_dump()
+
+
+# What the published ``confidence`` on a patch row means, for every surface that
+# carries it. One definition, so the route, the queue and the readiness surface
+# cannot say different things about the same field.
+PATCH_CONFIDENCE_BASIS = "not_measured"
 
 
 # The statuses a patch can hold. `GET /ontology/patches?status=` matched this
