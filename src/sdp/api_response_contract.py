@@ -72,9 +72,23 @@ Derivation rules, chosen so a published schema cannot over-claim:
   ``masking``/``masking_rules``/``required_role``/``tenant_id`` and the product
   sets at least five more keys on refusal branches no probe reached
   (``refusal_cause``, ``known_actions``, ``unmapped_published_action``,
-  ``actor_tenant_id``, ``redact``). ``exercise_decision_branches`` in the
-  generator drives those branches now, so the classification is observed rather
-  than asserted. ``tests/test_api_response_contract.py`` derives this set from
+  ``actor_tenant_id``, ``redact``). What makes the classification observed
+  rather than asserted is the generator's ``REQUIRED_QUERY`` entry raising this
+  ledger's page size to 500: the ledger is newest-first and the probe sequence
+  files far more than one default page of decisions before this path is read, so
+  the refusal rows carrying those keys were simply off the page. Measured by
+  removing that one entry and regenerating::
+
+      with    'obligations': {'type': 'object', 'additionalProperties': {}}
+      without 'obligations': {'type': 'object', 'properties': {'masking': ...,
+                              'tenant_id': ..., 'required_role': ...}}
+
+  This sentence credited ``exercise_decision_branches`` until 2026-10-27. That
+  function was written for this and **removed**, because mutating it changed the
+  generated file not at all - it produced byte-identical output, and the page
+  size was doing the work the whole time. Prose that credits a mechanism which
+  is not there sends the next reader to the wrong place, and this file's own
+  tests do not read prose. ``tests/test_api_response_contract.py`` derives this set from
   the schemas and compares it to this paragraph, so a sixth node cannot arrive
   without the sentence changing.
 * every path placeholder is probed with **several values**, unioned, and the
