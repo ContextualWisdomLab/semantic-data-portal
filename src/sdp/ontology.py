@@ -829,12 +829,27 @@ class Resolution:
     client could not tell a definition it can look up from an identifier that
     leads nowhere. ``defined_in_vocabulary`` is that distinction; the resolution
     is still returned, because it is a real pointer to a dataset.
+
+    ``aliases`` is the concept's **own** alias set, identical to what the two
+    sibling routes publishing a field of that name return
+    (``search_concepts`` -> ``ConceptTerm.aliases`` and ``concept_assets``).
+    It used to be an accumulator: the concept, its declared aliases found in the
+    text, *and the first mapped dataset's business terms found in the text*, all
+    in one list. Dataset terms are declared by datasets and are not synonyms of
+    anything, so resolving "이탈 고객" published 이탈 as an alias of 고객, of
+    활성 고객 and of 비즈니스 용어, and resolving "매출" published 매출 as an
+    alias of 전환 - a concept the glossary does not define at all. A glossary or
+    synonym-expansion UI built on the field recorded synonymy the vocabulary
+    denies. ``matched_terms`` keeps that information under a name that states
+    what it is: the names and terms that actually appeared in the text, and so
+    caused this concept to score.
     """
 
     term: str
     score: float
     uri: str
     aliases: List[str]
+    matched_terms: List[str]
     defined_in_vocabulary: bool
 
 
@@ -961,6 +976,19 @@ def concept_graph(concept: str) -> Dict[str, Any]:
     return {"canonical": concept, "not_found": True, "aliases": []}
 
 
+def _names_present_in(candidate: ConceptTerm, text: str) -> list[str]:
+    """Which of this concept's own names actually appear in the text.
+
+    ``search_concepts`` matches on normalized containment of the concept, its
+    aliases or its multilingual labels, so this recomputes that predicate rather
+    than guessing: a ``matched_terms`` that named something the match never
+    tested would be the contamination it replaces, one field over.
+    """
+    haystack = _normalize_term(text)
+    names = [candidate.concept] + list(candidate.aliases) + list(candidate.multilingual)
+    return sorted({name for name in names if _normalize_term(name) in haystack})
+
+
 def resolve_terms(text: str) -> list[Resolution]:
     text = text.strip()
     if not text:
@@ -970,25 +998,28 @@ def resolve_terms(text: str) -> list[Resolution]:
     for concept, dataset_ids in concept_dataset_index().items():
         dataset = dataset_ids[0] if dataset_ids else ""
         score = 0.0
-        aliases: list[str] = []
+        # What appeared in the text, which is *why* this concept scored. The
+        # concept's alias set is a property of the vocabulary and is read
+        # separately below; see ``Resolution`` for why they were one list.
+        matched: list[str] = []
 
         definition = _CONCEPT_DEFINITIONS.get(concept, {})
         candidate_aliases = [concept] + list(definition.get("aliases", []))
 
         if concept in text:
             score += 1.0
-            aliases.append(concept)
+            matched.append(concept)
         for alias in candidate_aliases:
-            if alias in text and alias not in aliases:
+            if alias in text and alias not in matched:
                 score += 0.3
-                aliases.append(alias)
+                matched.append(alias)
 
         if dataset:
             ds = next(ds for ds in list_datasets() if ds.id == dataset)
             for term in ds.terms:
                 if term in text:
                     score += 0.5
-                    aliases.append(term)
+                    matched.append(term)
             for dataset_term in mapping_candidates(ds, concept):
                 if dataset_term in text:
                     score += 0.3
@@ -999,7 +1030,8 @@ def resolve_terms(text: str) -> list[Resolution]:
                     term=concept,
                     score=min(score, 1.0),
                     uri=ontology_version.concept_iri(concept),
-                    aliases=sorted(set(aliases)),
+                    aliases=sorted(set(candidate_aliases)),
+                    matched_terms=sorted(set(matched)),
                     defined_in_vocabulary=canonical_concept_or_none(concept) is not None,
                 )
             )
@@ -1012,6 +1044,7 @@ def resolve_terms(text: str) -> list[Resolution]:
                     score=0.55,
                     uri=ontology_version.concept_iri(candidate.concept),
                     aliases=sorted(candidate.aliases),
+                    matched_terms=_names_present_in(candidate, text),
                     # ``search_concepts`` only ever yields registered concepts.
                     defined_in_vocabulary=True,
                 )

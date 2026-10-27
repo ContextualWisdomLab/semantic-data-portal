@@ -1886,7 +1886,12 @@ def resolve_terms(payload: dict[str, str]) -> dict[str, Any]:
                 "term": item.term,
                 "score": item.score,
                 "uri": item.uri,
+                # The concept's own alias set, the same one the two sibling
+                # routes publish. The tokens that caused the match are
+                # ``matched_terms``; they are not synonyms. See
+                # ``ontology.Resolution``.
                 "aliases": item.aliases,
+                "matched_terms": item.matched_terms,
                 # A term IRI for a concept the glossary does not define looks
                 # exactly like one it does. See ``ontology.Resolution``.
                 "defined_in_vocabulary": item.defined_in_vocabulary,

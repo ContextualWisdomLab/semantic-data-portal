@@ -537,7 +537,12 @@ SDP_CONNECTOR_TIMEOUT_MS='2s'          gate 통과, probe 라우트 400
   행. `offset`이 없던 동안에는 자격증명 없는 거부 600건이 최신 200행을 채워 그 데이터셋의
   **정당한 접근 이력 전체**를 조회 불가로 밀어냈다.
 - `POST /ontology/resolve` — `defined_in_vocabulary`로 glossary가 **정의하지 않은**
-  dataset 선언 용어(캠페인·전환·비즈니스 용어)를 구분해 게시한다
+  dataset 선언 용어(캠페인·전환·비즈니스 용어)를 구분해 게시한다. `aliases`는 **개념 자신의
+  별칭 집합**이고 `GET /ontology/search`·`GET /ontology/concept/{concept}`가 같은 이름으로
+  게시하는 것과 글자 그대로 같다. 본문에 실제로 나타나 **점수를 만든** 토큰은 별개 필드
+  `matched_terms`다 — 데이터셋이 선언한 업무 용어가 여기에 들어올 수 있고, 그것은 동의어가
+  아니다(전에는 두 가지가 `aliases` 하나에 누적되어, 정의조차 없는 `전환`이 `매출`을 자기
+  별칭으로 달고 나갔다)
 - `GET /ontology/concept/{concept}`
 - `GET /ontology/version`
 - `GET /ontology/change-log?user=<actor>`
