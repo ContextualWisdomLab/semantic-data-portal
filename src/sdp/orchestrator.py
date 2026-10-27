@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from sdp_core.demo_seed import classify_source_type
 
 from .authz import can_access_tenant
-from .catalog import get_dataset, ingest_event
+from .catalog import get_dataset, ingest_event, redacted_source_system
 from .domain import QueryDraftRequest
 from .policy import ROW_FILTER_ENFORCEMENT_NOTE, evaluate
 from .domain import QueryExecutionRequest
@@ -674,6 +674,32 @@ def draft_sql(req: QueryDraftRequest) -> dict:
         _audit_draft(req, decision_id=decision.decision_id, result="denied", reason=decision.reason)
         return {"error": "policy_denied", "reason": decision.reason}
 
+    # Every refusal below this line answers a request whose policy decision is
+    # already in the ledger, and none of them recorded the audit half. Measured
+    # per call on a published probe dataset, as deltas on ``/policy/decisions``
+    # and ``/audit/events``::
+    #
+    #     success                      decisions +1  audits +1
+    #     policy_denied (purpose)      decisions +1  audits +1
+    #     policy_denied (keyword)      decisions +1  audits +0
+    #     invalid_columns              decisions +1  audits +0
+    #     invalid_group_by             decisions +1  audits +0
+    #     draft_rejected_by_validator  decisions +1  audits +0
+    #
+    # ``_audit_draft``'s own docstring says it exists to close exactly this
+    # shape, and ``docs/requirements-coverage.md`` publishes NFR-SEC-005
+    # ("preview/query/policy/catalog change 100% 기록") as implemented, so the
+    # published claim was false for four reachable refusals and three more that
+    # only a direct caller can reach. ``execute_query`` keeps the pairing by
+    # routing every exit through one local ``response`` helper; this does the
+    # same, so a ninth refusal cannot be added unpaired.
+    def refuse(error: str, reason: str, **extra: object) -> dict:
+        """Answer one refusal, recording the audit half of its decision."""
+        _audit_draft(
+            req, decision_id=decision.decision_id, result="denied", reason=reason
+        )
+        return {"error": error, "reason": reason, **extra}
+
     question = req.question.strip().lower()
     # The reason names the offending keyword: the previous message said only
     # that "a" keyword was present, so an integrator whose question mentioned
@@ -681,23 +707,23 @@ def draft_sql(req: QueryDraftRequest) -> dict:
     # was spurious.
     forbidden_in_question = _matched_forbidden_keyword(question)
     if forbidden_in_question is not None:
-        return {
-            "error": "policy_denied",
-            "reason": f"허용되지 않은 키워드가 질의에 포함되었습니다: {forbidden_in_question}",
-        }
+        return refuse(
+            "policy_denied",
+            f"허용되지 않은 키워드가 질의에 포함되었습니다: {forbidden_in_question}",
+        )
 
     allowed_columns = {column.name for column in dataset.schema if column.datatype}
     if req.columns:
         unknown = sorted(set(req.columns) - allowed_columns)
         if unknown:
-            return {
-                "error": "invalid_columns",
-                "reason": f"요청한 컬럼이 데이터셋에 없습니다: {', '.join(unknown)}",
-            }
+            return refuse(
+                "invalid_columns",
+                f"요청한 컬럼이 데이터셋에 없습니다: {', '.join(unknown)}",
+            )
 
     requested_columns = req.columns or ["*"]
     if req.group_by and req.group_by not in allowed_columns:
-        return {"error": "invalid_group_by", "reason": "요청한 그룹화 컬럼이 데이터셋에 없습니다."}
+        return refuse("invalid_group_by", "요청한 그룹화 컬럼이 데이터셋에 없습니다.")
 
     # ``_safe_identifier`` rewrites a declared column that cannot be emitted
     # unquoted, and that rewrite is kept: a quoted identifier could never
@@ -733,13 +759,11 @@ def draft_sql(req: QueryDraftRequest) -> dict:
         }
     )
     if collisions:
-        return {
-            "error": "ambiguous_identifier",
-            "reason": (
-                "컬럼명을 SQL 식별자로 변환하면 다른 선언 컬럼과 같아져, 어느 컬럼을 "
-                "집계할지 확정할 수 없습니다: " + ", ".join(collisions)
-            ),
-        }
+        return refuse(
+            "ambiguous_identifier",
+            "컬럼명을 SQL 식별자로 변환하면 다른 선언 컬럼과 같아져, 어느 컬럼을 "
+            "집계할지 확정할 수 없습니다: " + ", ".join(collisions),
+        )
 
     # `interval '<n> day'` is a single-quoted literal, and this module's own
     # validate_sql_query refuses any statement containing a quote
@@ -801,23 +825,53 @@ def draft_sql(req: QueryDraftRequest) -> dict:
     # PostgreSQL would refuse anyway. All 24 members of
     # ``_TABLE_CLAUSE_TERMINATORS`` fail this way.
     if table_name.lower() in _TABLE_CLAUSE_TERMINATORS:
-        return {
-            "error": "unquotable_source_table",
-            "reason": (
-                "source table 이름이 SQL 절 키워드와 충돌해 이 게이트를 통과하는 "
-                "질의를 만들 수 없습니다. 인용 식별자는 "
-                "literal_values_not_allowed로 거부됩니다: "
-                f"{table_name}"
-            ),
-        }
+        return refuse(
+            "unquotable_source_table",
+            "source table 이름이 SQL 절 키워드와 충돌해 이 게이트를 통과하는 "
+            "질의를 만들 수 없습니다. 인용 식별자는 "
+            "literal_values_not_allowed로 거부됩니다: "
+            f"{table_name}",
+        )
+    # The same class, one shape wider, and the one a data lake actually produces:
+    # a derived name that is not an identifier at all. ``source_relation_name``
+    # already declines a *declared* name that cannot be emitted, and its docstring
+    # says why - "the draft's own allow-list check refuses it as
+    # ``unauthorized_table_reference``, which is a security-shaped reason for a
+    # naming problem" - but declining there falls back to the locator-derived
+    # name, which can be exactly that. Measured on two datasets differing only in
+    # the last path segment of ``source_system``::
+    #
+    #     s3://analytics/events/2024    GET /validate -> is_valid=true
+    #                                   POST /policy/decision -> allow
+    #                                   POST /llm/draft-query -> 400
+    #                                     unauthorized_table_reference
+    #     s3://analytics/events/orders  POST /llm/draft-query -> 200  FROM orders
+    #
+    # Nothing was unauthorized: the only table named is the one this function
+    # derived. A leading digit is not an identifier, so the allow-list's parser
+    # finds no table reference (``2024``) or a different one (``2024_q1`` reads
+    # back as ``_q1``), and the validator reports the single warning it has for
+    # "no authorized table was named". The predicate is the parser itself rather
+    # than a second identifier rule, because a second rule is what drifted: the
+    # drafter believed it had emitted a table and the gate disagreed.
+    if not _reads_back_as_one_table(table_name):
+        return refuse(
+            "unquotable_source_table",
+            f"source_system에서 파생한 테이블 이름 {table_name} 이(가) SQL 식별자가 "
+            "아니어서 이 게이트를 통과하는 질의를 만들 수 없습니다(locator: "
+            f"{redacted_source_system(dataset.source_system)}). 이름을 고쳐 쓰지 않고 "
+            "거절합니다 — 고쳐 쓰면 카탈로그가 선언하지 않은 relation을 선언된 것처럼 "
+            f"공표하게 됩니다. {DRAFT_SQL_DIALECT}.table distribution에 식별자 형태의 "
+            "relation 이름을 선언하면 그 이름을 그대로 사용합니다.",
+        )
 
     row_limit = min(req.row_limit, 2000)
     if row_limit <= 0:
-        return {"error": "invalid_row_limit", "reason": "row_limit must be a positive integer"}
+        return refuse("invalid_row_limit", "row_limit must be a positive integer")
 
     timeout_ms = req.timeout_ms
     if timeout_ms < 500 or timeout_ms > 120000:
-        return {"error": "invalid_timeout", "reason": "timeout_ms must be between 500 and 120000"}
+        return refuse("invalid_timeout", "timeout_ms must be between 500 and 120000")
 
     if req.group_by:
         group_identifier = _safe_identifier(req.group_by)
@@ -894,14 +948,12 @@ def draft_sql(req: QueryDraftRequest) -> dict:
             "카탈로그가 알려 줄 relation 이름이 없습니다."
         )
     if self_check:
-        return {
-            "error": "draft_rejected_by_validator",
-            "reason": (
-                "생성된 질의가 이 제품의 SQL 안전성 게이트를 통과하지 못했습니다: "
-                f"{', '.join(self_check)}"
-            ),
-            "warnings": self_check,
-        }
+        return refuse(
+            "draft_rejected_by_validator",
+            "생성된 질의가 이 제품의 SQL 안전성 게이트를 통과하지 못했습니다: "
+            f"{', '.join(self_check)}",
+            warnings=self_check,
+        )
 
     # ``카탈로그에서 검증된 테이블/컬럼만 사용`` was false for every dataset,
     # for two different reasons, so it is replaced by what is true.
@@ -975,7 +1027,6 @@ def draft_sql(req: QueryDraftRequest) -> dict:
             f"행 레벨 조건({predicates})은 이 SQL에 포함되지 않았습니다. "
             + ROW_FILTER_ENFORCEMENT_NOTE
         )
-
 
     if not req.group_by:
         assumptions.append("기본 집계는 건수 카운트 기반으로 반환")
