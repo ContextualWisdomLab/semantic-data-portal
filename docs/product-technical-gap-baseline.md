@@ -1521,6 +1521,15 @@ The job was not started because your account is locked due to a billing issue.
 | 레인 (labels) | 배정 | 결과 | 증거 |
 | --- | --- | --- | --- |
 | `ubuntu-latest` / `ubuntu-24.04` (GitHub-hosted) | 배정 전 거절, 러너 없음, step 0 | 3~5초 `failure` + 과금 annotation | sdp `111122277682`, `.github` `111123489781` |
+
+**그 "3~5초"는 job 수준에서 재야 합니다 — run 수준 시간은 이 판정에 쓸 수 없습니다.**
+2026-10-27 14:5xZ에 같은 브랜치의 네 head를 run 수준으로 보면
+`updated_at - run_started_at`이 4초·80초·114초·176초·234초·587초로 흩어져 있어, 긴 쪽은
+**CI가 실제로 돌다가 실패한 것처럼 읽힙니다.** job 수준으로 같은 run들을 다시 재면
+`started_at - completed_at`이 전부 **2~5초**이고 job은 하나, step은 0입니다
+(`40522135278/122251758683` 2초, `40517828809/122235956769` 3초,
+`40526477858` 4초). run 수준의 차이는 큐·정리 시간이고 실행 시간이 아닙니다. 이 구분을
+놓치면 존재하지 않는 테스트 실패를 쫓게 되므로, 이 표의 판정 기준은 **job 수준**입니다.
 | `[self-hosted, linux, x64]`, `+cwlab-control` | **약 3초에 배정** | 정상 실행 (step 9·6·26개 수행) | `.github` `111121081820`(`cwlab-s1-05`), `111121081851`(`cwlab-s1-07`), `111121123986`(`cwlab-s1-02`) |
 | `[self-hosted, linux, x64, cwlab-ci-isolated]` | 거절되지 않음, 러너 없음 | **무한 큐** | `.github` `111121080117`(03:46:56Z 큐), sdp `#110` `111121092591`(03:47:01Z 큐) |
 
