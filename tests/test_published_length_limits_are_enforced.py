@@ -37,6 +37,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from sdp.api import MAX_CHANGE_REASON_CHARS, app  # noqa: E402
 from sdp.api_request_contract import REQUEST_BODY_EXTRA_PROPERTIES  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from scripts.generate_response_contract import (  # noqa: E402
+    non_demo_dataset_body,
+)
+
 client = TestClient(app)
 
 
@@ -68,50 +74,100 @@ def _new_patch() -> str:
     return created.json()["id"]
 
 
+# One body builder per published surface. The *parametrization* is derived from
+# ``published_limits()``, so this mapping can only be incomplete **loudly**: a
+# published limit with no builder fails with the message below instead of being
+# silently left undriven.
+#
+# It was a hand-written list of four callers next to a premise that asserted the
+# published set has five members. ``POST /catalog/datasets``' ``reason`` was the
+# one nobody sent an over-limit value to - so deleting that route's enforcement
+# (``change_reason=_change_reason(payload)`` ->
+# ``change_reason=(payload.get("reason") or None)``) left this file 10/10 green
+# while a 513-character reason answered 200 and was stored whole. Measured.
+#
+# That is the same "a curated list reports green on what it never visited" shape
+# the sibling ``test_refusal_evidence_is_not_an_existence_oracle.py`` was
+# repaired for in this round, one file over.
+_OTHER_FIELDS: dict[tuple[str, str], object] = {
+    ("POST", "/catalog/datasets/{dataset_id}/publish"): lambda: (
+        {"path": "/catalog/datasets/crm-customer-master/publish", "body": {"actor": "admin"}}
+    ),
+    ("POST", "/catalog/datasets/{dataset_id}/deprecate"): lambda: (
+        {"path": "/catalog/datasets/sales-order/deprecate", "body": {"actor": "admin"}}
+    ),
+    ("PATCH", "/catalog/datasets/{dataset_id}"): lambda: (
+        {"path": "/catalog/datasets/crm-customer-master", "body": {"actor": "admin", "description": "d"}}
+    ),
+    ("POST", "/ontology/patches/{patch_id}/review"): lambda: (
+        {"path": f"/ontology/patches/{_new_patch()}/review",
+         "body": {"actor": "admin", "decision": "approve"}}
+    ),
+    ("POST", "/catalog/datasets"): lambda: (
+        {"path": "/catalog/datasets", "body": _onboarding_body()}
+    ),
+}
+
+_ONBOARDING_SEQUENCE = [0]
+
+
+def _onboarding_body() -> dict[str, object]:
+    """A valid onboarding body with a fresh id, so repeated calls do not collide."""
+    _ONBOARDING_SEQUENCE[0] += 1
+    body = non_demo_dataset_body()
+    body["id"] = f"length-limit-probe-{_ONBOARDING_SEQUENCE[0]}"
+    return body
+
+
+def _send(method: str, path: str, field: str, value: str):
+    """Call one published surface with ``field`` set to ``value``."""
+    builder = _OTHER_FIELDS.get((method, path))
+    assert builder is not None, (
+        f"the contract publishes a maxLength on {method} {path} {field!r} and "
+        "this file has no body builder for it, so nothing sends it an "
+        "over-limit value. Add one - a published limit nothing drives is a "
+        "limit that can be deleted suite-green."
+    )
+    plan = builder()
+    body = dict(plan["body"])
+    body[field] = value
+    return client.request(method, plan["path"], json=body)
+
+
 @pytest.mark.parametrize(
-    ("label", "call"),
-    [
-        (
-            "publish reason",
-            lambda value: client.post(
-                "/catalog/datasets/crm-customer-master/publish",
-                json={"actor": "admin", "reason": value},
-            ),
-        ),
-        (
-            "deprecate reason",
-            lambda value: client.post(
-                "/catalog/datasets/sales-order/deprecate",
-                json={"actor": "admin", "reason": value},
-            ),
-        ),
-        (
-            "patch reason",
-            lambda value: client.patch(
-                "/catalog/datasets/crm-customer-master",
-                json={"actor": "admin", "description": "d", "reason": value},
-            ),
-        ),
-        (
-            "review comment",
-            lambda value: client.post(
-                f"/ontology/patches/{_new_patch()}/review",
-                json={"actor": "admin", "decision": "approve", "comment": value},
-            ),
-        ),
-    ],
+    ("method", "path", "field", "limit"),
+    published_limits(),
+    ids=[f"{method} {path} {field}" for method, path, field, _ in published_limits()],
 )
-def test_a_value_over_the_published_limit_is_refused(label: str, call) -> None:
+def test_a_value_over_the_published_limit_is_refused(
+    method: str, path: str, field: str, limit: int
+) -> None:
     """The defect: one was truncated, the other retained whole, both answered 200."""
-    response = call("x" * (MAX_CHANGE_REASON_CHARS + 1))
-    assert response.status_code == 400, (label, response.status_code, response.text)
+    response = _send(method, path, field, "x" * (limit + 1))
+    assert response.status_code == 400, (method, path, response.status_code, response.text)
     body = response.json()["detail"]
     assert body["error"] == "invalid_request", body
-    assert any(
-        entry["field"] in {"reason", "comment"} for entry in body["fields"]
-    ), body
-    assert str(MAX_CHANGE_REASON_CHARS) in str(body), (
-        f"{label}: the refusal does not name the limit it enforced: {body}"
+    assert any(entry["field"] == field for entry in body["fields"]), body
+    assert str(limit) in str(body), (
+        f"{method} {path} {field}: the refusal does not name the limit it "
+        f"enforced: {body}"
+    )
+
+
+def test_every_published_limit_has_a_body_builder() -> None:
+    """The premise of the derivation, asserted rather than left to a KeyError.
+
+    If a new published limit arrives, the parametrization above drives it and
+    fails on the missing builder - but it fails inside a parametrized case,
+    which reads like the route being broken. This says plainly which it is.
+    """
+    undriven = [
+        f"{method} {path} {field}"
+        for method, path, field, _ in published_limits()
+        if (method, path) not in _OTHER_FIELDS
+    ]
+    assert not undriven, (
+        f"published limits with no body builder in this file: {undriven}"
     )
 
 
