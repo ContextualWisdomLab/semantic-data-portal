@@ -1432,6 +1432,14 @@ def create_dataset(payload: dict[str, Any]) -> dict[str, Any]:
                 before_commit=assert_dataset_mirror_kinds_are_available,
             )
             seed_dataset(dataset)
+    except catalog.SourceSystemRedactionMarker as refusal:
+        # Before the conflict and blanket arms, and typed rather than caught as a
+        # ``ValueError``: the write echo redacts ``source_system``, and replaying
+        # the echoed body stored the marker and deleted the locator. A blanket arm
+        # reports that as "request body is not valid", which names neither the
+        # field nor the remedy - and ``pydantic.ValidationError`` is a
+        # ``ValueError`` too, so the arm cannot tell them apart after the fact.
+        raise HTTPException(status_code=400, detail=str(refusal)) from refusal
     except (NodeKindConflict, catalog.DatasetAlreadyExists) as conflict:
         # Two refusals, one status: the id this registration wants is already
         # taken - by another kind of graph node, or by a dataset. A duplicate id
@@ -1561,6 +1569,14 @@ def patch_catalog_dataset(dataset_id: str, payload: dict[str, Any]) -> dict[str,
             seed_dataset(dataset)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=_missing_resource_detail(exc))
+    except catalog.SourceSystemRedactionMarker as refusal:
+        # Before the conflict and blanket arms, and typed rather than caught as a
+        # ``ValueError``: the write echo redacts ``source_system``, and replaying
+        # the echoed body stored the marker and deleted the locator. A blanket arm
+        # reports that as "request body is not valid", which names neither the
+        # field nor the remedy - and ``pydantic.ValidationError`` is a
+        # ``ValueError`` too, so the arm cannot tell them apart after the fact.
+        raise HTTPException(status_code=400, detail=str(refusal)) from refusal
     except NodeKindConflict as conflict:
         # Before the blanket arm, so a kind conflict is not reported as a
         # malformed body - and catching the *precise* type rather than

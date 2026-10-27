@@ -83,6 +83,13 @@ _SAFE_CONNECTION_KEYS = frozenset(
 _WRAPPER_SCHEMES = frozenset({"jdbc", "odbc"})
 
 
+# What a source locator reads as once its credential is removed and nothing
+# recognizable is left. A constant rather than four literals, because a *write*
+# has to refuse this exact string: the echo is replayable, and replaying it used
+# to store the marker and delete the locator.
+SOURCE_SYSTEM_REDACTED = "redacted"
+
+
 def _redacted_keyword_value_dsn(source_system: str) -> str:
     """Keep only the allow-listed locator keys of a keyword/value connection string."""
     tokens: list[str] = []
@@ -92,7 +99,7 @@ def _redacted_keyword_value_dsn(source_system: str) -> str:
         key, _, value = chunk.partition("=")
         if key.strip().lower() in _SAFE_CONNECTION_KEYS:
             tokens.append(f"{key.strip()}={value}")
-    return " ".join(tokens) if tokens else "redacted"
+    return " ".join(tokens) if tokens else SOURCE_SYSTEM_REDACTED
 
 
 def redacted_source_system(source_system: str) -> str:
@@ -134,7 +141,7 @@ def redacted_source_system(source_system: str) -> str:
     try:
         parts = urlsplit(source_system)
     except ValueError:
-        return "redacted"
+        return SOURCE_SYSTEM_REDACTED
 
     # A wrapper scheme hides the real URL in the path; unwrap and re-parse once.
     if parts.scheme in _WRAPPER_SCHEMES and "//" in parts.path:
@@ -151,7 +158,9 @@ def redacted_source_system(source_system: str) -> str:
         # No authority: the remainder is not a locator we can trust to be
         # secret-free, so only the allow-listed keys of it survive.
         remainder = _redacted_keyword_value_dsn(parts.path)
-        return f"{parts.scheme}:{remainder}" if remainder != "redacted" else f"{parts.scheme}:redacted"
+        if remainder != SOURCE_SYSTEM_REDACTED:
+            return f"{parts.scheme}:{remainder}"
+        return f"{parts.scheme}:{SOURCE_SYSTEM_REDACTED}"
     try:
         port = parts.port
     except ValueError:
@@ -162,7 +171,7 @@ def redacted_source_system(source_system: str) -> str:
     path = parts.path
     if "=" in path:
         safe = _redacted_keyword_value_dsn(path)
-        path = f"/{safe}" if safe != "redacted" else "/redacted"
+        path = f"/{safe}" if safe != SOURCE_SYSTEM_REDACTED else f"/{SOURCE_SYSTEM_REDACTED}"
     return urlunsplit((parts.scheme, authority, path, "", ""))
 
 
@@ -258,6 +267,48 @@ def published_distributions(distributions: Any) -> list[Dict[str, Any]]:
         )
         for distribution in distributions or ()
     ]
+
+
+class SourceSystemRedactionMarker(ValueError):
+    """A write tried to store the marker the write echo returns.
+
+    Typed rather than a bare ``ValueError`` for the reason the route comments
+    give: a blanket ``ValueError`` arm reports a precise refusal as "request body
+    is not valid", and ``pydantic.ValidationError`` is a ``ValueError`` too, so
+    the arm cannot be made to tell them apart after the fact.
+    """
+
+
+def reject_redaction_marker(source_system: str | None) -> None:
+    """Refuse a write that would store the marker the echo returns.
+
+    ``POST``/``PATCH`` answer with ``source_system`` redacted, and for a plain
+    label with no connection-string structure the redactor fails closed and
+    returns ``SOURCE_SYSTEM_REDACTED`` rather than echoing a value that might
+    itself be a password. The marker then travelled back in through an ordinary
+    read-modify-write. Measured before this::
+
+        POST  {source_system: 'warehouse-postgres'}  -> 200, echo 'redacted'
+        stored                                        -> 'warehouse-postgres'
+        PATCH {title: ..., source_system: 'redacted'} -> 200
+        stored                                        -> 'redacted'
+        audit details -> before.source_system == after.source_system == 'redacted'
+
+    So the least sensitive value - a label carrying no credential at all - was
+    the one the product destroyed most completely, and the ledger recorded the
+    destruction as no change. Refusing is the answer rather than ignoring the
+    field: a silently dropped write is the defect this repository has already
+    repaired twice (``license``, then ``distributions``).
+
+    A dataset genuinely named ``redacted`` cannot be registered under that
+    locator, which the refusal says out loud.
+    """
+    if source_system is not None and source_system.strip() == SOURCE_SYSTEM_REDACTED:
+        raise SourceSystemRedactionMarker(
+            "source_system은 쓰기 응답에서 가려진 값입니다. 응답을 그대로 재전송하면 "
+            f"저장된 locator가 {SOURCE_SYSTEM_REDACTED!r}로 덮어쓰기 되므로 거절합니다. "
+            "실제 locator를 보내거나 이 필드를 생략하십시오."
+        )
 
 
 def audited_patch_values(values: Dict[str, Any]) -> Dict[str, Any]:
@@ -1010,6 +1061,7 @@ def _register_dataset_locked(
     tests ``None``. Raising from the hook leaves nothing written, so a refused
     registration is a refusal rather than a half-applied mutation.
     """
+    reject_redaction_marker(payload.source_system)
     dataset_id = payload.id or _next_generated_dataset_id()
 
     if dataset_id in _DATA:
@@ -1082,6 +1134,7 @@ def _patch_dataset_locked(
     change_reason: str | None = None,
 ) -> Dataset:
     """Apply one patch. Call with the mutation lock held."""
+    reject_redaction_marker(patch.source_system)
     dataset = get_dataset_or_404(dataset_id)
     before = dataset.model_dump()
     data = dataset.model_dump()
@@ -1144,6 +1197,16 @@ def _patch_dataset_locked(
                 "changes": audited_patch_values(effective),
                 "before": audited_patch_values({k: before[k] for k in effective}),
                 "after": audited_patch_values({k: data[k] for k in effective}),
+                # Both sides go through the same lossy projection, so two
+                # different plain labels both read ``redacted`` and a real change
+                # to the source locator showed up as before == after. The flag is
+                # computed from the raw values, which are in scope here and
+                # nowhere inside the projection.
+                **(
+                    {"source_system_changed": before.get("source_system") != data.get("source_system")}
+                    if "source_system" in effective
+                    else {}
+                ),
                 **change_reason_details(change_reason),
             },
         ),
