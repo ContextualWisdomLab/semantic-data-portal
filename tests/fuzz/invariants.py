@@ -125,6 +125,55 @@ def check_draft_sql(req: QueryDraftRequest) -> None:
             check_safe_identifier(col)
 
 
+def check_validate_sql_query(
+    query: str, source_system: str, declared_relation: str | None
+) -> None:
+    """``validate_sql_query`` over arbitrary text, with and without a relation.
+
+    ``declared_relation`` became a live input when the drafter and the allow-list
+    stopped guessing the relation from the connection locator and started taking
+    it from the catalog's declared ``postgresql.table`` distribution. The
+    parameter is catalog-derived rather than caller-supplied, but it reaches the
+    same comparison, so the fuzz seam covers it: an engine that only ever drove
+    the locator path would stop exercising what production now does.
+
+    The last assertion is the repair itself as an invariant: a statement naming
+    exactly the declared relation is never refused as *unauthorized*. It may
+    still be refused for other reasons (a keyword collision, a literal), which
+    is why only that one warning is excluded.
+    """
+    warnings = orchestrator.validate_sql_query(
+        query, source_system=source_system, declared_relation=declared_relation
+    )
+    assert isinstance(warnings, list)
+    assert all(isinstance(item, str) for item in warnings)
+    assert len(warnings) == len(set(warnings)), f"duplicated warning: {warnings}"
+    if not query.strip().lower().startswith("select "):
+        assert "only_select_allowed" in warnings
+    if ";" in query:
+        assert "single_statement_required" in warnings
+
+    if declared_relation:
+        relation = orchestrator._safe_identifier(declared_relation)
+        # Whether the emitted name reads back as itself is asked of the
+        # production parser, not re-derived here. The first version of this
+        # invariant used "non-empty and not a clause keyword" and Hypothesis
+        # refuted it with ``"0"``: a leading digit is not an identifier, so
+        # ``FROM 0`` is not a table reference and ``FROM 0abc`` parses as the
+        # table ``abc``. That counterexample is why ``source_relation_name``
+        # now declines such a name instead of emitting it.
+        if orchestrator._reads_back_as_one_table(relation):
+            authorized = orchestrator.validate_sql_query(
+                f"select count(*) from {relation} limit 1",
+                source_system=source_system,
+                declared_relation=relation,
+            )
+            assert "unauthorized_table_reference" not in authorized, (
+                f"the declared relation {relation!r} was refused as unauthorized: "
+                f"{authorized}"
+            )
+
+
 def check_execute_query(req: QueryExecutionRequest) -> None:
     """``orchestrator.execute_query``: always returns a response; hostile SQL is
     rejected rather than marked SUCCEEDED."""

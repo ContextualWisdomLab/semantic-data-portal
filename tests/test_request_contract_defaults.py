@@ -99,7 +99,7 @@ def test_a_missing_or_empty_dataset_list_is_a_client_error_that_names_the_field(
     body = {
         "user": "analyst",
         "language": "SQL",
-        "query": "select customer_id from customer",
+        "query": "select customer_id from crm_customer_master",
         "purpose": "analysis",
     }
     if dataset_ids is not None:
@@ -146,7 +146,7 @@ def test_the_audit_ledger_labels_every_unmeasured_execution_figure() -> None:
             "user": "analyst",
             "dataset_ids": ["crm-customer-master"],
             "language": "SQL",
-            "query": "select customer_id from customer",
+            "query": "select customer_id from crm_customer_master",
             "purpose": "analysis",
         },
     )
@@ -204,7 +204,7 @@ def test_each_mock_row_count_provenance_has_its_own_label() -> None:
                 "user": "analyst",
                 "dataset_ids": [dataset_id],
                 "language": "SQL",
-                "query": "select customer_id from customer",
+                "query": "select customer_id from crm_customer_master",
                 "purpose": "analysis",
                 **extra,
             },
@@ -247,7 +247,7 @@ def test_a_dry_run_labels_its_row_count_differently() -> None:
             "user": "analyst",
             "dataset_ids": ["crm-customer-master"],
             "language": "SQL",
-            "query": "select customer_id from customer",
+            "query": "select customer_id from crm_customer_master",
             "purpose": "analysis",
             "dry_run": True,
         },

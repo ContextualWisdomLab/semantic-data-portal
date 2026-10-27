@@ -29,15 +29,20 @@ is the **false claim**, not the draft's existence. So the response labels itself
 at the point of delivery - the same choice made for ``/graph/stats``'s
 instance-wide counts and for the mock executor's provenance fields.
 
-``executable_against_source`` is ``False`` for **every** dataset, SQL included,
-because that is currently true for every dataset. Resolving the relation from
-the catalog's declared ``postgresql.table`` distribution - and building
-``validate_sql_query``'s allow-list from that same derivation, which today
-shares this guess and therefore refuses the catalog's own relation
-(``validate(real) -> ['unauthorized_table_reference']``,
-``validate(draft) -> []``) - is the separate repair recorded in the gap
-baseline. When it lands, SQL sources flip to ``True`` and this file's
-expectation changes with them.
+``executable_against_source`` was ``False`` for **every** dataset when this
+file was written, including the two SQL ones, because that was true of every
+dataset then. **That repair has since landed** - the drafter resolves the
+relation from the catalog's declared ``postgresql.table`` distribution and
+``validate_sql_query``'s allow-list is built from the same resolution - so
+``crm-customer-master`` and ``sales-order`` now name a real relation and say
+they are executable. ``tests/test_draft_names_the_declared_relation.py`` owns
+that half.
+
+What is left here is the half that is still true, and it is not a leftover: the
+other three datasets declare ``parquet``, ``sparql.graph`` and ``rest.json``,
+have no relation to name, and must keep saying so. Flipping all five would have
+been the same over-claim in a new place. The file's docstring predicted this
+change and the expectations moved with it rather than being deleted.
 """
 
 from __future__ import annotations
@@ -66,6 +71,15 @@ EXPECTED_KINDS = {
     "sales-order": "sql",
     "semantic-glossary": "rdf",
     "marketing-campaign": "api",
+}
+
+
+# The three datasets that declare no relation. Derived from ``EXPECTED_KINDS``
+# rather than listed again: a source kind other than ``sql`` cannot have a
+# ``postgresql.table`` distribution, and the relational pair's own expectations
+# live in ``tests/test_draft_names_the_declared_relation.py``.
+NON_RELATIONAL = {
+    dataset_id: kind for dataset_id, kind in EXPECTED_KINDS.items() if kind != "sql"
 }
 
 
@@ -102,15 +116,16 @@ def test_every_draft_publishes_its_source_kind(dataset_id: str) -> None:
     assert body["source_kind"] == EXPECTED_KINDS[dataset_id], body["source_kind"]
 
 
-@pytest.mark.parametrize("dataset_id", sorted(EXPECTED_KINDS))
-def test_no_draft_claims_to_be_executable_against_its_source(
+@pytest.mark.parametrize("dataset_id", sorted(NON_RELATIONAL))
+def test_a_source_with_no_relation_does_not_claim_to_be_executable(
     dataset_id: str,
 ) -> None:
-    """True for all five today, for two different reasons.
+    """An object prefix, a named graph and a REST path are not relations.
 
-    A non-relational source has no relation at all; a relational one is named by
-    its database rather than its relation. Either way the statement will not run
-    as emitted, and the response has to be the place that says so.
+    The relational two are covered by
+    ``tests/test_draft_names_the_declared_relation.py``; these three have
+    nothing for the catalog to declare, so the response has to be the place that
+    says the name was derived.
     """
     body = _draft(dataset_id)
     assert body["executable_against_source"] is False, body
@@ -120,34 +135,45 @@ def test_no_draft_claims_to_be_executable_against_its_source(
     caveat = body["execution_caveat"]
     assert EXPECTED_KINDS[dataset_id] in caveat, caveat
     assert "locator" in caveat, f"the caveat does not say where the name came from: {caveat}"
-    assert "distribution" in caveat, f"the caveat does not say where the real name is: {caveat}"
+    assert "distribution" in caveat, (
+        f"the caveat does not say what the catalog would have to declare: {caveat}"
+    )
 
 
 @pytest.mark.parametrize("dataset_id", sorted(EXPECTED_KINDS))
 def test_no_draft_claims_the_catalog_verified_its_table(dataset_id: str) -> None:
-    """The sentence that was false for all five is gone, and its truth is stated.
+    """The sentence that was false for all five is gone, for all five.
 
-    Checked as two separate properties: the old claim about *tables* is absent,
-    and the replacement says the columns are declared while the table name is
-    derived. A reader must be able to tell which half is catalog-backed.
+    "검증된" is a claim about *validation* the catalog never performed, and it
+    stays absent whether or not the dataset declares a relation - a declared
+    relation is a declaration, not a verification that it exists on the target
+    system. The columns half is catalog-backed for every dataset and is asserted
+    with it, so a reader can tell which half is which.
     """
     assumptions = " ".join(_draft(dataset_id)["assumptions"])
     assert "검증된 테이블" not in assumptions, (
         f"the table-verification claim survives: {assumptions}"
     )
     assert "컬럼은 카탈로그 선언에서" in assumptions, assumptions
+
+
+@pytest.mark.parametrize("dataset_id", sorted(NON_RELATIONAL))
+def test_an_undeclared_table_name_says_where_it_came_from(dataset_id: str) -> None:
+    """The three with no declared relation name their derivation in the open."""
+    assumptions = " ".join(_draft(dataset_id)["assumptions"])
     assert "source_system" in assumptions, assumptions
 
 
-@pytest.mark.parametrize("dataset_id", sorted(EXPECTED_KINDS))
-def test_the_emitted_table_is_the_locator_segment_not_the_relation(
+@pytest.mark.parametrize("dataset_id", sorted(NON_RELATIONAL))
+def test_an_undeclared_table_name_is_the_locator_segment(
     dataset_id: str,
 ) -> None:
-    """The measurement behind the caveat, pinned so it cannot quietly change.
+    """The measurement behind the caveat, for the datasets it still describes.
 
-    If a later change makes the drafter name the catalog's own relation, this
-    test fails and is the right place to notice - the caveat and
-    ``executable_against_source`` would both need revisiting in the same breath.
+    These three declare no relation, so there is nothing else the name could
+    come from. If one of them gains a ``postgresql.table`` distribution, this
+    fails and is the right place to notice - ``NON_RELATIONAL`` and the
+    executability expectation would both move in the same breath.
     """
     dataset = get_dataset(dataset_id)
     body = _draft(dataset_id)
@@ -157,12 +183,12 @@ def test_the_emitted_table_is_the_locator_segment_not_the_relation(
     declared_relations = [
         str(dist.endpoint).rstrip("/").rsplit("/", 1)[-1]
         for dist in dataset.distributions
-        if "table" in dist.format
+        if str(dist.format).endswith(".table")
     ]
     if declared_relations:
-        assert emitted not in declared_relations, (
-            f"{dataset_id} now emits its declared relation {emitted!r}; the "
-            "caveat and executable_against_source have to be revisited"
+        assert False, (
+            f"{dataset_id} now declares a relation ({declared_relations}); it "
+            "belongs with the relational datasets, not here"
         )
 
 

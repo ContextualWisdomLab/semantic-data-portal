@@ -3257,7 +3257,11 @@ validate_sql_query("... FROM customer ...")             -> []
 `execution_caveat`(이름이 **locator에서 왔다**는 것과 진짜 이름이 **카탈로그
 distribution에 있다**는 것 둘 다). 거짓 assumption은 참인 두 문장으로 교체했습니다.
 
-### 남은 수리 (이 절이 그 기록입니다)
+### 남은 수리 — **들어왔습니다** (`2026-10-27 00:50Z` 절)
+
+아래 다섯 단계는 모두 수행되었고, 결과와 fuzz seam이 찾은 추가 결함은 이 문서의
+"드래프트가 카탈로그가 선언한 relation을 지목합니다" 절에 있습니다. 이 목록은 그때의
+계획 기록으로 남겨 둡니다 — 수리된 것을 미해결로 읽히게 두지 않기 위해 제목에 적습니다.
 
 `8ed985d`의 코드 주석과 커밋 메시지가 "the separate repair recorded in the gap baseline"을
 참조합니다. **그 기록이 바로 이 절입니다** — 참조를 적을 때 대상이 없으면 그 참조 자체가
@@ -3553,6 +3557,77 @@ JS 런타임이 없으므로 효과를 실행할 수는 없습니다(브라우�
 나머지 역검증 넷: 실패 상태를 초록으로(가드 둘 red), 서버 초기 chip을 다시 초록으로(red),
 signed-out을 amber로(red), `.badge.warn`을 스타일시트에서 제거(스타일시트 대조 가드 red —
 tone 집합을 나열하지 않고 **서버가 보낸 CSS에서 파생**하므로 한쪽만 바뀌면 걸립니다).
+
+이 절은 측정 기록이고 병합 허가가 아닙니다.
+
+## 드래프트가 카탈로그가 선언한 relation을 지목합니다. 게이트도 같은 파생을 씁니다 (2026-10-27 00:50Z)
+
+이 문서의 "드래프트 SQL의 `FROM`이 relation이 아니라 연결 locator였습니다" 절이 **남은
+수리**로 적어 둔 것이 들어왔습니다. 그 절의 다섯 단계를 그대로 따랐습니다.
+
+카탈로그는 답을 처음부터 갖고 있었습니다 — 시드 다섯 중 둘이 `postgresql.table`
+distribution으로 relation을 선언합니다:
+
+```
+crm-customer-master  postgresql://analytics.dw/customer -> FROM crm_customer_master
+  (선언: https://example.internal/api/table/crm_customer_master)
+sales-order          postgresql://analytics.dw/sales    -> FROM sales_order
+  (선언: https://example.internal/api/table/sales_order)
+```
+
+나머지 셋은 `parquet`·`sparql.graph`·`rest.json`을 선언합니다 — 지목할 relation이 **없고**,
+locator 파생 이름과 그 사실을 계속 말합니다. 다섯을 모두 executable로 뒤집는 것은 같은
+over-claim을 새 자리에 놓는 것입니다.
+
+자기 모순도 닫혔습니다. `validate_sql_query`의 allow-list가 **같은 파생**을 쓰므로:
+
+```
+validate("... FROM crm_customer_master ...")  -> []                               (이전: 거부)
+validate("... FROM customer ...")             -> ['unauthorized_table_reference']  (이전: 통과)
+```
+
+`source_relation_name` 하나를 드래프터와 게이트가 **공유**합니다. 사본 둘이면 갈라지고, 그
+갈라짐이 애초의 결함이었습니다. `DRAFT_SQL_DIALECT` 상수 하나가 응답의 `dialect`와 어떤
+distribution을 relation으로 읽을지를 **동시에** 정하므로 둘이 어긋날 수 없습니다.
+
+### fuzz seam이 결함 하나를 찾았습니다
+
+새 invariant(`check_validate_sql_query`)를 양쪽 엔진이 공유하도록 넣었고, Hypothesis가
+`declared_relation="0"`을 반례로 돌려줬습니다. `_safe_identifier("0")`은 `"0"`을 그대로
+돌려주는데 **선두 숫자는 식별자가 아닙니다**: 발행된 `FROM 0`은 테이블 참조가 아니고,
+`FROM 0abc`는 파서가 테이블 **`abc`**로 읽습니다 — 쓴 이름과 인가된 이름이 다른 문자열이
+됩니다. 어느 쪽이든 draft 자신의 allow-list 검사가 `unauthorized_table_reference`로
+거부하는데, 그것은 **네이밍 문제에 보안 모양의 사유**를 붙이는 것입니다.
+
+그래서 `source_relation_name`은 발행된 이름이 **자기 자신으로 다시 읽히지 않으면**
+선언을 거절하고 locator 이름과 "파생이지 선언이 아님" caveat를 유지합니다. 판정은
+PostgreSQL 식별자 규칙을 여기서 다시 쓰지 않고 **production 파서에게 묻습니다**
+(`_referenced_source_tables(f"select 1 from {name}") == [name]`) — allow-list가 참조하는
+그 파서와 일치하는 것이 중요한 성질입니다.
+
+### 역검증에서 변이 하나가 green으로 돌아왔습니다
+
+dialect 제한(`postgresql.table`만)을 "table이 포함된 아무 format"으로 넓히는 변이가
+전부 통과했습니다. 시드에 비-PostgreSQL `.table` distribution이 **없어서** 그 변이가
+시드 위에서는 행동상 무해하기 때문입니다. 제 테스트는 "시드의 모든 `.table` 선언이
+`postgresql.table`이다"를 단언했는데, 그것은 **시드에 대한 진술**이고 규칙에 대한 진술이
+아닙니다. 합성 데이터셋으로 `mysql.table`·`snowflake.table`·`delta.table`·
+`postgresql.table.backup`·`not_postgresql.table`을 몰아 규칙 자체를 단언하도록 고쳤고,
+그 변이가 이제 red입니다. 비-발행가능 이름도 같은 이유로 합성으로만 측정됩니다 — 시드가
+그 경우를 표현할 수 없고, 그래서 fuzz 실행이 찾아야 했습니다.
+
+나머지 역검증 다섯: resolver가 항상 None(가드 다섯 red), 게이트가 자기 추측 유지(열넷 red —
+fuzz invariant 포함), draft가 locator 이름 유지(열하나 red), 전부 executable로 주장(셋 red),
+읽히지 않는 이름을 그대로 발행(declined 가드 red).
+
+### 호출자 쪽 변화
+
+`/browse/query`가 같은 해석을 쓰므로, 구매자가 **카탈로그가 공표한 relation 이름**으로
+질의하면 통과하고 추측된 이름은 거부됩니다 — 이전의 정반대입니다. 저장소 안에서는 route를
+통과하던 테스트 열둘이 red로 바뀌었고 전부 선언된 relation으로 고쳤습니다. 그중 둘은
+`validate_sql_query`를 `declared_relation` 없이 부르고 있었는데(= fuzz fallback 경로),
+**제품이 검증하는 방식과 다르게 검증하던 것**이므로 그 자리를 제품과 같게 맞췄습니다.
+production 호출자는 둘뿐이고 둘 다 해석을 넘깁니다 — 전수 확인했습니다.
 
 이 절은 측정 기록이고 병합 허가가 아닙니다.
 

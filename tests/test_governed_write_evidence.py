@@ -176,7 +176,7 @@ def test_the_browse_query_route_is_not_an_existence_oracle() -> None:
                 "user": "analyst",
                 "dataset_ids": [dataset_id],
                 "language": "SQL",
-                "query": "select customer_id from customer",
+                "query": "select customer_id from crm_customer_master",
                 "purpose": "analysis",
             },
         )
@@ -202,7 +202,7 @@ def test_the_body_named_refusal_is_still_recorded_with_its_real_reason() -> None
             "user": "analyst",
             "dataset_ids": ["body-named-foreign"],
             "language": "SQL",
-            "query": "select customer_id from customer",
+            "query": "select customer_id from crm_customer_master",
             "purpose": "analysis",
         },
     )
@@ -237,7 +237,7 @@ def test_a_pre_policy_refusal_says_so_instead_of_leaving_a_null_decision() -> No
             "user": "analyst",
             "dataset_ids": ["crm-customer-master"],
             "language": "SQL",
-            "query": "select customer_id from customer",
+            "query": "select customer_id from crm_customer_master",
             "purpose": "analysis",
         },
     )

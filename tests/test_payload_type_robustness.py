@@ -49,7 +49,7 @@ RAW_PAYLOAD_ROUTES = (
             "user": "analyst",
             "dataset_ids": ["crm-customer-master"],
             "language": "SQL",
-            "query": "select customer_id from customer",
+            "query": "select customer_id from crm_customer_master",
             "purpose": "analysis",
         },
         ("user", "language", "query", "purpose"),

@@ -225,3 +225,18 @@ def test_execute_query_answers_a_bypassed_empty_dataset_list() -> None:
     assert isinstance(response, QueryExecutionResponse)
     assert response.status == "REJECTED"
     assert response.warnings == ["dataset_ids_required"]
+
+
+@settings(max_examples=60, suppress_health_check=[HealthCheck.too_slow])
+@given(
+    query=st.text(max_size=96),
+    source_system=st.text(max_size=64),
+    declared_relation=st.one_of(st.none(), st.text(max_size=48)),
+)
+def test_validate_sql_query_holds_invariants(query, source_system, declared_relation):
+    """The Hypothesis half of ``fuzz/fuzz_query_safety.py``'s oracle.
+
+    Both engines call the same invariant, so the crash oracle cannot differ
+    between the always-on suite and the coverage-guided run.
+    """
+    invariants.check_validate_sql_query(query, source_system, declared_relation)

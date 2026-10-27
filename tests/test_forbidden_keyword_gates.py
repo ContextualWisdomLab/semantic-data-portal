@@ -128,14 +128,14 @@ def test_browse_query_accepts_a_query_whose_column_merely_contains_a_keyword() -
             },
         )
 
-    control = post("select customer_id from customer")
+    control = post("select customer_id from crm_customer_master")
     assert control.status_code == 200, control.text
 
-    measured = post("select created_at from customer")
+    measured = post("select created_at from crm_customer_master")
     assert measured.status_code == 200, measured.text
     assert "forbidden_keyword_detected" not in measured.json()["warnings"]
 
-    hostile = post("select customer_id from customer drop")
+    hostile = post("select customer_id from crm_customer_master drop")
     assert hostile.status_code == 400
     assert "forbidden_keyword_detected" in hostile.json()["detail"]["warnings"]
 

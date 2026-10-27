@@ -35,7 +35,11 @@ from fastapi.testclient import TestClient
 
 from sdp import catalog
 from sdp.api import app
-from sdp.orchestrator import _temporal_column, validate_sql_query
+from sdp.orchestrator import (
+    _temporal_column,
+    source_relation_name,
+    validate_sql_query,
+)
 
 
 client = TestClient(app)
@@ -71,7 +75,16 @@ def test_every_drafted_query_passes_the_validator_and_executes() -> None:
         assert "query" in body, f"{dataset.id}: {body}"
         sql = body["query"]
 
-        warnings = validate_sql_query(sql, source_system=dataset.source_system)
+        # Validated the way the product validates it. The drafter now names
+        # the relation the catalog declares, and the allow-list is built from
+        # the same resolution - calling this without the declared relation
+        # exercises the fuzz harness's fallback, not the governed path, and
+        # would refuse the statement the product itself accepts.
+        warnings = validate_sql_query(
+            sql,
+            source_system=dataset.source_system,
+            declared_relation=source_relation_name(dataset),
+        )
         if warnings:
             failures.append((dataset.id, "validator", warnings, sql))
             continue
@@ -171,7 +184,14 @@ def test_a_group_by_draft_also_round_trips() -> None:
     ).json()
     sql = body["query"]
     assert f"GROUP BY {group_column}" in sql, sql
-    assert validate_sql_query(sql, source_system=dataset.source_system) == []
+    assert (
+        validate_sql_query(
+            sql,
+            source_system=dataset.source_system,
+            declared_relation=source_relation_name(dataset),
+        )
+        == []
+    )
 
     executed = client.post(
         "/browse/query",

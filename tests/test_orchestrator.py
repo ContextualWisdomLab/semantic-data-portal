@@ -169,7 +169,7 @@ def test_execute_query_dry_run_succeeds_with_zero_rows() -> None:
     resp = orch.execute_query(
         QueryExecutionRequest(
             dataset_ids=[_CRM],
-            query="SELECT customer_id FROM customer",
+            query="SELECT customer_id FROM crm_customer_master",
             user="admin",
             purpose="analysis",
             dry_run=True,
@@ -209,7 +209,7 @@ def test_a_dry_run_group_by_does_not_fabricate_a_measurement() -> None:
             dataset_ids=[_CRM],
             query=(
                 "SELECT signup_at, count(*) AS active_customer_count "
-                "FROM customer GROUP BY signup_at LIMIT 1000"
+                "FROM crm_customer_master GROUP BY signup_at LIMIT 1000"
             ),
             user="admin",
             purpose="analysis",
@@ -254,8 +254,9 @@ def test_the_ledger_and_the_response_agree_and_the_rows_carry_provenance() -> No
 
     for dry_run in (True, False):
         for query in (
-            "SELECT customer_id FROM customer",
-            "SELECT signup_at, count(*) AS n FROM customer GROUP BY signup_at",
+            "SELECT customer_id FROM crm_customer_master",
+            "SELECT signup_at, count(*) AS n FROM crm_customer_master "
+            "GROUP BY signup_at",
         ):
             before = len(catalog.list_audit_events(limit=500))
             resp = orch.execute_query(

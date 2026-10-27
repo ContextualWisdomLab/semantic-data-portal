@@ -190,6 +190,68 @@ def _source_table_name(source_system: str) -> str:
     return _safe_identifier(source_system.rstrip("/").rsplit("/", 1)[-1])
 
 
+# The dialect every draft is emitted in. Published as the response's
+# ``dialect`` and used to decide which declared distribution can be claimed
+# executable, so the two cannot disagree: a relation in another dialect is not
+# a relation this statement can name.
+DRAFT_SQL_DIALECT = "postgresql"
+
+
+def source_relation_name(dataset: Any) -> str | None:
+    """The relation this dataset declares, or ``None`` when it declares none.
+
+    ``_source_table_name`` reads the last path segment of ``source_system``,
+    which is a *connection* locator: for a libpq URI that segment is the
+    **database** name, and for an object prefix, a named graph or a REST path it
+    is not a relation at all. Measured over the seed catalogue, no draft named a
+    relation that exists, while the catalog held the answer the whole time::
+
+        crm-customer-master  postgresql://analytics.dw/customer -> FROM customer
+          declared: https://example.internal/api/table/crm_customer_master
+        sales-order          postgresql://analytics.dw/sales    -> FROM sales
+          declared: https://example.internal/api/table/sales_order
+
+    ``validate_sql_query``'s source-table allow-list was built from the same
+    guess, so the product refused the catalog's own relation and accepted the
+    one it had invented. Both readers take the answer from here instead, which
+    is why the allow-list is not given a lookup of its own.
+
+    ``None`` is the honest answer for the three seed datasets that declare
+    ``parquet``, ``sparql.graph`` and ``rest.json``: they have no relation, and
+    the caller keeps the locator-derived name and keeps saying so.
+
+    It is also the answer for a declared name that cannot be emitted as a table
+    reference, which the fuzz seam surfaced. ``_safe_identifier`` happily
+    returns ``"0"``, and a leading digit is not an identifier: the emitted
+    ``FROM 0`` is not a table reference at all, and ``FROM 0abc`` is parsed as
+    the table ``abc`` - a *different* name than the one written. Either way the
+    draft's own allow-list check refuses it as
+    ``unauthorized_table_reference``, which is a security-shaped reason for a
+    naming problem. Returning ``None`` instead keeps the locator name and the
+    "derived, not declared" caveat, which is both true and diagnosable.
+    """
+    for distribution in getattr(dataset, "distributions", ()) or ():
+        if str(distribution.format) != f"{DRAFT_SQL_DIALECT}.table":
+            continue
+        segment = str(distribution.endpoint).rstrip("/").rsplit("/", 1)[-1]
+        if not segment:
+            continue
+        relation = _safe_identifier(segment)
+        if _reads_back_as_one_table(relation):
+            return relation
+    return None
+
+
+def _reads_back_as_one_table(name: str) -> bool:
+    """Whether an emitted ``FROM <name>`` is read back as exactly this table.
+
+    Asked of the production parser rather than re-deriving PostgreSQL's
+    identifier rules here: ``_referenced_source_tables`` is what the allow-list
+    consults, so agreeing with it is the property that matters.
+    """
+    return _referenced_source_tables(f"select 1 from {name}") == [name]
+
+
 def _referenced_source_tables(sql: str) -> list[str] | None:
     """List every table identifier that a FROM or JOIN clause references.
 
@@ -255,7 +317,9 @@ def _matched_forbidden_keyword(text: str) -> str | None:
     return None
 
 
-def validate_sql_query(sql: str, *, source_system: str) -> list[str]:
+def validate_sql_query(
+    sql: str, *, source_system: str, declared_relation: str | None = None
+) -> list[str]:
     stripped = sql.strip()
     lowered = stripped.lower()
     warnings: list[str] = []
@@ -296,7 +360,12 @@ def validate_sql_query(sql: str, *, source_system: str) -> list[str]:
         warnings.append("missing_source_table")
         return warnings
 
-    expected = _source_table_name(source_system).lower()
+    # ``declared_relation`` is what the catalog says the relation is, resolved
+    # once by ``source_relation_name`` and passed in by every caller that has a
+    # dataset. The ``source_system`` fallback is a live path, not dead code:
+    # ``fuzz/fuzz_query_safety.py`` and its Hypothesis mirror call this with a
+    # bare locator and no dataset to resolve against.
+    expected = (declared_relation or _source_table_name(source_system)).lower()
     # Compare the WHOLE reference. Taking only the last dot-separated component
     # made any qualification whose leaf matched pass the allow-list:
     # pg_catalog.customer, otherdb.otherschema.customer and
@@ -487,7 +556,8 @@ def draft_sql(req: QueryDraftRequest) -> dict:
     # already existed inline for ``buyer_demo_dataset_summaries`` and is now
     # shared rather than copied.
     source_kind = classify_source_type(dataset.source_system)
-    table_name = _source_table_name(dataset.source_system)
+    declared_relation = source_relation_name(dataset)
+    table_name = declared_relation or _source_table_name(dataset.source_system)
     # ``_referenced_source_tables`` treats a clause keyword as the end of the
     # table list, so a source table named ``order`` - one of the most ordinary
     # names in a sales warehouse - broke out of the list with ``expect_table``
@@ -561,17 +631,30 @@ def draft_sql(req: QueryDraftRequest) -> dict:
     # found and fixed one at a time (the ``interval '<n> day'`` literal, and a
     # source table colliding with a clause keyword); this check is what catches
     # the third without waiting for a report.
-    self_check = validate_sql_query(sql, source_system=dataset.source_system)
-    # Published rather than inferred: no draft currently names a relation that
-    # exists on the target system, so the response states that instead of
-    # letting the buyer discover it in their own warehouse.
-    executable_against_source = False
-    execution_caveat = (
-        f"source_kind={source_kind}. 이 draft의 테이블 이름은 연결 locator에서 "
-        "파생된 것이므로 대상 시스템의 relation 이름과 다를 수 있습니다. "
-        "실행 전에 카탈로그의 distribution(postgresql.table 등)에 기록된 실제 "
-        "relation 이름으로 바꾸십시오."
+    self_check = validate_sql_query(
+        sql,
+        source_system=dataset.source_system,
+        declared_relation=declared_relation,
     )
+    # Published rather than inferred, and now true in both directions: a dataset
+    # that declares a relation gets a statement naming it, and one that declares
+    # none says the name came from the locator. Claiming all five executable
+    # would be the same over-claim in a new place - an object prefix, a named
+    # graph and a REST path are not relations.
+    executable_against_source = declared_relation is not None
+    if declared_relation is not None:
+        execution_caveat = (
+            f"source_kind={source_kind}. 테이블 이름 {declared_relation}은(는) "
+            f"카탈로그의 {DRAFT_SQL_DIALECT}.table distribution에 선언된 relation "
+            "입니다. 권한·스키마 경로는 대상 시스템 쪽 설정을 따릅니다."
+        )
+    else:
+        execution_caveat = (
+            f"source_kind={source_kind}. 이 draft의 테이블 이름은 연결 locator에서 "
+            "파생된 것이므로 대상 시스템의 relation 이름과 다를 수 있습니다. 이 "
+            f"데이터셋은 {DRAFT_SQL_DIALECT}.table distribution을 선언하지 않았으므로 "
+            "카탈로그가 알려 줄 relation 이름이 없습니다."
+        )
     if self_check:
         return {
             "error": "draft_rejected_by_validator",
@@ -611,8 +694,17 @@ def draft_sql(req: QueryDraftRequest) -> dict:
     # otherwise.
     assumptions = [
         "컬럼은 카탈로그 선언에서 가져왔습니다",
-        f"테이블 이름은 source_system({source_kind}) 경로의 마지막 조각에서 "
-        "파생했습니다 — 카탈로그가 검증한 relation 이름이 아닙니다",
+        (
+            f"테이블 이름 {table_name}은(는) 카탈로그의 "
+            f"{DRAFT_SQL_DIALECT}.table distribution에 선언된 relation입니다"
+            if declared_relation is not None
+            # Still true for a dataset that declares no relation, and it has to
+            # stay said: the same sentence was published for every dataset while
+            # being false for none of them in this direction and true for none in
+            # the other.
+            else f"테이블 이름은 source_system({source_kind}) 경로의 마지막 "
+            "조각에서 파생했습니다 — 카탈로그가 선언한 relation 이름이 아닙니다"
+        ),
         "read-only SELECT만 허용",
         "목적별 정책으로 PII 필드는 masking 또는 집계 제한",
     ]
@@ -655,7 +747,7 @@ def draft_sql(req: QueryDraftRequest) -> dict:
         "assumptions": assumptions,
         "policy_decision": decision.model_dump(),
         "preview_required": req.purpose == "analysis",
-        "dialect": "postgresql",
+        "dialect": DRAFT_SQL_DIALECT,
         "source_kind": source_kind,
         "executable_against_source": executable_against_source,
         "execution_caveat": execution_caveat,
@@ -665,6 +757,10 @@ def draft_sql(req: QueryDraftRequest) -> dict:
         # declared name. ``requested_columns`` reports the declared names and
         # alone it contradicted the statement beside it.
         "emitted_identifiers": dict(sorted(rewritten.items())),
+        # The relation the statement targets, so a reader does not have to parse
+        # the SQL to find out - and so the claim beside it
+        # (``executable_against_source``) is about something visible.
+        "source_table": table_name,
         "timeout_ms": timeout_ms,
         "estimated_cost": estimated_cost,
         "date_window_days": req.date_window_days if window_column else 0,
@@ -890,7 +986,11 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
             warnings=[decision.reason],
         )
 
-    validation_warnings = validate_sql_query(req.query, source_system=dataset.source_system)
+    validation_warnings = validate_sql_query(
+        req.query,
+        source_system=dataset.source_system,
+        declared_relation=source_relation_name(dataset),
+    )
     if validation_warnings:
         audit(
             dataset_id=dataset.id,

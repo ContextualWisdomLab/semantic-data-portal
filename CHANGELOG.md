@@ -2,15 +2,15 @@
 
 이 문서는 `claude/semantic-portal-pr-merge-e5a48k` 브랜치(PR
 [#102](https://github.com/ContextualWisdomLab/semantic-data-portal/pull/102))가
-베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **258개** 커밋 중 133개는
-gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 125개입니다. 이 숫자는 **이
+베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **260개** 커밋 중 134개는
+gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 126개입니다. 이 숫자는 **이
 줄을 담은 커밋을 포함한** 값입니다 — 측정 시점의 234에 이 커밋을 더한 것. 측정 명령:
 
     git rev-list --count origin/docs/product-technical-gap-baseline..HEAD
     git log --format=%H origin/docs/product-technical-gap-baseline..HEAD \
       --name-only -- docs/product-technical-gap-baseline.md | grep -c '^[0-9a-f]\{40\}$'
 
-앞서 적혀 있던 164/112, 186/113, 199/122/77, 203/122/81, 211/122/89, 212/122/90, 213/122/91, 214/122/92, 215/122/93, 216/122/94, 218/122/96, 219/122/97, 220/122/98, 221/122/99, 222/122/100, 223/122/101, 224/122/102, 225/122/103, 226/122/104, 228/122/106, 230/123/107, 231/123/108, 233/124/109, 235/125/110, 252/128/124, 253/129/124, 254/130/124, 255/130/125, 256/131/125, 257/132/125는 각각 그 시점의 값이고 이후
+앞서 적혀 있던 164/112, 186/113, 199/122/77, 203/122/81, 211/122/89, 212/122/90, 213/122/91, 214/122/92, 215/122/93, 216/122/94, 218/122/96, 219/122/97, 220/122/98, 221/122/99, 222/122/100, 223/122/101, 224/122/102, 225/122/103, 226/122/104, 228/122/106, 230/123/107, 231/123/108, 233/124/109, 235/125/110, 252/128/124, 253/129/124, 254/130/124, 255/130/125, 256/131/125, 257/132/125, 258/133/125는 각각 그 시점의 값이고 이후
 커밋을 반영하지 않은 숫자였습니다 — 자기 문서의 수치도 측정해서 맞춰 둡니다. 199는 이
 줄을 쓴 뒤 3개 커밋이 더 쌓여 낡아 203으로, 203은 다음 커밋에서 낡아 204로, 204는 또
 두 커밋 뒤에 206으로 다시 측정해 고쳤습니다. 206도 그 값을 담은 커밋 자신 때문에 도착
@@ -30,10 +30,11 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 12
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                       1489 passed, 31 skipped
+    pytest                       1517 passed, 31 skipped
     pytest (파일 순서 정/역/난수)  각 1489 passed, 31 skipped — 순서 무관
-                                 (정순 · 역순 · seed 11/707/31337; 이 라운드의 마지막
-                                  커밋 bf5f8cc의 트리에서 측정)
+                                 (정순 · 역순 · seed 11/707/31337; `bf5f8cc` 트리에서
+                                  측정. 이 커밋에서는 다시 재지 않았으므로 정순 값과
+                                  다릅니다 — 다음 묶음 끝에 재서 합칩니다)
     pytest tests/fuzz            11 passed
     python -m sdp.demo_smoke     exit 0, "ready": true
 
@@ -44,7 +45,7 @@ pgvector 핀 커밋이 10건, event-loop 수리 커밋이 2건, 환경 변수 �
 1266 → 1300 → 1310 → 1312 → 1320 → 1327 → 1330 → 1333 → 1336 → 1340 → 1344 → 1347로
 올라갔고, 그 뒤 수리들을 거쳐 1397에, 새 파일 24건으로 1421에, KPI 포인터 가드 8건으로
 1429에, 404 detail 가드 7건으로 1436에, 거부 사유 가드 11건으로 1447에, 요청 본문
-문서 가드 34건으로 1481에, 콘솔 chip 색 가드 8건으로 1489에 와 있습니다(skip이
+문서 가드 34건으로 1481에, 콘솔 chip 색 가드 8건으로 1489에, relation 해석 가드 28건으로 1517에 와 있습니다(skip이
 23 → 31로 는 것은 새 가드 둘이 `measured`가 아닌 KPI 넷에
 대해 skip하기 때문입니다 — 그 skip 자체가 분기가 측정된 증거이고, 같은 파일의
 `test_at_least_one_kpi_exercises_each_branch`가 양쪽 분기에 사례가 있음을 단언합니다)
@@ -76,6 +77,59 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 백그라운드 측정 중에 트리를 고친 탓에 seed 11이 4건 실패로 나온 일이 있고, 그것은 결함이
 아니라 동시 편집이었습니다. Atheris(`fuzz/fuzz_query_safety.py`)는 로컬에 wheel이 없어
 실행하지 않았습니다 — 같은 invariant의 Hypothesis 미러가 `tests/fuzz`에서 돕니다.
+
+### Fixed — 드래프트가 카탈로그가 선언한 relation을 지목합니다. 게이트도 같은 파생을 씁니다 (high)
+
+`8ed985d`가 라벨만 붙이고 미뤄 둔 수리입니다. 카탈로그는 답을 처음부터 갖고 있었습니다 —
+시드 다섯 중 둘이 `postgresql.table` distribution으로 relation을 선언합니다:
+
+    crm-customer-master  postgresql://analytics.dw/customer -> FROM crm_customer_master
+    sales-order          postgresql://analytics.dw/sales    -> FROM sales_order
+
+나머지 셋은 `parquet`·`sparql.graph`·`rest.json`을 선언합니다 — 지목할 relation이 **없고**,
+locator 파생 이름과 그 사실을 계속 말합니다. 다섯을 모두 executable로 뒤집는 것은 같은
+over-claim을 새 자리에 놓는 것입니다.
+
+자기 모순도 닫혔습니다. allow-list가 **같은 파생**을 쓰므로:
+
+    validate("... FROM crm_customer_master ...") -> []                              (이전: 거부)
+    validate("... FROM customer ...")            -> ['unauthorized_table_reference'] (이전: 통과)
+
+`source_relation_name` 하나를 드래프터와 게이트가 **공유**합니다 — 사본 둘이면 갈라지고,
+그 갈라짐이 애초의 결함이었습니다. `DRAFT_SQL_DIALECT` 상수 하나가 응답의 `dialect`와 어떤
+distribution을 relation으로 읽을지를 동시에 정하므로 둘이 어긋날 수 없습니다. 응답에
+`source_table`을 공표해서 `executable_against_source`가 **보이는 것**에 대한 주장이 되게
+했고, `assumptions`의 테이블 문장도 선언/파생에 따라 갈라집니다.
+
+**fuzz seam이 결함 하나를 찾았습니다.** 양쪽 엔진이 공유하는 invariant를 넣자 Hypothesis가
+`declared_relation="0"`을 반례로 돌려줬습니다. `_safe_identifier("0")`은 `"0"`을 그대로
+돌려주는데 **선두 숫자는 식별자가 아닙니다**: `FROM 0`은 테이블 참조가 아니고 `FROM 0abc`는
+파서가 테이블 **`abc`**로 읽습니다 — 쓴 이름과 인가된 이름이 다른 문자열입니다. 어느 쪽이든
+draft 자신의 검사가 `unauthorized_table_reference`로 거부하는데, 네이밍 문제에 **보안 모양의
+사유**를 붙이는 것입니다. 그래서 발행된 이름이 **자기 자신으로 다시 읽히지 않으면** 선언을
+거절하고, 그 판정은 PostgreSQL 식별자 규칙을 다시 쓰지 않고 **production 파서에게**
+묻습니다(`_referenced_source_tables(f"select 1 from {name}") == [name]`).
+
+**역검증에서 변이 하나가 green으로 돌아왔습니다** — dialect 제한을 "table이 포함된 아무
+format"으로 넓히는 변이입니다. 시드에 비-PostgreSQL `.table` distribution이 없어 그 변이가
+시드 위에서 행동상 무해하기 때문입니다. 제 테스트는 "시드의 모든 `.table` 선언이
+`postgresql.table`이다"를 단언했는데 그것은 **시드에 대한 진술**이고 규칙에 대한 진술이
+아닙니다. 합성 데이터셋으로 `mysql.table`·`snowflake.table`·`delta.table`·
+`postgresql.table.backup`·`not_postgresql.table`을 몰아 규칙을 단언하도록 고쳤고 이제
+red입니다. 나머지 다섯: resolver가 항상 None(다섯 red), 게이트가 자기 추측 유지(열넷 red),
+draft가 locator 이름 유지(열하나 red), 전부 executable 주장(셋 red), 읽히지 않는 이름을
+그대로 발행(red).
+
+**호출자 쪽 변화를 적습니다.** `/browse/query`가 같은 해석을 쓰므로 구매자가 카탈로그가
+공표한 relation 이름으로 질의하면 통과하고 추측된 이름은 거부됩니다 — 이전의 정반대입니다.
+저장소 안에서 route를 통과하던 테스트 열둘이 red로 바뀌어 전부 선언된 relation으로
+고쳤습니다. 그중 둘은 `validate_sql_query`를 `declared_relation` 없이 불러
+**제품과 다르게 검증**하고 있었으므로 제품과 같게 맞췄습니다. production 호출자는 둘뿐이고
+둘 다 해석을 넘깁니다(전수 확인). fuzz target의 signature가 바뀌었으므로 Atheris 하네스와
+Hypothesis 미러를 **같은 invariant** 위에 올려 둘이 갈라질 수 없게 했습니다.
+
+테스트 15건(새 파일) + `test_draft_source_kind.py`를 "선언 없는 셋"으로 좁혔습니다 —
+그 파일의 docstring이 이 변경을 예고하고 있었고, 삭제하지 않고 기대를 같이 옮겼습니다.
 
 ### Fixed — 콘솔 readiness chip의 **색**이 네 상태 전부에서 초록이었습니다 (medium)
 
