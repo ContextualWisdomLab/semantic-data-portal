@@ -77,11 +77,27 @@ def _sample_rows(dataset: Dataset) -> List[Dict[str, Any]]:
     ]
 
 
-def preview(dataset_id: str, user: str, purpose: str, limit: int = 100, offset: int = 0) -> Dict[str, Any]:
-    if limit < 1:
-        raise ValueError("limit must be at least 1")
-    if limit > 100:
-        raise ValueError("preview limit cannot exceed 100")
+# The fixed ceiling on one preview page, and the number the request contract
+# publishes as this property's bound. It was a bare ``100`` in two comparisons
+# and in no document: the published description said only that policy may
+# require a lower cap, so a client sending ``limit: 500`` met a 400 the document
+# never mentioned. Named here so the contract can reference the same value
+# rather than restate it.
+MAX_PREVIEW_ROWS = 100
+MIN_PREVIEW_ROWS = 1
+
+
+def preview(
+    dataset_id: str,
+    user: str,
+    purpose: str,
+    limit: int = MAX_PREVIEW_ROWS,
+    offset: int = 0,
+) -> Dict[str, Any]:
+    if limit < MIN_PREVIEW_ROWS:
+        raise ValueError(f"limit must be at least {MIN_PREVIEW_ROWS}")
+    if limit > MAX_PREVIEW_ROWS:
+        raise ValueError(f"preview limit cannot exceed {MAX_PREVIEW_ROWS}")
     if offset < 0:
         raise ValueError("offset must be greater than or equal to 0")
 

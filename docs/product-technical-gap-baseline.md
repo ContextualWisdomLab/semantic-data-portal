@@ -3704,6 +3704,48 @@ counts: {'고객': number, '고객행동': number, '매출': number, '온톨로�
 
 이 절은 측정 기록이고 병합 허가가 아닙니다.
 
+## 공표된 설명 둘이 **제품에 없는 규칙**을 적고 있었습니다 (2026-10-27 04:15Z)
+
+**`action`**: "평가할 동작(`search`·`read`·`create`·`publish` 등)". `read`는 평가되지
+않습니다 — nonsense 문자열과 **동일하게** `평가할 수 없는 action입니다.`로 거부됩니다.
+독자가 가장 먼저 시도할 예시가 작동하지 않는 것이었고, 거부 사유는 문서가 틀렸다는 말을
+하지 않습니다. 설명과 `enum`을 엔진의 `KNOWN_ACTIONS`·`CATALOG_ACTION_ALIASES`에서
+파생합니다.
+
+**`limit`**: "정책이 더 낮은 상한을 요구하면 그쪽이 적용됩니다"만 적고 고정 상한 100을
+적지 않았습니다. 그리고 측정하다 **라우트의 조용한 clamp**를 찾았습니다 —
+`limit=min(limit, 100)`, `offset=max(offset, 0)`. `browse.preview`의 ValueError 가드는
+HTTP에서 도달 불가능했습니다:
+
+    limit=101  -> 200    limit=500 -> 200    offset=-5 -> 200
+
+호출자가 보낸 값과 다른 페이지를 받으면서 그 사실을 모릅니다. change-reason truncation과
+같은 형태이고 같은 방식으로 거부합니다. 상한·하한을 `MAX_PREVIEW_ROWS`/`MIN_PREVIEW_ROWS`
+상수로 올려 계약이 참조하고, `offset`의 하한도 같은 커밋에서 공표했습니다 — 수리가 만든
+새 400을 미공표로 두면 그게 이 절의 결함입니다.
+
+### 파생이 자동으로 정직을 주지는 않습니다
+
+설명을 `KNOWN_ACTIONS`에서 파생하면 둘은 **구성상** 일치합니다. `KNOWN_ACTIONS` 자신이
+엔진과 어긋나면 그 일치는 아무것도 보장하지 않습니다. 그래서 제안된 action 전부를 라이브
+라우트로 보내 어느 것도 "평가할 수 없는"으로 돌아오지 않음을 단언합니다 —
+`KNOWN_ACTIONS`에 `read`를 더하는 변이가 그 단언만 red로 만듭니다.
+
+### 가드 작성 중의 두 실수
+
+* backtick 추출기가 `deny`를 제안된 action으로 집었습니다(설명이 거부 효과를 backtick으로
+  적으므로). 값이 아닌 토큰을 명시 목록으로 뺐습니다 — 패턴으로 거르면 세 번째가 조용히
+  들어옵니다.
+* `from .policy import CATALOG_ACTION_ALIASES`가 mutable dict에 두 번째 이름을 붙여
+  module-state 가드가 red가 됐습니다. 가드가 옳습니다. 모듈 자격 참조로 바꿨습니다.
+
+### 닫지 않은 것
+
+`minimum`/`maximum`/`enum`을 이번에 넣은 세 속성 밖에서, 공표된 제약이 실제로 강제되는지는
+여전히 전수 측정하지 않았습니다. `maxLength` 다섯과 이 셋이 측정된 전부입니다.
+
+이 절은 측정 기록이고 병합 허가가 아닙니다.
+
 ## 공표된 `maxLength: 512`가 **어디에서도 규칙이 아니었습니다** (2026-10-27 04:00Z)
 
 `api_request_contract`가 본문 속성 다섯(카탈로그 mutation 넷의 `reason`, patch review의

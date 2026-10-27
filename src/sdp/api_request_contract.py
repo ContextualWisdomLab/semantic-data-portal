@@ -40,6 +40,13 @@ from fastapi import FastAPI
 from fastapi.routing import APIRoute
 from pydantic import BaseModel
 
+# Imported as modules, not names. ``from .policy import CATALOG_ACTION_ALIASES``
+# bound a second name to that mutable dict here, and
+# ``tests/test_module_state_coverage.py`` flagged it as an unclassified
+# module-level mutable - correctly: a second name for one dict is a drift
+# source, which is the thing these derived descriptions exist to remove.
+from . import browse as _browse
+from . import policy as _policy
 from sdp_core import (
     DatasetCreateRequest,
     DatasetPatchRequest,
@@ -265,14 +272,23 @@ REQUEST_BODY_EXTRA_PROPERTIES: dict[tuple[str, str], dict[str, Any]] = {
         },
         "limit": {
             "type": "integer",
+            "minimum": _browse.MIN_PREVIEW_ROWS,
+            "maximum": _browse.MAX_PREVIEW_ROWS,
             "description": (
-                "돌려줄 행 수의 상한. 정책이 더 낮은 상한을 요구하면 그쪽이 적용됩니다."
+                f"돌려줄 행 수의 상한. {_browse.MIN_PREVIEW_ROWS}~{_browse.MAX_PREVIEW_ROWS} 범위이고, "
+                f"{_browse.MAX_PREVIEW_ROWS}을 넘기면 400으로 거부됩니다 — 조용히 줄여 주지 "
+                "않습니다. 정책이 더 낮은 상한을 요구하면 그쪽이 적용됩니다. "
+                "앞서 이 설명은 정책 상한만 말하고 고정 상한을 말하지 않아서, "
+                "문서를 읽고 더 큰 값을 보낸 클라이언트가 문서에 없는 400을 받았습니다."
             ),
         },
         "offset": {
             "type": "integer",
+            "minimum": 0,
             "description": (
-                "건너뛸 행 수. 페이지네이션용이며 기본값은 0입니다."
+                "건너뛸 행 수. 페이지네이션용이며 기본값은 0입니다. 음수는 400으로 "
+                "거부됩니다 — 앞서 라우트가 조용히 0으로 바꿨고, 그러면 호출자는 자기가 "
+                "보낸 값과 다른 페이지를 받으면서 그 사실을 모릅니다."
             ),
         },
     },
@@ -346,8 +362,22 @@ REQUEST_BODY_EXTRA_PROPERTIES: dict[tuple[str, str], dict[str, Any]] = {
         },
         "action": {
             "type": "string",
+            # Derived from the engine's own vocabulary, not restated. This used
+            # to read "`search`·`read`·`create`·`publish` 등" and ``read`` is
+            # not an action this engine evaluates: it is refused exactly like a
+            # nonsense string, with ``평가할 수 없는 action입니다.`` - so the one
+            # example a reader is most likely to try first was the one that
+            # could not work, and the refusal did not say the document was
+            # wrong.
+            "enum": sorted(_policy.KNOWN_ACTIONS | set(_policy.CATALOG_ACTION_ALIASES)),
             "description": (
-                "평가할 동작(`search`·`read`·`create`·`publish` 등)."
+                "평가할 동작. 평가 가능한 값은 "
+                + "·".join(f"`{action}`" for action in sorted(_policy.KNOWN_ACTIONS))
+                + "이고, 공표된 RBAC 매트릭스 이름("
+                + "·".join(f"`{alias}`" for alias in sorted(_policy.CATALOG_ACTION_ALIASES))
+                + ")도 받아 같은 동작으로 매핑됩니다. 그 밖의 값은 `deny`와 "
+                "`평가할 수 없는 action입니다.`로 답하고 obligations의 "
+                "`known_actions`에 평가 가능한 집합을 돌려줍니다."
             ),
         },
         "purpose": {

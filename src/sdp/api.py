@@ -2753,14 +2753,21 @@ def browse_preview(dataset_id: str, payload: dict[str, Any]) -> dict[str, Any]:
             raise HTTPException(status_code=400, detail="user is required")
         # int() on a JSON array, object or null raises TypeError, which the
         # handlers below do not catch - a 500 for what is plainly a bad request.
-        limit = _pagination_int(payload, "limit", 100)
+        limit = _pagination_int(payload, "limit", browse.MAX_PREVIEW_ROWS)
         offset = _pagination_int(payload, "offset", 0)
+        # Passed through, not clamped. ``min(limit, 100)`` and
+        # ``max(offset, 0)`` silently rewrote the caller's request and made
+        # ``browse.preview``'s own bounds unreachable over HTTP: ``limit: 500``
+        # answered 200 with a hundred rows and ``offset: -5`` answered 200 from
+        # the top, neither saying so, while the published description mentioned
+        # only a policy cap. Same shape as the change-reason truncation - a
+        # silent rewrite of what the caller asked for - and refused the same way.
         return browse.preview(
             dataset_id=dataset_id,
             user=_payload_str(payload, "user", "anonymous"),
             purpose=_payload_str(payload, "purpose", "analysis"),
-            limit=min(limit, 100),
-            offset=max(offset, 0),
+            limit=limit,
+            offset=offset,
         )
     except KeyError:
         raise HTTPException(status_code=404, detail="dataset not found")
