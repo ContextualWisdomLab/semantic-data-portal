@@ -782,12 +782,21 @@ def enterprise_shacl_validation_summary(
         # platform-wide rather than only at the moment of a publication. The
         # vocabulary is shared rather than tenant-owned, so it is not scoped.
         "concept_conformance": concept_conformance,
-        # ONT-002's verification half. Also unscoped, and for the same reason:
-        # the hierarchy is the shared vocabulary's, and the edge identifiers it
-        # reports are concept names, which the ontology surface already serves
-        # to any caller - unlike the per-dataset ``reports`` array above, which
-        # carries tenant-owned dataset ids and is scoped.
-        "hierarchy_class_separation": hierarchy_class_separation_report(),
+        # ONT-002's verification half. The *counts* are platform-wide for the
+        # same reason the pass rate is, but the **identifiers are scoped** -
+        # this used to be exempt on the stated ground that "the edge identifiers
+        # it reports are concept names, which the ontology surface already
+        # serves to any caller". That is true of the warning branch and false of
+        # the violation branch, which fires precisely when an endpoint is a
+        # dataset node rather than a concept, so the identifier is a dataset id
+        # by construction. Measured: a reader of one tenant planted a hierarchy
+        # edge to an id that was not yet a node, the owning tenant onboarded that
+        # id, and an **unauthenticated** caller then read it here while
+        # ``/catalog/datasets/{id}``, ``/browse/{id}/schema``, ``/graph/nodes/{id}``
+        # and ``/catalog/search`` all refused that same caller - with
+        # ``withheld_report_count`` rising in the same body. A concept endpoint
+        # is shared vocabulary and stays visible.
+        "hierarchy_class_separation": hierarchy_class_separation_report(tenant_ids),
         # ONT-007's half: a consistency result a release gate can read. Separate
         # from the SHACL block above and carrying its own engine declaration,
         # because acyclicity is a graph property rather than a shape and because

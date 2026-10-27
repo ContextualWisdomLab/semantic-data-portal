@@ -136,6 +136,60 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 고치기 전까지 ClusterFuzzLite 이미지에서 **import에서 죽고 있었고** 입력을 하나도 퍼징하지
 않았습니다. "미러가 있으니 됐다"는 커버리지 주장이 아닙니다.
 
+### Security — 증빙 라우트가 **인증 없는 호출자에게** 다른 테넌트의 dataset id를 넘겼습니다 (high, 교차 테넌트 식별자 누출)
+
+`GET /enterprise/shacl-validation`의 라우트 주석은 "The aggregate stays open - it carries
+**no dataset identity**"라고 적고, `enterprise_shacl_validation_summary`는
+`hierarchy_class_separation` 블록을 같은 근거로 면제했습니다 — "the edge identifiers it
+reports are **concept names**, which the ontology surface already serves to any caller".
+
+그 전제는 **이 블록이 존재하는 이유인 분기에서 거짓**입니다. `ConceptHierarchyShape`의
+violation은 계층 끝점이 **concept이 아니라 dataset 노드일 때** 정확히 발생하므로, 그 메시지의
+식별자는 구성상 dataset id이고 메시지가 그것을 찍습니다.
+
+`09ee1ad`에서, 마지막 읽기에는 **아무 자격증명도 없이** 재현했습니다:
+
+```
+0) 익명 GET /enterprise/shacl-validation
+     withheld_report_count 5 · reports 0 · hierarchy violations 2 (둘 다 warning)
+1) data-admin(tenant demo)이 노드가 아닌 id로 계층 간선을 심습니다
+     POST /graph/edges {broader, 고객 -> zeta-leak-probe}        -> 200
+2) tenant zeta가 그 id를 온보딩합니다
+     POST /catalog/datasets {id: zeta-leak-probe, tenant_id: zeta} -> 200
+3) 익명 GET /enterprise/shacl-validation
+     withheld_report_count 6 · reports 0
+     + {"severity": "violation", "message": "hierarchy target is a 'dataset' node
+        rather than a 'concept', … : broader: 고객 -> zeta-leak-probe
+        (target=zeta-leak-probe)"}
+
+같은 익명 호출자의 다른 경로:
+  GET /catalog/datasets/zeta-leak-probe -> 403   GET /browse/zeta-leak-probe/schema -> 404
+  GET /graph/nodes/zeta-leak-probe      -> 403   GET /catalog/search?q=제타          -> 403
+```
+
+같은 응답 본문에서 `withheld_report_count`가 6으로 오른 것은, 라우트가 per-dataset 리포트
+여섯 건을 **withhold하고 있다고 말하면서** 한 키 옆에서 일곱 번째 테넌트의 dataset id를
+넘겨준다는 뜻입니다. 1단계의 쓰기에 필요한 것은 **다른 테넌트의 reader 하나**뿐입니다 —
+끝점이 없는 간선은 설계상 허용되고(시드의 로드 순서가 그것을 필요로 합니다), 그 끝점이
+나중에 dataset이 되는 경우가 바로 이 리포트가 잡으려고 있는 경우입니다.
+
+**수리:** 집계는 플랫폼 전체로 두고 **식별자를 호출자 범위로** 좁힙니다. 범위 밖 테넌트가
+소유한 노드의 id는 `<withheld>`가 되고 가린 수를 `withheld_identifier_count`로 공표합니다 —
+한 키 옆의 `withheld_report_count`와 같은 방식입니다. violation 자체와 `conforms`·
+`unknown_endpoint_count`는 **모든 호출자에게 동일**합니다(조달의 숫자가 누가 물었는지에
+따라 달라지면 안 되므로). 면제의 **참인 절반은 유지**했습니다: concept 끝점은 공유 어휘이고
+누구에게나 보입니다 — 시드의 `매출 성장`·`매출 채널별 집계` warning 둘이 남는지 단언합니다.
+
+**가드는 하나의 id가 아니라 카탈로그에서 파생합니다.** 익명 payload 전체를 직렬화해 카탈로그의
+**모든** dataset id와 맞춰 보므로, 다른 키를 통한 두 번째 누출도 같은 테스트에서 red가 됩니다.
+
+**변이 다섯, 전부 red**(범위 미전달 / 모든 식별자 재공표 / 가린 수 삭제 / concept 끝점까지
+과잉 가림 / 범위 판정 반전).
+
+**닫지 않은 것.** 범위 밖 violation이 **존재한다는 사실**은 여전히 공표됩니다(식별자 없이).
+그것이 ONT-002 검증 절반이 플랫폼 전체 진술이어야 하는 이유이고, 이 저장소가 withheld 수를
+공표하는 패턴과 같습니다 — 신원이 아니라 개수입니다.
+
 ### Security — dataset id에 **콜론 하나**가 있으면 그 데이터셋의 그래프 노드가 테넌트 경계 밖으로 나갔습니다 (high, 교차 테넌트 읽기 + 쓰기)
 
 `policy.graph_node_dataset_id`가 노드의 소유 데이터셋을 **첫 번째** 콜론 앞부분으로 해석했습니다

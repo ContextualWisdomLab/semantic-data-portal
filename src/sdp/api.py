@@ -578,9 +578,13 @@ def enterprise_evidence_pack() -> dict[str, Any]:
 
 @app.get("/enterprise/shacl-validation")
 def enterprise_shacl_validation(user: str = Query(default="anonymous")) -> dict[str, Any]:
-    # The aggregate stays open - it carries no dataset identity. The per-dataset
-    # report array does, so it is scoped to the caller like the rest of the
-    # discovery surface. An unresolvable actor sees the aggregate and no reports.
+    # The aggregate stays open; the identities in it are scoped. "It carries no
+    # dataset identity" was this comment's claim and it was wrong about one key:
+    # ``hierarchy_class_separation``'s violation message names the endpoint, and
+    # that endpoint is a dataset id exactly when the violation fires. Both the
+    # per-dataset report array and the hierarchy identifiers are scoped to the
+    # caller now, each declaring its own withholding count. An unresolvable actor
+    # sees the aggregate, no reports, and no foreign identifier.
     return enterprise_shacl_validation_summary(accessible_tenant_ids(user))
 
 

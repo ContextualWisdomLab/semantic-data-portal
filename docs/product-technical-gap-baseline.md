@@ -3769,6 +3769,37 @@ counts: {'고객': number, '고객행동': number, '매출': number, '온톨로�
 
 이 절은 측정 기록이고 병합 허가가 아닙니다.
 
+## 증빙 라우트가 인증 없는 호출자에게 다른 테넌트의 dataset id를 넘겼습니다 (2026-10-27 21:40Z)
+
+```
+0) 익명 GET /enterprise/shacl-validation  -> withheld_report_count 5 · violations 2(warning)
+1) data-admin(tenant demo): POST /graph/edges {broader, 고객 -> zeta-leak-probe} -> 200
+2) tenant zeta: POST /catalog/datasets {id: zeta-leak-probe, tenant_id: zeta}   -> 200
+3) 익명 GET /enterprise/shacl-validation  -> withheld_report_count 6 · reports 0
+     + violation "... : broader: 고객 -> zeta-leak-probe (target=zeta-leak-probe)"
+같은 익명 호출자: /catalog/datasets/{id} 403 · /browse/{id}/schema 404 ·
+                  /graph/nodes/{id} 403 · /catalog/search 403
+```
+
+라우트 주석은 "carries no dataset identity"라고, 요약 함수는 "the edge identifiers it
+reports are concept names"라고 적었습니다. `ConceptHierarchyShape`의 violation은 끝점이
+concept이 아니라 **dataset 노드일 때** 발생하므로 그 식별자는 구성상 dataset id입니다.
+warning 분기에는 참이고 violation 분기에는 거짓인 면제입니다. 1단계 쓰기에 필요한 것은 다른
+테넌트의 reader 하나이고, 끝점이 없는 간선은 설계상 허용됩니다.
+
+**수리:** 집계는 플랫폼 전체, 식별자는 호출자 범위. 범위 밖 소유자의 id는 `<withheld>`이고
+가린 수는 `withheld_identifier_count`로 공표합니다. violation 자체와 `conforms`·
+`unknown_endpoint_count`는 모든 호출자에게 동일합니다. concept 끝점은 공유 어휘이므로 유지 —
+면제의 참인 절반입니다. 가드는 익명 payload 전체를 카탈로그의 모든 dataset id와 맞춰 보므로
+다른 키를 통한 두 번째 누출도 red입니다. 변이 다섯 전부 red.
+
+### 닫지 않은 것
+
+범위 밖 violation이 **존재한다는 사실**은 식별자 없이 계속 공표됩니다 — ONT-002 검증 절반이
+플랫폼 전체 진술이어야 하기 때문이고, 이 저장소의 withheld-count 패턴과 같습니다.
+
+이 절은 측정 기록이고 병합 허가가 아닙니다.
+
 ## dataset id의 콜론 하나가 그 데이터셋의 그래프 노드를 테넌트 경계 밖으로 내보냈습니다 (2026-10-27 20:55Z)
 
 ```

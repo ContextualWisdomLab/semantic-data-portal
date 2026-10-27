@@ -580,7 +580,13 @@ SDP_CONNECTOR_TIMEOUT_MS='2s'          gate 통과, probe 라우트 400
   class 제약을 그래프 현재 상태에 평가; 끝점이 없는 간선은 violation이 아니라
   `unknown_endpoint_count`로 따로 센다)을 게시한다. 쓰기 게이트가 볼 수 없는
   순서 — 끝점이 없을 때 쓴 간선의 끝점이 나중에 dataset으로 생기는 경우 — 는
-  이 리포트가 잡는다. SHACL 프로세서나 reasoner는 여전히 실행되지 않는다
+  이 리포트가 잡는다. **집계는 플랫폼 전체이고 식별자는 호출자 범위다** —
+  `hierarchy_class_separation`의 violation은 끝점이 concept이 아니라 dataset일 때
+  발생하므로 그 식별자는 구성상 dataset id이고, 범위 밖 테넌트의 것이면
+  `<withheld>`로 가려지며 가린 수를 `withheld_identifier_count`로 공표한다
+  (concept 끝점은 공유 어휘이므로 누구에게나 보인다). 가려도 violation 자체와
+  `conforms`·`unknown_endpoint_count`는 모든 호출자에게 동일하다. SHACL 프로세서나
+  reasoner는 여전히 실행되지 않는다
   (`shacl_engine_executed: false`). 여기에 `hierarchy_consistency`가 더해진다 —
   서로 포섭하는 개념 묶음 수(`cyclic_group_count`)와 그 구성원, 그리고
   `consistency_engine: builtin_graph_checks` / `reasoner_executed: false`.

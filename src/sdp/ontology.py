@@ -392,7 +392,12 @@ def _vocabulary_hierarchy_edges() -> list[tuple[str, str, str]]:
     return sorted(found)
 
 
-def hierarchy_class_separation_report() -> dict[str, Any]:
+HIERARCHY_IDENTIFIER_WITHHELD = "<withheld>"
+
+
+def hierarchy_class_separation_report(
+    tenant_ids: list[str] | None = None,
+) -> dict[str, Any]:
     """ConceptHierarchyShape conformance over the graph's hierarchy edges.
 
     Published on ``/enterprise/shacl-validation`` so ONT-002's constraint is
@@ -420,11 +425,14 @@ def hierarchy_class_separation_report() -> dict[str, Any]:
     declares for the concept pass rate - so ``conformance_scope`` says so here
     too rather than letting the count read as covering every edge in the graph.
     """
+    from .catalog import get_dataset
     from .graph_store import get_store
+    from .policy import graph_node_dataset_id
 
     store = get_store()
     found = _vocabulary_hierarchy_edges()
     kinds: dict[str, str | None] = {}
+    withheld: set[str] = set()
 
     def _kind_of(node_id: str) -> str | None:
         """This node's kind, or ``None`` when no such node exists."""
@@ -433,18 +441,50 @@ def hierarchy_class_separation_report() -> dict[str, Any]:
             kinds[node_id] = node.kind if node else None
         return kinds[node_id]
 
-    return hierarchy_class_separation(
+    def _printable_id(node_id: str) -> str:
+        """The identifier this caller may read, or the withholding marker.
+
+        ``ConceptHierarchyShape``'s violation fires exactly when an endpoint is a
+        **dataset** node rather than a concept, so the identifier in that finding
+        is a dataset id by construction - and this report was unscoped on the
+        stated ground that "the edge identifiers it reports are concept names,
+        which the ontology surface already serves to any caller". True of the
+        warning branch, false of the violation branch, and an unauthenticated
+        caller read a foreign tenant's dataset id out of an aggregate evidence
+        endpoint that refuses that same caller on every other route (403/404).
+
+        A concept endpoint is shared vocabulary and stays visible: that half of
+        the exemption was right. Only a node owned by a dataset outside the
+        caller's scope is withheld, and the finding itself - shape, path,
+        severity, counts - is published either way, because ONT-002's
+        verification half is a platform-wide statement.
+        """
+        owning_dataset = graph_node_dataset_id(node_id)
+        if owning_dataset is None:
+            return node_id
+        if tenant_ids is None:
+            return node_id
+        dataset = get_dataset(owning_dataset)
+        if dataset is None or dataset.tenant_id in tenant_ids:
+            return node_id
+        withheld.add(node_id)
+        return HIERARCHY_IDENTIFIER_WITHHELD
+
+    report = hierarchy_class_separation(
         [
             {
                 "edge_type": edge_type,
-                "source_id": source_id,
-                "target_id": target_id,
+                "source_id": _printable_id(source_id),
+                "target_id": _printable_id(target_id),
                 "source_kind": _kind_of(source_id),
                 "target_kind": _kind_of(target_id),
             }
             for edge_type, source_id, target_id in found
         ]
     )
+    # Declared rather than silent, the same way ``withheld_report_count`` is on
+    # the per-dataset array one key over.
+    return {**report, "withheld_identifier_count": len(withheld)}
 
 
 def hierarchy_consistency_report() -> dict[str, Any]:
