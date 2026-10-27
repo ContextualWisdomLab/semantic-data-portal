@@ -2178,6 +2178,10 @@ def ontology_patch_review(patch_id: str, payload: dict[str, str]) -> dict[str, A
     # ``maxLength: 512`` is published for this property too, and was enforced
     # nowhere: a 1000-character comment was accepted and retained whole.
     comment = _bounded_prose(payload.get("comment"), "comment") or ""
+    # See the upsert route: the pin is checked before the review is applied, so a
+    # caller holding an older vocabulary is refused rather than publishing into
+    # one it has not seen.
+    version = _ontology_version_stamp(payload.get(ontology_version.PIN_PARAMETER))
     try:
         reviewed = ontology.review_patch(
             patch_id=patch_id,
@@ -2243,7 +2247,13 @@ def ontology_patch_review(patch_id: str, payload: dict[str, str]) -> dict[str, A
             "tenant_id": decision.obligations.get("tenant_id"),
         },
     )
-    return {**reviewed, "policy_decision_id": decision.decision_id}
+    return {
+        **reviewed,
+        "policy_decision_id": decision.decision_id,
+        # As on the upsert route: the version this review produced, and the pin
+        # that was checked before anything was written.
+        "ontology_version": version,
+    }
 
 
 @app.get("/ontology/term/{term}/graph")
@@ -2510,6 +2520,11 @@ def ingest_concept(payload: OntologyConceptRequest) -> dict[str, Any]:
         event_type="ontology.concept_upsert",
         audit_allow=False,
     )
+    # Before the first write: a pin naming another vocabulary refuses here (409)
+    # exactly as it does on the read routes, and the stamp returned is the
+    # version this write produced. The key was accepted and dropped by pydantic
+    # before this, so the refusal never happened and no version was published.
+    version = _ontology_version_stamp(payload.ontology_content_digest)
     aliases = list(payload.aliases or [])
     multilingual = list(getattr(payload, "multilingual", None) or [])
     # Validate before the first of the two writes. This route wrote the graph
@@ -2606,9 +2621,22 @@ def ingest_concept(payload: OntologyConceptRequest) -> dict[str, Any]:
     return {
         "status": "upserted",
         "concept": record,
-        "published_concept": registration["concept"],
+        # See ``ontology.register_concept``: this named the concept even when the
+        # shipped definition was deliberately kept, so a 200 read as a
+        # publication while the revision and the digest had not moved.
+        "publication_status": registration["publication_status"],
+        "published_concept": (
+            registration["concept"]
+            if registration["publication_status"] == ontology.PUBLICATION_PUBLISHED
+            else None
+        ),
         "concept_already_published": registration["already_published"],
         "concept_validation": registration["concept_validation"],
+        # The version this write produced. The read routes stamp the version they
+        # answered from and enforce the same pin; a writer needs both more, not
+        # less - measured, a wrong ``ontology_content_digest`` on this route
+        # answered 200 and the response carried no version identity at all.
+        "ontology_version": version,
     }
 
 

@@ -28,6 +28,13 @@ class GraphEdgeRequest(BaseModel):
 
 
 class OntologyConceptRequest(BaseModel):
+    # The vocabulary version this write expects to be writing against. The read
+    # routes already accept and enforce it (409 on a mismatch, 400 on a malformed
+    # digest) and stamp the version they answered from; this route accepted the
+    # documented key silently - pydantic drops an unknown field - so a caller
+    # pinning "I believe the vocabulary is at digest X" got neither enforcement
+    # nor a stamp. The key name comes from ``ontology_version.PIN_PARAMETER``.
+    ontology_content_digest: str | None = None
     concept: str = Field(min_length=1)
     definition: str = ""
     aliases: List[str] = Field(default_factory=list)

@@ -290,6 +290,15 @@ REQUEST_BODY_EXTRA_PROPERTIES: dict[tuple[str, str], dict[str, Any]] = {
                 "거부합니다."
             ),
         },
+        "ontology_content_digest": {
+            "type": "string",
+            "description": (
+                "쓰기 전에 기대하는 어휘 버전을 고정하는 content digest(64자 16진수). 현재 버전과 다르면 "
+                "409, 형식이 틀리면 400이며, 생략하면 고정 없이 씁니다. 응답은 이 쓰기가 만든 버전을 "
+                "`ontology_version`으로 돌려줍니다. 키 이름은 `sdp.ontology_version.PIN_PARAMETER`가 "
+                "정의하며, 읽기 라우트와 같은 키입니다."
+            ),
+        },
     },
     ("POST", "/browse/{dataset_id}/preview"): {
         "user": {

@@ -606,6 +606,15 @@ def validate_concept_registration(
     return canonical
 
 
+# What a vocabulary write did, for the two routes that perform one. The audit
+# rows already distinguished these (``approved_without_publication``,
+# ``upserted_without_publication``); the responses said ``published_concept:
+# 고객`` with the revision and the content digest unchanged, so the honest label
+# existed only in the ledger a curator does not read.
+PUBLICATION_PUBLISHED = "published"
+PUBLICATION_EXISTING_KEPT = "existing_definition_kept"
+
+
 def register_concept(
     concept: str,
     *,
@@ -708,6 +717,7 @@ def _register_concept_locked(
         return {
             "concept": canonical,
             "already_published": True,
+            "publication_status": PUBLICATION_EXISTING_KEPT,
             "concept_validation": concept_shape_report(
                 canonical, existing, evaluated_record="published_vocabulary"
             ),
@@ -745,6 +755,7 @@ def _register_concept_locked(
     return {
         "concept": canonical,
         "already_published": False,
+        "publication_status": PUBLICATION_PUBLISHED,
         # Evaluated against the record as **stored**, after the write, so the
         # published report describes published content rather than a submission
         # that could still have been refused.
@@ -1173,7 +1184,17 @@ def _review_patch_locked(
         _ONTOLOGY_PATCHES[idx] = patch
         published = patch.model_dump()
         if registration is not None:
-            published["published_concept"] = registration["concept"]
+            # ``published_concept`` names a concept only when one was published.
+            # It used to name it either way, so an approval that deliberately
+            # kept the shipped definition answered ``published_concept: 고객``
+            # with the revision and digest unchanged. ``concept`` still names
+            # the subject of the review, so nothing is lost.
+            published["publication_status"] = registration["publication_status"]
+            published["published_concept"] = (
+                registration["concept"]
+                if registration["publication_status"] == PUBLICATION_PUBLISHED
+                else None
+            )
             published["concept_already_published"] = registration["already_published"]
             # ONT-005 asks for SHACL before merge. The gate runs inside
             # ``register_concept`` above - so a non-conforming concept raises
