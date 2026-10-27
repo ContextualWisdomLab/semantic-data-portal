@@ -56,7 +56,6 @@ RESTORED_BY_FIXTURE = frozenset(
         "sdp.observability._SINK_BREAKER",
         "sdp.ontology._ALIAS_TO_CANONICAL",
         "sdp.ontology._CONCEPT_DEFINITIONS",
-        "sdp.ontology._INDEX",
         "sdp.ontology._ONTOLOGY_PATCHES",
         "sdp.ontology_version._CHANGE_LOG",
         "sdp.ontology_version._REVISION_STATE",

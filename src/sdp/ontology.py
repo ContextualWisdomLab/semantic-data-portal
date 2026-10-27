@@ -63,7 +63,31 @@ _CONCEPT_DEFINITIONS: Dict[str, Dict[str, Any]] = {
 }
 
 
-def _build_index() -> Dict[str, List[str]]:
+def concept_dataset_index() -> Dict[str, List[str]]:
+    """The concept-to-dataset map, derived from the catalog on every read.
+
+    This was a module-level snapshot taken at import (``_INDEX =
+    _build_index()``), so a dataset registered afterwards never entered it.
+    Measured after onboarding and publishing one dataset declaring 고객, as
+    ``user=data-admin``::
+
+        GET  /catalog/search?q=고객    -> 6 ids, including the new one
+        GET  /ontology/term/고객/graph -> 5 ids, including the new one
+        GET  /ontology/concept/고객    -> 4 ids, without it, withheld_dataset_count 0
+        POST /llm/search {고객}        -> 4 ids, without it, withheld_dataset_count 0
+
+    So the owner's two documented "which datasets carry this term" entry points
+    answered without their dataset while declaring that nothing was withheld, and
+    two routes README calls siblings serving the same fact disagreed. That the map
+    is outside the *versioned* scope (``sdp:datasetMappingIsVersioned false``)
+    stays true; what it no longer does is go stale.
+
+    Deriving it is cheap enough that there is no cache to keep coherent and no new
+    module state for ``tests/conftest.py`` to restore: rebuilding costs 3.7 ms per
+    2000 calls against ``resolve_terms``'s own 148.9 ms for the same 2000 - 2.5%,
+    on 10 keys over 5 datasets. Insertion order still follows ``list_datasets()``,
+    so the documented tie-break over this map's order is unchanged.
+    """
     index: Dict[str, List[str]] = {}
     for dataset in list_datasets():
         for concept in dataset.terms:
@@ -75,7 +99,6 @@ def _normalize_term(value: str) -> str:
     return value.strip().replace("_", " ").lower()
 
 
-_INDEX = _build_index()
 _ONTOLOGY_PATCHES: list[OntologyPatch] = []
 # Bounds on the process-lifetime proposal queue; see propose_patch.
 MAX_ONTOLOGY_PATCHES = 500
@@ -788,7 +811,7 @@ class ConceptTerm:
 class Resolution:
     """One resolved term, and whether the vocabulary actually defines it.
 
-    ``_INDEX`` is built from ``dataset.terms``, which are declared by datasets
+    The concept-to-dataset map is built from ``dataset.terms``, which are declared by datasets
     and need not be registered concepts. Measured on the seed, resolution
     published term IRIs for 캠페인, 전환 and 비즈니스 용어 - none of which the
     glossary defines - identically shaped to the IRI of a defined concept, so a
@@ -933,7 +956,7 @@ def resolve_terms(text: str) -> list[Resolution]:
         return []
 
     resolved: list[Resolution] = []
-    for concept, dataset_ids in _INDEX.items():
+    for concept, dataset_ids in concept_dataset_index().items():
         dataset = dataset_ids[0] if dataset_ids else ""
         score = 0.0
         aliases: list[str] = []
@@ -991,13 +1014,13 @@ def concept_assets(concept: str, tenant_ids: list[str] | None = None) -> Dict[st
     """Describe one concept and the datasets it maps to, scoped to the caller.
 
     The concept vocabulary is shared, but ``dataset_ids`` is dataset identity.
-    ``_INDEX`` is built from ``list_datasets()`` with no tenant predicate, so this
+    ``concept_dataset_index()`` is built from ``list_datasets()`` with no tenant predicate, so this
     returned every tenant's dataset ids - and ``POST /llm/search`` served it to a
     caller whose own policy decision said ``deny``. ``withheld_dataset_count``
     declares the truncation so a short list does not read as the whole mapping.
     """
     canonical = _canonicalize_concept(concept)
-    datasets = _INDEX.get(canonical, [])
+    datasets = concept_dataset_index().get(canonical, [])
     if tenant_ids is not None:
         visible_ids = {dataset.id for dataset in list_datasets(tenant_ids)}
         scoped = [dataset_id for dataset_id in datasets if dataset_id in visible_ids]

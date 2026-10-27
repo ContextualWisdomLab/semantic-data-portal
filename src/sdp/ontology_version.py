@@ -57,9 +57,12 @@ Five honesty rules shape what is published:
   ``"deprecated"`` and so reported a reason the caller never gave.)
 
 Two limits of the version itself, declared rather than implied. It covers the
-concept vocabulary and its alias index only: ``ontology._INDEX``, the
-concept-to-dataset map, is built once at import and no registration updates it,
-so dataset mapping is **not** versioned here. And there is no update event in
+concept vocabulary and its alias index only: the concept-to-dataset map
+(``ontology.concept_dataset_index()``) is derived from the catalog on read and no
+revision tracks a change to it, so dataset mapping is **not** versioned here.
+That map used to be an import-time snapshot as well, which is a different defect
+and is fixed: a dataset published after startup never entered it, while the two
+routes reading it declared that nothing was withheld. And there is no update event in
 the change log because there is no update operation anywhere - a re-publication
 of an existing concept is a no-op, not an edit.
 """
@@ -610,7 +613,7 @@ def vocabulary_jsonld(
       definition, so the undefined targets are published under
       ``sdp:undefinedHierarchyTarget`` with a count, and the alias is resolved
       through the alias index so the triple points at the real concept.
-    * **No dataset ids.** ``ontology._INDEX`` is built with no tenant predicate,
+    * **No dataset ids.** The concept-to-dataset map is built with no tenant predicate,
       and serving it is exactly how ``concept_assets`` leaked every tenant's
       dataset ids to a caller its own policy decision denied. This document is
       open, so it carries the vocabulary only; the concept-to-dataset mapping

@@ -120,7 +120,10 @@
   - 미해결 경계: OWL axiom이 없고 reasoner가 release를 검증하지 않습니다(ONT-007,
     NFR-QUAL-002). revision·변경 로그·심사자 기록은 프로세스 메모리 한정이며
     `revision_is_durable: false`로 선언합니다. 버전 범위는 어휘와 alias index뿐이고
-    `ontology._INDEX`(개념↔dataset 매핑)는 import 시점에 고정됩니다.
+    개념↔dataset 매핑(`ontology.concept_dataset_index()`)의 변경은 어떤 revision도
+    추적하지 않습니다. 그 매핑이 **import 시점에 고정**돼 있던 것은 별개 결함이고
+    수리했습니다 — 기동 후 게시된 데이터셋이 그 맵에 들어가지 못하는데 읽는 두
+    라우트는 `withheld_dataset_count: 0`을 공표했습니다.
 - ONT-005 제안-승인-노출 흐름 + **게시 전 ConceptShape 평가**, ONT-006 매핑
   상태(`proposed/approved/rejected`), 근거 문자열/신뢰도
   - `POST /ontology/patches`

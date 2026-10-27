@@ -37,7 +37,9 @@ def _plant_foreign_dataset() -> None:
     )
     # The index is module state built at import; rebuild it so the planted
     # dataset is present exactly as it would be after a restart.
-    ontology._INDEX = ontology._build_index()
+    # The concept-to-dataset map used to be an import-time snapshot that this
+    # line had to rebuild by hand after registering a dataset. It is derived
+    # on read now, so registering is enough.
 
 
 def test_a_denied_caller_is_refused_rather_than_served() -> None:

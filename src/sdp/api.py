@@ -1925,8 +1925,8 @@ def ontology_vocabulary_jsonld() -> dict[str, Any]:
     ``mappings[].concept`` is a plain literal, so no triple anywhere named a
     concept. This is the artifact the revision versions.
 
-    Open, and it **derives** no dataset identity. ``ontology._INDEX`` is built
-    with no tenant predicate, and serving it is exactly how ``concept_assets``
+    Open, and it **derives** no dataset identity. The concept-to-dataset map is
+    built with no tenant predicate, and serving it is exactly how ``concept_assets``
     leaked every tenant's dataset ids to a caller its own policy decision
     denied; the concept-to-dataset mapping stays on the governed
     ``GET /ontology/concept/{term}``. The document says so in

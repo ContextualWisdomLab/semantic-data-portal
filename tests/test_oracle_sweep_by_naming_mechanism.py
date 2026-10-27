@@ -76,7 +76,9 @@ def _plant() -> None:
     catalog._DATA[FOREIGN] = base.model_copy(
         update={"id": FOREIGN, "tenant_id": "unreachable-tenant", "terms": ["고객"]}
     )
-    ontology._INDEX = ontology._build_index()
+    # The concept-to-dataset map used to be an import-time snapshot that this
+    # line had to rebuild by hand after registering a dataset. It is derived
+    # on read now, so registering is enough.
 
 
 def _probes() -> list[tuple[str, object]]:

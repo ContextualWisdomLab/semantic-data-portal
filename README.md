@@ -486,7 +486,10 @@ SDP_CONNECTOR_TIMEOUT_MS='2s'          gate 통과, probe 라우트 400
   actor와, 승인 경로에서는 reviewer 신원을 담기 때문이다. 공개된 쪽은 수치뿐이다.
 - `GET /ontology/vocabulary/jsonld` — 어휘의 SKOS/RDFS JSON-LD 직렬화.
   `owl:versionInfo`에 revision+digest를 담는다. 공개이며 **dataset id를 담지 않는다**
-  (`_INDEX`에는 tenant 술어가 없다 — `concept_assets`가 바로 그 이유로 고쳐졌다).
+  (개념↔dataset 맵에는 tenant 술어가 없다 — `concept_assets`가 바로 그 이유로
+  고쳐졌다. 그 맵은 카탈로그에서 **읽을 때 파생**된다: import 시점 스냅샷이던 동안
+  기동 후 게시된 데이터셋은 `GET /ontology/concept/{term}`과 `POST /llm/search`에
+  보이지 않으면서 두 응답이 `withheld_dataset_count: 0`을 공표했다).
   정의되지 않은 10개 계층 edge는 IRI를 만들지 않고 선언하고, alias 전용 target은
   alias index로 해소한다(휴면 고객 → 이탈 고객).
 - `GET /ontology/search`·`POST /ontology/resolve` — 응답에 `ontology_version` 스탬프.

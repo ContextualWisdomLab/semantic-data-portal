@@ -28,8 +28,10 @@ The state covered here was enumerated from the modules, not listed from memory::
 
     sdp.catalog          _DATA, _AUDIT_LOG, _SCHEMA_HISTORY
     sdp.evidence         _POLICY_DECISION_LOG, _AUDIT_EVENT_LOG
-    sdp.ontology         _CONCEPT_DEFINITIONS, _ALIAS_TO_CANONICAL, _ONTOLOGY_PATCHES,
-                         _INDEX
+    sdp.ontology         _CONCEPT_DEFINITIONS, _ALIAS_TO_CANONICAL, _ONTOLOGY_PATCHES
+                         (the concept-to-dataset map was here too, as ``_INDEX``;
+                         it is derived from the catalog on read now, so there is
+                         no snapshot left to restore)
     sdp.ontology_version _CHANGE_LOG, _REVISION_STATE
     sdp.observability    request-observation ring buffer, export-error buffer,
                          governed-evidence gap counter,
@@ -145,7 +147,6 @@ def restore_in_memory_app_state():
     patches = [patch.model_copy(deep=True) for patch in ontology._ONTOLOGY_PATCHES]
     concept_definitions = deepcopy(ontology._CONCEPT_DEFINITIONS)
     alias_to_canonical = dict(ontology._ALIAS_TO_CANONICAL)
-    concept_index = deepcopy(ontology._INDEX)
     change_log = [dict(entry) for entry in ontology_version._CHANGE_LOG]
     revision_state = dict(ontology_version._REVISION_STATE)
     jwks_cache = dict(authz._JWKS_CACHE)
@@ -177,8 +178,6 @@ def restore_in_memory_app_state():
         ontology._CONCEPT_DEFINITIONS.update(concept_definitions)
         ontology._ALIAS_TO_CANONICAL.clear()
         ontology._ALIAS_TO_CANONICAL.update(alias_to_canonical)
-        ontology._INDEX.clear()
-        ontology._INDEX.update(concept_index)
         ontology_version._CHANGE_LOG[:] = change_log
         ontology_version._REVISION_STATE.clear()
         ontology_version._REVISION_STATE.update(revision_state)
