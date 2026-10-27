@@ -44,6 +44,7 @@ from .catalog import (
     list_datasets,
     list_facet_counts,
     patch_dataset,
+    published_distribution,
     publish_dataset,
     register_dataset,
     validate_metadata,
@@ -1132,7 +1133,7 @@ def _jsonld_distribution(dataset: Any, distribution: Any) -> dict[str, Any]:
     The original identifier is kept as ``dcterms:identifier`` rather than
     silently dropped.
     """
-    payload = distribution.model_dump()
+    payload = published_distribution(distribution.model_dump())
     distribution_id = payload.pop("id", None)
     node: dict[str, Any] = {"@type": "dcat:Distribution"}
     if distribution_id:

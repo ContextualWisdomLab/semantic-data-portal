@@ -222,7 +222,42 @@ def mutation_response_view(dataset: Dataset) -> Dict[str, Any]:
     source_system = projected.get("source_system")
     if isinstance(source_system, str):
         projected["source_system"] = redacted_source_system(source_system)
+    projected["distributions"] = published_distributions(projected.get("distributions"))
     return projected
+
+
+def published_distribution(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Project one distribution for publication, dropping its endpoint credential.
+
+    ``redacted_source_system`` states the rule this product holds itself to - the
+    credential is dropped "on every path - including the authorized one, since no
+    caller needs the credential" - and ``mutation_view`` exists because four
+    mutation responses handed the DSN back. ``DatasetDistribution.endpoint`` is a
+    URL of the same shape and was routed through none of it. Measured with
+    ``endpoint: https://dsnuser:SUPERSEKRET123@files.internal/x.csv?token=TOKEN1``::
+
+        POST /catalog/datasets      -> 200, secret in response: True
+        GET  /catalog/datasets/{id} -> secret in response: True, token: True
+
+    The redactor already handled that URL (``-> https://files.internal/x.csv``),
+    so this is the routing the field never had. The locator itself stays
+    published: it is how a consumer fetches the data.
+    """
+    projected = dict(payload)
+    endpoint = projected.get("endpoint")
+    if endpoint is not None:
+        projected["endpoint"] = redacted_source_system(str(endpoint))
+    return projected
+
+
+def published_distributions(distributions: Any) -> list[Dict[str, Any]]:
+    """Project a dataset's distributions for publication."""
+    return [
+        published_distribution(
+            distribution if isinstance(distribution, dict) else distribution.model_dump()
+        )
+        for distribution in distributions or ()
+    ]
 
 
 def audited_patch_values(values: Dict[str, Any]) -> Dict[str, Any]:
@@ -247,6 +282,8 @@ def audited_patch_values(values: Dict[str, Any]) -> Dict[str, Any]:
             ]
         elif key == "profile" and isinstance(value, dict):
             projected[key] = {"withheld_keys": sorted(value)}
+        elif key == "distributions" and isinstance(value, list):
+            projected[key] = published_distributions(value)
         else:
             projected[key] = value
     return projected
@@ -293,6 +330,7 @@ def discovery_view(dataset: Dataset) -> Dict[str, Any]:
     published = dataset.model_dump()
     for field in _GOVERNED_DATASET_FIELDS:
         published.pop(field, None)
+    published["distributions"] = published_distributions(published.get("distributions"))
     published["schema_field_count"] = len(dataset.schema)
     published["metadata_completeness"] = dataset.metadata_completeness
     published["metadata_recommendation_score"] = dataset.metadata_recommendation_score
@@ -1025,8 +1063,14 @@ def _patch_dataset_locked(
 
     effective: dict[str, Any] = {}
     for key, value in updates.items():
-        if key in {"tags", "terms", "related_datasets", "lineage_inputs", "lineage_outputs", "mappings", "profile"} and value is None:
-            continue
+        # ``None`` means "not supplied" for every patchable field, and an empty
+        # collection is how a caller clears one: ``[]`` is not ``None``, so it is
+        # written. A named list of collection fields used to be skipped here
+        # before the same test below, which made the membership dead - both
+        # branches skipped a ``None`` identically - while reading as a rule that
+        # applied to those seven fields only. Adding ``distributions`` to that
+        # list looked like a behaviour change and was a no-op; the mutation that
+        # removed it again came back green, which is what exposed the branch.
         if value is not None:
             data[key] = value
             effective[key] = value

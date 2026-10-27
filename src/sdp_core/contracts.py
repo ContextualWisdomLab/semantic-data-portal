@@ -352,6 +352,15 @@ class DatasetPatchRequest(BaseModel):
     terms: Optional[list[str]] = None
     related_datasets: Optional[list[str]] = None
     schema: Optional[list[ColumnMetadata]] = None
+    # ``license`` was already absent once and silently dropped a supplied value;
+    # ``distributions`` was the same omission one field later, and it is the one
+    # field a refusal tells a steward to add. Measured before this: PATCH with a
+    # ``postgresql.table`` distribution answered 200, stored nothing, and
+    # ``/llm/draft-query`` kept refusing the dataset whose remedy had just been
+    # "applied". Every other collection ``DatasetCreateRequest`` accepts is
+    # patchable; ``tests/test_patch_accepts_the_fields_create_does.py`` holds the
+    # two request models to that parity with a declared exemption list.
+    distributions: Optional[list[DatasetDistribution]] = None
     lineage_inputs: Optional[list[str]] = None
     lineage_outputs: Optional[list[str]] = None
     mappings: Optional[list[BusinessMapping]] = None
