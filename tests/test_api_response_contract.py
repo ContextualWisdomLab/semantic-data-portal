@@ -235,6 +235,69 @@ def test_the_profile_route_publishes_the_nullability_it_actually_returns() -> No
     )
 
 
+def test_the_term_graph_route_publishes_its_not_found_discriminator() -> None:
+    """The one field that tells an unknown term from a known one.
+
+    ``GET /ontology/term/{term}/graph`` answers 200 either way, and the two
+    responses differ in shape: a known term returns ten keys, an unknown one
+    returns three - ``aliases``, ``canonical`` and ``not_found: true``.
+    ``not_found`` is the only field that distinguishes them, and it was not in
+    the published contract at all, because ``path_values()`` probed ``{term}``
+    with a single hard-coded existing value.
+
+    That function derives every other placeholder from the product, and its own
+    docstring carries the reason: "One value per placeholder is how the probe
+    route came to publish one of five shapes." ``{concept}`` and ``{term}`` were
+    the two left as a literal.
+
+    Measured before the repair::
+
+        GET /ontology/term/고객/graph        -> 200, 10 keys
+        GET /ontology/term/<unknown>/graph   -> 200, ['aliases', 'canonical', 'not_found']
+        published properties                 -> no 'not_found'
+
+    A client generated from the document cannot detect the unknown-term answer.
+    """
+    route = "/ontology/term/{term}/graph"
+    published = RESPONSE_SCHEMAS[("GET", route)]
+    assert "not_found" in published["properties"], (
+        "the discriminator between a known and an unknown term is not published: "
+        f"{sorted(published['properties'])}"
+    )
+
+    unknown = client.get("/ontology/term/존재하지않는용어-zzz/graph")
+    assert unknown.status_code == 200, unknown.text
+    payload = unknown.json()
+    # The premise, so this is not vacuous.
+    assert payload.get("not_found") is True, payload
+    violations = _violations(payload, published)
+    assert not violations, f"{route} disagrees with an unknown-term response: {violations}"
+
+    # The nested graph of the concept route carries the same discriminator, so
+    # "the concept route is symmetric" was only true of its top-level keys.
+    concept = RESPONSE_SCHEMAS[("GET", "/ontology/concept/{concept}")]
+    assert "not_found" in concept["properties"]["graph"]["properties"], (
+        sorted(concept["properties"]["graph"]["properties"])
+    )
+
+
+def test_the_unknown_ontology_probe_is_actually_unknown() -> None:
+    """The probe value has to stay absent from the vocabulary to mean anything.
+
+    If the ontology ever gained a concept by this name the unknown branch would
+    stop being probed and the discriminator would silently leave the contract
+    again - the same way it was missing in the first place. Asserted rather
+    than assumed, because this is the premise the probe rests on.
+    """
+    probed = generator.UNKNOWN_ONTOLOGY_PROBE
+    response = client.get(f"/ontology/term/{probed}/graph")
+    assert response.status_code == 200, response.text
+    assert response.json().get("not_found") is True, (
+        f"{probed!r} resolves in the vocabulary, so the unknown branch is no "
+        "longer being probed; pick a value the ontology does not carry"
+    )
+
+
 def test_every_json_get_operation_is_covered() -> None:
     """Enumerated from the route table, so a new route cannot slip through.
 

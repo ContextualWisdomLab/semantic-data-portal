@@ -59,6 +59,11 @@ TARGET = REPO_ROOT / "src" / "sdp" / "api_response_contract.py"
 # keep in step.
 # A fixed first value per placeholder, for callers that need one concrete URL.
 # Everything else is derived - see ``path_values``.
+# A concept/term the ontology does not carry, for the unknown branch of the two
+# ontology routes. Not a random string: it has to stay absent from the vocabulary
+# for the probe to mean anything, and a guard asserts that it does.
+UNKNOWN_ONTOLOGY_PROBE = "generator-probe-unknown-term"
+
 PATH_SUBSTITUTIONS = {
     "{dataset_id}": "crm-customer-master",
     "{node_id}": "crm-customer-master",
@@ -103,8 +108,21 @@ def path_values() -> dict[str, tuple[str, ...]]:
         # and the route's shape follows the id it is given.
         "{node_id}": (first, column),
         "{connector_id}": tuple(sorted(_SOURCE_CONNECTORS)),
-        "{concept}": ("고객",),
-        "{term}": ("고객",),
+        # A known value **and** an unknown one. These two were the only
+        # placeholders left as a single literal, and the rule this docstring
+        # already states applied to them: ``/ontology/term/{term}/graph``
+        # answers 200 either way and the shapes differ, so probing only a known
+        # term published ten keys and left out ``not_found`` - the one field
+        # that tells an unknown term from a known one. A client generated from
+        # the document could not detect the unknown answer at all.
+        #
+        # The concept route is symmetric (measured: identical key sets for a
+        # known and an unknown concept), so its second value changes nothing
+        # today. It is there because "the shapes happen to agree now" is not a
+        # property anything checks, and the cost of probing both branches is
+        # one request.
+        "{concept}": ("고객", UNKNOWN_ONTOLOGY_PROBE),
+        "{term}": ("고객", UNKNOWN_ONTOLOGY_PROBE),
     }
 REQUIRED_QUERY = {
     "/catalog/search": {"q": "고객"},
