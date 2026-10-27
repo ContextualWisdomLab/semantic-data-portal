@@ -3760,6 +3760,48 @@ counts: {'고객': number, '고객행동': number, '매출': number, '온톨로�
 
 이 절은 측정 기록이고 병합 허가가 아닙니다.
 
+## 리뷰 큐의 `confidence`가 제안문의 글자 수였습니다 (2026-10-27 13:00Z)
+
+`POST /ontology/patches`, `GET /ontology/patches`, 그리고 자격증명 없이 읽히는
+`GET /enterprise/steward-review`가 `len(suggestion) / 220.0`을 confidence로 공표했습니다.
+
+```
+len=  8  confidence=0.3     "해지 고객 비율"   | len=300  confidence=0.95  "ㅁ"*300
+GET /enterprise/steward-review (actor 없음) -> 최고 confidence 행은 ㅁ 300자
+```
+
+호출자가 confidence를 줄 수도 없으므로(route는 concept·suggestion만 읽습니다) 제품에 근거가
+없습니다. **수리:** `confidence: null` + `confidence_basis: "not_measured"`. 필드는 유지합니다
+— 스튜어드가 읽어도 되는 제안 내용으로 이미 고정돼 있습니다.
+
+### 닫지 않은 것
+
+두 배열(`patches`, `review_items`)의 **행 모양이 공표 응답 계약에 없습니다**(`items: {}`) —
+생성기 프로브 시점에 큐가 비어 있기 때문입니다. 구매자는 그 원소에 대해 `Any`를 받습니다.
+
+## facet 라우트가 공표된 적 없는 어휘를 집행하고, PRD가 facet이라고 적은 둘을 거부했습니다 (2026-10-27 13:00Z)
+
+여정 검증 둘이 CONFIRMED로 돌려준 발견입니다.
+
+```
+GET /catalog/facets?field=tags|terms -> 400 "unsupported facet field"
+README grep -in facet -> 0건 · OpenAPI field 파라미터에 enum·description 없음
+```
+
+유효한 값을 알 방법이 소스뿐이었고, 거부는 거절된 값도 지원 집합도 말하지 않았습니다. 형제
+라우트(`?status=`)는 `requested`/`known_statuses`를 담는 반대 패턴을 이미 씁니다. 그리고
+거부된 두 차원이 PRD가 facet으로 적은 둘입니다 — `list_facet_counts`의 list 분기는 허용된
+스칼라 여섯 중 어느 것도 닿을 수 없었으므로, 능력은 거부되던 차원들을 위해 있었습니다.
+
+**수리:** 어휘를 `FACET_FIELDS` 상수로 올리고 `tags`·`terms`를 더하고, 거부에
+`requested`/`known_fields`를 담고, OpenAPI description과 README 라우트 목록을 그 집합에서
+파생시킵니다.
+
+### 닫지 않은 것
+
+PRD 표 전체를 파싱해 "PRD가 facet이라고 적은 차원이 집합에 다 있는지"를 대조하지는 않습니다 —
+두 값에 대해서만 단언합니다.
+
 ## 선언만 되고 집행되지 않는 행 레벨 필터를 "적용됐다"고 공표했습니다 (2026-10-27 10:15Z)
 
 구성된 구매자 여정(온보딩 → 발견 → preview)을 `TestClient`로 끝까지 몰아 본 라운드에서

@@ -54,9 +54,17 @@ gap-baseline 문서를 건드렸고, 나머지 138개는 건드리지 않았습�
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest (3.11)                1837 passed, 31 skipped
-    pytest (3.12, tests.yml의 핀) 1837 passed, 31 skipped — CI가 쓰는 인터프리터
-    pytest (파일 순서 정/역/난수)  각 1837 passed, 31 skipped — 순서 무관
+    pytest (3.11)                1849 passed, 31 skipped
+    pytest (3.12, tests.yml의 핀) 1849 passed, 31 skipped — CI가 쓰는 인터프리터
+    pytest (파일 순서 정/역/난수)  각 1849 passed, 31 skipped — 순서 무관
+                                 (3.11 shuffled-31337 1회차만 1849가 아니라 1848 +
+                                  실패 1건이었습니다. `test_the_alert_wait_does_not_
+                                  block_the_event_loop`가 event loop 차단 상한
+                                  100ms에 대해 177.88ms를 측정했고, 같은 순서를 유휴
+                                  상태에서 다시 돌리면 1849로 통과합니다. 벽시계
+                                  민감 테스트의 부하 flake이며, 이 라운드의 변경은
+                                  alert 경로를 건드리지 않습니다 — 순서 성질이 아니라
+                                  부하라고 적어 둡니다)
     atheris 하네스 5개            616,943 inputs, crash 0 (3.12, 20~31초 예산)
                                  (정순 · 역순 · seed 11/707/31337; 이 커밋의 트리에서
                                   측정. 이 라운드의 테스트가 데이터셋을 온보딩하므로
@@ -79,7 +87,8 @@ ClusterFuzzLite 하네스 import 가드 3건으로 1523에,
 테이블 allow-list 가드 25건 + near-miss 성질 1건으로 1549에,
 존재 oracle 가드 82건으로 1631에, 콘솔 sink 감사 2건으로 1633에, `union` 가드 6건으로 1639에, 선언 relation 정직성 가드 26건으로 1665에, 공표 한도 가드 10건으로 1675에, 공표 설명 가드 12건으로 1687에, map 노드·obligations 가드 2건으로 1689에, sentinel·nullability 가드 9건으로 1698에 왔고, 구성된 구매자 여정 라운드의 네 수리
 (행 레벨 필터 정직성 9건, 드래프트 거부 증빙 페어링 11건, 참된 거부 이유 14건, 배포
-endpoint 자격증명·patch 계약 10건)로 **1837**에 와 있습니다(skip이
+endpoint 자격증명·patch 계약 10건)로 1837에, 같은 라운드의 뒤이은 두 수리(patch
+confidence 정직성 5건, facet 어휘 공표 7건)로 **1849**에 와 있습니다(skip이
 23 → 31로 는 것은 새 가드 둘이 `measured`가 아닌 KPI 넷에
 대해 skip하기 때문입니다 — 그 skip 자체가 분기가 측정된 증거이고, 같은 파일의
 `test_at_least_one_kpi_exercises_each_branch`가 양쪽 분기에 사례가 있음을 단언합니다)
@@ -114,6 +123,81 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 **이 문장이 결함을 가려 줬습니다**: 미러가 돈다는 것은 참이지만, 그 하네스는 아래 항목이
 고치기 전까지 ClusterFuzzLite 이미지에서 **import에서 죽고 있었고** 입력을 하나도 퍼징하지
 않았습니다. "미러가 있으니 됐다"는 커버리지 주장이 아닙니다.
+
+### Security — 리뷰 큐의 `confidence`가 **제안문의 글자 수**였습니다 (high, 무자격 공개 표면)
+
+`min(max(len(suggestion) / 220.0, 0.3), 0.95)`를 계산해 `POST /ontology/patches`,
+`GET /ontology/patches`, 그리고 **자격증명 없이 읽히는** `GET /enterprise/steward-review`에
+공표했습니다. 같은 말을 하는 제안 둘과 아무 말도 아닌 제안 하나로 재면:
+
+```
+len=  8  confidence=0.3                 "해지 고객 비율"            (정확한 정의)
+len=208  confidence=0.9409090909090909  같은 뜻을 " 입니다. "로 패딩
+len=300  confidence=0.95                "ㅁ" * 300                  (무의미)
+
+GET /enterprise/steward-review (actor 없음) -> 최고 confidence 행은 ㅁ 300자
+```
+
+confidence로 triage하는 스튜어드는 정확한 제안에서 **멀어지는 쪽으로** 정렬되고, 열린
+readiness 표면을 읽는 구매자는 품질 신호가 타이핑 분량인 큐를 봅니다. 호출자가 값을 줄 수도
+없습니다 — `POST /ontology/patches`는 `concept`과 `suggestion`만 읽습니다. 즉 제품에
+**근거가 아예 없습니다.**
+
+수리는 이 저장소가 측정할 수 없는 값에 이미 쓰는 모양입니다: 측정하지 않았다고 공표합니다.
+`confidence: null` + `confidence_basis: "not_measured"`이고, 필드는 그대로 둡니다 —
+`tests/test_steward_queue_identity_scope.py`가 그것을 스튜어드가 읽어도 되는 제안 내용으로
+고정하고 있습니다. 선례는 spend 표면의 `usage_source`/`measurement_status`,
+`SDP_EVIDENCE_RETENTION_DAYS`의 `unimplemented_environment`, 그리고 같은 라운드의
+`row_filter_summary.filter_enforced`입니다.
+
+**변이 넷, 전부 red** — 그중 하나는 처음 green이었습니다. 모델의 `confidence_basis` 기본값을
+`"measured"`로 바꿔도 아무도 잡지 못했는데, `propose_patch`가 basis를 명시로 넘기므로 측정
+표면에는 기본값이 나타나지 않으면서 **직접 생성되는 모든 patch**를 지배합니다. 모델 기본값과
+basis 상수가 같아야 한다는 단언을 더했습니다.
+
+**닫지 않은 것.** `GET /ontology/patches`의 `patches`와 `/enterprise/steward-review`의
+`review_items`는 공표 응답 계약에서 `{"type": "array", "items": {}}`입니다 — 생성기 프로브
+시점에 큐가 비어 있어 **행 모양이 공표된 적이 없습니다.** 그래서 이 변경이 계약을 깨지
+않았고, 동시에 구매자는 두 배열의 원소에 대해 `Any`를 받습니다. 그것은 별개 항목입니다.
+
+### Fixed — facet 라우트가 **공표된 적 없는 어휘**를 집행했고, PRD가 facet이라고 적은 두 차원을 거부했습니다 (medium, 구매자 체감)
+
+여정 워크플로의 적대적 검증 둘이 모두 CONFIRMED로 돌려준 발견입니다.
+
+```
+GET /catalog/facets?field=domain -> 200 {"field": "domain", "counts": {...}}
+GET /catalog/facets?field=tags   -> 400 {"detail": "unsupported facet field"}
+GET /catalog/facets?field=terms  -> 400 {"detail": "unsupported facet field"}
+
+README.md         grep -in "facet" -> 0건 (라우트 자체가 없습니다)
+GET /openapi.json {"name": "field", "schema": {"type": "string", "default": "domain"}}
+                  — enum도 description도 없음
+```
+
+유효한 값을 알 방법이 **소스를 읽는 것뿐**이었습니다. 이 저장소는 형제 거부에서 반대
+패턴을 이미 씁니다 — `GET /ontology/patches?status=`는 400에 `requested`와
+`known_statuses`를 담습니다 — 그리고 같은 결함 계열을 네 시간 전에 `POST /policy/decision`의
+`action`에서 엔진의 열거를 공표하는 것으로 닫았습니다.
+
+구매자가 가장 먼저 시도할 두 값이 바로 제품의 PRD가 facet 차원으로 적은 둘입니다
+(`docs/prd-trd.md`가 `businessTerms`를 "keyword + facet"으로, CAT-001이 `tags`를
+search/facet 차원으로). 둘 다 거부됐고, `list_facet_counts`에는 **어느 허용 필드도 닿을 수
+없는** list 분기가 처음부터 있었습니다 — 허용된 여섯은 전부 스칼라이고, 그 분기를 밟는 것은
+`domain: ["retail", "wholesale"]`을 꾸며 내는 테스트 하나뿐이었습니다(`Dataset.domain: str`
+계약 위반). **능력은 라우트가 거부하는 바로 그 차원들을 위해 있었습니다.**
+
+수리 셋: 어휘를 상수 `FACET_FIELDS` 하나로 올리고 `tags`·`terms`를 더합니다(값별로 세는
+list 분기가 이제 실데이터로 도달됩니다). 거부는 `requested`/`known_fields`를 담습니다. 그리고
+OpenAPI 파라미터 description과 README의 라우트 목록이 그 집합에서 **파생**됩니다.
+
+**변이 다섯, 전부 red.** 그리고 제 structural 가드가 M4(어휘 재복제)를 **처음에 놓쳤습니다**:
+"모듈에 리터럴은 최대 하나"로 적었는데 상수를 여러 줄 `frozenset`으로 쓰면 brace 패턴에
+걸리지 않아 재복제본이 유일한 매치가 되어 통과했습니다. 집행 지점의 소스를 보고 그 안에
+리터럴이 없음을 요구하도록 고쳤습니다.
+
+**닫지 않은 것.** 공표된 facet 차원이 **집행된 집합과 같은지**는 가드가 derived로 집행하지만,
+PRD가 facet으로 적은 차원이 `FACET_FIELDS`에 **빠지지 않았는지**는 두 값(`tags`·`terms`)에
+대해서만 단언합니다. PRD 표 전체를 파싱해 대조하지는 않습니다.
 
 ### Security — 선언만 되고 **집행되지 않는 행 레벨 필터**를 "적용됐다"고 공표했고, 증빙 원장에도 그렇게 적었습니다 (high, 구매자 체감)
 
