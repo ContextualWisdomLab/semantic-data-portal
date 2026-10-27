@@ -136,6 +136,70 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 고치기 전까지 ClusterFuzzLite 이미지에서 **import에서 죽고 있었고** 입력을 하나도 퍼징하지
 않았습니다. "미러가 있으니 됐다"는 커버리지 주장이 아닙니다.
 
+### Security — dataset id에 **콜론 하나**가 있으면 그 데이터셋의 그래프 노드가 테넌트 경계 밖으로 나갔습니다 (high, 교차 테넌트 읽기 + 쓰기)
+
+`policy.graph_node_dataset_id`가 노드의 소유 데이터셋을 **첫 번째** 콜론 앞부분으로 해석했습니다
+(그래프 노드 id가 `<dataset>:<column>`이므로). 그래서 **id 자신에 콜론이 있는 데이터셋**은
+아무것으로도 해석되지 않았고, 소비자 둘이 그 "아무것도 아님"을 *소유 테넌트가 없는 공유
+어휘*로 읽습니다 — `can_see_graph_node`는 `True`를, `graph_node_target_tenant`는 `None`을
+돌려주며, `None`은 `_authorize_graph_write`가 "검사할 테넌트가 없다"로 처리하는 바로 그 값입니다.
+
+`935e309`에서 tenant `zeta` 데이터셋 둘(하나는 id에 콜론, 하나는 없음)을 만들고
+`data-admin`(tenant `demo`, 역할 `admin`+`data-analyst`)으로 측정했습니다:
+
+```
+GET  /graph/nodes/zeta-plain-admin-probe:customer_email   -> 404 node not found
+POST /graph/nodes {... zeta-plain-admin-probe:customer_email}
+                                                          -> 403 tenant boundary denied
+GET  /graph/nodes/zeta-colon-admin:probe:customer_email   -> 200 {'pii': True, …}
+POST /graph/nodes {... zeta-colon-admin:probe:customer_email,
+                   properties: {'pii': False, 'probe_marker': True}}
+                                                          -> 200 upserted
+
+admin으로 되읽기:
+  zeta-plain-admin-probe:customer_email   pii=True   probe_marker=None
+  zeta-colon-admin:probe:customer_email   pii=False  probe_marker=True   <- 외부 쓰기가 들어갔습니다
+```
+
+외부 테넌트의 admin이 **다른 경로로는 읽을 수조차 없는** 컬럼을 읽고 그 `pii` 분류를
+뒤집었습니다 — `POST /search/semantic`과 `POST /graph/query`가 먹는 거버닝 메타데이터입니다.
+이것은 `graph_node_target_tenant`의 docstring이 **닫았다고 기록한 바로 그 결함**이고, 구분자를
+담은 dataset id면 무엇이든 다시 열었습니다.
+
+통과시킨 추론은 그 함수의 주석에 있습니다 — "An id shaped like a dataset node whose dataset
+does not exist is not tenant-owned … It cannot reach another tenant's content, because there
+is no content there to reach." 없는 데이터셋에는 참이고, **실제 id가 구분자를 담아서** prefix가
+아무것도 해석하지 못한 이 경우에는 거짓입니다. 거기엔 내용이 있습니다.
+
+**수리:** 첫 세그먼트가 아니라 **가장 긴** dataset-id prefix를 해석합니다. 전체 id를 먼저
+시도하고 아니면 오른쪽에서 한 세그먼트씩 떼므로, 이전에 해석되던 id는 전부 같은 데이터셋으로
+해석되고 **자기 값이 데이터셋인 id가 이제 자기 자신으로 해석됩니다.**
+
+**첫 수리 시도는 틀렸고, 이 저장소의 기존 테스트가 잡았습니다.** 처음에는 create 경계에서
+구분자를 **금지**했습니다. `tests/test_catalog_mirror_kind_conflict.py`가 `부모셋`과
+`부모셋:자식셋`을 형제 데이터셋으로 만들고 둘 사이에 `has_column` 간선을 걸며,
+`소유자셋:자식:컬럼`을 데이터셋 `소유자셋:자식`의 컬럼 노드로 다룹니다 — dataset id의 콜론은
+**지원되는 모양**이고 사고가 아닙니다. 그 두 테스트가 red가 되어 알려 줬고, 금지를 되돌렸습니다.
+같은 테스트들이 제품이 이 경우에 이미 쓰는 판별자도 이름 짓습니다("the stamp `seed_dataset`
+wrote on it, which names `소유자셋:자식` as the mirror that produced it") — 가장 긴 prefix
+해석은 id만으로 같은 답에 도달하는 것입니다: **가장 구체적인** 데이터셋이 노드를 소유합니다.
+
+그래서 **두 번째 결함도 같이 닫혔습니다**: `소유자셋:자식:컬럼`은 전에 `소유자셋`으로 —
+**틀린 소유자**, 따라서 틀린 테넌트로 — 해석됐습니다. 문을 열어 두는 것과 별개인 오귀속입니다.
+
+**변이 넷, 전부 red**(첫 세그먼트로 복귀 / fallback 없이 전체 id만 / 왼쪽부터 가장 짧은
+prefix / 구분자 상수 변경). M2·M4는 기존 가드
+`tests/test_governance_boundary.py::test_a_foreign_tenant_admin_cannot_overwrite_a_node_it_cannot_read`도
+red로 만듭니다 — 같은 경계이고, 그 가드가 덮던 것은 콜론 없는 모양뿐이었습니다.
+
+**닫지 않은 것.** 노드 id 이름공간은 여전히 단사가 아닙니다 — 개념 이름에도 콜론이 허용됩니다
+(`POST /ontology/concepts {"concept": "콜론:개념"}` -> 200으로 측정). 개념 `a:b`에서 데이터셋
+`a`가 존재하면 그 개념 노드는 `a`의 테넌트로 귀속되어 **다른 테넌트에 숨겨집니다** — 누출이
+아니라 과잉 제한 방향이고, 이 수리 **이전에도 똑같이** 그랬습니다(바뀐 것은 전체 id가 먼저
+시도된다는 점뿐). 노드 kind 안정성이 데이터셋 노드 id와 같은 이름의 개념을 409로 거부하므로
+완전히 같은 id의 충돌은 저장소에 존재할 수 없습니다. 이름공간을 단사로 만드는 것은 별개 범위이고,
+금지가 지원되는 모양을 깨뜨린다는 측정이 그 설계를 미리 제약합니다.
+
 ### Fixed — 세 문서가 ClusterFuzzLite가 하네스를 **돌린다고** 적었습니다. 아무것도 돌리지 않습니다 (medium)
 
 `fuzz/fuzz_query_safety.py`는 `validate_sql_query`의 Atheris 타깃이고, 세 곳이 그 실행

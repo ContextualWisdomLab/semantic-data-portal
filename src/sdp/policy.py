@@ -545,16 +545,68 @@ def is_mutable(subject: str, action: str, resource: str) -> bool:
 # at depth 2. Visibility is therefore decided per node.
 
 
+GRAPH_NODE_SEPARATOR = ":"
+
+
 def graph_node_dataset_id(node_id: str) -> str | None:
     """Return the dataset a graph node belongs to, or ``None`` if it belongs to none.
 
     Dataset nodes are keyed by the dataset id and column nodes by
-    ``"<dataset_id>:<column_name>"``, so the owning dataset is the part before the
-    first colon. A node whose prefix names no dataset - a business concept or
-    glossary term - is not dataset-owned.
+    ``"<dataset_id>:<column_name>"``. A node whose prefix names no dataset - a
+    business concept or glossary term - is not dataset-owned.
+
+    The **longest** prefix is resolved, not the part before the first separator.
+    A dataset id may itself contain a colon, and splitting at the first one
+    resolved every node of such a dataset to ``None`` - which both consumers read
+    as *shared vocabulary with no owning tenant*: :func:`can_see_graph_node`
+    returns ``True`` and :func:`graph_node_target_tenant` returns ``None``, the
+    one value ``_authorize_graph_write`` treats as "no tenant to check". Measured
+    with two tenant-``zeta`` datasets and a ``data-admin`` whose tenant is
+    ``demo``::
+
+        GET  /graph/nodes/zeta-plain-probe:customer_email  -> 404 node not found
+        POST /graph/nodes {... zeta-plain-probe:customer_email}
+                                                           -> 403 tenant boundary denied
+        GET  /graph/nodes/zeta-colon:probe:customer_email   -> 200 {'pii': True, ...}
+        POST /graph/nodes {... zeta-colon:probe:customer_email,
+                           properties: {'pii': False}}      -> 200 upserted
+
+    So a foreign admin read a column it cannot reach by any other route and
+    flipped its ``pii`` classification - the same defect
+    :func:`graph_node_target_tenant`'s docstring records closing, reopened by any
+    dataset id containing the separator. That function's comment explains how:
+    "An id shaped like a dataset node whose dataset does not exist is not
+    tenant-owned … It cannot reach another tenant's content, because there is no
+    content there to reach." True for an absent dataset, false when the prefix
+    resolves to nothing *because the real id holds the separator*.
+
+    Trying the full id first and otherwise stripping one segment from the right
+    strictly extends the previous answer: every id that resolved before still
+    resolves, and an id whose own value is a dataset now resolves to itself
+    instead of to a prefix.
+
+    Reserving the separator in new dataset ids was the first repair attempted
+    here and it was **wrong**: this repository's own tests create ``부모셋`` and
+    ``부모셋:자식셋`` as sibling datasets with a ``has_column`` edge between them,
+    and ``소유자셋:자식:컬럼`` as a column node of dataset ``소유자셋:자식``
+    (``tests/test_catalog_mirror_kind_conflict.py``). The colon in a dataset id is
+    a supported shape, not an accident, so forbidding it broke two intentional
+    contracts - measured as two failures before the attempt was reverted. Those
+    same tests name the discriminator the mirror already uses for this case, "the
+    stamp ``seed_dataset`` wrote on it, which names ``소유자셋:자식`` as the mirror
+    that produced it", and resolving the longest prefix is the same answer
+    reached from the id alone: the **most specific** dataset owns the node.
+    ``소유자셋:자식:컬럼`` previously resolved to ``소유자셋`` - the wrong owner, and
+    a second defect this fixes.
     """
-    dataset = get_dataset(node_id.split(":", 1)[0])
-    return dataset.id if dataset else None
+    candidate = node_id
+    while True:
+        dataset = get_dataset(candidate)
+        if dataset:
+            return dataset.id
+        if GRAPH_NODE_SEPARATOR not in candidate:
+            return None
+        candidate = candidate.rsplit(GRAPH_NODE_SEPARATOR, 1)[0]
 
 
 def can_see_graph_node(subject: str, node_id: str) -> bool:

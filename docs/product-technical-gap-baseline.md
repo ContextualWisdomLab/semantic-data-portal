@@ -3769,6 +3769,45 @@ counts: {'고객': number, '고객행동': number, '매출': number, '온톨로�
 
 이 절은 측정 기록이고 병합 허가가 아닙니다.
 
+## dataset id의 콜론 하나가 그 데이터셋의 그래프 노드를 테넌트 경계 밖으로 내보냈습니다 (2026-10-27 20:55Z)
+
+```
+tenant zeta 데이터셋 둘, data-admin(tenant demo, 역할 admin) 으로:
+GET  /graph/nodes/zeta-plain-admin-probe:customer_email  -> 404 node not found
+POST /graph/nodes {... 같은 노드}                          -> 403 tenant boundary denied
+GET  /graph/nodes/zeta-colon-admin:probe:customer_email  -> 200 {'pii': True, …}
+POST /graph/nodes {... 같은 노드, properties {'pii': False}} -> 200 upserted
+admin으로 되읽기: 콜론 쪽 pii=False (외부 쓰기가 들어갔습니다), 평문 쪽 pii=True
+```
+
+`graph_node_dataset_id`가 **첫** 콜론 앞부분으로 소유 데이터셋을 해석하므로, id 자신에 콜론이
+있는 데이터셋은 아무것으로도 해석되지 않고 소비자 둘이 그것을 "소유 테넌트 없는 공유 어휘"로
+읽습니다(`can_see_graph_node` True, `graph_node_target_tenant` None — 쓰기 인가가 "검사할
+테넌트 없음"으로 처리하는 값). 외부 admin이 다른 경로로는 읽을 수 없는 컬럼의 `pii` 분류를
+뒤집었고, 그 메타데이터는 `/search/semantic`·`/graph/query`가 먹습니다.
+
+**수리:** 가장 긴 dataset-id prefix를 해석합니다. 이전에 해석되던 id는 전부 같은 답이고,
+자기 값이 데이터셋인 id가 자기 자신으로 해석됩니다. 부수로 `소유자셋:자식:컬럼`이 `소유자셋`이
+아니라 `소유자셋:자식`으로 귀속되는 오귀속도 닫힙니다.
+
+**첫 시도가 틀렸고 기존 테스트가 잡았습니다.** create 경계에서 구분자를 금지했더니
+`tests/test_catalog_mirror_kind_conflict.py`의 두 테스트가 red — 그 파일이 `부모셋`과
+`부모셋:자식셋`을 형제 데이터셋으로, `소유자셋:자식:컬럼`을 `소유자셋:자식`의 컬럼으로 다룹니다.
+dataset id의 콜론은 지원되는 모양입니다. 금지를 되돌리고 수리를 resolver 안에만 두었습니다.
+
+변이 넷 전부 red. M2·M4는 기존 `test_a_foreign_tenant_admin_cannot_overwrite_a_node_it_cannot_read`도
+red로 만듭니다 — 같은 경계이고 그 가드가 덮던 것은 콜론 없는 모양뿐이었습니다.
+
+### 닫지 않은 것
+
+노드 id 이름공간은 단사가 아닙니다 — 개념 이름에도 콜론이 허용됩니다(측정: `콜론:개념` 200).
+개념 `a:b`에 데이터셋 `a`가 있으면 그 개념은 `a`의 테넌트로 귀속되어 과잉 제한됩니다(누출
+방향이 아니고, 이 수리 이전에도 동일). kind 안정성이 완전히 같은 id의 충돌을 409로 막습니다.
+이름공간을 단사로 만드는 것은 별개 범위이며, 금지가 지원되는 모양을 깨뜨린다는 이 측정이 그
+설계를 미리 제약합니다.
+
+이 절은 측정 기록이고 병합 허가가 아닙니다.
+
 ## 세 문서가 ClusterFuzzLite가 하네스를 돌린다고 적었습니다. 아무것도 돌리지 않습니다 (2026-10-27 20:10Z)
 
 ```
