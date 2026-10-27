@@ -87,6 +87,23 @@ MAX_PREVIEW_ROWS = 100
 MIN_PREVIEW_ROWS = 1
 
 
+def _invalid_pagination_reason(limit: int, offset: int) -> tuple[str, str] | None:
+    """The audit reason and caller message for out-of-range pagination, if any.
+
+    Returned rather than raised so the caller can record the refusal before it
+    becomes an exception. The message is the one the caller already received
+    before this was governed, so the HTTP contract is unchanged; what changes is
+    that the refusal now leaves a row.
+    """
+    if limit < MIN_PREVIEW_ROWS:
+        return "invalid_pagination_limit", f"limit must be at least {MIN_PREVIEW_ROWS}"
+    if limit > MAX_PREVIEW_ROWS:
+        return "invalid_pagination_limit", f"preview limit cannot exceed {MAX_PREVIEW_ROWS}"
+    if offset < 0:
+        return "invalid_pagination_offset", "offset must be greater than or equal to 0"
+    return None
+
+
 def preview(
     dataset_id: str,
     user: str,
@@ -94,13 +111,22 @@ def preview(
     limit: int = MAX_PREVIEW_ROWS,
     offset: int = 0,
 ) -> Dict[str, Any]:
-    if limit < MIN_PREVIEW_ROWS:
-        raise ValueError(f"limit must be at least {MIN_PREVIEW_ROWS}")
-    if limit > MAX_PREVIEW_ROWS:
-        raise ValueError(f"preview limit cannot exceed {MAX_PREVIEW_ROWS}")
-    if offset < 0:
-        raise ValueError("offset must be greater than or equal to 0")
-
+    # The pagination bounds are checked *after* the dataset lookup and the
+    # policy call, not before them. They used to be first, which was harmless
+    # only while the route clamped the values and made them unreachable over
+    # HTTP; ``4d9e3d3`` stopped clamping - rightly, a clamp silently rewrote
+    # what the caller asked for - and that turned them into a refusal path that
+    # returned before any policy evaluation and filed no evidence at all.
+    # Measured: ``limit: 9999`` answered 400 with zero audit events and zero
+    # policy decisions, for an authorised caller, for a denied caller, and for
+    # an absent dataset alike. On the policy-gated data-access surface of a
+    # product whose claim is the evidence trail, and against the invariant
+    # CLAUDE.md states outright.
+    #
+    # Deny first, so the answer a caller gets is the authorisation answer: one
+    # who may not read the dataset is told that, and never learns what this
+    # route thinks of their pagination.
+    #
     # The existence lookup comes before the policy call, and that is not a
     # regression of the policy-before-access order: no data is read here, and
     # the generic ``evaluate`` cannot file an absent-id refusal safely.
@@ -148,6 +174,25 @@ def preview(
             details={"purpose": purpose, "policy_decision_id": decision.decision_id},
         )
         _refuse(user, dataset, decision)
+
+    invalid_pagination = _invalid_pagination_reason(limit, offset)
+    if invalid_pagination is not None:
+        reason, message = invalid_pagination
+        ingest_event(
+            event_type="browse.preview",
+            actor=user,
+            dataset_id=dataset_id,
+            decision="denied",
+            reason=reason,
+            decision_id=decision.decision_id,
+            details={
+                "purpose": purpose,
+                "policy_decision_id": decision.decision_id,
+                "requested_limit": limit,
+                "requested_offset": offset,
+            },
+        )
+        raise ValueError(message)
 
     rows = _sample_rows(dataset)
 
