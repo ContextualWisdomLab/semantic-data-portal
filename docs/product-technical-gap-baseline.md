@@ -3704,6 +3704,62 @@ counts: {'고객': number, '고객행동': number, '매출': number, '온톨로�
 
 이 절은 측정 기록이고 병합 허가가 아닙니다.
 
+## 산문 넷이 자기 코드와 어긋났고, 가드 하나는 네 철자 중 하나만 봤습니다 (2026-10-27 04:35Z)
+
+### obligations: 아홉 키 중 넷만 공표
+
+제품이 결정 분기별로 `refusal_cause`·`known_actions`·`unmapped_published_action`·
+`actor_tenant_id`·`redact`를 더 설정하는데 공표는 닫힌 4키 struct였습니다. `required`가
+없으므로 틀린 것은 아니고 절반 넘게 침묵한 것입니다.
+
+원인은 ledger 페이지 크기입니다. newest-first·기본 100행이고 probe 순서가 이 라우트를 읽기
+전에 100건 넘게 기록하므로, 거부 분기 행이 페이지 밖에 있었습니다. probe의 `limit`을 500
+(라우트 상한)으로 올리니 map으로 분류됩니다.
+
+### 효과를 보일 수 없는 기계장치를 지웠습니다
+
+그 분기를 일부러 구동하는 헬퍼를 먼저 썼습니다. 넣고/빼고 재생성한 출력이 **byte 단위로
+동일**합니다 — 평범한 probe가 이미 전부 건드리고 있었습니다. 알려 준 것은 헬퍼 삭제 변이가
+**green으로 돌아온 것**입니다. 그 상태로 남기면 "이게 성질을 지탱한다"는 거짓 docstring이
+딸린 죽은 코드가 됩니다. 지웠고, 실제로 일한 한 줄에 측정을 적었습니다.
+
+### data-keyed 목록이 양방향으로 틀렸습니다
+
+"four nodes"라 적고 `/catalog/datasets/{dataset_id}/audit[].details`를 빠뜨렸고,
+`/policy/decisions[].obligations`를 넣었는데 그 노드는 당시 struct였습니다. 다섯 모두
+스키마 주소 방식대로 적고, 가드가 스키마에서 파생해 양방향 비교합니다.
+
+### 목록 가드가 열거가 아니라 docstring 전체를 봤습니다
+
+열거에서 노드를 지워도 아래 설명 단락의 언급으로 통과했습니다 — 변이가 green. 열거 문장만
+보도록 좁혔습니다. 이 라운드에서 "선언을 보고 효과를 보지 않는 가드"의 일곱 번째입니다.
+
+### detail 가드의 구멍
+
+`str(exc)`만 매칭하고 `f"{exc}"`·`.format(exc)`·`% exc`는 못 봤습니다. 오늘 쓰는 핸들러는
+없으므로 제품 결함이 아니라 가드 구멍입니다. 검출기를 한 함수로 빼서 가드와 자기 검증
+테스트가 같은 코드를 쓰게 했습니다.
+
+### 산문 셋
+
+* `orchestrator.py`: "Relational SQL is drafted only for a relational source" — 아래 코드에
+  대해 거짓. 다섯 시드 전부에 PostgreSQL을 emit하고 셋은 비관계형입니다. 수리는 거절이
+  아니라 공개였습니다.
+* `/enterprise/auth/oidc-preview`의 `actor`: "없으면 거부됩니다" — 거짓. 200이고
+  `audit_recorded`만 달라집니다. 형제 라우트 다섯에서 복사된 문장입니다.
+* `test_mutation_refusal_names_its_cause.py`: "scope 없는 주체는 dataset을 보지 않는 role
+  체크에서 거부된다" — 이 파일을 쓰는 동안 거짓으로 측정된 전제입니다. 엔진에 없는 성질을
+  엔진에 돌리면 다음 사람이 dataset 범위 호출을 되살려도 된다고 결론 냅니다.
+
+### 닫지 않은 것
+
+`obligations`가 `additionalProperties: {}`이므로 **키별 타입은 공표되지 않습니다**
+(`masking`은 배열, `tenant_id`는 문자열). 키 집합이 결정 분기마다 달라지는 노드에 대해
+map이 올바른 분류이지만, 아홉 키의 고정 어휘에 타입을 주는 표현(예: 키별 스키마를 가진
+map)은 이 생성기에 없습니다 — 별도 항목입니다.
+
+이 절은 측정 기록이고 병합 허가가 아닙니다.
+
 ## 공표된 설명 둘이 **제품에 없는 규칙**을 적고 있었습니다 (2026-10-27 04:15Z)
 
 **`action`**: "평가할 동작(`search`·`read`·`create`·`publish` 등)". `read`는 평가되지

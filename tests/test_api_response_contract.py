@@ -48,6 +48,7 @@ confusing "observed null" with "nothing observed" fails the live-response check.
 from __future__ import annotations
 
 from pathlib import Path
+import re
 import sys
 
 import pytest
@@ -113,11 +114,12 @@ def _violations(value: object, schema: dict, path: str = "$") -> list[str]:
             return [f"{path}: published object, got {type(value).__name__}"]
         if "additionalProperties" in schema:
             # A data-keyed map: every key's value is described by one schema.
-            # The construct exists because four nodes are keyed by data
-            # (``audit/events[].details``, ``/catalog/facets.counts``,
-            # ``dataset_status_counts``, ``/policy/decisions[].obligations``)
-            # and publishing the seed's observed keys as a field list handed a
-            # client a struct where the product returns a map.
+            # The construct exists because five nodes are keyed by data - the
+            # authoritative list is in ``api_response_contract``'s docstring and
+            # ``test_the_data_keyed_nodes_are_the_ones_the_prose_names`` below
+            # holds the two together. Publishing the seed's observed keys as a
+            # field list handed a client a struct where the product returns a
+            # map.
             values = schema["additionalProperties"]
             found = []
             for key, item in value.items():
@@ -485,3 +487,78 @@ def test_nesting_does_not_lose_a_second_observation_either() -> None:
         {"type": "object", "properties": {"outer": _object(a={"type": "string"}, b={"type": "boolean"})}},
     )
     assert merged["properties"]["outer"]["properties"]["b"] == {"type": "boolean"}
+
+
+def _data_keyed_nodes() -> set[str]:
+    """Every published node whose keys are data, read off the schemas."""
+    found: set[str] = set()
+
+    def walk(node: object, path: str) -> None:
+        if not isinstance(node, dict):
+            return
+        if node.get("type") == "object" and "additionalProperties" in node:
+            found.add(path)
+        for name, child in (node.get("properties") or {}).items():
+            walk(child, f"{path}.{name}")
+        if "items" in node:
+            walk(node["items"], f"{path}[]")
+
+    for (_method, path), schema in RESPONSE_SCHEMAS.items():
+        walk(schema, path)
+    return found
+
+
+def test_the_data_keyed_nodes_are_the_ones_the_prose_names() -> None:
+    """The module docstring lists them; a list nobody checks goes stale.
+
+    It did. It said four, named ``/policy/decisions[].obligations`` - which was
+    published as a closed four-key struct, so the rule had never fired on it -
+    and omitted ``/catalog/datasets/{dataset_id}/audit[].details`` altogether.
+    Wrong in both directions at once, with the count wrong to match.
+    """
+    import sdp.api_response_contract as module
+
+    prose = module.__doc__ or ""
+    measured = _data_keyed_nodes()
+    assert len(measured) == 5, sorted(measured)
+
+    # The *enumeration*, not the whole docstring. Matching anywhere in the
+    # prose was too loose: removing a node from the list left it mentioned in
+    # the paragraph below that explains the list, and the mutation came back
+    # green. The sentence runs from "keyed by data" to the first full stop that
+    # ends it, which is where the nodes are enumerated.
+    marker = "nodes are keyed by data"
+    assert marker in prose, prose[:200]
+    enumeration = prose.split(marker, 1)[1].split("The generator tells", 1)[0]
+    listed = set(re.findall(r"``([^`]+)``", enumeration))
+    missing = sorted(node for node in measured if node not in listed)
+    assert not missing, (
+        "these data-keyed nodes are not in the docstring's list, so a client "
+        f"reading it would generate a struct for a map: {missing}"
+    )
+    extra = sorted(name for name in listed if name not in measured)
+    assert not extra, (
+        f"the docstring lists nodes that are not published as maps: {extra}"
+    )
+    assert "**Five**" in prose or f"**{len(measured)}**" in prose, prose[:200]
+
+
+def test_the_obligations_node_is_a_map_because_its_keys_vary() -> None:
+    """A node the product fills from nine keys must not publish four of them.
+
+    What achieves it is the ledger page size in ``REQUIRED_QUERY``: the probe
+    sequence files more than a hundred decisions before this path is read, so
+    the refusal branches' rows were off the end of the default page. Dropping
+    that one query parameter republishes the four-key struct, which is the
+    mutation this assertion answers.
+
+    A helper that deliberately drove those branches was written first and then
+    removed - regenerating with and without it gave byte-identical output. This
+    docstring claimed the helper was what held the property up; it was not, and
+    the mutation that deleted it came back green rather than red.
+    """
+    obligations = RESPONSE_SCHEMAS[("GET", "/policy/decisions")]["items"]["properties"][
+        "obligations"
+    ]
+    assert "additionalProperties" in obligations, obligations
+    assert "properties" not in obligations, obligations

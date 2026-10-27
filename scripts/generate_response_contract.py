@@ -114,6 +114,20 @@ REQUIRED_QUERY = {
         "to_version": "1.0.0",
     },
     "/enterprise/connectors/{connector_id}/probe": {"dataset_id": "crm-customer-master"},
+    # The ledger is newest-first and the default page is 100 rows, and the
+    # probe sequence itself files far more than 100 decisions before this path
+    # is read. So the rows carrying the *refusal* branches' obligations keys -
+    # ``refusal_cause``, ``known_actions``, ``unmapped_published_action``,
+    # ``actor_tenant_id``, ``redact`` - were off the end of the page, and
+    # ``obligations`` was published as a closed four-key struct for a node the
+    # product fills from nine. 500 is the route's own ceiling.
+    #
+    # This one line is the whole repair. A helper that deliberately drove those
+    # branches was written first and removed: regenerating with and without it
+    # produced byte-identical output, because the ordinary probing already
+    # triggers every one of them - they were observed, just not on page one.
+    # A mutation that deleted the helper came back green, which is what said so.
+    "/policy/decisions": {"limit": "500"},
 }
 PROBES: tuple[dict[str, str], ...] = ({}, {"user": "admin"}, {"actor": "admin"})
 

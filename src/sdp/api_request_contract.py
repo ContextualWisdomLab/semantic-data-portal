@@ -178,8 +178,17 @@ REQUEST_BODY_EXTRA_PROPERTIES: dict[tuple[str, str], dict[str, Any]] = {
     ("POST", "/enterprise/auth/oidc-preview"): {
         "actor": {
             "type": "string",
+            # "없으면 anonymous로 취급되어 거부됩니다" was copied from the five
+            # sibling mutation routes, where it is true. It is false here:
+            # measured, a complete claim set answers 200 with or without an
+            # actor, and with ``actor: "anonymous"`` too. The only difference is
+            # ``audit_recorded`` - true for an identified caller, false
+            # otherwise. This route refuses nobody; it declines to file an audit
+            # row for a caller it cannot name.
             "description": (
-                "인가 주체. 없으면 anonymous로 취급되어 거부됩니다. GET 라우트는 같은 주체를 쿼리 "
+                "인가 주체. **이 라우트는 actor로 거부하지 않습니다** — 없거나 anonymous여도 "
+                "미리보기는 200으로 돌아오고, 달라지는 것은 응답의 `audit_recorded`뿐입니다"
+                "(식별된 호출자면 true, 아니면 false). GET 라우트는 같은 주체를 쿼리 "
                 "`?user=`로 받지만 이 라우트는 **본문의 `actor`**로 받습니다 — 이름이 라우트마다 다르므로 "
                 "문서가 말해야 합니다."
             ),

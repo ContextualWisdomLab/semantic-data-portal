@@ -87,30 +87,74 @@ def _key_error_handlers() -> list[ast.ExceptHandler]:
     return handlers
 
 
+def _renders_the_exception(handler: ast.ExceptHandler) -> list[int]:
+    """Lines in this handler that render the caught exception into a string.
+
+    ``str(exc)`` is the form the repair removed, and for a ``KeyError`` it
+    publishes ``repr(args[0])`` - quotes included. It is not the only form that
+    does: ``f"{exc}"``, ``"{}".format(exc)`` and ``"%s" % exc`` all call the
+    same ``__str__``. The first version of this detector matched only the
+    ``str()`` call, so the guard's claim - that the seven latent sites cannot
+    become live - held for one spelling out of four. No handler uses the other
+    three today; measured, which is why this closes a hole in the guard rather
+    than a defect in the product.
+
+    One function rather than one here and a second copy inside the test that
+    checks this one. Two copies of a detector is the drift the rest of this file
+    exists to catch.
+    """
+    name = handler.name
+    if name is None:
+        return []
+    found: list[int] = []
+    for node in ast.walk(handler):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "str"
+            and len(node.args) == 1
+            and isinstance(node.args[0], ast.Name)
+            and node.args[0].id == name
+        ):
+            found.append(node.lineno)
+        elif isinstance(node, ast.JoinedStr):
+            if any(
+                isinstance(part, ast.FormattedValue)
+                and isinstance(part.value, ast.Name)
+                and part.value.id == name
+                for part in node.values
+            ):
+                found.append(node.lineno)
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "format"
+            and any(isinstance(arg, ast.Name) and arg.id == name for arg in node.args)
+        ):
+            found.append(node.lineno)
+        elif (
+            isinstance(node, ast.BinOp)
+            and isinstance(node.op, ast.Mod)
+            and isinstance(node.right, ast.Name)
+            and node.right.id == name
+        ):
+            found.append(node.lineno)
+    return sorted(set(found))
+
+
 def test_no_key_error_arm_publishes_str_of_the_exception() -> None:
     """The construction, so the seven latent sites cannot become live.
 
     ``str(exc)`` is the defect; the message itself is in ``exc.args``. This is
     about the *handlers*, not about which routes happen to be reachable today.
     """
-    offenders = []
-    for handler in _key_error_handlers():
-        if handler.name is None:
-            continue
-        for node in ast.walk(handler):
-            if (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Name)
-                and node.func.id == "str"
-                and len(node.args) == 1
-                and isinstance(node.args[0], ast.Name)
-                and node.args[0].id == handler.name
-            ):
-                offenders.append(node.lineno)
+    offenders = [
+        line for handler in _key_error_handlers() for line in _renders_the_exception(handler)
+    ]
     assert not offenders, (
         "src/sdp/api.py:"
         + ", ".join(str(line) for line in sorted(offenders))
-        + " render a caught KeyError with str(), which publishes "
+        + " render a caught KeyError into a string, which publishes "
         "repr(args[0]) - use the message instead"
     )
 
@@ -122,40 +166,56 @@ def test_the_parser_finds_the_pattern_it_claims_to_find() -> None:
     cannot find any, so the parser is driven over text where the answer is
     known - including two near-misses it must *not* report.
     """
-    found = []
-    tree = ast.parse(
-        "try:\n"
-        "    f()\n"
-        "except KeyError as exc:\n"
-        "    raise HTTPException(status_code=404, detail=str(exc))\n"
-        "try:\n"
-        "    f()\n"
-        "except KeyError as exc:\n"
-        "    raise HTTPException(status_code=404, detail=exc.args[0])\n"
-        "try:\n"
-        "    f()\n"
-        "except ValueError as exc:\n"
-        "    raise HTTPException(status_code=400, detail=str(exc))\n"
+    source = "\n".join(
+        [
+            # Four spellings of the same publication, one per KeyError arm.
+            "try:",
+            "    f()",
+            "except KeyError as exc:",
+            "    raise HTTPException(status_code=404, detail=str(exc))",
+            "try:",
+            "    f()",
+            "except KeyError as exc:",
+            '    raise HTTPException(status_code=404, detail=f"{exc}")',
+            "try:",
+            "    f()",
+            "except KeyError as exc:",
+            '    raise HTTPException(status_code=404, detail="{}".format(exc))',
+            "try:",
+            "    f()",
+            "except KeyError as exc:",
+            '    raise HTTPException(status_code=404, detail="%s" % exc)',
+            # Near-misses that must NOT be reported.
+            "try:",
+            "    f()",
+            "except KeyError as exc:",
+            "    raise HTTPException(status_code=404, detail=exc.args[0])",
+            "try:",
+            "    f()",
+            "except KeyError as exc:",
+            '    raise HTTPException(status_code=404, detail="dataset not found")',
+            "try:",
+            "    f()",
+            "except KeyError as exc:",
+            '    raise HTTPException(status_code=404, detail=f"{other}")',
+            "try:",
+            "    f()",
+            "except ValueError as exc:",
+            "    raise HTTPException(status_code=400, detail=str(exc))",
+            "",
+        ]
     )
-    for handler in ast.walk(tree):
-        if not (
-            isinstance(handler, ast.ExceptHandler)
-            and isinstance(handler.type, ast.Name)
-            and handler.type.id == "KeyError"
-            and handler.name is not None
-        ):
-            continue
-        for node in ast.walk(handler):
-            if (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Name)
-                and node.func.id == "str"
-                and len(node.args) == 1
-                and isinstance(node.args[0], ast.Name)
-                and node.args[0].id == handler.name
-            ):
-                found.append(node.lineno)
-    assert found == [4], found
+    tree = ast.parse(source)
+    found = [
+        line
+        for handler in ast.walk(tree)
+        if isinstance(handler, ast.ExceptHandler)
+        and isinstance(handler.type, ast.Name)
+        and handler.type.id == "KeyError"
+        for line in _renders_the_exception(handler)
+    ]
+    # Lines 4, 8, 12 and 16 are the four spellings; nothing else.
+    assert found == [4, 8, 12, 16], found
 
 
 @pytest.mark.parametrize(

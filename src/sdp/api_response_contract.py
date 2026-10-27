@@ -54,12 +54,29 @@ Derivation rules, chosen so a published schema cannot over-claim:
   than ``properties``. ``counts`` on ``/catalog/facets`` was published as five
   properties named after the seed's Korean domain values, so a client generated
   from the document got a five-field struct for a map and any catalog but the
-  demo seed broke it. Four nodes are keyed by data: that one,
-  ``audit/events[].details``, ``dataset_status_counts`` and
+  demo seed broke it. **Five** nodes are keyed by data, each named here the way
+  the schemas address it so the list can be checked rather than read:
+  ``/catalog/facets.counts``,
+  ``/audit/events[].details``, ``/catalog/datasets/{dataset_id}/audit[].details``,
+  ``/enterprise/steward-review.dataset_status_counts`` and
   ``/policy/decisions[].obligations``. The generator tells a map from a field
   list by probing a **second catalog state** - a key the other state has and
   this one does not is data, while a merely absent key is not, because nothing
   is published as required.
+
+  This list was wrong in both directions and the count was wrong with it. It
+  said four, omitted ``/catalog/datasets/{dataset_id}/audit[].details``
+  entirely, and named ``/policy/decisions[].obligations`` while the generator
+  had in fact published that node as a closed four-key struct - the rule had
+  never fired on it, because the ordinary probes only ever produce
+  ``masking``/``masking_rules``/``required_role``/``tenant_id`` and the product
+  sets at least five more keys on refusal branches no probe reached
+  (``refusal_cause``, ``known_actions``, ``unmapped_published_action``,
+  ``actor_tenant_id``, ``redact``). ``exercise_decision_branches`` in the
+  generator drives those branches now, so the classification is observed rather
+  than asserted. ``tests/test_api_response_contract.py`` derives this set from
+  the schemas and compares it to this paragraph, so a sixth node cannot arrive
+  without the sentence changing.
 * every path placeholder is probed with **several values**, unioned, and the
   connector and dataset ids come from the product rather than a list here. A
   schema derived from one of several shapes is the same drift: the probe route
@@ -1250,13 +1267,7 @@ RESPONSE_SCHEMAS: dict[tuple[str, str], dict[str, Any]] = {
                                   'action': {'type': 'string'},
                                   'effect': {'type': 'string'},
                                   'decision_id': {'type': 'string'},
-                                  'obligations': {'type': 'object',
-                                                  'properties': {'masking': {'type': 'array',
-                                                                             'items': {}},
-                                                                 'tenant_id': {'type': 'string'},
-                                                                 'required_role': {'type': 'string'},
-                                                                 'masking_rules': {'type': 'array',
-                                                                                   'items': {}}}},
+                                  'obligations': {'type': 'object', 'additionalProperties': {}},
                                   'reason': {'type': 'string'}}}},
 }
 

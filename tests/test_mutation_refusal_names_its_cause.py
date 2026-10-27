@@ -18,10 +18,24 @@ attempts in this repository's own session log.
 The 404 is deliberate and its reason is recorded in ``api.py``: a *foreign*
 dataset must be indistinguishable from an absent one, and an earlier version
 leaked that difference through the reason string while both answered 403. That
-property is kept here. It just does not need the unauthenticated case: a
-subject with no resolvable tenant is refused by the role check, which never
-consults the dataset, so the answer cannot vary with the dataset either way.
-Both designs are oracle-free; only one of them is true.
+property is kept here. The reason the unauthenticated case does not need it is
+**not** the one this docstring used to give. It said "a subject with no
+resolvable tenant is refused by the role check, which never consults the
+dataset, so the answer cannot vary with the dataset either way" - and that was
+measured false while this file was being written, which is why
+``_catalog_mutation_refusal`` evaluates ``resource="catalog"`` instead of the
+dataset id::
+
+    evaluate("anonymous", "crm-customer-master", "publish")
+      -> deny "tenant boundary denied"
+    evaluate("anonymous", "no-such-dataset",     "publish")
+      -> deny "존재하지 않는 데이터셋입니다."
+
+The engine *does* consult the dataset for a scope-less subject, and its reason
+varies with whether the id exists. The route is oracle-free because it asks a
+question that cannot depend on the dataset, not because the engine would have
+been safe to ask. Crediting the engine with a property it does not have is how
+the next reader concludes the dataset-scoped call is fine to reintroduce.
 
 So: an unauthenticated mutation gets the authorization reason, an authenticated
 caller who cannot reach the dataset's tenant keeps the 404, and the

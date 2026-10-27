@@ -619,8 +619,17 @@ def draft_sql(req: QueryDraftRequest) -> dict:
         where_clause = (
             f"WHERE {_safe_identifier(window_column)} >= current_date - {req.date_window_days}"
         )
-    # Relational SQL is drafted only for a relational source. Measured over the
-    # seed catalogue, this function emitted PostgreSQL for all five datasets and
+    # The source's kind is published, not used to withhold the draft. An
+    # earlier version of this comment claimed "relational SQL is drafted only
+    # for a relational source", which is false of the code directly below it:
+    # measured, this function still emits PostgreSQL for all five seed datasets,
+    # three of which classify as ``file_lake``, ``rdf`` and ``api``. What
+    # changed is that the response now carries ``source_kind`` and
+    # ``executable_against_source: false`` for those three instead of asserting
+    # the catalog had verified the table. The repair was disclosure, not
+    # refusal, and the comment should say which.
+    #
+    # Measured over the seed catalogue, this function emitted PostgreSQL for all five datasets and
     # three of them are not relational at all - the "table" was an S3 prefix
     # (``s3://analytics/events/crm`` -> ``FROM crm``), a SPARQL named graph
     # (``sparql://semantic.graph/customer-intelligence`` ->
