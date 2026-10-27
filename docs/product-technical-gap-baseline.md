@@ -3704,6 +3704,54 @@ counts: {'고객': number, '고객행동': number, '매출': number, '온톨로�
 
 이 절은 측정 기록이고 병합 허가가 아닙니다.
 
+## 드래프트가 **고쳐 쓴** 테이블 이름을 "카탈로그가 선언한 relation"이라고 공표했습니다 (2026-10-27 03:45Z)
+
+`source_relation_name`이 선언 이름을 `_safe_identifier`로 통과시켰고, 드래프트는 그 고쳐 쓴
+이름을 `assumptions`·`execution_caveat`에서 "카탈로그에 선언된 relation"이라고 공표했습니다.
+
+    선언 analytics.sales_order  ->  FROM analytics_sales_order
+    선언 "sales order"          ->  FROM sales_20order   (%20이 남은 뒤 % -> _)
+
+둘 다 `executable_against_source: true`, `emitted_identifiers: {}`. 같은 응답의 **컬럼
+경로는 같은 rewrite를 공개합니다.** 한 응답 안에 같은 rewrite에 대한 반대의 정직성이
+있었습니다. 그리고 고쳐 쓴 relation 이름은 이 함수가 고치려고 존재하는 결함입니다.
+
+### 고친 방식: 고쳐 쓰지 않고 거절
+
+URL 디코드 후, 점으로 구분된 평범한 식별자 1~3개일 때만 **적힌 대로** 반환합니다. 아니면
+`None` — locator 이름과 "파생, 선언 아님" caveat. 수식된 이름을 emit할 수 있는 이유는
+allow-list가 raw 비교로 바뀌었기 때문입니다(같은 라운드의 선행 항목).
+
+### 테스트가 rewrite를 "측정한 대로" 적어 두고 있었습니다
+
+`("table$x", "table_x")`에 "Asserted as measured"라고 달려 있었습니다. 측정해서 적어 둔 것과
+받아들인 것은 다릅니다. 측정 기록이 결함 승인으로 굳는 경로가 이것입니다.
+
+### 수리가 거짓 주장을 다른 거짓 주장으로 바꾸지 않도록
+
+`None`의 원인이 둘인데 caveat은 "distribution을 선언하지 않았으므로" 하나만 말했습니다.
+`sales order`를 선언한 데이터셋에는 거짓이고, 운영자를 없는 distribution을 찾으러
+보냅니다. 두 원인을 분리했습니다.
+
+### 변이 둘이 green으로 돌아왔습니다 (그리고 왜)
+
+* URL 디코드 제거 → green. `sales%20order`는 디코드와 무관하게 거절되므로 그 케이스는
+  디코드를 **증명하지 않습니다.** 가르는 케이스는 `%5F`(디코드하면 `sales_order`).
+* caveat 분기를 `False`로 → green. 이름이 caveat 테스트인데 헬퍼만 보고 문장을 보지
+  않았습니다. 응답에서 문장을 읽도록 고쳤습니다.
+
+둘 다 "선언을 보고 효과를 보지 않는 가드"의 같은 형태입니다. 이 라운드에서 같은 형태가
+여섯 번 나왔습니다.
+
+### 닫지 않은 것
+
+컬럼 쪽 rewrite는 그대로입니다 — 선언 컬럼 `order amount`가 `order_amount`로 emit되고,
+`emitted_identifiers`에 공개되긴 하지만 거절되지는 않습니다. 테이블 쪽과 같은 규칙(고쳐
+쓰지 않고 거절)을 적용할지는 별도 항목입니다. 그리고 수식된 relation을 emit하게 된 것은
+allow-list의 raw 비교에 의존하므로, 그 둘은 이제 한 쌍으로 유지해야 합니다.
+
+이 절은 측정 기록이고 병합 허가가 아닙니다.
+
 ## 생성기가 **두 번째 관찰만 가진 필드의 타입을 버려** 34개 노드를 "any"로 공표했습니다 (2026-10-27 03:30Z)
 
 `scripts/generate_response_contract.py`의 `union`이 docstring에서 `None`("아직 관찰 없음")과

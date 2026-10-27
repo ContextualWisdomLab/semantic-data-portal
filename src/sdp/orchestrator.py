@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import re
+from urllib.parse import unquote
 from typing import Any
 from datetime import datetime, timezone
 from sdp_core.demo_seed import classify_source_type
@@ -229,17 +230,75 @@ def source_relation_name(dataset: Any) -> str | None:
     ``unauthorized_table_reference``, which is a security-shaped reason for a
     naming problem. Returning ``None`` instead keeps the locator name and the
     "derived, not declared" caveat, which is both true and diagnosable.
+
+    **The declared name is never rewritten.** It used to be pushed through
+    ``_safe_identifier`` first, and the draft then published the *rewritten*
+    name while claiming, in its ``assumptions`` and its ``execution_caveat``,
+    that it "is the relation declared in the catalog's postgresql.table
+    distribution". Measured on synthetic declarations::
+
+        declared analytics.sales_order  ->  FROM analytics_sales_order
+        declared "sales order"          ->  FROM sales_20order
+
+    The second is the URL escape ``%20`` surviving into the name after ``%``
+    became ``_``. Both were published with ``executable_against_source: true``
+    and an empty ``emitted_identifiers`` - no disclosure at all - while the
+    column path discloses the very same kind of rewrite in
+    ``emitted_identifiers`` plus a caveat. Same rewrite, opposite honesty, in
+    one response. And a rewritten relation name is the defect this function was
+    written to fix: a name that is not the one the catalog declared.
+
+    So the segment is URL-decoded and accepted **as written** when it is a
+    usable reference - one to three dot-separated parts, each a plain SQL
+    identifier - and declined otherwise. A qualified name is emittable because
+    the allow-list compares references raw, so ``FROM analytics.sales_order``
+    against the declared ``analytics.sales_order`` matches; nothing is quoted,
+    and no part can carry a metacharacter.
     """
     for distribution in getattr(dataset, "distributions", ()) or ():
         if str(distribution.format) != f"{DRAFT_SQL_DIALECT}.table":
             continue
-        segment = str(distribution.endpoint).rstrip("/").rsplit("/", 1)[-1]
+        segment = unquote(str(distribution.endpoint).rstrip("/").rsplit("/", 1)[-1])
         if not segment:
             continue
-        relation = _safe_identifier(segment)
-        if _reads_back_as_one_table(relation):
-            return relation
+        if _is_emittable_relation(segment) and _reads_back_as_one_table(segment):
+            return segment
     return None
+
+
+# One to three dot-separated plain identifiers: table, schema.table,
+# database.schema.table. Deliberately not a sanitiser - a declaration that does
+# not match is declined, not rewritten.
+_RELATION_PART = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_MAX_RELATION_PARTS = 3
+
+
+def _is_emittable_relation(name: str) -> bool:
+    """Whether this declared name can be emitted into SQL exactly as written."""
+    parts = name.split(".")
+    if not 1 <= len(parts) <= _MAX_RELATION_PARTS:
+        return False
+    return all(_RELATION_PART.match(part) for part in parts)
+
+
+def declares_relational_distribution(dataset: Any) -> bool:
+    """Whether the dataset declares a relation at all, emittable or not.
+
+    ``source_relation_name`` returning ``None`` has two different causes and
+    the draft's caveat used to state only one of them: "this dataset declares
+    no postgresql.table distribution, so the catalog has no relation name to
+    give". That is true for the three seed datasets declaring ``parquet``,
+    ``sparql.graph`` and ``rest.json``. It is **false** for a dataset that
+    declares a relation whose name cannot be emitted as written - the catalog
+    does have a name, and the reason the draft is not using it is the name
+    itself. Telling an operator "you declared nothing" when they declared
+    ``sales order`` sends them to the wrong place.
+    """
+    return any(
+        str(distribution.format) == f"{DRAFT_SQL_DIALECT}.table"
+        and unquote(str(distribution.endpoint).rstrip("/").rsplit("/", 1)[-1])
+        for distribution in getattr(dataset, "distributions", ()) or ()
+    )
 
 
 def _reads_back_as_one_table(name: str) -> bool:
@@ -666,6 +725,18 @@ def draft_sql(req: QueryDraftRequest) -> dict:
             f"source_kind={source_kind}. 테이블 이름 {declared_relation}은(는) "
             f"카탈로그의 {DRAFT_SQL_DIALECT}.table distribution에 선언된 relation "
             "입니다. 권한·스키마 경로는 대상 시스템 쪽 설정을 따릅니다."
+        )
+    elif declares_relational_distribution(dataset):
+        # The declaration exists; its *name* is the problem. Saying "you
+        # declared nothing" here would send an operator who declared
+        # ``sales order`` to look for a missing distribution.
+        execution_caveat = (
+            f"source_kind={source_kind}. 이 draft의 테이블 이름은 연결 locator에서 "
+            "파생된 것이므로 대상 시스템의 relation 이름과 다를 수 있습니다. 이 "
+            f"데이터셋은 {DRAFT_SQL_DIALECT}.table distribution을 선언했지만, 선언된 "
+            "이름이 SQL 식별자(또는 점으로 구분된 식별자 1~3개)가 아니어서 적힌 대로 "
+            "emit할 수 없습니다. 이름을 고쳐 쓰지 않고 거절합니다 — 고쳐 쓰면 카탈로그가 "
+            "선언하지 않은 relation을 선언된 것처럼 공표하게 됩니다."
         )
     else:
         execution_caveat = (

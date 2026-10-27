@@ -44,6 +44,7 @@ from sdp.catalog import get_dataset, list_datasets  # noqa: E402
 from sdp.orchestrator import (  # noqa: E402
     DRAFT_SQL_DIALECT,
     source_relation_name,
+    declares_relational_distribution,
     validate_sql_query,
 )
 
@@ -202,11 +203,33 @@ def test_a_dataset_with_no_declared_relation_still_says_so(dataset_id: str) -> N
         ("crm_customer_master", "crm_customer_master"),
         ("_private_table", "_private_table"),
         # Sanitised, not rejected: ``$`` is a legal continuation character in
-        # PostgreSQL and in this module's token, but ``_safe_identifier`` maps
-        # every non-alphanumeric byte to ``_``, so the declaration resolves to
-        # ``table_x``. Asserted as measured - a declared name is not emitted
-        # verbatim, and a reader of this file should see that.
-        ("table$x", "table_x"),
+        # PostgreSQL and in this module's token, but it is not a plain
+        # identifier, so it is declined rather than rewritten.
+        #
+        # This case used to assert ``("table$x", "table_x")`` - the rewrite,
+        # "asserted as measured". Recording a rewrite as expected was the
+        # mistake: the draft published the rewritten name while claiming in its
+        # assumptions and caveat that it *is* the relation the catalog declared,
+        # with nothing in ``emitted_identifiers``. A name that is not the
+        # declared one is the defect this resolver exists to fix, so measuring
+        # the rewrite and writing it down is not the same as accepting it.
+        ("table$x", None),
+        # The URL escape, which is how a space actually arrives. Undecoded,
+        # ``%`` became ``_`` and the draft emitted ``sales_20order`` - a
+        # fragment of the encoding, published as the declared relation.
+        ("sales%20order", None),
+        ("sales order", None),
+        # Quoting and termination characters, declined rather than scrubbed.
+        ("orders;drop", None),
+        ("orders'x", None),
+        ('orders"x', None),
+        ("orders-2024", None),
+        # Too many parts to be a relation reference.
+        ("a.b.c.d", None),
+        # Empty parts are not identifiers.
+        (".orders", None),
+        ("orders.", None),
+        ("a..b", None),
         # A leading digit is not an identifier. ``_safe_identifier`` returns
         # these unchanged, so a declaration carrying one used to be emitted and
         # then refused by the draft's own allow-list as
@@ -302,3 +325,189 @@ def test_one_resolver_serves_the_draft_and_the_gate() -> None:
         assert "warnings" not in body, body.get("warnings")
     finally:
         orchestrator.source_relation_name = original
+
+
+# ---------------------------------------------------------------------------
+# A qualified declaration is emittable, and nothing is rewritten on the way.
+#
+# The allow-list compares references raw (see
+# ``tests/test_table_allow_list_compares_raw.py``), so ``FROM
+# analytics.sales_order`` against the declared ``analytics.sales_order``
+# matches. That is what makes emitting the declared name verbatim possible
+# rather than having to choose between a rewrite and a refusal.
+# ---------------------------------------------------------------------------
+
+QUALIFIED = "analytics.sales_order"
+
+
+@pytest.mark.parametrize(
+    "declared",
+    [
+        "orders",
+        QUALIFIED,
+        "warehouse.analytics.sales_order",
+        "_private_orders",
+        "Orders2024",
+    ],
+    ids=["bare", "schema_qualified", "three_part", "leading_underscore", "mixed_case"],
+)
+def test_an_emittable_declaration_is_returned_exactly_as_written(declared: str) -> None:
+    """No rewriting: resolution either returns the declared string or ``None``."""
+    resolved = source_relation_name(
+        _dataset_double(f"{DRAFT_SQL_DIALECT}.table", declared)
+    )
+    assert resolved == declared, resolved
+
+
+def test_the_gate_accepts_a_qualified_declaration_naming_itself() -> None:
+    """Emitting a qualified name is only honest if the allow-list takes it."""
+    assert validate_sql_query(
+        f"select count(*) from {QUALIFIED} limit 1",
+        source_system="postgresql://analytics.dw/orders",
+        declared_relation=QUALIFIED,
+    ) == []
+
+
+def test_the_gate_still_refuses_a_different_qualification() -> None:
+    """Accepting the declared qualified name must not accept any qualified name."""
+    warnings = validate_sql_query(
+        f"select count(*) from other.{QUALIFIED.split('.')[1]} limit 1",
+        source_system="postgresql://analytics.dw/orders",
+        declared_relation=QUALIFIED,
+    )
+    assert "unauthorized_table_reference" in warnings, warnings
+
+
+@pytest.mark.parametrize(
+    "declared",
+    ["table$x", "sales%20order", "orders;drop", "orders'x", "0abc", "a.b.c.d"],
+)
+def test_a_declined_declaration_is_never_published_as_the_declared_relation(
+    declared: str,
+) -> None:
+    """The honesty property, stated over the resolver rather than one example.
+
+    Whatever the draft ends up naming, it must not be a *rewrite* of the
+    declared name presented as the declared name. Resolution returning ``None``
+    is what routes the caller to the locator-derived name and the
+    "derived, not declared" caveat.
+    """
+    resolved = source_relation_name(
+        _dataset_double(f"{DRAFT_SQL_DIALECT}.table", declared)
+    )
+    assert resolved is None, (
+        f"{declared!r} resolved to {resolved!r}, which the draft would publish "
+        "as the relation the catalog declares"
+    )
+
+
+def test_an_escape_that_decodes_to_an_identifier_resolves_to_the_decoded_name() -> None:
+    """The URL decode has to change an outcome, or it is not being tested.
+
+    ``sales%20order`` is declined with or without decoding - ``%`` is not in
+    the identifier pattern either way - so listing it among the declined cases
+    proves nothing about the decode. Removing ``unquote`` left every assertion
+    in this file green. ``%5F`` is the case that separates them: the declared
+    relation *is* ``sales_order``, and only a decoding resolver can say so.
+    """
+    resolved = source_relation_name(
+        _dataset_double(f"{DRAFT_SQL_DIALECT}.table", "sales%5Forder")
+    )
+    assert resolved == "sales_order", resolved
+
+
+def _onboard_published(dataset_id: str, declared_format: str, relation: str) -> None:
+    """Create and publish a dataset declaring exactly this distribution."""
+    created = client.post(
+        "/catalog/datasets",
+        json={
+            "id": dataset_id,
+            "title": "caveat fixture",
+            "description": "a declaration whose name cannot be emitted",
+            "owner": "owner-team",
+            "steward": "steward-team",
+            "domain": "고객",
+            "tenant_id": "demo",
+            "source_system": "postgresql://analytics.dw/orders",
+            "sensitivity": "low",
+            "update_frequency": "daily",
+            "quality_score": 0.9,
+            "freshness_score": 0.9,
+            "schema": [
+                {
+                    "name": "order_id",
+                    "datatype": "string",
+                    "description": "order identifier",
+                    "pii": False,
+                    "nullable_ratio": 0.0,
+                    "distinct_ratio": 1.0,
+                    "classification": [],
+                }
+            ],
+            "distributions": [
+                {
+                    "id": "declared_table",
+                    "format": declared_format,
+                    "endpoint": f"https://example.internal/api/table/{relation}",
+                }
+            ],
+            "actor": "admin",
+        },
+    )
+    assert created.status_code == 200, created.text
+    published = client.post(
+        f"/catalog/datasets/{dataset_id}/publish", json={"actor": "admin"}
+    )
+    assert published.status_code == 200, published.text
+
+
+def test_the_caveat_distinguishes_no_declaration_from_an_unusable_one() -> None:
+    """``None`` has two causes and the caveat used to state only one.
+
+    "this dataset declares no postgresql.table distribution, so the catalog has
+    no relation name to give" is true of the three seed datasets that declare
+    ``parquet``, ``sparql.graph`` and ``rest.json``. It is false of a dataset
+    that declares ``sales order`` - the catalog *does* have a name, and the
+    reason it is not used is the name. Repairing the rewrite without repairing
+    this would trade one false claim for another.
+
+    The first version of this test asserted ``declares_relational_distribution``
+    and ``source_relation_name`` and called itself a caveat test. Replacing the
+    caveat branch's condition with ``False`` left it green: it checked the
+    helper, not the sentence the helper exists to choose. So the sentence is
+    read here, out of the drafted response.
+    """
+    unusable = _dataset_double(f"{DRAFT_SQL_DIALECT}.table", "sales%20order")
+    absent = _dataset_double("parquet", "whatever")
+    assert source_relation_name(unusable) is None
+    assert source_relation_name(absent) is None
+    assert declares_relational_distribution(unusable) is True
+    assert declares_relational_distribution(absent) is False
+
+    _onboard_published("caveat-unusable-name", f"{DRAFT_SQL_DIALECT}.table", "sales%20order")
+    caveat = _draft("caveat-unusable-name")["execution_caveat"]
+    assert "선언했지만" in caveat, caveat
+    assert "선언하지 않았으므로" not in caveat, (
+        "the caveat tells an operator who declared a relation that they "
+        f"declared none: {caveat}"
+    )
+
+    for undeclared in UNDECLARED:
+        other = _draft(undeclared)["execution_caveat"]
+        assert "선언하지 않았으므로" in other, (undeclared, other)
+        assert "선언했지만" not in other, (undeclared, other)
+
+
+def test_the_resolver_has_no_sanitiser_on_its_path() -> None:
+    """Structural, because the behavioural guards above cannot see a near-miss.
+
+    A sanitiser reintroduced here would pass every case that happens to be
+    idempotent under it and fail only the ones this file lists. The rule is
+    that the declared segment reaches the return unmodified except for URL
+    decoding, so ``_safe_identifier`` must not appear in this function.
+    """
+    import inspect
+
+    source = inspect.getsource(source_relation_name)
+    body = source.split('"""', 2)[-1]
+    assert "_safe_identifier" not in body, body
