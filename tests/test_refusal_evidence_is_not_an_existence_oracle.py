@@ -54,6 +54,22 @@ rows above are that order; the five leaking ones are the other one.
 
 The HTTP channel is unchanged. What changes is which scope the evidence lands
 in - the owning tenant's auditor still sees attempts on its own assets.
+
+One sentence above was overstated until later measurement. ``browse``'s three
+rows read ``0/0`` here, and this file credited that to "the working order".
+``schema`` was clean for a different reason: it filed **nothing** for an absent
+id, which keeps this ledger quiet and leaves a louder channel open. The
+unauthenticated global gauges on ``GET /metrics`` moved ``+1/+1`` for a foreign
+id and ``+0/+0`` for an absent one, so a caller with no credential at all could
+read the answer off the counters - see
+``test_counter_surfaces_are_not_an_existence_oracle.py``. ``schema`` now files
+through ``evaluate_dataset_scope_refusal`` like its siblings, and the claim
+above is earned rather than coincidental.
+
+The two guards are not redundant, and each catches what the other misses:
+filing nothing reddens only the counter sweep, while filing through the generic
+``evaluate`` - into the prober's own scope - reddens only this file. Closing one
+channel by opening the other would pass either guard alone.
 """
 
 from __future__ import annotations

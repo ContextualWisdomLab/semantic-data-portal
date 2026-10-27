@@ -279,6 +279,37 @@ def _refuse(user: str, dataset: Dataset, decision: Any) -> None:
 def schema(dataset_id: str, user: str, purpose: str = "analysis") -> Dict[str, Any]:
     dataset = get_dataset(dataset_id)
     if not dataset:
+        # The absent-id refusal is filed, like every sibling route's. Raising
+        # ``KeyError`` here without filing left this route the only
+        # dataset-scoped surface whose evidence differs between "not yours" and
+        # "does not exist", and the difference is published **without a
+        # credential**: ``GET /metrics`` carries the global
+        # ``sdp_audit_events_observed_total`` and
+        # ``sdp_policy_decisions_observed_total`` gauges, so reading them,
+        # calling this route with a candidate id and reading them again answered
+        # the question the identical 404 exists to refuse. Measured, both
+        # answering 404::
+        #
+        #     GET /browse/{id}/schema    foreign +1/+1    absent +0/+0
+        #     POST /browse/{id}/preview  foreign +1/+1    absent +1/+1
+        #
+        # ``evaluate_dataset_scope_refusal`` is what keeps filing from becoming
+        # the leak itself: it files to the owning tenant or the reserved
+        # ``unresolved`` scope, never to the prober's, so the owning tenant's
+        # auditor still sees attempts on its own assets while the prober's own
+        # ledger learns nothing. The earlier existence-oracle guard measured
+        # that tenant-scoped ledger and read 0/0 here, correctly - its premise
+        # was a channel that needs a credential, and this one needs none.
+        refusal = evaluate_dataset_scope_refusal(user, dataset_id)
+        ingest_event(
+            event_type="browse.schema",
+            actor=user,
+            dataset_id=dataset_id,
+            decision="denied",
+            reason="dataset_not_found",
+            decision_id=refusal.decision_id,
+            details={"policy_decision_id": refusal.decision_id},
+        )
         raise KeyError("dataset not found")
 
     decision = evaluate(subject=user, resource=dataset_id, action="schema", purpose=purpose)
