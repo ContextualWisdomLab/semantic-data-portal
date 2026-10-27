@@ -3769,6 +3769,36 @@ counts: {'고객': number, '고객행동': number, '매출': number, '온톨로�
 
 이 절은 측정 기록이고 병합 허가가 아닙니다.
 
+## manifest 둘이 운영자에게 제품이 하지 않는 일을 말했습니다 (2026-10-27 23:50Z)
+
+```
+1) vault의 규칙 있는 변수 둘을 거부되는 값으로:
+   rejected_environment {두 변수 모두 거부} · missing_environment {}
+   configured_integrations ['connector_credential_vault']      <- configured
+   unconfigured_integrations ['connector_credential_vault', …] <- 그리고 unconfigured
+   (두 줄 위 주석: "An integration configured with a value the code refuses is not configured")
+2) SDP_SQLITE_PATH 설정 상태에서
+   probe_semantics["/healthz"] = "reports the active store … Wire monitoring here."
+   GET /healthz -> {"ready": true, "backend": "in_memory", …}  payload에 "evidence" 없음
+   (/healthz 자기 docstring은 "graph-engine backend availability"라고 더 좁게 적습니다)
+```
+
+**수리:** ① `configured_integrations`는 `unconfigured`의 여집합. ② probe 설명이 자기가 읽는
+것을 이름 짓고, manifest가 `evidence_store`(`selected_by`·`backend`·
+`readiness_probe_covers_it: false`)를 공표합니다. 선택 순서는 `sdp.evidence`에서 읽습니다.
+
+변이 다섯 중 M5가 처음 green — 첫 가드가 `selected_by`의 소속만 단언했고 테스트 환경은 셋 중
+아무것도 설정하지 않아 Postgres 분기를 없애도 통과했습니다. 모듈의 교체 seam으로 세 분기를
+모두 몰아 red로 만들었습니다.
+
+### 닫지 않은 것
+
+증빙 스토어 readiness probe는 만들지 않았습니다 — store protocol에 readiness 메서드가 없고
+추가하면 구현 둘과 실행 불가능한 Postgres 경로를 건드립니다. `readiness_probe_covers_it: false`가
+그 사실을 말합니다.
+
+이 절은 측정 기록이고 병합 허가가 아닙니다.
+
 ## 공표된 걸음의 주장 셋을 제품이 반박합니다 (2026-10-27 23:05Z)
 
 ```

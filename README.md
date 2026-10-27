@@ -613,7 +613,15 @@ SDP_CONNECTOR_TIMEOUT_MS='2s'          gate 통과, probe 라우트 400
 - `GET /enterprise/kpis` — KPI별 `status`(feature 출시 여부)와 `measured`(숫자를 계산하는지)를 따로 공표. `measured: false`인데 `status: implemented`이고 target이 숫자면 `measurement_gap` 필수
 - `GET /enterprise/controls`
 - `GET /enterprise/rbac-matrix`
-- `GET /enterprise/observability`
+- `GET /enterprise/observability` — `evidence_store`로 **이 배포가 실제로 쓰고 있는
+  원장**을 공표한다(`selected_by`: `SDP_DATABASE_URL`·`SDP_SQLITE_PATH`·
+  `process_memory_fallback` 중 하나, `backend`, 그리고 `readiness_probe_covers_it: false`).
+  `probe_semantics`의 `/healthz` 설명은 한동안 "reports **the active store**"라고 적었는데
+  `/healthz`는 **그래프 스토어만** 읽는다 — `SDP_SQLITE_PATH`를 설정한 배포에서
+  `backend: in_memory`(그래프 쪽)를 답하고 payload에 "evidence"라는 단어가 없다.
+  모니터링을 그곳에 걸라고 안내받은 운영자가 증빙 원장의 가용성을 보고 있다고 오해할 수
+  있었다. 증빙 스토어에 대한 readiness probe는 **아직 없고** 그 사실을
+  `readiness_probe_covers_it`이 말한다
 - `GET /enterprise/latency-budgets`
 - `GET /enterprise/production-readiness`
 - `GET /enterprise/evidence-pack`

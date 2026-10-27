@@ -489,8 +489,17 @@ def enterprise_production_readiness_manifest(
         integrations=integrations,
         demo_blockers=[],
         paid_pilot_blockers=paid_pilot_blockers,
+        # The complement of ``unconfigured``, not of ``missing_environment``
+        # alone. Built from the narrower set, this field published an
+        # integration whose values the same payload *rejects* as configured, so
+        # one response asserted both - measured with the vault's two
+        # rule-bearing variables set to refused values:
+        # ``configured_integrations ['connector_credential_vault']`` beside
+        # ``unconfigured_integrations ['connector_credential_vault', ...]`` and
+        # the same id in ``paid_pilot_blockers``. The comment above
+        # ``unconfigured`` already stated the rule this field was breaking.
         configured_integrations=[
-            item.id for item in integrations if item.id not in missing_environment
+            item.id for item in integrations if item.id not in set(unconfigured)
         ],
         unconfigured_integrations=unconfigured,
         missing_environment=missing_environment,

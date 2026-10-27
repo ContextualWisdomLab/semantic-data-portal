@@ -983,6 +983,43 @@ def _redacted_sink_target(parsed: Any) -> str:
     return _authority(host, port)
 
 
+def _evidence_store_identity() -> dict[str, Any]:
+    """Which evidence ledger this deployment is writing to, and who checks it.
+
+    ``/healthz`` reads the graph store and nothing else, so an operator who
+    wired monitoring there - which ``probe_semantics`` told them to do, calling
+    it "the active store" - could not learn that the ledger carrying this
+    product's auditability claim is somewhere the probe never looks. The
+    precedence here is read from ``sdp.evidence`` rather than restated, so the
+    two cannot drift: ``SDP_DATABASE_URL`` wins, then ``SDP_SQLITE_PATH``, then
+    the bounded in-process fallback.
+
+    ``readiness_probe_covers_it`` is ``False`` and stays that way until a probe
+    exists: the store protocol has no readiness method, and adding one touches
+    both implementations plus a Postgres path this repository cannot exercise.
+    A declared gap, not a silent one.
+    """
+    from . import evidence
+
+    store = evidence._STORE
+    if store is None:
+        selected_by = "process_memory_fallback"
+        backend = "in_memory_bounded_lists"
+    elif type(store).__name__ == "PostgresEvidenceStore":
+        selected_by = "SDP_DATABASE_URL"
+        backend = "postgres"
+    else:
+        selected_by = "SDP_SQLITE_PATH"
+        backend = "sqlite"
+    return {
+        "selected_by": selected_by,
+        "backend": backend,
+        # The probe the manifest points monitoring at does not read this store.
+        "readiness_probe_covers_it": False,
+        "readiness_probe": "/healthz covers the graph store only",
+    }
+
+
 def _sink_status() -> dict[str, Any]:
     sink_url = os.getenv("SDP_LOG_SINK_URL", "").strip()
     alert_webhook_url = os.getenv("SDP_ALERT_WEBHOOK_URL", "").strip()
@@ -1365,11 +1402,31 @@ def build_observability_manifest() -> dict[str, Any]:
         "readiness_endpoint": "/healthz",
         "probe_semantics": {
             "/health": "liveness; returns a constant and consults nothing",
+            # "the active store" read as *the* store. This product has two that
+            # matter and the probe reads one: ``/healthz`` consults
+            # ``graph_store.get_store()`` only, and its own docstring says so
+            # ("Readiness probe verifying graph-engine backend availability").
+            # Measured with ``SDP_SQLITE_PATH`` set, so the evidence ledger is on
+            # SQLite: ``/healthz`` answers ``{"ready": true, "backend":
+            # "in_memory", ...}`` and the word "evidence" appears nowhere in its
+            # payload - so an operator who wires monitoring here reads
+            # ``in_memory`` while the ledger carrying this product's
+            # auditability claim is somewhere else. The evidence store's
+            # identity is published under ``evidence_store`` below, which is
+            # what that operator needed; a readiness probe *over* it is a
+            # separate change and ``readiness_probe_covers_it`` says so.
             "/healthz": (
-                "readiness; reports the active store and answers 503 when the "
-                "backend is unreachable. Wire monitoring here."
+                "readiness for the graph store only; answers 503 when the graph "
+                "backend is unreachable. It does not read the evidence store - "
+                "see evidence_store.readiness_probe_covers_it. Wire monitoring "
+                "here for the graph engine."
             ),
         },
+        # Which ledger the deployment is actually writing to, because the
+        # readiness probe cannot say. Selected the same way ``sdp.evidence``
+        # selects it, read through a helper rather than duplicating the
+        # precedence here.
+        "evidence_store": _evidence_store_identity(),
         "metrics_endpoint": "/metrics",
         "structured_logs": {
             "status": "implemented",

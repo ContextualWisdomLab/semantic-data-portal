@@ -136,6 +136,58 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 고치기 전까지 ClusterFuzzLite 이미지에서 **import에서 죽고 있었고** 입력을 하나도 퍼징하지
 않았습니다. "미러가 있으니 됐다"는 커버리지 주장이 아닙니다.
 
+### Fixed — manifest 둘이 운영자에게 **제품이 하지 않는 일**을 말했습니다 (medium x2)
+
+**1. `configured_integrations`가 자기 payload와 모순됐습니다.** `production.py`는 그것을
+`missing_environment`만으로 만들면서, 두 줄 위에서 `unconfigured = missing | rejected`를
+계산하고 그 위에 이렇게 적어 둡니다 — "An integration configured with a value the code
+refuses is **not** configured. Counting it as ready because the name is present is the defect
+this split exists to close." vault의 규칙 있는 변수 둘을 **거부되는 값**으로 두고 측정:
+
+```
+SDP_CONNECTOR_VAULT_PROVIDER = hashicorp   (허용: env)
+SDP_CONNECTOR_TIMEOUT_MS     = 0           (요구: integer >= 1)
+
+rejected_environment      {'connector_credential_vault': {두 변수 모두 거부 사유}}
+missing_environment       {}
+configured_integrations   ['connector_credential_vault']       <- configured라고 공표
+unconfigured_integrations ['connector_credential_vault', …]    <- 그리고 unconfigured라고도
+paid_pilot_blockers       connector_credential_vault 포함
+```
+
+한 응답이 vault가 설정됐다고 말하고, 두 번에 걸쳐 설정되지 않았다고 말합니다.
+
+**2. `/enterprise/observability`가 증빙 스토어를 볼 수 없는 probe에 모니터링을 걸라고
+안내했습니다.** `probe_semantics["/healthz"]`는 "readiness; reports **the active store** and
+answers 503 when the backend is unreachable. Wire monitoring here."라고 적었습니다.
+`/healthz`의 자기 docstring은 더 좁고 정직합니다 — "Readiness probe verifying **graph-engine**
+backend availability" — 그리고 `get_store()`만 봅니다. `SDP_SQLITE_PATH`를 설정해 증빙 원장이
+SQLite에 있는 상태로 측정:
+
+```
+GET /healthz -> {"ready": true, "backend": "in_memory", "database": false, …}
+payload 어디에도 "evidence"라는 단어가 없음
+```
+
+"the active store"를 읽은 운영자는 `in_memory`를 보고, 이 제품의 **감사 가능성 주장을 싣고
+있는 원장**은 다른 곳에 있습니다. 503 약속도 둘 중 하나만 덮습니다.
+
+**수리:** ① `configured_integrations`는 `missing`이 아니라 **`unconfigured`의 여집합**입니다
+(두 줄 위 주석이 이미 그 규칙을 적고 있었습니다). ② probe 설명이 자기가 읽는 것을 이름 짓고
+(그래프 스토어만, 503도 그래프 backend만), manifest가 **운영자가 필요했던 것**을 공표합니다 —
+`evidence_store`(`selected_by`·`backend`·`readiness_probe_covers_it: false`). 선택 순서는
+`sdp.evidence`에서 읽으므로 둘이 어긋날 수 없습니다.
+
+**변이 다섯 중 M5가 처음 green이었습니다.** 첫 가드는 `selected_by`가 셋 중 하나인지만
+단언했고 테스트 환경은 셋 중 아무것도 설정하지 않으므로, Postgres 분기를 없애는 변이가
+통과했습니다 — **테스트가 닿지 못하는 분기가 바로 그 분기를 쓰는 배포에서 깨지는 분기**입니다.
+모듈 자신의 교체 seam(`configure_evidence_store`)으로 세 분기를 모두 몰아 red로 만들었습니다.
+
+**닫지 않은 것.** 증빙 스토어에 대한 **readiness probe는 만들지 않았습니다** — store protocol에
+readiness 메서드가 없고, 추가하면 구현 둘에 더해 이 저장소가 실행할 수 없는 Postgres 경로까지
+건드립니다. `readiness_probe_covers_it: false`가 그 사실을 말합니다. 선언된 공백이고 조용한
+공백이 아닙니다.
+
 ### Fixed — 공표된 걸음의 주장 **셋**을 제품이 반박합니다 (medium x3, 실사 경로)
 
 문서를 구매자가 하라는 대로 걸어서 찾은 셋입니다. 셋 다 **고정된 문장이 아니라 제품에**
