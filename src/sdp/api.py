@@ -917,10 +917,14 @@ def catalog_search(
     min_quality: float | None = Query(default=None, ge=0, le=1),
     min_freshness: float | None = Query(default=None, ge=0, le=1),
     limit: int = Query(default=20, ge=1, le=100),
+    # Added with the truncation disclosure below, for the reason the three
+    # evidence routes gained theirs: the cap published a page as if it were the
+    # answer, and match 101 was reachable by no request at all.
+    offset: int = Query(default=0, ge=0),
     include_inactive: bool = Query(default=False),
 ) -> dict[str, Any]:
     tenant_ids = _authorize_catalog_discovery(user)
-    results = catalog.search_catalog(
+    page = catalog.search_catalog_page(
         q,
         tenant_ids=tenant_ids,
         tags=tags,
@@ -933,7 +937,9 @@ def catalog_search(
         min_freshness=min_freshness,
         include_inactive=include_inactive,
         limit=limit,
+        offset=offset,
     )
+    results = page.items
 
     filtered = [
         {
@@ -957,10 +963,19 @@ def catalog_search(
         for row in results
     ]
 
+    # ``count`` stays the page length - that is what it always was, and
+    # ``/ontology/change-log`` publishes the same shape - with the total, the
+    # withheld remainder and the flag beside it so the page cannot read as the
+    # whole answer. The total is exact: the match runs over the whole catalog
+    # in-process before the slice.
+    withheld = max(page.total_match_count - offset - len(filtered), 0)
     return {
         "query": q,
         "count": len(filtered),
         "items": filtered,
+        "total_match_count": page.total_match_count,
+        "withheld_match_count": withheld,
+        "search_is_truncated": withheld > 0,
     }
 
 

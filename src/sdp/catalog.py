@@ -622,6 +622,25 @@ class SearchResult:
     score: float
 
 
+@dataclass(frozen=True)
+class SearchPage:
+    """One page of catalog search results, beside the size of the whole match.
+
+    ``GET /catalog/search`` published ``{query, count, items}`` with ``count``
+    being the length of the page, no total and **no ``offset``** - so a query
+    matching more than the 100-row cap handed a caller 100 rows with nothing
+    saying so, and match 101 was reachable by no request. The product's own
+    ``GET /catalog/facets`` counts the same population and reported more.
+
+    ``total_match_count`` is exact rather than a lower bound: the match runs
+    in-process over the whole catalog before the slice, so there is no page the
+    count could be hiding behind.
+    """
+
+    items: list[SearchResult]
+    total_match_count: int
+
+
 # Imported, not duplicated: ``Dataset.metadata_completeness`` scores the same
 # list. They were two lists of different lengths (7 vs 10), so a dataset the
 # validator calls critically invalid still published
@@ -677,7 +696,7 @@ def _term_score(dataset: Dataset, token_patterns: list[re.Pattern[str]], query: 
     return score
 
 
-def search_catalog(
+def search_catalog_page(
     query: str,
     *,
     tags: Optional[list[str]] = None,
@@ -690,12 +709,13 @@ def search_catalog(
     min_freshness: Optional[float] = None,
     include_inactive: bool = False,
     limit: int = 20,
+    offset: int = 0,
     tenant_ids: list[str] | None = None,
-) -> list[SearchResult]:
+) -> SearchPage:
     tokens = [t.strip() for t in query.split() if t.strip()]
     token_patterns = _compiled_query_tokens(tokens)
     if not tokens:
-        return []
+        return SearchPage(items=[], total_match_count=0)
 
     by_token: list[SearchResult] = []
     tags_filter = _to_set(tags)
@@ -730,7 +750,20 @@ def search_catalog(
             by_token.append(SearchResult(dataset=dataset, score=score))
 
     by_token.sort(key=lambda row: row.score, reverse=True)
-    return by_token[:limit]
+    return SearchPage(
+        items=by_token[offset : offset + limit],
+        total_match_count=len(by_token),
+    )
+
+
+def search_catalog(*args: Any, **kwargs: Any) -> list[SearchResult]:
+    """The page alone, for callers that do not publish a truncation claim.
+
+    Kept as the previous signature and return type so the library seam and its
+    tests are unchanged; ``search_catalog_page`` is what the route calls, because
+    the route is what has to say how much it withheld.
+    """
+    return search_catalog_page(*args, **kwargs).items
 
 
 # The dimensions `GET /catalog/facets` counts. A constant rather than a literal

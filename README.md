@@ -504,7 +504,13 @@ SDP_CONNECTOR_TIMEOUT_MS='2s'          gate 통과, probe 라우트 400
 
 - `GET /health`
 - `GET /metrics`
-- `GET /catalog/search?q=...`
+- `GET /catalog/search?q=...&limit=&offset=` — `count`는 **이 페이지의 길이**이고
+  전체 일치 수는 `total_match_count`, 남은 수는 `withheld_match_count`,
+  잘렸는지는 `search_is_truncated`로 함께 공표한다(`/ontology/change-log`와 같은
+  모양). `limit`은 100이 상한이므로 그 이상은 `offset`으로 넘긴다 — `offset`이
+  없던 동안에는 101번째 일치를 **어떤 요청으로도 받을 수 없었고**, 그 사실을
+  말하는 필드도 없었다. 총계는 하한이 아니라 정확하다(일치 판정이 자르기 전에
+  카탈로그 전체를 돈다)
 - `GET /catalog/datasets`
 - `GET /catalog/datasets/{dataset_id}` — discovery 표면. 컬럼 스키마(`pii` 플래그),
   `source_system`, row-count `profile`, `tenant_id`은 응답에 포함되지 않는다

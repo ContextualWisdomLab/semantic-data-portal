@@ -136,6 +136,44 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 고치기 전까지 ClusterFuzzLite 이미지에서 **import에서 죽고 있었고** 입력을 하나도 퍼징하지
 않았습니다. "미러가 있으니 됐다"는 커버리지 주장이 아닙니다.
 
+### Fixed — `GET /catalog/search`가 **한 페이지를 전체 답처럼** 공표했고, 101번째 일치는 어떤 요청으로도 받을 수 없었습니다 (high, 구매자 체감)
+
+라우트가 `limit`을 100으로 묶고 `catalog.search_catalog`가 `by_token[:limit]`을 돌려주며,
+본문은 `{query, count, items}`였습니다 — 총계도, 잘림 표시도, **`offset`도** 없습니다.
+제품 자신의 형제가 이것을 반박합니다: `GET /catalog/facets`는 같은 모집단을 세고 페이지보다
+많이 보고합니다.
+
+```
+GET /catalog/search?q=…&user=admin&limit=100   -> count 100, items 100
+GET /catalog/facets?user=admin                 -> 같은 모집단이 더 많음
+GET /catalog/search?q=…&user=admin&offset=100  -> 그런 파라미터가 없으므로 무시(첫 페이지 반복)
+```
+
+"내 데이터셋 중 이 용어를 담은 것이 몇 개냐"를 묻는 실사 독자는 100을 받고, 그렇지 않다고
+말해 주는 것은 아무것도 없습니다. 이 저장소는 같은 종류를 증빙 라우트 셋에서 이미 세 번
+고쳤고(`/policy/decisions`·`/audit/events`·`/catalog/datasets/{id}/audit`가 `offset`을 얻음),
+`GET /ontology/change-log`가 이미 정직한 모양을 공표합니다.
+
+**수리:** 그 모양을 그대로 따릅니다 — `count`는 페이지 길이로 두고(원래 그랬고 형제도 그렇습니다)
+`total_match_count`·`withheld_match_count`·`search_is_truncated`를 옆에 공표하며 `offset`을
+추가합니다. 총계는 **하한이 아니라 정확**합니다: 일치 판정이 자르기 전에 카탈로그 전체를
+in-process로 돌므로 숨어 있을 페이지가 없습니다. 라이브러리 쪽은 `search_catalog_page`가
+`SearchPage(items, total_match_count)`를 돌려주고 기존 `search_catalog`는 그 페이지만 꺼내는
+얇은 래퍼로 남으므로, 그 seam의 호출자와 테스트는 바뀌지 않습니다.
+
+**변이 여섯 중 M6이 처음 green이었습니다.** `q`는 한 글자만 있으면 되므로 `q=%20`은 토큰이
+없는 조기 반환 분기에 도달하는데, 그 분기의 총계를 1로 바꾸는 변이가 통과했습니다 — 나머지
+단언이 전부 **일치하는** 질의를 몰기 때문입니다. 빈 결과에 대한 거짓 잘림 주장이므로 테스트를
+더했고, 이제 red입니다.
+
+**제가 쓴 가드 하나가 또 틀렸습니다**(측정이 고쳤습니다): facet 비교를 `counts["domain"]`으로
+읽었는데 라우트는 `{field, counts}`를 공표하고 `counts`는 domain 값으로 바로 키가 잡힙니다.
+중첩은 제 오해였고 제품 결함이 아니므로 측정대로 고쳐 적었습니다.
+
+**닫지 않은 것.** `offset`은 깊이를 주지만 **안정 커서가 아닙니다** — 두 요청 사이에 데이터셋이
+온보딩되면 경계가 밀립니다. 증빙 라우트에 같은 한계가 같은 이유로 기록돼 있고, 안정 커서는
+정렬 키의 공표가 선행 조건입니다(검색 점수는 동점이 흔하므로 그 자체로는 커서가 될 수 없습니다).
+
 ### Security — 증빙 라우트가 **인증 없는 호출자에게** 다른 테넌트의 dataset id를 넘겼습니다 (high, 교차 테넌트 식별자 누출)
 
 `GET /enterprise/shacl-validation`의 라우트 주석은 "The aggregate stays open - it carries
