@@ -562,3 +562,103 @@ def test_the_obligations_node_is_a_map_because_its_keys_vary() -> None:
     ]
     assert "additionalProperties" in obligations, obligations
     assert "properties" not in obligations, obligations
+
+
+# ---------------------------------------------------------------------------
+# ``union``'s sentinel confusion had three sites, not one. ``None`` is "nothing
+# observed yet" and ``{}`` is "observed, and any type fits", and three defaults
+# spelled the first as the second:
+#
+#   properties[key] = union(properties.get(key, {}), item)          <- fixed earlier
+#   merged["items"] = union(left.get("items") or {}, ...)           <- here
+#   union(left.get("additionalProperties") or {}, ...)              <- here
+#
+# Each let one observation that saw nothing erase a type another had measured.
+# ---------------------------------------------------------------------------
+
+
+def test_an_empty_array_observes_nothing_about_its_elements() -> None:
+    """``derive([])`` must not claim "any element type fits"."""
+    assert generator.derive([]) == {"type": "array"}
+    assert "items" not in generator.derive([])
+
+
+def test_an_empty_array_does_not_erase_a_measured_element_type() -> None:
+    """The defect: one empty ``lineage_inputs`` erased the ``string``."""
+    empty = generator.derive([])
+    typed = generator.derive(["a"])
+    assert generator.union(empty, typed) == {"type": "array", "items": {"type": "string"}}
+    assert generator.union(typed, empty) == {"type": "array", "items": {"type": "string"}}
+
+
+def test_two_empty_arrays_still_claim_nothing() -> None:
+    """The other direction: nothing observed must not become "any"."""
+    assert generator.union(generator.derive([]), generator.derive([])) == {"type": "array"}
+
+
+def test_an_array_observed_as_two_types_still_collapses_to_any() -> None:
+    """The guard against over-correcting, as for ``properties``."""
+    merged = generator.union(generator.derive(["a"]), generator.derive([1]))
+    assert merged == {"type": "array", "items": {}}, merged
+
+
+def test_a_struct_observation_describes_a_maps_values() -> None:
+    """A map unioned with a struct keeps the value type the struct carried.
+
+    ``.get("additionalProperties") or {}`` read a struct observation as "any",
+    so one such observation erased ``counts``' and
+    ``dataset_status_counts``' ``number``.
+    """
+    as_map = {"type": "object", "additionalProperties": {"type": "number"}}
+    as_struct = {"type": "object", "properties": {"고객": {"type": "number"}}}
+    assert generator.union(as_map, as_struct) == as_map
+    assert generator.union(as_struct, as_map) == as_map
+
+
+def test_a_struct_of_mixed_types_widens_the_maps_values() -> None:
+    """And it must widen honestly when the struct's values disagree."""
+    as_map = {"type": "object", "additionalProperties": {"type": "number"}}
+    mixed = {"type": "object", "properties": {"a": {"type": "number"}, "b": {"type": "string"}}}
+    merged = generator.union(as_map, mixed)
+    assert merged == {"type": "object", "additionalProperties": {}}, merged
+
+
+def test_the_counted_maps_still_publish_their_value_type() -> None:
+    """End to end, on the committed contract rather than on synthetic input."""
+    facets = RESPONSE_SCHEMAS[("GET", "/catalog/facets")]["properties"]["counts"]
+    assert facets == {"type": "object", "additionalProperties": {"type": "number"}}, facets
+
+
+def test_demo_context_is_published_as_nullable() -> None:
+    """The third probe state's whole purpose.
+
+    ``buyer_demo_context_for_dataset`` returns ``None`` for any dataset in no
+    buyer-demo domain, and every *seed* dataset is in one - so the connector
+    probe's ``demo_context`` was only ever observed as an object and published
+    as a non-nullable one. A client generated from the document broke on the
+    first dataset outside those domains.
+    """
+    probe = RESPONSE_SCHEMAS[("GET", "/enterprise/connectors/{connector_id}/probe")]
+    assert probe["properties"]["demo_context"] == {}, probe["properties"]["demo_context"]
+
+
+def test_the_nullability_probe_runs_after_the_map_rule() -> None:
+    """Order is the property here, and it is the one two attempts got wrong.
+
+    Unioning the second (new-domain) state into the types, and onboarding the
+    non-demo dataset before the first observation, each destroy the map rule:
+    it compares the schema's key set against the second state's, and once those
+    keys are in the schema nothing differs. Measured both times - ``details``
+    reverted from a map to a closed struct. The third state is applied after
+    the rule has fired, which cannot do that.
+    """
+    source = GENERATOR.read_text()
+    map_rule = source.index("as_map_where_keys_are_data(schema, other)")
+    third = source.index("for payload in third_state.get(path, []):")
+    assert map_rule < third, (
+        "the nullability state is unioned before the map rule has fired, which "
+        "destroys it"
+    )
+    # And the map rule's own result is still there to prove it did fire.
+    details = RESPONSE_SCHEMAS[("GET", "/audit/events")]["items"]["properties"]["details"]
+    assert "additionalProperties" in details, details

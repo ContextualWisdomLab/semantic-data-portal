@@ -141,6 +141,9 @@ CONTINUATION_PAD = 8
 PROBE_DATASET_ID = "generator-probe-dataset"
 PROBE_DOMAIN = "제너레이터프로브"
 PROBE_SEED_DATASET = "crm-customer-master"
+# The nullability probe's dataset: in no buyer-demo domain. The id is unlike
+# any seed id so a leftover cannot be mistaken for seed data.
+NON_DEMO_DATASET_ID = "generator-probe-outside-demo"
 # Fields the onboarding route derives rather than accepts.
 PROBE_EXCLUDED_FIELDS = frozenset(
     {"created_at", "updated_at", "version", "schema_version", "status"}
@@ -239,7 +242,13 @@ def derive(value: Any, depth: int = 1) -> dict[str, Any]:
         return {"type": "string"}
     if isinstance(value, list):
         if not value:
-            return {"type": "array", "items": {}}
+            # No ``items`` at all: an empty array observes **nothing** about its
+            # elements. Returning ``{"items": {}}`` said "observed, and any type
+            # fits", and ``union`` then let that swallow a real element type -
+            # one empty ``lineage_inputs`` in any probed payload erased the
+            # ``string`` the others showed. Same confusion as the properties
+            # default, one level down.
+            return {"type": "array"}
         items = NOTHING_OBSERVED
         for element in value:
             items = union(items, derive(element, depth + 1))
@@ -257,6 +266,23 @@ def derive(value: Any, depth: int = 1) -> dict[str, Any]:
 
 
 NOTHING_OBSERVED: dict[str, Any] | None = None
+
+
+def _map_value_schema(node: dict[str, Any]) -> dict[str, Any] | None:
+    """What this object observation says about a map's values.
+
+    A node already published as a map says it directly. A node observed as a
+    struct says the union of its property schemas - every value it carried is a
+    value of the map. A node with neither has observed nothing, which is
+    ``NOTHING_OBSERVED`` rather than ``{}``: the distinction this module's
+    ``union`` rests on, and the one all three of its defaults got wrong.
+    """
+    if "additionalProperties" in node:
+        return node["additionalProperties"]
+    merged: dict[str, Any] | None = NOTHING_OBSERVED
+    for item in (node.get("properties") or {}).values():
+        merged = union(merged, item)
+    return merged
 
 
 def union(left: dict[str, Any] | None, right: dict[str, Any] | None) -> dict[str, Any]:
@@ -283,10 +309,13 @@ def union(left: dict[str, Any] | None, right: dict[str, Any] | None) -> dict[str
     merged = dict(left)
     if left.get("type") == "object":
         if "additionalProperties" in left or "additionalProperties" in right:
-            values = union(
-                left.get("additionalProperties") or {},
-                right.get("additionalProperties") or {},
-            )
+            # The third site of the same defect. ``.get(...) or {}`` said
+            # "observed, any type fits" about a side that carries no
+            # ``additionalProperties`` at all - and a struct observation does
+            # describe a map's values: they are the union of its property
+            # schemas. Reading it as "any" let one struct observation erase
+            # ``counts``' and ``dataset_status_counts``' ``number``.
+            values = union(_map_value_schema(left), _map_value_schema(right))
             return {"type": "object", "additionalProperties": values}
         if "properties" not in left or "properties" not in right:
             merged.pop("properties", None)
@@ -305,7 +334,15 @@ def union(left: dict[str, Any] | None, right: dict[str, Any] | None) -> dict[str
             properties[key] = union(properties.get(key, NOTHING_OBSERVED), item)
         merged["properties"] = properties
     elif left.get("type") == "array":
-        merged["items"] = union(left.get("items") or {}, right.get("items") or {})
+        # ``NOTHING_OBSERVED`` as the default, not ``{}`` - an absent ``items``
+        # means no element was ever seen, and must yield to a side that saw one.
+        items = union(
+            left.get("items", NOTHING_OBSERVED), right.get("items", NOTHING_OBSERVED)
+        )
+        if items or "items" in left or "items" in right:
+            merged["items"] = items
+        else:
+            merged.pop("items", None)
     return merged
 
 
@@ -433,6 +470,26 @@ def render_block(name: str, annotation: str, entries: dict[Any, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def non_demo_dataset_body() -> dict[str, Any]:
+    """An onboarding body for a dataset belonging to no buyer-demo domain.
+
+    Built from a seed dataset, keeping its domain so no key set moves. The only
+    property that matters is that this id is in none of
+    ``buyer_demo_domains()``'s ``dataset_ids``, which is what makes
+    ``demo_context`` observable as ``null``.
+    """
+    from sdp.catalog import get_dataset
+
+    seed = json.loads(get_dataset(PROBE_SEED_DATASET).model_dump_json())
+    body = {
+        key: value for key, value in seed.items() if key not in PROBE_EXCLUDED_FIELDS
+    }
+    body["id"] = NON_DEMO_DATASET_ID
+    body["title"] = "generator nullability probe"
+    body["actor"] = "admin"
+    return body
+
+
 def generate() -> str:
     """The regenerated module text, with the hand-written prose preserved."""
     sys.path.insert(0, str(REPO_ROOT / "src"))
@@ -469,6 +526,19 @@ def generate() -> str:
         if payloads:
             second_state[path] = payloads
 
+    # The third state: one dataset in no buyer-demo domain, for nullability.
+    outside = client.post("/catalog/datasets", json=non_demo_dataset_body())
+    if outside.status_code not in {200, 201}:
+        raise SystemExit(
+            "the nullability probe could not onboard a dataset outside the "
+            f"buyer-demo domains ({outside.status_code}): {outside.text[:300]}"
+        )
+    third_state: dict[str, list[Any]] = {}
+    for path in paths:
+        payloads = fetch_all(client, path)
+        if payloads:
+            third_state[path] = payloads
+
     schemas: dict[tuple[str, str], dict[str, Any]] = {}
     # Sorted, so the committed file's order is a property of the generator and
     # not of the app's route registration order.
@@ -481,6 +551,21 @@ def generate() -> str:
         schema = union(schema, schema)
         for other in second_state.get(path, []):
             schema = as_map_where_keys_are_data(schema, other)
+        # Types only, and strictly **after** the map rule. Every seed dataset
+        # belongs to a buyer-demo domain, so ``demo_context`` on the connector
+        # probe was only ever observed as an object - the product returns
+        # ``null`` for any dataset outside those domains, and the contract
+        # published a non-nullable object a client breaks on.
+        #
+        # Two earlier attempts are recorded because both were wrong: unioning
+        # the second state into the types, and onboarding this dataset before
+        # the first observation. Each destroys the map rule, which compares the
+        # schema's key set against the second state's - once those keys are in
+        # the schema there is nothing left to differ, and ``details`` reverted
+        # from a map to a closed struct. Applying a third state after the rule
+        # has already fired cannot do that.
+        for payload in third_state.get(path, []):
+            schema = union(schema, derive(payload))
         schemas[("GET", path)] = schema
 
     text = TARGET.read_text()
