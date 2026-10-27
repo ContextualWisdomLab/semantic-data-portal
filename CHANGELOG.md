@@ -55,9 +55,9 @@ gap-baseline 문서를 건드렸고, 나머지 148개는 건드리지 않았습�
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest (3.11)                1910 passed, 31 skipped
-    pytest (3.12, tests.yml의 핀) 1910 passed, 31 skipped — CI가 쓰는 인터프리터
-    pytest (파일 순서 정/역/난수)  각 1910 passed, 31 skipped — 순서 무관
+    pytest (3.11)                1920 passed, 31 skipped
+    pytest (3.12, tests.yml의 핀) 1920 passed, 31 skipped — CI가 쓰는 인터프리터
+    pytest (파일 순서 정/역/난수)  각 1920 passed, 31 skipped — 순서 무관
                                  (이 head의 열 번은 전부 깨끗합니다. 앞선 head
                                   `c4ac6b5`의 트리에서는 3.11 shuffled-31337 1회차가
                                   1848 + 실패 1건이었습니다 —
@@ -91,7 +91,7 @@ ClusterFuzzLite 하네스 import 가드 3건으로 1523에,
 (행 레벨 필터 정직성 9건, 드래프트 거부 증빙 페어링 11건, 참된 거부 이유 14건, 배포
 endpoint 자격증명·patch 계약 10건)로 1837에, 같은 라운드의 뒤이은 두 수리(patch
 confidence 정직성 5건, facet 어휘 공표 7건)로 1849에, 가정 결정 라벨 42건과 완전성 숫자 합치 5건으로
-1896에, 발견 가능성 6건으로 1902에, 쓰기 에코 재전송 8건으로 **1910**에 와 있습니다(skip이
+1896에, 발견 가능성 6건으로 1902에, 쓰기 에코 재전송 8건으로 1910에, 증빙 도달성 10건으로 **1920**에 와 있습니다(skip이
 23 → 31로 는 것은 새 가드 둘이 `measured`가 아닌 KPI 넷에
 대해 skip하기 때문입니다 — 그 skip 자체가 분기가 측정된 증거이고, 같은 파일의
 `test_at_least_one_kpi_exercises_each_branch`가 양쪽 분기에 사례가 있음을 단언합니다)
@@ -126,6 +126,56 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 **이 문장이 결함을 가려 줬습니다**: 미러가 돈다는 것은 참이지만, 그 하네스는 아래 항목이
 고치기 전까지 ClusterFuzzLite 이미지에서 **import에서 죽고 있었고** 입력을 하나도 퍼징하지
 않았습니다. "미러가 있으니 됐다"는 커버리지 주장이 아닙니다.
+
+### Fixed — 호출자가 **자기 200이 알려 준 증빙 행에 도달할 수 없었습니다** (high, 구매자 체감)
+
+세 읽기 라우트가 공표하던 선택자는 `limit`(≤500·≤500·≤200)과 `resource`/`user`뿐이고, 모든
+store가 최신순으로 정렬한 뒤 **자릅니다** — `evidence.py`의 in-memory fallback은
+`decisions[:limit]`, SQLite·Postgres는 `ORDER BY ... DESC LIMIT ?`. 그래서 호출자 자신의
+행이 **가장 먼저** 밀려납니다:
+
+```
+자기 preview가 돌려준 policy_decision_id
+  직후        : 조회됨 (범위 내 2행)
+  600요청 뒤  : 조회 안 됨 (범위 내 500행, 전부 더 최신)
+
+공표 파라미터  /policy/decisions -> limit(500), resource, user
+               /audit/events     -> limit(500), resource, user
+offset=500 / cursor=x / decision_id=abc -> 받아들이고 무시
+```
+
+응답은 `request_id`·`query_id`·`policy_decision_id`를 건네주고 감사 행은 셋을 다 담는데,
+어떤 읽기 라우트도 그중 하나도 **필터로 받지 않았습니다.** 유일한 선택자 `resource`는 바로
+가장 빨리 채워지는 차원입니다. 데이터셋 경로도 같습니다 — 자격증명 없는 거부 600건이 최신
+200행을 채워 그 데이터셋의 정당한 접근 이력 전체를 밀어냅니다.
+
+수리는 `offset`과 `decision_id`를 **읽기 경로 끝까지** 더하는 것입니다: 세 라우트, 두 reader
+(`evidence.list_policy_decisions`, `catalog.list_audit_events`), 그리고 SQLite·Postgres 양쪽의
+`LIMIT ? OFFSET ?`. 두 증빙 테이블이 이미 `decision_id`를 **일급 컬럼**으로 들고 있어
+JSON 추출이 아니라 인덱스 비교입니다. 병합 reader는 merge **전에** `offset + limit`까지
+over-fetch합니다 — store에만 있는 행이 깊은 페이지에서 조용히 빠지기 때문입니다.
+
+**`offset`이 보장하는 것을 재서 적었습니다.** 한 스냅샷 안에서는 정확히 분할합니다(0-19와
+20-39가 겹치지 않음). 두 요청 사이에서는 **겹칩니다** — 증빙 읽기를 인가하는 것 자체가
+원장에 결정 행을 하나 남기고(이 제품의 불변식) 그 행이 머리에 붙어 이후 페이지를 한 칸씩
+밀기 때문입니다. 제 첫 테스트는 두 HTTP 호출에 걸쳐 깨끗한 분할을 단언했고 바로 그 drift로
+실패했습니다. 가드는 이제 참인 쪽을 단언합니다: 한 스냅샷은 분할하고, 두 요청의 겹침은
+**그 사이에 추가된 행 수로 상한**이 잡힙니다.
+
+**SQL 경로를 처음으로 실제로 몰았습니다.** 테스트 환경에는 store가 설정되지 않으므로
+(`SDP_DATABASE_DSN`·`SDP_SQLITE_PATH` 미설정) 이 변경의 SQL은 측정되지 않은 채 남을 수
+있었습니다. 문서화된 로컬 store인 SQLite를 임시 파일로 직접 몰아 `LIMIT/OFFSET`과 id
+필터를 확인하고, store에만 있는 60행에 대해 깊은 페이지가 짧게 답하지 않는지도 확인합니다.
+Postgres는 같은 코드 모양이지만 서비스가 필요하므로 **서명 가드만** 걸려 있다고 적어 둡니다.
+
+**변이 일곱, 전부 red** — M4(merge 전 over-fetch 제거)는 처음 green이었습니다. store가 없으면
+관측할 수 없는 경로였고, 그래서 store를 설정하는 테스트를 더했습니다.
+
+**닫지 않은 것.** `offset`은 안정 커서가 아닙니다(위 drift). 안정 커서는 decision의
+`recorded_at` 공표가 선행 조건이고 POL-005가 그 부재를 기록합니다. 그리고 in-memory
+fallback의 2000행 보존 창 자체는 그대로입니다 — `offset`은 **보존된 창 안에서** 페이지를
+옮길 뿐 보존 경계를 넘지 못합니다. 증빙 읽기가 자기 자신의 행을 자기 답에 담는 것도
+그대로입니다(별개 항목).
 
 ### Security — 쓰기 응답이 **재전송 가능**했고, 재전송하면 저장된 locator가 지워졌습니다 (medium, 데이터 손실 + 거짓 원장)
 

@@ -3769,6 +3769,27 @@ counts: {'고객': number, '고객행동': number, '매출': number, '온톨로�
 
 이 절은 측정 기록이고 병합 허가가 아닙니다.
 
+## 호출자가 자기 200이 알려 준 증빙 행에 도달할 수 없었습니다 (2026-10-27 15:30Z)
+
+```
+자기 preview가 돌려준 policy_decision_id: 직후 조회됨 / 600요청 뒤 조회 안 됨
+공표 선택자: limit, resource, user 뿐 · offset·cursor·decision_id는 받아들이고 무시
+```
+
+모든 store가 최신순 정렬 뒤 자르므로 호출자 자신의 행이 가장 먼저 밀려납니다. 데이터셋 경로도
+같아서, 자격증명 없는 거부 600건이 그 데이터셋의 정당한 접근 이력 전체를 밀어냅니다.
+
+**수리:** `offset`·`decision_id`를 읽기 경로 끝까지(라우트 3, reader 2, SQLite·Postgres SQL).
+두 증빙 테이블은 `decision_id`를 일급 컬럼으로 이미 들고 있습니다. 병합 reader는 merge 전에
+`offset + limit`까지 over-fetch합니다.
+
+### 닫지 않은 것
+
+`offset`은 안정 커서가 아닙니다 — 증빙 읽기가 원장에 결정 행을 남기므로 연속한 두 요청의
+페이지가 그 수만큼 겹칩니다(가드가 상한으로 단언). 안정 커서는 decision `recorded_at` 공표가
+선행 조건이고 POL-005가 그 부재를 기록합니다. in-memory fallback의 2000행 보존 창도 그대로
+입니다. Postgres SQL은 서명 가드만 걸려 있습니다(서비스가 필요).
+
 ## 쓰기 응답이 재전송 가능했고, 재전송하면 저장된 locator가 지워졌습니다 (2026-10-27 14:15Z)
 
 ```
