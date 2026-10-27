@@ -106,6 +106,85 @@ def test_the_published_matrix_is_evaluable_and_agrees_for_every_clean_row() -> N
     )
 
 
+def _published_action_enum() -> list[str]:
+    """The ``action`` enum as the live OpenAPI document publishes it."""
+    spec = client.get("/openapi.json").json()
+    schema = (
+        spec["paths"]["/policy/decision"]["post"]["requestBody"]["content"][
+            "application/json"
+        ]["schema"]
+    )
+    enum = schema["properties"]["action"].get("enum")
+    assert enum, f"the action enum is no longer published: {schema['properties']['action']}"
+    return list(enum)
+
+
+def test_every_value_the_document_publishes_is_one_the_route_can_evaluate() -> None:
+    """Document against behaviour, which is a different pair from the guard above.
+
+    The guard above compares the **matrix** to the engine's own sets, and the
+    enum is *derived* from those sets rather than restated - so neither of them
+    asks the question a client asks: does the value this document advertises
+    actually work when posted?
+
+    "Derived from the engine's vocabulary" answers that only if the engine's
+    sets are what the route accepts, which is an assumption. A handler that
+    narrowed its acceptance, or a set that stopped matching the handler, would
+    leave the document advertising a value that answers ``평가할 수 없는
+    action입니다.`` - and nothing would notice, because the enum and the sets
+    would still agree with each other.
+
+    Measured when this was added: all 19 published values evaluate, none
+    refused. And it cannot fail while the derivation stands - removing an alias
+    from the engine removes it from the enum too, so the document and the route
+    narrow together and this guard has nothing left to catch. That is why the
+    next test asserts the derivation itself: this one is the protection that
+    activates the moment the enum becomes a literal, and that one is what
+    notices the moment it does. Stated rather than left implied, because a
+    guard that cannot fail today reads like a guard that works.
+    """
+    refused = []
+    for action in _published_action_enum():
+        response = client.post(
+            "/policy/decision",
+            json={
+                "subject": "admin",
+                "resource": "crm-customer-master",
+                "action": action,
+                "purpose": "analysis",
+            },
+        )
+        if response.status_code != 200:
+            refused.append(f"{action}: HTTP {response.status_code}")
+            continue
+        body = response.json()
+        if "평가할 수 없는 action" in str(body.get("reason", "")):
+            refused.append(f"{action}: {body.get('reason')}")
+    assert not refused, (
+        "the document publishes these as acceptable ``action`` values and the "
+        f"route cannot evaluate them: {refused}"
+    )
+
+
+def test_the_published_enum_is_not_narrower_than_the_vocabulary_it_derives_from() -> None:
+    """The reverse direction, as far as it can honestly be checked.
+
+    The enum derives from ``KNOWN_ACTIONS | CATALOG_ACTION_ALIASES``, so
+    comparing it to those sets is comparing a value with its own source - it
+    cannot fail while the derivation stands, and that is exactly what this
+    asserts: that the derivation still stands. If someone replaces the derived
+    expression with a hand-written list, this reddens, and the test above then
+    becomes the one that matters.
+    """
+    assert set(_published_action_enum()) == set(KNOWN_ACTIONS) | set(
+        CATALOG_ACTION_ALIASES
+    ), (
+        "the published enum is no longer the engine's vocabulary; if it was "
+        "replaced with a literal list, every value now needs the end-to-end "
+        "check above rather than a derivation to lean on"
+    )
+
+
 def test_every_published_action_resolves_to_a_known_action_or_a_declared_gap() -> None:
     """No published name may be silently unrecognized.
 
