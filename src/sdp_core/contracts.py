@@ -198,31 +198,26 @@ class Dataset(BaseModel):
         return covered / len(recommended_fields)
 
     def recompute_scores(self) -> None:
-        required_total = 11
-        scored = 0
-        if self.owner:
-            scored += 1
-        if self.steward:
-            scored += 1
-        if self.title:
-            scored += 1
-        if self.description:
-            scored += 1
-        if self.sensitivity:
-            scored += 1
-        if self.source_system:
-            scored += 1
-        if self.update_frequency:
-            scored += 1
-        if self.domain:
-            scored += 1
-        if self.tags:
-            scored += 1
-        if self.schema:
-            scored += 1
-        if self.distributions:
-            scored += 1
-        self.completeness_score = round(scored / required_total, 3)
+        """Recompute the two published score fields from their own definitions.
+
+        ``completeness_score`` was a **third** tally here: eleven hand-written
+        branches with ``required_total = 11``, including ``tags``, which
+        ``REQUIRED_METADATA_FIELDS`` does not require and the validator never
+        asks for. Measured on two datasets whose bodies differ only in ``tags``::
+
+            probe-with-tags  /validate missing: [] is_valid: True
+                             completeness_score 1.0    metadata_completeness 1.0
+            probe-no-tags    /validate missing: [] is_valid: True
+                             completeness_score 0.909  metadata_completeness 1.0
+
+        0.909 is 10/11, so one payload told a diligence reader that a dataset was
+        90.9% complete with nothing missing while its sibling field said 100%.
+        The comment above ``REQUIRED_METADATA_FIELDS`` records the same drift
+        being closed once already between the property and the validator; this
+        was the copy it did not reach. A tag still counts where a tag belongs -
+        ``recommended_score`` - and nowhere else.
+        """
+        self.completeness_score = round(self.metadata_completeness, 3)
         self.recommended_score = round(self.metadata_recommendation_score, 3)
 
 
