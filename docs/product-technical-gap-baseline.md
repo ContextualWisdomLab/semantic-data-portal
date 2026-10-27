@@ -3938,8 +3938,14 @@ crash 0**. `declared_relation` near-miss 모드도 그 안에서 돌았습니다
 * `orchestrator.py`: "Relational SQL is drafted only for a relational source" — 아래 코드에
   대해 거짓. 다섯 시드 전부에 PostgreSQL을 emit하고 셋은 비관계형입니다. 수리는 거절이
   아니라 공개였습니다.
-* `/enterprise/auth/oidc-preview`의 `actor`: "없으면 거부됩니다" — 거짓. 200이고
-  `audit_recorded`만 달라집니다. 형제 라우트 다섯에서 복사된 문장입니다.
+* `/enterprise/auth/oidc-preview`의 `actor`: "없으면 거부됩니다" — 거짓. 200입니다. 형제
+  라우트 다섯에서 복사된 문장입니다. **2026-10-27 정정**: 그 자리에 제가 적은 "`audit_recorded`만
+  달라집니다"도 거짓이었습니다 — 기본 설정에서 **2개**(`audit_recorded`·`audit_event_id`),
+  `SDP_OIDC_GROUP_ROLE_MAP`을 설정한 운영 설정에서는 **5개**(`actor_context`·`audit_event_id`·
+  `audit_recorded`·`group_role_bindings`·`role_map_source`)가 달라집니다. 즉 actor가
+  운영자 매핑을 받을지 빈 매핑을 받을지를 결정합니다. 더 나쁜 문장을 좁히는 데 그쳐 **덜
+  나쁜 거짓**을 남긴 것이고, 공표 문구와 `tests/test_oidc_preview_actor_description.py`로
+  고쳤습니다.
 * `test_mutation_refusal_names_its_cause.py`: "scope 없는 주체는 dataset을 보지 않는 role
   체크에서 거부된다" — 이 파일을 쓰는 동안 거짓으로 측정된 전제입니다. 엔진에 없는 성질을
   엔진에 돌리면 다음 사람이 dataset 범위 호출을 되살려도 된다고 결론 냅니다.

@@ -181,16 +181,43 @@ REQUEST_BODY_EXTRA_PROPERTIES: dict[tuple[str, str], dict[str, Any]] = {
             # "없으면 anonymous로 취급되어 거부됩니다" was copied from the five
             # sibling mutation routes, where it is true. It is false here:
             # measured, a complete claim set answers 200 with or without an
-            # actor, and with ``actor: "anonymous"`` too. The only difference is
-            # ``audit_recorded`` - true for an identified caller, false
-            # otherwise. This route refuses nobody; it declines to file an audit
-            # row for a caller it cannot name.
+            # actor, and with ``actor: "anonymous"`` too. This route refuses
+            # nobody.
+            #
+            # What it then said - "the only difference is ``audit_recorded``" -
+            # was false in **both** configurations, and the correction that
+            # introduced it only narrowed the worse sentence it replaced. An A/B
+            # over the same claim set::
+            #
+            #     no SDP_OIDC_GROUP_ROLE_MAP (shipped default), 2 keys differ:
+            #         audit_event_id, audit_recorded
+            #     SDP_OIDC_GROUP_ROLE_MAP set (the operator case), 5 keys:
+            #         actor_context, audit_event_id, audit_recorded,
+            #         group_role_bindings, role_map_source
+            #
+            # With the map configured the actor decides whether the response
+            # carries the deployment's real group-to-role mapping or an empty
+            # one (``role_map_source`` moves from
+            # ``withheld_operator_configured_map_requires_an_actor`` to
+            # ``operator_configured``). That withholding is the
+            # enumeration-oracle control this route exists to have; describing
+            # it as "only ``audit_recorded``" tells an operator debugging "why
+            # does the preview show no roles" to look anywhere but at the one
+            # input that caused it, and tells an auditor the control has no
+            # observable effect. ``tests/test_oidc_preview_actor_description.py``
+            # reads the keys back out of this description and compares them to a
+            # measured A/B in both configurations.
             "description": (
                 "인가 주체. **이 라우트는 actor로 거부하지 않습니다** — 없거나 anonymous여도 "
-                "미리보기는 200으로 돌아오고, 달라지는 것은 응답의 `audit_recorded`뿐입니다"
-                "(식별된 호출자면 true, 아니면 false). GET 라우트는 같은 주체를 쿼리 "
-                "`?user=`로 받지만 이 라우트는 **본문의 `actor`**로 받습니다 — 이름이 라우트마다 다르므로 "
-                "문서가 말해야 합니다."
+                "미리보기는 200으로 돌아옵니다. 다만 **응답이 달라집니다.** 기본 설정에서는 "
+                "`audit_recorded`와 그 감사 행의 `audit_event_id`가 달라지고, 배포가 "
+                "`SDP_OIDC_GROUP_ROLE_MAP`을 설정한 경우에는 `role_map_source`·"
+                "`group_role_bindings`·`actor_context`도 달라집니다 — 식별되지 않은 호출자에게는 "
+                "운영자가 설정한 매핑을 **주지 않고**(`role_map_source`가 "
+                "`withheld_operator_configured_map_requires_an_actor`) 빈 매핑으로 답하기 "
+                "때문입니다. 역할이 비어 보이면 먼저 actor를 확인하십시오. GET 라우트는 같은 "
+                "주체를 쿼리 `?user=`로 받지만 이 라우트는 **본문의 `actor`**로 받습니다 — "
+                "이름이 라우트마다 다르므로 문서가 말해야 합니다."
             ),
         },
         "claims": {
