@@ -1,4 +1,14 @@
 # ClusterFuzzLite image for Semantic Data Portal Python fuzz targets.
+#
+# Scorecard discovery marker:
+# **no workflow in this repository builds or runs this image**.
+# The three workflows here (tests.yml, fuzz.yml,
+# scorecard-analysis.yml) do not reference ClusterFuzzLite and never have, and
+# the organization's only central ClusterFuzzLite workflow is a reusable
+# `workflow_call` with no caller here. The CMD below is therefore the shape the
+# entrypoint would take, not a pipeline that has ever run. The fuzzing that does
+# run is in .github/workflows/fuzz.yml; tests/test_fuzzing_posture_is_what_runs.py
+# keeps this comment and that fact in step.
 FROM python:3.12-slim@sha256:423ed6ab25b1921a477529254bfeeabf5855151dc2c3141699a1bfc852199fbf
 
 ENV PYTHONUNBUFFERED=1 \

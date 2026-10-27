@@ -2,15 +2,16 @@
 
 이 문서는 `claude/semantic-portal-pr-merge-e5a48k` 브랜치(PR
 [#102](https://github.com/ContextualWisdomLab/semantic-data-portal/pull/102))가
-베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **306개** 커밋 중 158개가
-gap-baseline 문서를 건드렸고, 나머지 148개는 건드리지 않았습니다. 이 숫자는 **이 줄을 담은
-커밋을 포함한** 값입니다 — 측정 시점의 305에 이 커밋을 더한 것(이 커밋은 gap 문서를
-건드리지 않습니다).
+베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **319개** 커밋 중 168개가
+gap-baseline 문서를 건드렸고, 나머지 151개는 건드리지 않았습니다. 이 숫자는 **이 줄을 담은
+커밋을 포함한** 값입니다 — 측정 시점의 318에 이 커밋을 더한 것(이 커밋은 gap 문서를
+건드립니다).
 
-**그 153/138 분할은 "제품 변경 138건"을 뜻하지 않습니다.** 측정 명령이 세는 것은 "그 문서를
+**그 168/151 분할은 "제품 변경 151건"을 뜻하지 않습니다.** 측정 명령이 세는 것은 "그 문서를
 건드렸는가"뿐이고, 이 브랜치의 수리 커밋은 거의 전부 같은 커밋에서 코드와 기록을 같이
-바꿉니다. 코드가 바뀐 커밋은 **167개**, 문서만 바꾼 커밋은 **139개**입니다(이 커밋 포함 — 측정값
-167/138에 이 문서-전용 커밋을 더한 것).
+바꿉니다. 코드가 바뀐 커밋은 **175개**, 문서만 바꾼 커밋은 **144개**입니다(이 커밋 포함 — 측정값
+174/144에 이 커밋을 더한 것이고, 이 커밋은 `fuzz/`·`tests/`·`.clusterfuzzlite/`를 바꾸므로
+코드 쪽입니다).
 
 **그 두 숫자는 이제 세어서 얻은 값입니다. 앞서는 계산해서 얻었고, 틀렸습니다.** 이 자리에
 있던 `152/119`는 `(gap 문서를 건드리지 않은 커밋) + (gap 문서와 코드를 함께 바꾼 커밋)`으로
@@ -55,9 +56,9 @@ gap-baseline 문서를 건드렸고, 나머지 148개는 건드리지 않았습�
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest (3.11)                1941 passed, 31 skipped
-    pytest (3.12, tests.yml의 핀) 1941 passed, 31 skipped — CI가 쓰는 인터프리터
-    pytest (파일 순서 정/역/난수)  각 1941 passed, 31 skipped — 순서 무관
+    pytest (3.11)                1976 passed, 31 skipped
+    pytest (3.12, tests.yml의 핀) 1976 passed, 31 skipped — CI가 쓰는 인터프리터
+    pytest (파일 순서 정/역/난수)  각 1976 passed, 31 skipped — 순서 무관
                                  (이 head의 열 번은 전부 깨끗합니다. 앞선 head
                                   `c4ac6b5`의 트리에서는 3.11 shuffled-31337 1회차가
                                   1848 + 실패 1건이었습니다 —
@@ -67,14 +68,20 @@ gap-baseline 문서를 건드렸고, 나머지 148개는 건드리지 않았습�
                                   통과했습니다. 벽시계 민감 테스트의 부하 flake이고
                                   이 브랜치의 변경은 alert 경로를 건드리지 않습니다 —
                                   순서 성질이 아니라 부하로 기록해 둡니다)
-    atheris 하네스 5개            616,943 inputs, crash 0 (3.12, 20~31초 예산)
-                                 (정순 · 역순 · seed 11/707/31337; 이 커밋의 트리에서
-                                  측정. 이 라운드의 테스트가 데이터셋을 온보딩하므로
-                                  격리를 다시 쟀습니다)
-    pytest tests/fuzz            13 passed
-                                 (앞서 11로 적혀 있었습니다 — `declared_relation`
-                                  property 하나가 더해졌는데 이 숫자를 다시 재지
-                                  않았습니다. Atheris 쪽은 아래 하네스 항목 참조)
+    atheris 하네스 4개            472,815 inputs, crash 0 (3.12, 20초/타깃)
+                                 (`tests/fuzz/run_atheris.sh`가 도는 전부입니다 —
+                                  넷입니다. 앞서 "하네스 5개 616,943 inputs"로
+                                  적혀 있었고, 그 다섯 번째는 `fuzz/fuzz_query_safety.py`
+                                  입니다. 그 하네스는 러너 밖에 있고 **어떤 파이프라인도
+                                  돌리지 않습니다** — 아래 ClusterFuzzLite 항목이 그
+                                  발견입니다. 그러니 다섯을 센 숫자는 돌지 않는 하네스를
+                                  하나 포함한 값이었습니다. 이번 측정은 감사 워크플로가
+                                  같은 머신에서 도는 동안 돌렸으므로 input 수는
+                                  **처리량이 아니라 하한**입니다. 단언하는 성질은
+                                  crash 0입니다)
+    pytest tests/fuzz            13 passed, 3 skipped
+                                 (앞서 11로, 그 뒤 skip 없이 13으로 적혀 있었습니다 —
+                                  skip 셋은 재지 않았습니다. 세어서 적습니다)
     python -m sdp.demo_smoke     exit 0, "ready": true
 
 alert 전달 커밋이 테스트를 34건(새 파일 넷 33건 + `test_honest_metrics.py` 1건),
@@ -91,7 +98,9 @@ ClusterFuzzLite 하네스 import 가드 3건으로 1523에,
 (행 레벨 필터 정직성 9건, 드래프트 거부 증빙 페어링 11건, 참된 거부 이유 14건, 배포
 endpoint 자격증명·patch 계약 10건)로 1837에, 같은 라운드의 뒤이은 두 수리(patch
 confidence 정직성 5건, facet 어휘 공표 7건)로 1849에, 가정 결정 라벨 42건과 완전성 숫자 합치 5건으로
-1896에, 발견 가능성 6건으로 1902에, 쓰기 에코 재전송 8건으로 1910에, 증빙 도달성 10건으로 1920에, preview 출처 공표 11건으로 1931에, 어휘 쓰기 정직성 10건으로 **1941**에 와 있습니다(skip이
+1896에, 발견 가능성 6건으로 1902에, 쓰기 에코 재전송 8건으로 1910에, 증빙 도달성 10건으로 1920에, preview 출처 공표 11건으로 1931에, 어휘 쓰기 정직성 10건으로 1941에, resolve 별칭 7건으로
+1948에, probe 거부 증빙 6건 + map 선언 4건으로 1958에, 거부 plane 5건으로 1963에, 콘솔
+플로우 링크 7건으로 1970에, 퍼징 공표 장소 6건으로 **1976**에 와 있습니다(skip이
 23 → 31로 는 것은 새 가드 둘이 `measured`가 아닌 KPI 넷에
 대해 skip하기 때문입니다 — 그 skip 자체가 분기가 측정된 증거이고, 같은 파일의
 `test_at_least_one_kpi_exercises_each_branch`가 양쪽 분기에 사례가 있음을 단언합니다)
@@ -126,6 +135,53 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 **이 문장이 결함을 가려 줬습니다**: 미러가 돈다는 것은 참이지만, 그 하네스는 아래 항목이
 고치기 전까지 ClusterFuzzLite 이미지에서 **import에서 죽고 있었고** 입력을 하나도 퍼징하지
 않았습니다. "미러가 있으니 됐다"는 커버리지 주장이 아닙니다.
+
+### Fixed — 세 문서가 ClusterFuzzLite가 하네스를 **돌린다고** 적었습니다. 아무것도 돌리지 않습니다 (medium)
+
+`fuzz/fuzz_query_safety.py`는 `validate_sql_query`의 Atheris 타깃이고, 세 곳이 그 실행
+장소를 사실로 적었습니다 — `CLAUDE.md`("`.clusterfuzzlite/Dockerfile` 이미지에서 …
+실행된다"), 하네스 자신의 docstring("ClusterFuzzLite runs this file as …"), 그리고
+`tests/test_fuzz_harness_imports.py`("the image is the **only place** either one shows").
+
+```
+$ grep -rln 'clusterfuzzlite\|cflite' .github/
+(출력 없음)
+$ ls .github/workflows/
+fuzz.yml  scorecard-analysis.yml  tests.yml
+$ git log --all --diff-filter=A --name-only -- '.github/workflows/*cflite*'
+(커밋된 적 없음)
+중앙 저장소: fast-mlsirm-cflite_pr.yml  <- on: workflow_call, 여기엔 호출자 없음
+```
+
+이 이미지를 빌드하거나 실행하는 파이프라인은 **없습니다.** 그래서 이 하네스는 지금까지
+**한 번도 실행된 적이 없고**, `.clusterfuzzlite/`의 역할은 Scorecard discovery marker입니다.
+
+**비용을 치른 문장은 세 번째입니다.** `tests/test_fuzz_harness_imports.py`는 이 하네스의
+import 수리가 체크아웃에서 보이지 않았기 때문에 존재하는데, 그 docstring이 다음 독자를
+"이미지에서 보인다"며 그곳으로 보냅니다. 거기엔 볼 것이 영원히 없습니다. 같은 docstring이
+이미 참인 문장도 담고 있었습니다 — "This file is the only thing standing between the
+ClusterFuzzLite entrypoint and silence" — 그리고 적힌 것보다 **더** 참입니다: entrypoint에
+도달하는 일이 없으므로 다른 결과가 없습니다.
+
+**과장하지 않기 위해 같이 단언한 것:** 그 하네스가 검사하는 invariant는 **도는 곳에서**
+검사됩니다. `fuzz.yml`의 Hypothesis job이 `tests/fuzz/test_fuzz_properties.py`를 돌리고 그
+파일이 같은 공유 oracle을 호출하며, Atheris job은 `tests/fuzz/atheris/` 하네스 넷을 돕니다.
+빠진 것은 공표된 실행 장소이고 커버리지가 아닙니다.
+
+**수리:** 네 곳(위 셋 + 이미지 자신)이 사실을 적고, `tests/test_fuzzing_posture_is_what_runs.py`가
+그 문단들을 **파생된 파이프라인 상태에 양방향으로** 묶습니다 — 나중에 ClusterFuzzLite를
+붙이면 "돌지 않는다"고 적은 문단이 red가 됩니다.
+
+**변이 여덟, 전부 red** — 단 M3(Hypothesis mirror가 oracle 호출을 멈춤)이 처음 **green**이었습니다.
+가드가 `"check_validate_sql_query" in mirror`였고, 변이가 이름을 `..._DISABLED`로 바꾸자
+접두사가 부분 문자열 검사를 그대로 만족시켰습니다. 전제는 "oracle을 호출한다"였고 코드가 센
+것은 "이 글자들이 나타난다"였습니다 — 이 수리가 한 겹 위에서 고치는 바로 그 결함이므로,
+AST로 **호출**을 셉니다. 이름 변경과 호출 삭제 양쪽에서 red입니다.
+
+**닫지 않은 것.** `.clusterfuzzlite/`를 실제로 도는 파이프라인에 붙이는 것은 하지 않았습니다 —
+계정 Actions 과금 잠금이 호스티드 레인을 디스패치 전에 거절하는 동안 새 게이트를 추가하면
+증거 없는 공표가 하나 늘어날 뿐입니다. 선언이 파이프라인을 따라가도록 묶어 두었으므로,
+붙이는 쪽을 택할 때 문서가 red로 알려 줍니다.
 
 ### Fixed — 콘솔 "Pilot Flow"의 다섯 단계 중 **둘을 따라갈 수 없었습니다** (low, 구매자 체감)
 

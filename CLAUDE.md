@@ -91,7 +91,24 @@ supply-chain 하드닝 유지: base image는 digest-pinned(`python:3.12-slim@sha
 
 ### Fuzzing
 
-`fuzz/fuzz_query_safety.py`는 Atheris로 `validate_sql_query` invariant를 검사한다. Atheris wheel은 Linux x86_64 전용(`fuzz-requirements.txt`)이며 `.clusterfuzzlite/Dockerfile` 이미지에서 `python fuzz/fuzz_query_safety.py -runs=1000`으로 실행된다.
+`fuzz/fuzz_query_safety.py`는 Atheris로 `validate_sql_query` invariant를 검사한다. Atheris wheel은 Linux x86_64 전용(`fuzz-requirements.txt`)이다.
+
+**이 하네스를 실제로 돌리는 파이프라인은 없다.** `.clusterfuzzlite/Dockerfile`은 entrypoint로
+`python fuzz/fuzz_query_safety.py -runs=1000`을 선언하지만,
+**어떤 워크플로도 이 이미지를 빌드하거나 실행하지 않는다** — 이 저장소의 워크플로는 `tests.yml`·`fuzz.yml`·
+`scorecard-analysis.yml` 셋이고 어느 것도 ClusterFuzzLite를 참조하지 않으며, 그런 워크플로가
+커밋된 적도 없다. 조직 중앙 워크플로 중 ClusterFuzzLite를 돌리는 것은
+`fast-mlsirm-cflite_pr.yml` 하나이고 `on: workflow_call`이라 호출자가 있어야 도는데, 여기엔
+호출자가 없다. 그래서 `.clusterfuzzlite/`의 역할은 Scorecard discovery marker이고, 이 하네스는
+지금까지 **한 번도 실행된 적이 없다**.
+
+그 invariant 자체는 **도는 곳에서 검사된다** — `fuzz.yml`의 Hypothesis job이
+`tests/fuzz/test_fuzz_properties.py`를 돌리고 그 파일이 같은 공유 oracle
+(`tests/fuzz/invariants.py`)을 호출하며, Atheris job은 `tests/fuzz/run_atheris.sh`로
+`tests/fuzz/atheris/` 하네스 넷을 돈다. 빠진 것은 공표된 실행 장소이고 커버리지가 아니다.
+하네스 자체를 지키는 것은 `tests/test_fuzz_harness_imports.py`(import + 이미지 COPY 집합)
+하나뿐이며, `tests/test_fuzzing_posture_is_what_runs.py`가 이 문단과 파이프라인 상태를
+**양방향으로** 묶는다 — 나중에 ClusterFuzzLite를 붙이면 이 문단이 red가 된다.
 
 ## 주요 컨벤션
 

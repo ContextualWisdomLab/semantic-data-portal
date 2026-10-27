@@ -3769,6 +3769,45 @@ counts: {'고객': number, '고객행동': number, '매출': number, '온톨로�
 
 이 절은 측정 기록이고 병합 허가가 아닙니다.
 
+## 세 문서가 ClusterFuzzLite가 하네스를 돌린다고 적었습니다. 아무것도 돌리지 않습니다 (2026-10-27 20:10Z)
+
+```
+$ grep -rln 'clusterfuzzlite\|cflite' .github/     -> 출력 없음
+$ ls .github/workflows/                            -> fuzz.yml scorecard-analysis.yml tests.yml
+$ git log --all --diff-filter=A -- '.github/workflows/*cflite*'  -> 커밋된 적 없음
+중앙 저장소의 유일한 CFL 워크플로: fast-mlsirm-cflite_pr.yml (on: workflow_call, 호출자 없음)
+```
+
+`CLAUDE.md`, 하네스 자신의 docstring, `tests/test_fuzz_harness_imports.py` 셋이 실행 장소를
+사실로 적었습니다. 그 이미지를 빌드·실행하는 파이프라인은 없고, `fuzz/fuzz_query_safety.py`는
+한 번도 실행된 적이 없습니다. `.clusterfuzzlite/`의 역할은 Scorecard discovery marker입니다.
+
+비용을 치른 문장은 import 가드의 docstring입니다 — 그 하네스의 import 수리가 체크아웃에서
+보이지 않았기 때문에 존재하는 파일인데, 다음 독자를 "이미지에서 보인다"며 도달 불가능한
+장소로 보냅니다. 같은 docstring의 다른 문장("이 파일이 entrypoint와 침묵 사이에 선 유일한
+것")은 참이고, 적힌 것보다 더 참입니다.
+
+**커버리지는 빠지지 않았습니다**(과장 방지로 같이 단언): invariant는 `fuzz.yml`의 Hypothesis
+job이 돌리는 `tests/fuzz/test_fuzz_properties.py`가 같은 공유 oracle로 검사하고, Atheris job은
+`tests/fuzz/atheris/` 하네스 넷을 돕니다. 빠진 것은 공표된 실행 장소입니다.
+
+**수리:** 네 곳이 사실을 적고, 새 테스트가 그 문단들을 파생된 파이프라인 상태에 양방향으로
+묶습니다. 변이 여덟 전부 red — M3이 처음 green이었고(`in` 부분 문자열 검사를 접두사 개명이
+만족), AST로 호출을 세도록 고쳤습니다.
+
+부수로 CHANGELOG의 자기 측정을 다시 쟀습니다: 커밋 318/167, 코드 174·문서 144,
+pytest 1976 passed / 31 skipped, `tests/fuzz` 13 passed / 3 skipped, atheris **하네스 넷**
+472,815 inputs / crash 0(20초/타깃, 감사 워크플로와 동시 실행이므로 input 수는 하한).
+앞서 적혀 있던 "하네스 5개"는 **돌지 않는 하네스를 하나 포함한** 값이었습니다.
+
+### 닫지 않은 것
+
+`.clusterfuzzlite/`를 실제로 도는 파이프라인에 붙이지는 않았습니다 — 과금 잠금이 호스티드
+레인을 거절하는 동안 새 게이트는 증거 없는 공표를 하나 늘립니다. 선언이 파이프라인을
+따라가도록 묶었으므로 붙이는 쪽을 택할 때 문서가 red로 알려 줍니다.
+
+이 절은 측정 기록이고 병합 허가가 아닙니다.
+
 ## 콘솔 "Pilot Flow"의 다섯 단계 중 둘을 따라갈 수 없었습니다 (2026-10-27 19:30Z)
 
 ```

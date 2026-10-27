@@ -4,8 +4,7 @@
 When that function gained a ``declared_relation`` parameter, the harness was put
 on the same shared oracle as the Hypothesis mirror so the two engines cannot
 disagree about what counts as a violation. The import that achieved it broke the
-harness in **two independent ways**, and the image is the only place either one
-shows:
+harness in **two independent ways**, and a checkout shows neither:
 
 1. ``.clusterfuzzlite/Dockerfile`` sets ``WORKDIR /src`` and
    ``PYTHONPATH=/src/src`` and runs ``CMD ["python", "fuzz/fuzz_query_safety.py"]``.
@@ -23,8 +22,17 @@ shows:
 module named 'tests'`` before a single input was fuzzed. Nothing caught it: the
 repository's own ``.github/workflows/fuzz.yml`` Atheris job runs
 ``tests/fuzz/run_atheris.sh``, which never runs *this* harness, and the
-Hypothesis job imports the oracle directly. This file is the only thing standing
-between the ClusterFuzzLite entrypoint and silence.
+Hypothesis job imports the oracle directly.
+
+And **no pipeline ever builds that image** - not this repository's three
+workflows, and not the organization's central required workflows, whose only
+ClusterFuzzLite entry is a reusable ``workflow_call`` with no caller here. So the
+sentence this docstring used to carry - that the image is where the breakage
+shows - named a venue that is never reached. This file is the only thing standing
+between the ClusterFuzzLite entrypoint and silence, and that is the whole of it
+rather than the first of several.
+``tests/test_fuzzing_posture_is_what_runs.py`` ties these paragraphs to the
+derived pipeline state in both directions.
 
 The first version of this guard reproduced the path *order* only, and passed
 while the image stayed broken - ``tests/`` exists in a checkout. A guard whose

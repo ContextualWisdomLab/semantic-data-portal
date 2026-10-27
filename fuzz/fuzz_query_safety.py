@@ -4,9 +4,15 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-# ClusterFuzzLite runs this file as ``python fuzz/fuzz_query_safety.py`` from
-# ``/src`` with ``PYTHONPATH=/src/src`` (.clusterfuzzlite/Dockerfile), so
-# ``sys.path[0]`` is **this file's directory**, not the repository root. Two
+# ``.clusterfuzzlite/Dockerfile`` declares this file as its entrypoint -
+# ``python fuzz/fuzz_query_safety.py`` from ``/src`` with
+# ``PYTHONPATH=/src/src`` - so ``sys.path[0]`` is **this file's directory**, not
+# the repository root. That is the environment the path repair below is written
+# for, and it is hypothetical:
+# **no workflow in this repository builds or runs that image**, and the only
+# central workflow that runs ClusterFuzzLite is a
+# reusable one with no caller here, so this harness has never been executed by
+# any pipeline. Two
 # separate things were wrong about importing the shared oracle below, and the
 # image is the only place either one shows: the root was on the path nowhere,
 # *and* the image did not contain ``tests`` at all. The oracle stays in
@@ -15,7 +21,11 @@ from pathlib import Path
 # oracle into ``fuzz/`` instead does not work: ``tests/fuzz`` is itself imported
 # as top-level ``fuzz`` under pytest, so it would shadow the new module.
 # This file is the one harness ``tests/fuzz/run_atheris.sh`` never runs, so only
-# ``tests/test_fuzz_harness_imports.py`` stands between it and silence.
+# ``tests/test_fuzz_harness_imports.py`` stands between it and silence - and
+# because nothing runs the image either, that guard is not merely the first line
+# of defence but the whole of it. The invariant is still checked where something
+# does run: ``tests/fuzz/test_fuzz_properties.py`` calls the same oracle under
+# ``fuzz.yml``'s Hypothesis job.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import atheris
