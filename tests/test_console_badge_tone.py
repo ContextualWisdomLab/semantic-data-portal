@@ -163,9 +163,104 @@ def test_the_helper_applies_the_tone_it_is_given() -> None:
 
 
 def test_the_class_write_uses_a_safe_dom_api() -> None:
-    """``className``, not ``innerHTML``: the console must stay sink-free."""
+    """The chip's class is written with ``className``, not an HTML sink."""
     page = _console()
     assert "className" in page or "classList" in page
-    script = page.split("<script>", 1)[-1]
-    assert "innerHTML = " not in script.replace("panelHtml", "") or True
     assert "document.write" not in page
+    assert "outerHTML" not in page
+    assert "insertAdjacentHTML" not in page
+
+
+def _html_template_literals(script: str) -> list[str]:
+    """Every backtick template literal in ``script`` that builds HTML."""
+    literals: list[str] = []
+    index = 0
+    while True:
+        start = script.find("`", index)
+        if start == -1:
+            return [literal for literal in literals if "<" in literal]
+        end = start + 1
+        while end < len(script):
+            if script[end] == "\\":
+                end += 2
+                continue
+            if script[end] == "`":
+                break
+            end += 1
+        literals.append(script[start + 1 : end])
+        index = end + 1
+
+
+def _interpolations(literal: str) -> list[str]:
+    """The expression inside each ``${...}`` of one template literal."""
+    found: list[str] = []
+    index = 0
+    while True:
+        start = literal.find("${", index)
+        if start == -1:
+            return found
+        depth, cursor = 1, start + 2
+        while cursor < len(literal) and depth:
+            if literal[cursor] == "{":
+                depth += 1
+            elif literal[cursor] == "}":
+                depth -= 1
+            cursor += 1
+        found.append(literal[start + 2 : cursor - 1].strip())
+        index = cursor
+
+
+def test_the_console_uses_innerhtml_and_escapes_everything_it_interpolates() -> None:
+    """The real property, in place of an assertion that could not fail.
+
+    This check used to read::
+
+        assert "innerHTML = " not in script.replace("panelHtml", "") or True
+
+    which is vacuous by construction, and the thing it was hedging around was
+    true: the controls, KPI and connector panels each assign ``innerHTML``, and
+    a comment a few lines above them said "the console stays free of
+    innerHTML". The hedge is why that comment survived.
+
+    So the property asserted is the one that actually holds. Every value
+    interpolated into an HTML-bearing template literal must be either an
+    ``esc(...)`` call or a ternary over string literals - a CSS class chosen
+    between ``'ok'`` and ``'warn'`` cannot carry caller data. Anything else is
+    an unescaped interpolation into an HTML sink.
+    """
+    script = _console().split("<script>", 1)[-1]
+    assert "innerHTML" in script, (
+        "if the console no longer uses an HTML sink this guard is measuring "
+        "nothing - delete it rather than leave it green"
+    )
+    literals = _html_template_literals(script)
+    assert literals, "no HTML-bearing template literal found; the parse is wrong"
+
+    # A ternary is accepted only when **both** branches are quoted string
+    # literals. The first predicate here was "contains ? and ' and no . after
+    # the ?", which would have accepted ``flag ? someIdentifier : 'warn'`` - a
+    # bare identifier carries data just as a property access does.
+    literal_branches = re.compile(r"^[^?]+\?\s*'[\w -]*'\s*:\s*'[\w -]*'$")
+    offenders = []
+    for literal in literals:
+        for expression in _interpolations(literal):
+            if expression.startswith("esc(") or literal_branches.match(expression):
+                continue
+            offenders.append(expression)
+    assert not offenders, (
+        "these values reach an HTML template literal without esc(): " f"{offenders}"
+    )
+
+
+def test_the_escaper_covers_every_html_metacharacter() -> None:
+    """``esc`` is the whole defence above, so what it replaces is asserted here."""
+    script = _console().split("<script>", 1)[-1]
+    escaper = script.split("const esc =", 1)[1].split("const pct", 1)[0]
+    for character, entity in (
+        ("&", "&amp;"),
+        ("<", "&lt;"),
+        (">", "&gt;"),
+        ('"', "&quot;"),
+        ("'", "&#39;"),
+    ):
+        assert entity in escaper, (character, entity, escaper)

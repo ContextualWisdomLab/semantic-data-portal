@@ -357,7 +357,14 @@ _CONSOLE_TEMPLATE = """<!doctype html>
     // before the words on a handoff dashboard. One helper writes both, because
     // two calls per state is how they drift apart.
     //
-    // ``className``, not an HTML sink: the console stays free of innerHTML.
+    // ``className``, not an HTML sink, for *this* helper. The console is not
+    // free of ``innerHTML`` - the controls, KPI and connector panels below all
+    // assign one - and a comment here claimed it was, three writes above them.
+    // What actually holds is that every value interpolated into those HTML
+    // template literals goes through ``esc`` or is a ternary over string
+    // literals, which ``test_console_badge_tone.py`` audits over the script
+    // text. That assertion used to end in ``or True``, so the false comment
+    // outlived the guard that was supposed to check it.
     const badge = (id, value, tone) => {
       const node = document.getElementById(id);
       node.textContent = value;
