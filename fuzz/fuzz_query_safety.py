@@ -2,6 +2,21 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
+
+# ClusterFuzzLite runs this file as ``python fuzz/fuzz_query_safety.py`` from
+# ``/src`` with ``PYTHONPATH=/src/src`` (.clusterfuzzlite/Dockerfile), so
+# ``sys.path[0]`` is **this file's directory**, not the repository root. Two
+# separate things were wrong about importing the shared oracle below, and the
+# image is the only place either one shows: the root was on the path nowhere,
+# *and* the image did not contain ``tests`` at all. The oracle stays in
+# ``tests/fuzz/invariants.py`` so both engines check one invariant; the image now
+# copies ``tests/fuzz`` and the repository root goes on the path here. Moving the
+# oracle into ``fuzz/`` instead does not work: ``tests/fuzz`` is itself imported
+# as top-level ``fuzz`` under pytest, so it would shadow the new module.
+# This file is the one harness ``tests/fuzz/run_atheris.sh`` never runs, so only
+# ``tests/test_fuzz_harness_imports.py`` stands between it and silence.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import atheris
 

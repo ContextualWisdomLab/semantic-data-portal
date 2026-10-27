@@ -3704,6 +3704,62 @@ counts: {'고객': number, '고객행동': number, '매출': number, '온톨로�
 
 이 절은 측정 기록이고 병합 허가가 아닙니다.
 
+## ClusterFuzzLite 하네스가 **한 입력도 퍼징하지 못하고** import에서 죽었습니다 (2026-10-27 02:20Z)
+
+`a2f50c2`가 두 엔진의 oracle을 하나로 모으면서 `fuzz/fuzz_query_safety.py`에
+`from tests.fuzz.invariants import check_validate_sql_query`를 넣었습니다. 이미지에서
+`ModuleNotFoundError: No module named 'tests'`가 첫 입력 전에 뜹니다. 원인이 **둘**입니다:
+
+* `WORKDIR /src` + `PYTHONPATH=/src/src` + `CMD python fuzz/fuzz_query_safety.py`에서
+  `sys.path[0]`은 **스크립트의 디렉터리**(`/src/fuzz`)이고 `/src`는 경로에 없습니다.
+* 이미지가 `tests`를 **담지 않았습니다**(`COPY src`, `COPY fuzz`, requirements 둘). 복사되지
+  않은 파일은 `sys.path`로 닿을 수 없습니다.
+
+### 왜 아무도 몰랐나
+
+`fuzz.yml`의 Atheris 잡은 `tests/fuzz/run_atheris.sh`를 돌리고, 그 스크립트는
+`tests/fuzz/atheris/fuzz_*.py` 네 개(`draft_sql`, `execute_query`, `resolve_terms`,
+`search_catalog`)만 돌립니다. `fuzz_query_safety`는 그 목록에 **없습니다** — 이 하네스는
+ClusterFuzzLite 이미지에서만 실행됩니다. Hypothesis 미러는 oracle을 직접 import하므로
+영향이 없습니다. 즉 `validate_sql_query`의 coverage-guided 커버리지는 그 이미지에만
+있었고, 그 이미지에서 죽어 있었습니다. CHANGELOG의 "미러가 `tests/fuzz`에서 돕니다"라는
+문장이 이 공백을 덮고 있었으므로 같은 커밋에서 고쳤습니다.
+
+### 이동이 아니라 복사로 고쳤습니다
+
+먼저 oracle을 `fuzz/invariants.py`로 옮겨 봤고 수집 단계가 거절했습니다: `tests/`에
+`__init__.py`가 없어 `tests/fuzz`가 pytest에서 **top-level `fuzz`로** import되므로 새
+모듈을 가립니다(`ImportError: cannot import name 'invariants' from 'fuzz'
+(.../tests/fuzz/__init__.py)`). 그래서 oracle은 `tests/fuzz/invariants.py`에 남고,
+Dockerfile이 `COPY tests/fuzz ./tests/fuzz`로 그 디렉터리만 담습니다. 하네스에는 repo
+root bootstrap이 있습니다. `chown -R`은 추가된 `COPY` 뒤이고, digest 고정과 uid 10001은
+그대로입니다.
+
+### 가드: 경로 순서가 아니라 파일 집합
+
+첫 판 가드(`tests/test_fuzz_harness_imports.py`)는 `sys.path` **순서**만 재현해서 체크아웃
+에서 green이었습니다 — 시뮬레이션 대상 이미지에는 `tests/`가 없는 동안. 지금은 Dockerfile
+에서 COPY 집합·`WORKDIR`·`PYTHONPATH`·`CMD`를 읽어 샌드박스를 만들고 그 안에서 하네스
+본문을 실행합니다. oracle의 모듈 경로는 하네스의 import 문에서 파싱하므로 하네스를 따라
+움직입니다.
+
+샌드박스는 **복사**입니다. symlink 판에서 변이 둘이 green으로 돌아왔습니다 — 하네스의
+bootstrap이 `Path(__file__).resolve()`이고 `resolve()`가 symlink를 따라가서, 샌드박스의
+`fuzz` 링크가 실제 체크아웃으로 풀려 진짜 repo root가 `sys.path`에 올랐습니다. 밖으로
+나갈 수 있는 샌드박스는 이미지가 아닙니다.
+
+변이 4건 전부 행동 프로브까지 red입니다: bootstrap 제거 / `COPY tests/fuzz` 제거 /
+`COPY tests/fuzz/corpus`로 좁히기 / `PYTHONPATH=/src/src` → `/src`.
+
+### 닫지 않은 것
+
+`fuzz_query_safety`는 여전히 `run_atheris.sh`의 목록에 없습니다. 이미지가 유일한 실행
+경로인 상태 자체는 그대로이고, 이제 그 경로가 살아 있다는 것만 가드됩니다. 로컬에 Atheris
+wheel이 없어 이 저장소에서 **실제 퍼징 실행**을 확인한 것은 아닙니다 — 확인한 것은 하네스가
+이미지의 파일 집합 안에서 import를 통과하고 oracle을 바인딩한다는 것까지입니다.
+
+이 절은 측정 기록이고 병합 허가가 아닙니다.
+
 ## 운영 메모
 
 - Database objects: 두 단어 이상 `snake_case`, 3NF. Catalog plane 테이블은 #73의 `migrations/0002_ontology_catalog_plane.sql`.

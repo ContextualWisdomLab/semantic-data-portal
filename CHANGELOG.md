@@ -2,15 +2,28 @@
 
 이 문서는 `claude/semantic-portal-pr-merge-e5a48k` 브랜치(PR
 [#102](https://github.com/ContextualWisdomLab/semantic-data-portal/pull/102))가
-베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **261개** 커밋 중 135개는
-gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 126개입니다. 이 숫자는 **이
-줄을 담은 커밋을 포함한** 값입니다 — 측정 시점의 234에 이 커밋을 더한 것. 측정 명령:
+베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **262개** 커밋 중 136개가
+gap-baseline 문서를 건드렸고, 나머지 126개는 건드리지 않았습니다. 이 숫자는 **이 줄을 담은
+커밋을 포함한** 값입니다 — 측정 시점의 261에 이 커밋을 더한 것.
+
+**그 136/126 분할은 "제품 변경 126건"을 뜻하지 않습니다.** 측정 명령이 세는 것은 "그 문서를
+건드렸는가"뿐이고, 이 브랜치의 수리 커밋은 거의 전부 같은 커밋에서 코드와 기록을 같이
+바꿉니다. 136개 중 **17개는 코드도 함께** 바꿨습니다. 그래서 실제 분할은 코드가 바뀐 커밋
+**143개**, 문서만 바꾼 커밋 **119개**입니다. 앞서 이 자리에 적혀 있던 "제품 동작이 바뀐
+나머지 126개"는 17건을 문서 작업으로 분류해 **적게 센 값**이었습니다 — 같은 결함이 위의
+낡은 숫자 목록 전체에 걸쳐 있습니다. 측정 명령:
 
     git rev-list --count origin/docs/product-technical-gap-baseline..HEAD
     git log --format=%H origin/docs/product-technical-gap-baseline..HEAD \
       --name-only -- docs/product-technical-gap-baseline.md | grep -c '^[0-9a-f]\{40\}$'
+    # 그중 코드도 바꾼 커밋 (위 분할이 문서 작업으로 분류하던 것):
+    for c in $(git log --format=%H origin/docs/product-technical-gap-baseline..HEAD \
+                 -- docs/product-technical-gap-baseline.md); do \
+      git show --name-only --format= "$c" \
+        | grep -qE '^(src/|tests/|fuzz/|\.github/|\.clusterfuzzlite/|scripts/)' \
+        && echo "$c"; done | wc -l
 
-앞서 적혀 있던 164/112, 186/113, 199/122/77, 203/122/81, 211/122/89, 212/122/90, 213/122/91, 214/122/92, 215/122/93, 216/122/94, 218/122/96, 219/122/97, 220/122/98, 221/122/99, 222/122/100, 223/122/101, 224/122/102, 225/122/103, 226/122/104, 228/122/106, 230/123/107, 231/123/108, 233/124/109, 235/125/110, 252/128/124, 253/129/124, 254/130/124, 255/130/125, 256/131/125, 257/132/125, 258/133/125, 260/134/126는 각각 그 시점의 값이고 이후
+앞서 적혀 있던 164/112, 186/113, 199/122/77, 203/122/81, 211/122/89, 212/122/90, 213/122/91, 214/122/92, 215/122/93, 216/122/94, 218/122/96, 219/122/97, 220/122/98, 221/122/99, 222/122/100, 223/122/101, 224/122/102, 225/122/103, 226/122/104, 228/122/106, 230/123/107, 231/123/108, 233/124/109, 235/125/110, 252/128/124, 253/129/124, 254/130/124, 255/130/125, 256/131/125, 257/132/125, 258/133/125, 260/134/126, 261/135/126는 각각 그 시점의 값이고 이후
 커밋을 반영하지 않은 숫자였습니다 — 자기 문서의 수치도 측정해서 맞춰 둡니다. 199는 이
 줄을 쓴 뒤 3개 커밋이 더 쌓여 낡아 203으로, 203은 다음 커밋에서 낡아 204로, 204는 또
 두 커밋 뒤에 206으로 다시 측정해 고쳤습니다. 206도 그 값을 담은 커밋 자신 때문에 도착
@@ -30,12 +43,15 @@ gap-baseline 문서 작업이고, 아래는 제품 동작이 바뀐 나머지 12
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest                       1520 passed, 31 skipped
-    pytest (파일 순서 정/역/난수)  각 1520 passed, 31 skipped — 순서 무관
+    pytest                       1523 passed, 31 skipped
+    pytest (파일 순서 정/역/난수)  각 1523 passed, 31 skipped — 순서 무관
                                  (정순 · 역순 · seed 11/707/31337; 이 커밋의 트리에서
                                   측정. 이 라운드의 테스트가 데이터셋을 온보딩하므로
                                   격리를 다시 쟀습니다)
-    pytest tests/fuzz            11 passed
+    pytest tests/fuzz            12 passed
+                                 (앞서 11로 적혀 있었습니다 — `declared_relation`
+                                  property 하나가 더해졌는데 이 숫자를 다시 재지
+                                  않았습니다. Atheris 쪽은 아래 하네스 항목 참조)
     python -m sdp.demo_smoke     exit 0, "ready": true
 
 alert 전달 커밋이 테스트를 34건(새 파일 넷 33건 + `test_honest_metrics.py` 1건),
@@ -45,7 +61,8 @@ pgvector 핀 커밋이 10건, event-loop 수리 커밋이 2건, 환경 변수 �
 1266 → 1300 → 1310 → 1312 → 1320 → 1327 → 1330 → 1333 → 1336 → 1340 → 1344 → 1347로
 올라갔고, 그 뒤 수리들을 거쳐 1397에, 새 파일 24건으로 1421에, KPI 포인터 가드 8건으로
 1429에, 404 detail 가드 7건으로 1436에, 거부 사유 가드 11건으로 1447에, 요청 본문
-문서 가드 34건으로 1481에, 콘솔 chip 색 가드 8건으로 1489에, relation 해석 가드 28건으로 1517에, 응답 계약 생성기 가드 3건으로 1520에 와 있습니다(skip이
+문서 가드 34건으로 1481에, 콘솔 chip 색 가드 8건으로 1489에, relation 해석 가드 28건으로 1517에, 응답 계약 생성기 가드 3건으로 1520에,
+ClusterFuzzLite 하네스 import 가드 3건으로 1523에 와 있습니다(skip이
 23 → 31로 는 것은 새 가드 둘이 `measured`가 아닌 KPI 넷에
 대해 skip하기 때문입니다 — 그 skip 자체가 분기가 측정된 증거이고, 같은 파일의
 `test_at_least_one_kpi_exercises_each_branch`가 양쪽 분기에 사례가 있음을 단언합니다)
@@ -77,6 +94,64 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 백그라운드 측정 중에 트리를 고친 탓에 seed 11이 4건 실패로 나온 일이 있고, 그것은 결함이
 아니라 동시 편집이었습니다. Atheris(`fuzz/fuzz_query_safety.py`)는 로컬에 wheel이 없어
 실행하지 않았습니다 — 같은 invariant의 Hypothesis 미러가 `tests/fuzz`에서 돕니다.
+**이 문장이 결함을 가려 줬습니다**: 미러가 돈다는 것은 참이지만, 그 하네스는 아래 항목이
+고치기 전까지 ClusterFuzzLite 이미지에서 **import에서 죽고 있었고** 입력을 하나도 퍼징하지
+않았습니다. "미러가 있으니 됐다"는 커버리지 주장이 아닙니다.
+
+### Fixed — ClusterFuzzLite 하네스가 **한 입력도 퍼징하지 못하고** import에서 죽었습니다 (high)
+
+`a2f50c2`가 `validate_sql_query`에 `declared_relation`을 더하면서, 두 엔진이 같은
+invariant를 보도록 하네스를 공유 oracle에 붙였습니다 —
+`from tests.fuzz.invariants import check_validate_sql_query`. 그 import가 하네스를
+깨뜨렸고, **두 가지가 동시에** 틀렸습니다:
+
+1. `.clusterfuzzlite/Dockerfile`은 `WORKDIR /src`, `PYTHONPATH=/src/src`,
+   `CMD ["python", "fuzz/fuzz_query_safety.py"]`입니다. Python은 **스크립트 자신의
+   디렉터리**를 `sys.path[0]`에 올리므로 경로는 `/src/fuzz`와 `/src/src`뿐이고 `/src`는
+   어디에도 없습니다.
+2. 그 이미지는 `tests`를 **아예 담지 않았습니다.** `COPY src`, `COPY fuzz`와 requirements
+   두 개가 전부였습니다. oracle은 주소를 못 찾는 수준이 아니라 **없었고**, `sys.path`를
+   어떻게 고쳐도 복사되지 않은 파일에는 닿지 않습니다.
+
+그래서 `ModuleNotFoundError: No module named 'tests'`가 첫 입력 전에 떴습니다.
+
+**아무 CI도 잡지 못했습니다.** 이 저장소의 `fuzz.yml` Atheris 잡은
+`tests/fuzz/run_atheris.sh`를 돌리고, 그 스크립트는 `tests/fuzz/atheris/fuzz_*.py` 네 개만
+돌립니다 — `fuzz_query_safety`는 거기에 **없습니다**. Hypothesis 잡은 oracle을 직접
+import합니다. 즉 이 파일은 ClusterFuzzLite 이미지에서만 실행되는 유일한 하네스이고,
+`validate_sql_query`의 coverage-guided 커버리지는 그 이미지에만 있었습니다.
+
+고친 것: 하네스에 repo root bootstrap, 그리고 Dockerfile에 `COPY tests/fuzz ./tests/fuzz`
+(`tests/` 전체가 아니라 oracle이 있는 디렉터리만 — 나머지 스위트는 이미지 의존이 아닙니다).
+
+**oracle을 `fuzz/`로 옮기는 쪽은 안 됩니다.** 먼저 그렇게 해 봤고 수집 단계가 거절했습니다:
+`tests/`에 `__init__.py`가 없어서 `tests/fuzz`가 pytest에서 **top-level `fuzz`로**
+import되므로, 새 `fuzz/invariants.py`를 가립니다(`ImportError: cannot import name
+'invariants' from 'fuzz' (.../tests/fuzz/__init__.py)`). 이름 충돌이 이 트리에서는 이동이
+더 나쁜 선택이라는 증거입니다. 이미지가 import하는 것을 이미지에 넣는 쪽이 맞습니다.
+
+### 가드가 재현해야 하는 것은 경로 순서가 아니라 **파일 집합**입니다
+
+첫 판 가드는 이미지의 `sys.path` **순서**만 재현했고, 체크아웃에는 `tests/`가 있으니
+**green이었습니다** — 자기가 시뮬레이션한다고 적은 이미지에는 `tests/`가 없는 동안.
+가드의 전제가 가드 대상보다 넓으면 그게 결함입니다. 그래서 지금은 Dockerfile에서 COPY
+집합·`WORKDIR`·`PYTHONPATH`·`CMD`를 **읽어** 샌드박스에 그 트리를 만들고, 그 안에서
+하네스 본문을 실행합니다(atheris는 stub, `main()`은 실행하지 않음). oracle의 모듈 경로도
+하네스 소스의 import 문에서 파싱하므로, 하네스가 oracle을 옮기면 가드가 따라갑니다.
+
+**샌드박스는 symlink가 아니라 복사입니다.** 첫 구현은 symlink였고 변이 둘이 green으로
+돌아왔습니다 — 하네스가 bootstrap을 `Path(__file__).resolve()`로 계산하고 `resolve()`는
+**symlink를 따라가므로**, 샌드박스의 `fuzz` 링크가 실제 체크아웃으로 풀려 진짜 repo
+root(그리고 `tests/`)가 `sys.path`에 올랐습니다. 밖으로 나갈 수 있는 샌드박스는 이미지가
+아닙니다.
+
+변이 4건으로 확인했습니다: bootstrap 제거 → red, `COPY tests/fuzz` 제거 → red,
+`COPY tests/fuzz/corpus`로 좁히기(oracle 없는 하위 디렉터리) → red,
+`PYTHONPATH=/src/src` → `/src` → red. 복사 샌드박스에서는 네 건 모두 **행동 프로브**까지
+빨개집니다(symlink 판에서는 둘이 전제 테스트만 빨갰습니다).
+
+공급망 속성은 그대로입니다 — base image digest 고정, non-root uid 10001, `chown`은 추가된
+`COPY` **뒤에** 있습니다.
 
 ### Fixed — 공표 응답 계약을 재생성하는 스크립트가 **존재하지 않았습니다** (high)
 
