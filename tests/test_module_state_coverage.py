@@ -78,6 +78,7 @@ NOT_RUNTIME_MUTATED = frozenset(
         "sdp.api_request_contract.REQUEST_BODY_EXTRA_PROPERTIES",
         "sdp.api_request_contract.REQUEST_BODY_MODELS",
         "sdp.api_response_contract.RESPONSE_SCHEMAS",
+        "sdp.policy.REFUSAL_PLANES",
         "sdp.api_response_contract.UNPUBLISHED_RESPONSES",
         "sdp.authz._ALGORITHM_KEY_TYPES",
         "sdp.authz._ALLOWED_JWT_ALGORITHMS",

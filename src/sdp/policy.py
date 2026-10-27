@@ -221,6 +221,51 @@ CATALOG_ACTION_ALIASES = {
 UNMAPPED_CATALOG_ACTIONS = frozenset({"administer_tenants", "review_security_evidence"})
 
 
+# The discovery branch keys on the **action**, and four planes route through it:
+# the catalog, the evidence ledgers, the ontology proposal queue and the
+# knowledge graph. Its reason named one of them. The previous repair of this
+# string set the right criterion for itself - "worded for every caller this
+# branch refuses" - and met it for the callers it had enumerated, which is why
+# an unauthenticated read of ``/policy/decisions`` or ``/graph/nodes/{id}`` was
+# told that catalog access requires authentication.
+#
+# Worded from a declared plane rather than from ``resource`` itself, because the
+# branch is also reached with values that are **assets**: ``_authorize_graph_read``
+# forwards a node id, and ``evaluate(..., resource="crm-customer-master",
+# action="search")`` returns this same decision. Echoing the resource would
+# reopen the existence oracle the dataset routes' 404 exists to close - a reason
+# may name the caller's plane and never the asset it asked about - so anything
+# not declared here falls back to a sentence that names neither.
+#
+# Every variant keeps ``인증된 사용자만``: ``_catalog_mutation_refusal`` answers a
+# scope-less mutation caller with this same decision and
+# ``tests/test_api.py`` reads that phrase, so it is a contract across the
+# variants rather than a property of one string.
+REFUSAL_PLANES = {
+    "catalog": "카탈로그 접근은 인증된 사용자만 가능합니다.",
+    # ``접근``, not ``읽기``: ``POST /ontology/patches`` reaches this branch as a
+    # write that reuses the discovery decision as its authentication check, and
+    # the previous repair of this string generalized ``목록 조회`` to ``접근``
+    # for the same reason. A plane word plus ``접근`` is true for every caller of
+    # that plane, which is the criterion this vocabulary exists to meet.
+    "evidence": "증빙 원장 접근은 인증된 사용자만 가능합니다.",
+    "ontology/patches": "온톨로지 제안 큐 접근은 인증된 사용자만 가능합니다.",
+    "graph": "지식 그래프 접근은 인증된 사용자만 가능합니다.",
+}
+# Names no plane and no asset, so it is true for every caller and leaks nothing.
+REFUSAL_PLANE_UNDECLARED = "이 요청은 인증된 사용자만 가능합니다."
+
+
+def discovery_refusal_reason(resource: str) -> str:
+    """What an unauthenticated caller is told, by the plane it asked about.
+
+    Two different asset ids must produce the identical sentence; that is the
+    property ``tests/test_refusals_name_their_own_plane.py`` re-asserts, and the
+    reason the lookup has no fallthrough to the resource.
+    """
+    return REFUSAL_PLANES.get(resource, REFUSAL_PLANE_UNDECLARED)
+
+
 def evaluate(
     subject: str,
     resource: str,
@@ -369,13 +414,7 @@ def evaluate(
             **decision_base,
             provenance=provenance,
             effect="deny",
-            # Worded for every caller this branch refuses, not only for a list
-            # read. ``_catalog_mutation_refusal`` answers a scope-less mutation
-            # caller with this same decision, because it is the only refusal in
-            # this engine whose reason cannot vary with the dataset - and a
-            # reason that varies is the existence oracle the route's 404 exists
-            # to close. "목록 조회" named the wrong action for that caller.
-            reason="카탈로그 접근은 인증된 사용자만 가능합니다.",
+            reason=discovery_refusal_reason(resource),
             obligations={"required_role": "data-analyst"},
         )
 
