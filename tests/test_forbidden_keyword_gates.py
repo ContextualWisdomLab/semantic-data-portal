@@ -39,6 +39,23 @@ INNOCUOUS_IDENTIFIERS = (
 )
 
 
+# Keyword tokens that a SQL lexer splits off but ``\b`` does not.
+# ``\b`` sits between a word character and a non-word character, and Python's
+# ``\w`` is Unicode-aware, so a digit or a non-ASCII letter immediately before a
+# keyword is *not* a boundary: ``\bunion\b`` does not match ``1union`` or
+# ``\ud55cunion``. Real engines do split there - MySQL reads ``SELECT 1union`` as
+# ``1 union`` - so the token is live while the guard is blind.
+#
+# This is a regression the unified matcher introduced. The two gates it replaced
+# (``draft_sql`` and ``audit``) matched bare substrings, which caught every shape
+# below; folding them onto ``validate_sql_query``'s word-boundary predicate fixed
+# their false refusals and inherited its blind spot in the same move. Replacing
+# three predicates with one is only safe if the survivor is at least as strict as
+# each; it was not. ContextualWisdomLab/semantic-data-portal#107 found this
+# boundary independently and chose the asymmetric predicate adopted here.
+LEXER_SPLIT_PREFIXES = ("1", "9", "0x1", "\ud55c", "\u00e9", "\u00b2")
+
+
 def test_the_keyword_list_has_exactly_one_reader() -> None:
     """One list, one matcher.
 
@@ -182,3 +199,81 @@ def test_draft_sql_direct_call_shares_the_same_verdict() -> None:
 
     assert "error" not in drafted("deleted_flag 가 null 인 고객 수")
     assert drafted("drop 고객")["error"] == "policy_denied"
+
+
+def test_the_matcher_sees_the_boundary_a_digit_or_non_ascii_prefix_hides() -> None:
+    r"""A keyword a lexer splits off must still be a keyword to the guard.
+
+    The accepted side of this contract is the point of the asymmetry: a keyword
+    *followed* by an ASCII identifier character stays accepted, because that is
+    an identifier (``updated_at``), while a keyword *preceded* by a digit or a
+    non-ASCII character is refused, because that is a token boundary the engine
+    honours and the previous predicate did not.
+    """
+    for prefix in LEXER_SPLIT_PREFIXES:
+        for keyword in ("union", "drop", "into"):
+            probe = f"{prefix}{keyword}"
+            assert orchestrator._matched_forbidden_keyword(probe) == keyword, probe
+
+    # The asymmetry, held in both directions on one keyword.
+    assert orchestrator._matched_forbidden_keyword("1update") == "update"
+    assert orchestrator._matched_forbidden_keyword("update1") is None
+    assert orchestrator._matched_forbidden_keyword("updated") is None
+    assert orchestrator._matched_forbidden_keyword("my_update") is None
+
+    # And the identifiers above stay accepted, so the fix is not "refuse more".
+    for identifier, _ in INNOCUOUS_IDENTIFIERS:
+        assert orchestrator._matched_forbidden_keyword(identifier) is None, identifier
+
+
+def test_browse_query_refuses_a_union_the_lexer_splits_off_a_number() -> None:
+    """End to end, on the shape that passed every gate with no warning at all.
+
+    ``limit 1union all`` drew an empty warning list from ``validate_sql_query``
+    before this: not a different refusal, no refusal.
+    """
+    def post(sql: str):
+        return client.post(
+            "/browse/query",
+            json={
+                "user": "analyst",
+                "dataset_ids": ["crm-customer-master"],
+                "language": "SQL",
+                "query": sql,
+                "purpose": "analysis",
+            },
+        )
+
+    spaced = post("select customer_id from crm_customer_master limit 1 union all")
+    assert spaced.status_code == 400, spaced.text
+    assert "forbidden_keyword_detected" in spaced.json()["detail"]["warnings"]
+
+    # The same statement with the one space removed.
+    joined = post("select customer_id from crm_customer_master limit 1union all")
+    assert joined.status_code == 400, joined.text
+    assert "forbidden_keyword_detected" in joined.json()["detail"]["warnings"]
+
+
+def test_the_property_lane_presses_the_same_boundary_as_production() -> None:
+    """The shared crash oracle must not be the weaker predicate.
+
+    ``tests/fuzz/invariants.py`` encodes the keyword contract independently so a
+    production regression is a property failure rather than a silent agreement.
+    An oracle weaker than production never fails falsely - and never presses the
+    class it dropped either, which is the whole reason the property lane exists.
+    The predicate is re-derived there rather than imported, so this compares two
+    implementations instead of a regex with itself.
+    """
+    from tests.fuzz import invariants
+
+    corpus = [f"{prefix}{keyword}" for prefix in LEXER_SPLIT_PREFIXES for keyword in ("union", "drop")]
+    corpus += [identifier for identifier, _ in INNOCUOUS_IDENTIFIERS]
+    corpus += ["select customer_id from customer", "drop table customer", "update1", "my_update"]
+
+    for probe in corpus:
+        production = orchestrator._matched_forbidden_keyword(probe) is not None
+        oracle = invariants.forbidden_keyword_present(probe)
+        assert production == oracle, (
+            f"production and the fuzz oracle disagree about {probe!r}: "
+            f"production={production} oracle={oracle}"
+        )

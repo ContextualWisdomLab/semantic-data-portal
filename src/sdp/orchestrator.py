@@ -349,7 +349,7 @@ def _referenced_source_tables(sql: str) -> list[str] | None:
 
 
 def _matched_forbidden_keyword(text: str) -> str | None:
-    """Return the first forbidden keyword appearing in ``text`` as a whole word.
+    r"""Return the first forbidden keyword appearing in ``text`` as a whole word.
 
     Every gate that consults ``_FORBIDDEN_KEYWORDS`` goes through here, because
     they did not agree before: ``validate_sql_query`` matched on word boundaries
@@ -366,12 +366,24 @@ def _matched_forbidden_keyword(text: str) -> str | None:
     catch the real cases (``drop table``, ``select ... into exfil``), which is
     what the keyword list exists for.
 
+    The boundary is deliberately asymmetric, and ``\b`` is not it. ``\b`` sits
+    between a word character and a non-word character, and Python's ``\w`` is
+    Unicode-aware, so a digit or a non-ASCII letter immediately *before* a
+    keyword is not a boundary to it: ``\bunion\b`` does not match ``1union``,
+    which MySQL reads as ``1 union``. Folding three predicates onto this one
+    therefore lost a class the two substring gates had caught - a survivor has
+    to be at least as strict as each predicate it replaces, and this one was
+    not. So the prefix side refuses anything that is not an ASCII identifier
+    character, while the suffix side still accepts one, because that is what
+    separates a split token from an ordinary column: ``1union`` is a keyword,
+    ``updated_at`` is a name. #107 reached the same predicate independently.
+
     The list is iterated in sorted order so the keyword reported back to the
     caller is deterministic rather than set-iteration dependent.
     """
     lowered = text.lower()
     for token in sorted(_FORBIDDEN_KEYWORDS):
-        if re.search(rf"\b{re.escape(token)}\b", lowered):
+        if re.search(rf"(?<![a-z_]){re.escape(token)}(?![a-z0-9_])", lowered):
             return token
     return None
 

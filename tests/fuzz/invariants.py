@@ -26,6 +26,25 @@ FORBIDDEN_KEYWORDS = orchestrator._FORBIDDEN_KEYWORDS
 _SQL_METACHARACTERS = set(" \t\r\n'\";()[]{}`*/\\%+-.,=<>!&|@#?:")
 
 
+def forbidden_keyword_present(text: str) -> bool:
+    r"""Whether ``text`` carries a forbidden keyword as a token.
+
+    Re-derived here rather than calling ``orchestrator._matched_forbidden_keyword``
+    on purpose: an oracle that calls the implementation it judges compares a
+    regex with itself and cannot fail. The boundary is asymmetric - a digit or a
+    non-ASCII character before a keyword is a boundary a SQL lexer honours
+    (``1union`` is ``1 union``), an ASCII identifier character after it is not
+    (``updated_at`` is a name). ``\b`` is the wrong predicate for both sides and
+    was what stood here, which made this lane weaker than production and so
+    blind to the class production had dropped.
+    """
+    lowered = text.lower()
+    return any(
+        re.search(rf"(?<![a-z_]){re.escape(token)}(?![a-z0-9_])", lowered)
+        for token in FORBIDDEN_KEYWORDS
+    )
+
+
 def reset_in_memory_state() -> None:
     """Clear the in-memory append-only stores between fuzz iterations.
 
@@ -239,7 +258,7 @@ def check_execute_query(req: QueryExecutionRequest) -> None:
     # previous substring predicate pinned the defect it was meant to guard: it
     # demanded that `select created_at from customer` be REJECTED, because
     # "create" is a substring of "created_at".
-    if any(re.search(rf"\b{re.escape(tok)}\b", lowered) for tok in FORBIDDEN_KEYWORDS):
+    if forbidden_keyword_present(lowered):
         assert resp.status == "REJECTED", "forbidden keyword was not rejected"
     if resp.status == "SUCCEEDED":
         assert resp.row_count >= 0
