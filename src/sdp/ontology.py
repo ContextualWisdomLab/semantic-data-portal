@@ -1208,6 +1208,29 @@ def review_patch(
         )
 
 
+def _mirror_concept_into_graph(registration: dict[str, Any]) -> dict[str, Any]:
+    """Write the published concept into the graph store, as the direct route does.
+
+    One helper so the two publication paths cannot drift again: whatever a
+    publication means for the graph, it means it the same way from a steward
+    approval and from a direct upsert. The record comes from the registrar, so
+    the node's definition is the one the vocabulary actually holds.
+    """
+    from .graph_store import get_store
+
+    return get_store().upsert_concept(
+        {
+            "concept": registration["concept"],
+            "definition": registration.get("definition", ""),
+            "aliases": list(registration.get("aliases", []) or []),
+            "multilingual": list(registration.get("multilingual", []) or []),
+            "broader": registration.get("broader"),
+            "narrower": list(registration.get("narrower", []) or []),
+            "related": list(registration.get("related", []) or []),
+        }
+    )
+
+
 def _review_patch_locked(
     patch_id: str,
     normalized: str,
@@ -1249,6 +1272,29 @@ def _review_patch_locked(
                 actor_id=patch.requestor,
                 reviewer_id=reviewer,
             )
+            # 노출 stops short again, one surface family over. The comment above
+            # records closing 제안 -> 승인 -> 노출 for the vocabulary reads, and
+            # the registrar is indeed "the same registrar POST /ontology/concepts
+            # uses" - but that route does *two* writes, the registrar and the
+            # graph mirror, and only the first was shared. Measured: an approved
+            # concept was listed by GET /ontology/concepts and present in the
+            # JSON-LD export while GET /graph/nodes/<name> answered 404,
+            # POST /graph/query and POST /search/semantic could not reach it, and
+            # /graph/stats did not move - so the **governed** path produced a
+            # concept the graph cannot see while the ungoverned direct upsert
+            # produced one it can.
+            #
+            # Inside the lock, and before the status write, for the reason the
+            # block above gives: a mirror that failed after the patch was marked
+            # approved would leave 승인 recorded and 노출 missing, which is the
+            # break this path exists to close. Lock order is vocabulary -> graph
+            # and only ever that way; the store takes no ontology lock.
+            #
+            # The payload is built from the **registrar's** record rather than
+            # the submission, the same correction the direct route carries: the
+            # registrar keeps a stored definition and discards a re-submission,
+            # so mirroring the proposal would leave the two disagreeing.
+            _mirror_concept_into_graph(registration)
 
         patch.reviewed_by = reviewer
         patch.reviewed_at = datetime.now(timezone.utc)

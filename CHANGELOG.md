@@ -136,6 +136,71 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 고치기 전까지 ClusterFuzzLite 이미지에서 **import에서 죽고 있었고** 입력을 하나도 퍼징하지
 않았습니다. "미러가 있으니 됐다"는 커버리지 주장이 아닙니다.
 
+### Fixed — 거버닝 발행 경로가 **그래프에 보이지 않았고**, 쓰기 응답은 자기가 **대체한** 버전을 공표했습니다 (medium x2)
+
+**1. steward 승인으로 발행된 개념이 어휘와 JSON-LD 내보내기에는 들어가고 그래프 노드는
+쓰지 않았습니다.** `POST /ontology/concepts`는 **두 번** 씁니다 — registrar와 그래프 미러.
+`review_patch`는 registrar만 호출합니다. 직접 경로를 같은 프로세스의 대조군으로 두고 측정:
+
+```
+경로 A  POST /ontology/concepts "직접 업서트 개념"
+  /ontology/concepts 목록에 있음      True
+  GET /graph/nodes/<이름>             200
+  /graph/stats                        nodes 26 -> 27, concepts 5 -> 6
+
+경로 B  POST /ontology/patches + review approve "승인 경로 개념"
+  /ontology/concepts 목록에 있음      True
+  /ontology/vocabulary/jsonld         True
+  GET /graph/nodes/<이름>             404
+  /graph/stats                        변동 없음
+```
+
+제안자·심사자·변경 로그가 붙는 **거버닝** 경로가 `/graph/nodes/{id}`·`/graph/query`·
+`POST /search/semantic`·`/graph/stats`가 볼 수 없는 개념을 만들고, 거버넌스 없는 직접
+업서트는 볼 수 있는 개념을 만듭니다.
+
+`_review_patch_locked`의 주석은 "제안 -> 승인 -> **노출**"을 닫았다고 기록하며 "through the
+same registrar POST /ontology/concepts uses"라고 적습니다 — 참이지만 **절반**입니다. 그 라우트는
+registrar **와 그래프 미러** 둘을 쓰고, 공유된 것은 첫 번째뿐이었습니다. 노출이 한 표면
+가족(graph) 건너에서 다시 멈춥니다.
+
+**수리:** 미러를 공유 헬퍼(`_mirror_concept_into_graph`) 하나로 만들고 승인 경로가 그것을
+호출합니다 — 락 안에서, 상태 쓰기 **전에**(미러가 실패한 뒤 patch가 approved로 남으면 승인은
+기록되고 노출은 빠지는, 이 경로가 닫으려고 있는 바로 그 파손입니다). 락 순서는 어휘 → 그래프
+한 방향뿐이고 스토어는 어휘 락을 잡지 않습니다. 미러 payload는 **제안문이 아니라 registrar의
+레코드**에서 만듭니다(registrar는 이미 게시된 정의를 유지하고 재제출을 버리므로, 제안문을
+미러하면 둘이 어긋납니다 — 직접 라우트가 같은 정정을 이미 담고 있습니다).
+
+**2. 두 쓰기 라우트가 자기가 대체한 버전을 공표했습니다.** 두 주석과 서비스되는 OpenAPI가
+"이 쓰기가 만든 버전"이라고 적는데, `_ontology_version_stamp`가 쓰기 **전에** 호출됩니다 —
+pin 검사에는 맞고 스탬프에는 틀립니다.
+
+```
+/ontology/version 쓰기 전   revision 3  digest 07cac5a3…
+쓰기 응답                   revision 3  digest 07cac5a3…   <- 낡은 것
+/ontology/version 쓰기 후   revision 4  digest 04193fcb…
+
+돌려받은 digest를 ontology_content_digest로 재생 -> 409
+```
+
+방금 받은 digest를 고정한 호출자가 **그것을 건네준 쓰기에게** 거부됩니다.
+
+**수리:** 헬퍼를 둘로 쪼갭니다 — `_ontology_version_pin_verdict`(쓰기 **전**, 400/409를
+그대로 올림)와 `_ontology_version_stamp_from`(쓰기 **후**, 현재 신원으로 스탬프). 읽기
+라우트는 합쳐진 쪽을 계속 씁니다(읽기는 자기가 검사한 버전에서 답하므로 전후가 같은
+순간입니다). **공표된 계약 문장은 바꾸지 않았습니다** — 이제 그 문장이 참입니다.
+
+**변이 넷 중 M2가 처음 green이었습니다.** 미러가 빈 정의를 써도 아무 테스트가 알아채지
+못했습니다 — 직접 라우트의 주석이 자기 쪽에서 같은 결함을 기록해 둔 그것입니다("a re-upsert
+that omitted `definition` left `GET /ontology/term/{term}/graph` serving 고객 with
+`definition: ''`"). 단언을 "비어 있지 않음"이 아니라 **registrar가 보관한 정의와 같음**으로
+쓰고, 두 번째 승인이 그것을 비우지 않는지도 몰았습니다(빈 정의·제안문 주입 양쪽 red).
+
+**닫지 않은 것.** 미러를 `register_concept` **안으로** 넣어 발행 경로가 구조적으로 미러를
+건너뛸 수 없게 만드는 쪽은 하지 않았습니다 — 직접 라우트의 응답이 그 미러의 반환값을 싣고
+있어 응답 모양을 건드리게 되고, 이 수리는 재현된 결함에 한정하는 쪽을 택했습니다. 대신
+가드가 **두 경로를 모두** 돌므로 세 번째 경로가 생기면 같은 성질을 만족해야 합니다.
+
 ### Fixed — manifest 둘이 운영자에게 **제품이 하지 않는 일**을 말했습니다 (medium x2)
 
 **1. `configured_integrations`가 자기 payload와 모순됐습니다.** `production.py`는 그것을

@@ -1873,6 +1873,48 @@ def policy_decisions(
 
 
 def _ontology_version_stamp(pinned: str | None) -> dict[str, Any]:
+    """Check the pin and stamp the version in one step, for a **read** route.
+
+    A read answers from the version it checked, so before and after are the same
+    moment. A write must not use this: see
+    :func:`_ontology_version_pin_verdict` and
+    :func:`_ontology_version_stamp_from`.
+    """
+    return _ontology_version_stamp_from(_ontology_version_pin_verdict(pinned))
+
+
+def _ontology_version_stamp_from(verdict: dict[str, Any]) -> dict[str, Any]:
+    """Build the published version stamp from the vocabulary as it stands now.
+
+    Split out of :func:`_ontology_version_stamp` so a write can check the pin
+    **before** it writes and stamp **after**. It used to do both before, and both
+    write routes therefore published the version they had just replaced - while
+    their own comments and the served OpenAPI said "the version this write
+    produced". Measured::
+
+        /ontology/version before   revision 3  digest 07cac5a3...
+        write response             revision 3  digest 07cac5a3...
+        /ontology/version after    revision 4  digest 04193fcb...
+
+        replaying the returned digest as ``ontology_content_digest`` -> 409
+
+    So a caller who pinned the digest the write had just handed it was refused by
+    that write. The check stays before - a caller holding an older vocabulary
+    must not publish into one it has not seen - and only the stamp moves.
+    """
+    stamp = ontology.ontology_version_identity()
+    return {
+        "ontology_revision": stamp["ontology_revision"],
+        "content_digest": stamp["content_digest"],
+        "digest_algorithm": stamp["digest_algorithm"],
+        "revision_is_durable": stamp["revision_is_durable"],
+        "pin_basis": verdict["pin_basis"],
+        "revision_is_pinnable": verdict["revision_is_pinnable"],
+        "pin_requested": verdict["pin_requested"],
+    }
+
+
+def _ontology_version_pin_verdict(pinned: str | None) -> dict[str, Any]:
     """The version this answer came from, refusing a pin that names another one.
 
     ``ontology_version_pin`` was published as an ``implemented`` connector
@@ -1902,16 +1944,7 @@ def _ontology_version_stamp(pinned: str | None) -> dict[str, Any]:
                 f"live={verdict['live_content_digest']})"
             ),
         )
-    stamp = ontology.ontology_version_identity()
-    return {
-        "ontology_revision": stamp["ontology_revision"],
-        "content_digest": stamp["content_digest"],
-        "digest_algorithm": stamp["digest_algorithm"],
-        "revision_is_durable": stamp["revision_is_durable"],
-        "pin_basis": verdict["pin_basis"],
-        "revision_is_pinnable": verdict["revision_is_pinnable"],
-        "pin_requested": verdict["pin_requested"],
-    }
+    return verdict
 
 
 @app.post("/ontology/resolve")
@@ -2231,7 +2264,7 @@ def ontology_patch_review(patch_id: str, payload: dict[str, str]) -> dict[str, A
     # See the upsert route: the pin is checked before the review is applied, so a
     # caller holding an older vocabulary is refused rather than publishing into
     # one it has not seen.
-    version = _ontology_version_stamp(payload.get(ontology_version.PIN_PARAMETER))
+    pin_verdict = _ontology_version_pin_verdict(payload.get(ontology_version.PIN_PARAMETER))
     try:
         reviewed = ontology.review_patch(
             patch_id=patch_id,
@@ -2300,9 +2333,10 @@ def ontology_patch_review(patch_id: str, payload: dict[str, str]) -> dict[str, A
     return {
         **reviewed,
         "policy_decision_id": decision.decision_id,
-        # As on the upsert route: the version this review produced, and the pin
-        # that was checked before anything was written.
-        "ontology_version": version,
+        # As on the upsert route: the version this review produced, stamped
+        # after the publication, and the pin that was checked before anything
+        # was written.
+        "ontology_version": _ontology_version_stamp_from(pin_verdict),
     }
 
 
@@ -2574,7 +2608,7 @@ def ingest_concept(payload: OntologyConceptRequest) -> dict[str, Any]:
     # exactly as it does on the read routes, and the stamp returned is the
     # version this write produced. The key was accepted and dropped by pydantic
     # before this, so the refusal never happened and no version was published.
-    version = _ontology_version_stamp(payload.ontology_content_digest)
+    pin_verdict = _ontology_version_pin_verdict(payload.ontology_content_digest)
     aliases = list(payload.aliases or [])
     multilingual = list(getattr(payload, "multilingual", None) or [])
     # Validate before the first of the two writes. This route wrote the graph
@@ -2682,11 +2716,13 @@ def ingest_concept(payload: OntologyConceptRequest) -> dict[str, Any]:
         ),
         "concept_already_published": registration["already_published"],
         "concept_validation": registration["concept_validation"],
-        # The version this write produced. The read routes stamp the version they
-        # answered from and enforce the same pin; a writer needs both more, not
-        # less - measured, a wrong ``ontology_content_digest`` on this route
-        # answered 200 and the response carried no version identity at all.
-        "ontology_version": version,
+        # The version this write produced - stamped **after** the write, which
+        # is what makes the sentence true. The read routes stamp the version
+        # they answered from and enforce the same pin; a writer needs both more,
+        # not less - measured, a wrong ``ontology_content_digest`` on this route
+        # answered 200 and the response carried no version identity at all, and
+        # later carried the version the write had just replaced.
+        "ontology_version": _ontology_version_stamp_from(pin_verdict),
     }
 
 

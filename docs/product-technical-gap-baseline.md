@@ -3769,6 +3769,39 @@ counts: {'고객': number, '고객행동': number, '매출': number, '온톨로�
 
 이 절은 측정 기록이고 병합 허가가 아닙니다.
 
+## 거버닝 발행 경로가 그래프에 보이지 않았고, 쓰기 응답은 대체한 버전을 공표했습니다 (2026-10-28 00:35Z)
+
+```
+경로 A (직접 업서트)  어휘 O · jsonld O · GET /graph/nodes 200 · stats nodes+1 concepts+1
+경로 B (제안->승인)   어휘 O · jsonld O · GET /graph/nodes 404 · stats 변동 없음
+
+/ontology/version 전 revision 3 / 07cac5a3…   쓰기 응답 revision 3 / 07cac5a3…
+/ontology/version 후 revision 4 / 04193fcb…   돌려받은 digest를 pin으로 재생 -> 409
+```
+
+거버닝 경로(제안자·심사자·변경 로그)가 `/graph/nodes`·`/graph/query`·`/search/semantic`·
+`/graph/stats`가 볼 수 없는 개념을 만들고, 거버넌스 없는 직접 업서트는 볼 수 있는 개념을
+만듭니다. `_review_patch_locked`의 주석은 "제안 -> 승인 -> 노출"을 닫았다고 적으며 "the same
+registrar POST /ontology/concepts uses"라고 하는데, 그 라우트는 registrar와 그래프 미러 둘을
+쓰고 공유된 것은 첫 번째뿐이었습니다.
+
+**수리:** 공유 미러 헬퍼 하나를 승인 경로가 락 안에서 상태 쓰기 전에 호출합니다(락 순서는
+어휘 → 그래프 한 방향). payload는 제안문이 아니라 registrar의 레코드에서 만듭니다. 버전은
+헬퍼를 둘로 쪼개 pin은 쓰기 전에, 스탬프는 쓰기 후에 합니다 — 공표된 계약 문장은 그대로 두고
+이제 그 문장이 참입니다.
+
+변이 넷 중 M2가 처음 green — 미러가 빈 정의를 써도 아무도 알아채지 못했고, 직접 라우트의
+주석이 자기 쪽에서 같은 결함을 기록해 둔 것입니다. 단언을 registrar가 보관한 정의와 같음으로
+바꾸고 두 번째 승인까지 몰아 red로 만들었습니다.
+
+### 닫지 않은 것
+
+미러를 `register_concept` 안으로 넣어 발행 경로가 구조적으로 건너뛸 수 없게 하는 쪽은 하지
+않았습니다 — 직접 라우트의 응답이 그 미러의 반환값을 싣고 있어 응답 모양을 건드립니다. 가드가
+두 경로를 모두 도므로 세 번째 경로가 생기면 같은 성질을 만족해야 합니다.
+
+이 절은 측정 기록이고 병합 허가가 아닙니다.
+
 ## manifest 둘이 운영자에게 제품이 하지 않는 일을 말했습니다 (2026-10-27 23:50Z)
 
 ```
