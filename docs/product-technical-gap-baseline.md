@@ -3769,6 +3769,35 @@ counts: {'고객': number, '고객행동': number, '매출': number, '온톨로�
 
 이 절은 측정 기록이고 병합 허가가 아닙니다.
 
+## 콘솔 "Pilot Flow"의 다섯 단계 중 둘을 따라갈 수 없었습니다 (2026-10-27 19:30Z)
+
+```
+콘솔이 찍는 경로, 찍힌 그대로:
+  200  readiness · evidence-pack · production-readiness · demo-plan · /docs · steward-review
+  405  /browse/query                                (POST 라우트 — 어떤 href도 도달 못 함)
+  422  /enterprise/connectors/sql_connector/probe   (dataset_id 누락 — 이 페이지가 아래 표에 찍는 값)
+```
+
+세 번째 결함이 측정 중에 나왔습니다: 플로우 링크가 `scoped()`를 지나지 않아 `?user=`로 열고
+클릭한 독자가 actor를 잃습니다(그래서 actor 게이트가 걸린 probe 단계가 404). `loadConnectors`가
+만드는 표 링크 넷도 같습니다 — 이미 `dataset_id`를 붙여 만들고 있었으므로 콘솔은 그
+파라미터를 처음부터 알고 있었습니다.
+
+**수리:** `data-path` + `scoped(node.dataset.path)`로 `href` 재작성(fetch와 같은 규칙 하나),
+POST 단계는 메서드를 적은 비링크 단계, probe 노드는 `dataset_id`를 싣고, 표 링크도 `scoped`.
+
+제가 쓴 가드의 전제가 처음 틀렸습니다 — "찍힌 경로는 모두 가져올 수 있어야 한다"로 썼으나
+probe는 익명에 404가 맞습니다(통제). 둘로 갈랐습니다: 누가 묻든 쓸 수 없는 것(405·422)과
+인가된 뷰어의 걸음. 변이 다섯 전부 red.
+
+### 닫지 않은 것
+
+**소스 계약**입니다. 브라우저 테스트 하네스가 없으므로(추가는 해시 고정 의존성이 새로 필요한
+유지관리자 결정) `data-path` → `scoped` 재작성이 실제 DOM에서 도는 것은 템플릿 단언으로만
+고정됩니다 — 기존 콘솔 계약 테스트가 같은 이유를 자기 docstring에 적습니다.
+
+이 절은 측정 기록이고 병합 허가가 아닙니다.
+
 ## 카탈로그에 대한 한 문장이 네 plane의 거부를 답했습니다 (2026-10-27 18:50Z)
 
 ```

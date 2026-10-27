@@ -127,6 +127,48 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 고치기 전까지 ClusterFuzzLite 이미지에서 **import에서 죽고 있었고** 입력을 하나도 퍼징하지
 않았습니다. "미러가 있으니 됐다"는 커버리지 주장이 아닙니다.
 
+### Fixed — 콘솔 "Pilot Flow"의 다섯 단계 중 **둘을 따라갈 수 없었습니다** (low, 구매자 체감)
+
+`/enterprise/console`의 Pilot Flow는 `<a class="node">` 다섯 개이고 각자 자기 경로를
+`<code>`에 찍습니다 — 구매자에게 건네는 걸음입니다. 콘솔이 찍는 모든 경로를 **찍힌
+그대로** 가져오면:
+
+```
+200 /enterprise/readiness · /enterprise/evidence-pack · /enterprise/production-readiness
+200 /enterprise/demo-plan · /docs · /enterprise/steward-review
+405 /browse/query                                {'detail': 'Method Not Allowed'}
+422 /enterprise/connectors/sql_connector/probe   {'loc': ['query','dataset_id'], 'type': 'missing'}
+```
+
+여덟 중 둘입니다. `/browse/query`는 **POST**이므로 어떤 `href`도 도달할 수 없고, probe는
+`dataset_id`를 요구하는데 그 값은 **이 페이지가 바로 아래 Connectors 표에 찍고
+있습니다**(`crm-customer-master`).
+
+**측정 중에 같은 절의 세 번째 결함이 나왔습니다.** 플로우 링크들이 `scoped()`를 지나지
+않습니다. 콘솔은 뷰어의 actor를 자기 쿼리 스트링에서 읽어 모든 **fetch**에 붙이는데,
+`?user=admin`으로 열고 노드를 클릭한 독자는 그것을 잃습니다 — 그래서 플로우에서 유일하게
+actor로 게이트된 probe 단계가 200이 아니라 404를 답했습니다. 그리고 `loadConnectors`가
+만드는 표의 링크 넷도 `href="${esc(path)}"`로 같은 결함을 가지고 있었습니다. 이미
+`dataset_id`를 붙여 만들고 있었으므로, **콘솔은 그 파라미터를 처음부터 알고 있었습니다.**
+
+**수리:** 경로를 `data-path`에 두고 `scoped(node.dataset.path)`로 `href`를 다시 씁니다
+(fetch와 같은 규칙 하나). POST 단계는 링크가 아니라 메서드를 적은 단계가 됩니다 — 지우면
+걸음 하나를 잃으므로 남기고 말하게 했습니다. probe 노드는 콘솔이 이미 아는 `dataset_id`를
+싣고, 표의 링크 넷도 `scoped`를 지납니다.
+
+**제가 쓴 가드의 전제가 처음엔 틀렸습니다.** "찍힌 경로는 모두 가져올 수 있어야 한다"로
+썼는데, probe는 actor 게이트가 걸려 있어 익명으로는 **404가 맞습니다**(통제가 동작하는
+것이고, 콘솔 badge가 이미 그렇게 말합니다). 둘로 갈랐습니다 — ① 누가 묻든 쓸 수 없는 것
+(405·422는 거부가 아니라 "요청을 만들 수 없다"는 뜻이고 로그인으로 고쳐지지 않습니다),
+② 인가된 뷰어는 걸음을 끝까지 걸을 수 있어야 한다.
+
+**변이 다섯, 전부 red.**
+
+**닫지 않은 것.** 이것은 **소스 계약**입니다 — 이 저장소에 브라우저 테스트 하네스가 없고
+추가하려면 해시 고정 의존성이 새로 필요하므로(유지관리자 결정), `data-path` → `scoped` 재작성이
+실제 DOM에서 도는 것은 테스트가 아니라 템플릿 단언으로 고정됩니다. 기존 콘솔 계약 테스트가
+같은 이유를 자기 docstring에 적고 있습니다.
+
 ### Fixed — 카탈로그에 대한 한 문장이 **네 plane의 거부를** 답했습니다 (low, 실사 경로)
 
 `policy.evaluate`의 discovery 분기는 **action**(`search`/`search_catalog`/`discover`)으로

@@ -602,7 +602,11 @@ SDP_CONNECTOR_TIMEOUT_MS='2s'          gate 통과, probe 라우트 400
 - `GET /enterprise/evidence-pack`
 - `GET /enterprise/shacl-validation`
 - `GET /enterprise/steward-review`
-- `GET /enterprise/console`
+- `GET /enterprise/console` — 읽기 전용 운영 콘솔. 뷰어의 actor를 **자기 쿼리
+  스트링에서** 읽어(`?user=`) fetch와 **링크 양쪽에** 붙인다. "Pilot Flow"의 다섯
+  단계 중 GET이 아닌 하나(`POST /browse/query`)는 링크가 아니라 메서드를 적은
+  단계로 표시한다 — 링크였을 때 405만 답했다. actor 없이 열면 badge가
+  `signed-out view - add ?user= …`로 말한다
 - `POST /enterprise/auth/oidc-preview`
 - `POST /enterprise/auth/oidc-verify`
 - `GET /enterprise/connectors/{connector_id}/probe` — 권한 없는 호출자에게는

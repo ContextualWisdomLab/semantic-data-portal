@@ -305,11 +305,11 @@ _CONSOLE_TEMPLATE = """<!doctype html>
         <section aria-label="Pilot workflow" aria-labelledby="flowTitle">
           <h2 id="flowTitle">Pilot Flow</h2>
           <div class="flow">
-            <a class="node" href="/enterprise/readiness"><strong>Readiness</strong><code>/enterprise/readiness</code></a>
-            <a class="node" href="/enterprise/evidence-pack"><strong>Evidence</strong><code>/enterprise/evidence-pack</code></a>
-            <a class="node" href="/enterprise/steward-review"><strong>Steward</strong><code>/enterprise/steward-review</code></a>
-            <a class="node" href="/browse/query"><strong>Query</strong><code>/browse/query</code></a>
-            <a class="node" href="/enterprise/connectors/sql_connector/probe"><strong>Connector</strong><code>/enterprise/connectors/sql_connector/probe</code></a>
+            <a class="node" data-path="/enterprise/readiness" href="/enterprise/readiness"><strong>Readiness</strong><code>/enterprise/readiness</code></a>
+            <a class="node" data-path="/enterprise/evidence-pack" href="/enterprise/evidence-pack"><strong>Evidence</strong><code>/enterprise/evidence-pack</code></a>
+            <a class="node" data-path="/enterprise/steward-review" href="/enterprise/steward-review"><strong>Steward</strong><code>/enterprise/steward-review</code></a>
+            <div class="node"><strong>Query</strong><code>POST /browse/query</code></div>
+            <a class="node" data-path="/enterprise/connectors/sql_connector/probe?dataset_id=crm-customer-master" href="/enterprise/connectors/sql_connector/probe?dataset_id=crm-customer-master"><strong>Connector</strong><code>/enterprise/connectors/sql_connector/probe?dataset_id=crm-customer-master</code></a>
           </div>
         </section>
         <section aria-label="Enterprise controls" aria-labelledby="controlsTitle">
@@ -383,6 +383,25 @@ _CONSOLE_TEMPLATE = """<!doctype html>
       return `${path}${separator}user=${encodeURIComponent(viewer)}`;
     }
 
+    // The Pilot Flow is a walk, and its nodes are links, so they carry the
+    // actor the same way the fetches do. They were bare ``href``s: a reader who
+    // opened the console with ``?user=`` and clicked a node dropped it, and the
+    // probe node - the one step in the flow that is actor-gated - answered 404
+    // on exactly the walk this section exists to support. The paths live in
+    // ``data-path`` so the ``href`` a viewer without an actor sees is still the
+    // unscoped path, and so this rewrite has one source rather than parsing the
+    // attribute it is about to replace.
+    //
+    // Two of the five nodes could not be followed at all before this. One
+    // pointed at ``/browse/query``, which is a **POST** - no ``href`` can ever
+    // reach it, so it is a step that states its method instead of a link that
+    // answers 405. The other omitted the ``dataset_id`` the route requires and
+    // answered 422, for a dataset this very page prints in the Connectors
+    // table below.
+    for (const node of document.querySelectorAll('.flow a.node[data-path]')) {
+      node.setAttribute('href', scoped(node.dataset.path));
+    }
+
     async function json(path) {
       const response = await fetch(scoped(path));
       if (!response.ok) {
@@ -428,7 +447,7 @@ _CONSOLE_TEMPLATE = """<!doctype html>
       ].map(async ([label, connector, dataset]) => {
         const path = `/enterprise/connectors/${connector}/probe?dataset_id=${encodeURIComponent(dataset)}`;
         const probe = await json(path);
-        return `<tr><td><a class="endpoint-link" href="${esc(path)}" aria-label="${esc(label)} probe endpoint for ${esc(dataset)}"><strong>${esc(label)}</strong></a></td><td class="mono">${esc(dataset)}</td><td><span class="badge ${probe.status === 'ready_for_demo' ? 'ok' : 'warn'}">${esc(probe.status)}</span></td></tr>`;
+        return `<tr><td><a class="endpoint-link" href="${esc(scoped(path))}" aria-label="${esc(label)} probe endpoint for ${esc(dataset)}"><strong>${esc(label)}</strong></a></td><td class="mono">${esc(dataset)}</td><td><span class="badge ${probe.status === 'ready_for_demo' ? 'ok' : 'warn'}">${esc(probe.status)}</span></td></tr>`;
       }));
       document.getElementById('connectorRows').innerHTML = rows.join('');
     }
