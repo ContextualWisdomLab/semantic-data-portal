@@ -401,6 +401,43 @@ def test_the_allowlist_admits_what_the_product_itself_emits(sql: str) -> None:
     assert "unauthorized_function_call" not in orch.validate_sql_query(sql, source_system=_SRC)
 
 
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT pg_catalog.count(*) FROM customer",
+        "SELECT evil.count(*) FROM customer",
+        "SELECT public.sum(customer_id) FROM customer",
+        "SELECT attacker_schema.max(customer_id) FROM customer",
+        "SELECT other.schema.avg(customer_id) FROM customer",
+        "SELECT pg_catalog . count(*) FROM customer",
+    ],
+)
+def test_a_qualified_call_is_refused_even_when_its_last_part_is_allowlisted(sql: str) -> None:
+    """The allow-list holds names, so a qualified call must not be read by its tail.
+
+    ``_FUNCTION_CALL`` captured only the identifier immediately before the
+    ``(``, so ``evil.count(*)`` presented as ``count`` - a member of the
+    allow-list - and the statement drew **no warning at all**. The name is not
+    the function: in PostgreSQL the schema qualification selects which
+    implementation runs, and ``search_path`` is not the only way to reach a
+    different one. Admitting a name while ignoring who owns it certifies
+    something the allow-list never reviewed.
+
+    The sibling cases matter as much as the first: an allow-list read by its
+    tail is bypassed by *any* prefix, so a schema an attacker can create in is
+    enough. The unqualified members stay admitted below, which is what makes
+    this a boundary rather than a tightening.
+
+    ContextualWisdomLab/semantic-data-portal#32 states this rule explicitly -
+    "schema-qualified function calls are rejected even when their final
+    identifier resembles an allowlisted function, because qualification can
+    select a different implementation" - and this branch did not hold it. The
+    27 other cases in that PR's corpus were already refused here; these four
+    were not.
+    """
+    assert "unauthorized_function_call" in orch.validate_sql_query(sql, source_system=_SRC)
+
+
 def test_the_allowlist_is_an_allowlist_not_a_denylist() -> None:
     """A deny-list cannot certify, because the set of unsafe names is unbounded.
 

@@ -141,7 +141,30 @@ _ALLOWED_FUNCTIONS = frozenset({"count", "sum", "avg", "min", "max"})
 
 # ``name(`` with optional whitespace. A bare ``(`` is not a call, so a
 # parenthesised expression or a subquery is untouched.
-_FUNCTION_CALL = re.compile(r"([A-Za-z_][A-Za-z_0-9]*)\s*\(")
+#
+# The name is captured **whole, qualification included**. Capturing only the
+# identifier next to the ``(`` read ``evil.count(*)`` as ``count`` - an
+# allow-list member - and the statement drew no warning at all. In PostgreSQL
+# the qualification selects which implementation runs, so a name admitted
+# without its owner certifies something the allow-list never reviewed, and an
+# allow-list read by its tail is bypassed by any prefix. ``_ALLOWED_FUNCTIONS``
+# holds no dotted names, so a qualified call is unauthorised by construction
+# rather than by a second rule that could drift from the first.
+#
+# The dot tolerates surrounding whitespace because PostgreSQL does:
+# ``pg_catalog . count(*)`` is the same call, and binding the dot tightly leaves
+# the scan to match the bare ``count(`` tail instead - admitting it. #32 states
+# the qualification rule; its own pattern binds the dot tightly and so would
+# still admit the spaced spelling.
+#
+# A lookbehind guarding against a tail matching alone was in the first version
+# of this and is not here, because removing it reddened nothing: Python's scan
+# is leftmost, so ``evil.count(`` matches at ``evil`` and the tail is never
+# reached on its own. It is not kept as insurance - a line that changes no
+# verdict should not ship with a comment implying it does.
+_FUNCTION_CALL = re.compile(
+    r"([A-Za-z_][A-Za-z_0-9]*(?:\s*\.\s*[A-Za-z_][A-Za-z_0-9]*)*)\s*\("
+)
 
 
 def _safe_identifier(value: str) -> str:
