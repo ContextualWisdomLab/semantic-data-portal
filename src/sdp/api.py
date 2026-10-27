@@ -342,6 +342,31 @@ def _catalog_mutation_refusal(
     tenant - the dataset-scoped branch below is used instead, because a 403 is
     not reported with the reason of an allow.
     """
+    unreachable = _unreachable_dataset_refusal(actor_id, dataset_id)
+    return unreachable or HTTPException(status_code=403, detail=decision.reason)
+
+
+def _unreachable_dataset_refusal(actor_id: str, dataset_id: str) -> HTTPException | None:
+    """403 for a caller with no scope, 404 for a dataset it cannot reach, else ``None``.
+
+    Split out of ``_catalog_mutation_refusal`` so the three mutation routes can
+    ask it **before** evaluating policy against the dataset id. Asking after was
+    an existence oracle in the prober's own evidence: ``evaluate`` files its row
+    as it decides, so by the time the refusal was chosen the ledger already held
+
+        {"action": "publish", "effect": "deny",
+         "reason": "존재하지 않는 데이터셋입니다.",
+         "obligations": {"tenant_id": "external"}}   <- the prober's own tenant
+
+    for an absent id, and nothing visible to the prober for a foreign one -
+    while both requests answered the same ``404 dataset not found``. The row did
+    not merely leak by being counted; it stated the answer in plain text.
+
+    ``browse.py`` has shown the working order since the preview repair: resolve
+    reachability first, file the refusal outside the prober's scope through
+    ``policy.evaluate_dataset_scope_refusal``, and only then evaluate. The
+    catalog mutations were the callers that still had it backwards.
+    """
     if accessible_tenant_ids(actor_id) == []:
         unauthenticated = evaluate(
             subject=actor_id, resource="catalog", action="search", purpose="discovery"
@@ -350,7 +375,33 @@ def _catalog_mutation_refusal(
             return HTTPException(status_code=403, detail=unauthenticated.reason)
     if catalog.dataset_in_scope(dataset_id, accessible_tenant_ids(actor_id)) is None:
         return HTTPException(status_code=404, detail="dataset not found")
-    return HTTPException(status_code=403, detail=decision.reason)
+    return None
+
+
+def _refuse_mutation_on_unreachable_dataset(
+    event_type: str, actor_id: str, dataset_id: str
+) -> None:
+    """Refuse a mutation on an unreachable dataset without evaluating against it.
+
+    Raises before any per-id policy evaluation. The 404 case still files both
+    halves of the governance invariant - a policy decision and an audit event -
+    but outside the caller's readable scope, so the owning tenant's auditor sees
+    the attempt on its own asset and the caller learns nothing about whether the
+    id is free. The 403 case has already filed its row against the resource
+    ``catalog``, which carries no information about the id.
+    """
+    unreachable = _unreachable_dataset_refusal(actor_id, dataset_id)
+    if unreachable is None:
+        return
+    if unreachable.status_code == 404:
+        refusal = evaluate_dataset_scope_refusal(actor_id, dataset_id)
+        _audit_refused_catalog_mutation(
+            event_type=event_type,
+            actor=actor_id,
+            dataset_id=dataset_id,
+            decision=refusal,
+        )
+    raise unreachable
 
 
 def _missing_resource_detail(exc: KeyError) -> str:
@@ -1310,6 +1361,9 @@ def create_dataset(payload: dict[str, Any]) -> dict[str, Any]:
 @app.post("/catalog/datasets/{dataset_id}/publish")
 def publish_catalog_dataset(dataset_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     actor_id = _actor(payload)
+    # Before evaluating against the id: a caller that cannot reach this
+    # dataset is refused without a row in its own readable scope.
+    _refuse_mutation_on_unreachable_dataset("dataset.publish", actor_id, dataset_id)
     decision = evaluate(subject=actor_id, resource=dataset_id, action="publish", purpose="catalog")
     if decision.effect != "allow":
         _audit_refused_catalog_mutation(
@@ -1362,6 +1416,9 @@ def publish_catalog_dataset(dataset_id: str, payload: dict[str, Any] | None = No
 @app.patch("/catalog/datasets/{dataset_id}")
 def patch_catalog_dataset(dataset_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     actor_id = _actor(payload)
+    # Before evaluating against the id: a caller that cannot reach this
+    # dataset is refused without a row in its own readable scope.
+    _refuse_mutation_on_unreachable_dataset("dataset.patch", actor_id, dataset_id)
     decision = evaluate(subject=actor_id, resource=dataset_id, action="patch", purpose="catalog")
     if decision.effect != "allow":
         _audit_refused_catalog_mutation(
@@ -1456,6 +1513,9 @@ def patch_catalog_dataset(dataset_id: str, payload: dict[str, Any]) -> dict[str,
 @app.post("/catalog/datasets/{dataset_id}/deprecate")
 def deprecate_catalog_dataset(dataset_id: str, payload: dict[str, str] | None = None) -> dict[str, Any]:
     actor_id = _actor(payload)
+    # Before evaluating against the id: a caller that cannot reach this
+    # dataset is refused without a row in its own readable scope.
+    _refuse_mutation_on_unreachable_dataset("dataset.deprecate", actor_id, dataset_id)
     decision = evaluate(subject=actor_id, resource=dataset_id, action="deprecate", purpose="catalog")
     if decision.effect != "allow":
         _audit_refused_catalog_mutation(
@@ -2200,8 +2260,36 @@ def _authorize_graph_node_read(actor: str, node_id: str) -> None:
     derived from dataset ids (``<dataset_id>`` and ``<dataset_id>:<column>``), so
     they are exactly as enumerable.
     """
-    _authorize_graph_read(actor, node_id)
-    if not can_see_graph_node(actor, node_id):
+    # Authentication is asked against the **family**, not the probed id. This
+    # call used to pass ``node_id``, and its own docstring says it "establishes
+    # authentication only" - so it filed a per-id row for a question that is not
+    # about that id, and for an absent id the catalog-discovery branch returns
+    # ``allow`` in the prober's own tenant. Measured through the prober's own
+    # ``GET /policy/decisions?resource=<id>``, with both HTTP bodies already
+    # identical 404s: foreign id 0 rows, absent id 1 row reading
+    # ``effect=allow reason='카탈로그 발견 정책 통과'``. A row appearing exactly when
+    # the id is free answers what the 404 refuses, and an ``allow`` row behind a
+    # 404 describes something that did not happen. The other two callers of this
+    # helper already pass the literal "graph"; this one did not.
+    #
+    # The per-node evaluation still happens - after the node is known to be
+    # visible, where its ``allow`` row is true and attributable. A refused read
+    # records only ``evaluate_dataset_scope_refusal``, which files to the owning
+    # tenant or the reserved ``unresolved`` scope.
+    # Absent *and* foreign are one refusal here. ``can_see_graph_node`` answers
+    # True for an id with no owning tenant - there is nothing to deny - so an
+    # absent node used to skip this branch, collect the per-node ``allow`` row,
+    # and then meet the route's own 404 at ``get_node``. That left the prober's
+    # ledger holding one row for a free id and none for a foreign one, which is
+    # the oracle the shared 404 exists to close. Resolving existence here puts
+    # both on the same path.
+    if get_store().get_node(node_id) is None or not can_see_graph_node(actor, node_id):
+        # Authenticate against the **family**, not the probed id. Passing
+        # ``node_id`` filed a per-id row for a question that is not about that
+        # id - and for an absent id the catalog-discovery branch returns
+        # ``allow``, in the prober's own tenant, behind a 404. The other two
+        # callers of this helper already pass the literal "graph".
+        _authorize_graph_read(actor, "graph")
         # The refusal has to be *recorded* as one. ``_authorize_graph_read``
         # evaluates the ``search`` branch, which returns before the policy
         # engine's tenant check, so the only row behind this 404 said
@@ -2227,6 +2315,12 @@ def _authorize_graph_node_read(actor: str, node_id: str) -> None:
             result="denied",
         )
         raise HTTPException(status_code=404, detail="node not found")
+    # One row for a permitted read, resource=node_id, exactly as before: this
+    # call both authenticates and attributes, so the family-level check above is
+    # only needed on the path that must not name the id. Recording the per-node
+    # ``allow`` after the node is known to be visible is what makes it true -
+    # an ``allow`` row behind a 404 describes something that did not happen.
+    _authorize_graph_read(actor, node_id)
 
 
 def _audit_refused_concept_upsert(

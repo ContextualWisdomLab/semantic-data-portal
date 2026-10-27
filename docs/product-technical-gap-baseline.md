@@ -3704,6 +3704,63 @@ counts: {'고객': number, '고객행동': number, '매출': number, '온톨로�
 
 이 절은 측정 기록이고 병합 허가가 아닙니다.
 
+## prober가 **자기 ledger로** 404가 거부한 질문에 답할 수 있었습니다 (2026-10-27 03:05Z)
+
+다섯 라우트(`GET /graph/nodes/{id}`, `POST /graph/query`, publish, deprecate, PATCH)가
+foreign과 absent를 동일한 404로 합치면서, prober 자신이 읽는 정책 결정 ledger에는 차이를
+남겼습니다. `external-analyst`로 측정, HTTP 본문은 이미 동일:
+
+    foreign id -> prober가 보는 행 0
+    absent  id -> prober가 보는 행 1
+
+그 행이 답을 평문으로 적습니다: mutation 셋은
+`reason="존재하지 않는 데이터셋입니다." tenant_id="external"`, graph 둘은
+`effect=allow reason="카탈로그 발견 정책 통과"` — 404 뒤의 allow 행입니다.
+
+### 원인은 거부 기록이 아니라 그 **앞의** 평가입니다
+
+* graph: `_authorize_graph_read(actor, node_id)`. 그 helper의 docstring이 스스로
+  "establishes authentication only"라고 적습니다 — 그 id에 관한 판단이 아닌 것을 id별 행으로
+  남깁니다. 다른 두 호출자는 이미 `"graph"`를 넘깁니다.
+* mutation: `evaluate(..., resource=dataset_id)`가 먼저 돌고 `_catalog_mutation_refusal`은
+  행이 이미 기록된 뒤에 답을 고릅니다.
+
+`browse.py`의 순서가 맞습니다: reachability → 범위 밖 기록 → 평가. 다섯 라우트를 그렇게
+바꿨습니다(`_unreachable_dataset_refusal`, `_refuse_mutation_on_unreachable_dataset`).
+
+### graph의 두 번째 결함
+
+`can_see_graph_node`는 소유 테넌트가 없는 id에 **True**입니다(거부할 것이 없음). 그래서
+absent 노드는 거부 분기를 건너뛰고 id별 allow 행을 받은 뒤 라우트의 `get_node` 404를
+만났습니다. 존재 확인을 같은 분기로 끌어와 둘을 한 경로에 둡니다. 성공 읽기는 여전히 행
+하나(resource=node_id)이고, 익명 호출자는 두 id에 동일한 403을 받습니다.
+
+### 큐레이션 목록이 자기가 세지 않은 것에 green을 보고합니다
+
+가드의 첫 판은 표면 여덟 개를 손으로 적었고, 같은 파일의 커버리지 체크가 측정되지 않은
+dataset-scoped 라우트 **열한 개**를 보고했습니다. 열한 개 전부 깨끗했지만 그 결과는
+큐레이션 목록이 스스로 낼 수 없는 결과입니다 — 방문하지 않고 같은 green을 냈을 것이므로.
+표면 목록을 `app.routes`에서 파생하도록 바꿨습니다. 본문으로 id를 받는 `POST /graph/query`는
+경로 스캔이 못 찾으므로 명시 등록하고, 그 등록이 유지되는지 따로 단언합니다.
+
+### prober의 채널을 닫는 것이 증거 삭제여서는 안 됩니다
+
+거부 기록을 통째로 지우는 변이가 위 단언 전부를 green으로 통과했습니다 — 소유자 쪽을 보는
+단언이 없었기 때문입니다. 전체 스위트는 `tests/test_refused_mutation_evidence.py`로 잡지만,
+자기가 다루는 것을 제거하면 만족되는 계열은 자족적이지 않으므로 소유 테넌트 auditor 쪽
+절반을 같은 파일에 넣었습니다. 그 단언의 첫 판은 audit 필드를 `decision`으로 물어
+**AssertionError가 아니라 AttributeError로 터졌습니다**(실제 이름은 `result`) — 터지는
+가드는 재는 가드가 아닙니다.
+
+### 닫지 않은 것
+
+측정은 `external-analyst`(테넌트 하나) 기준입니다. 여러 테넌트를 가진 호출자, 그리고
+`/audit/events`·`/enterprise/*` 같은 다른 증거 표면의 전수 측정은 하지 않았습니다 —
+dataset-scoped 라우트 19개는 파생으로 전수 측정되지만, 증거 **읽기** 표면 쪽은 아직
+`/policy/decisions`와 `/catalog/datasets/{id}/audit` 둘만 쟀습니다.
+
+이 절은 측정 기록이고 병합 허가가 아닙니다.
+
 ## 테이블 allow-list가 **정규화로 일치를 만들어** 다른 relation을 통과시켰습니다 (2026-10-27 02:50Z)
 
 `validate_sql_query`의 source-table allow-list가 각 테이블 참조를 `_safe_identifier`로
