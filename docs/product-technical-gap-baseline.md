@@ -3760,6 +3760,31 @@ counts: {'고객': number, '고객행동': number, '매출': number, '온톨로�
 
 이 절은 측정 기록이고 병합 허가가 아닙니다.
 
+## 게시한 데이터셋이 발견 라우트 둘에 보이지 않으면서 둘 다 withheld 0을 공표했습니다 (2026-10-27 13:45Z)
+
+`고객`을 term으로 선언한 데이터셋을 온보딩·게시한 뒤 `user=data-admin`으로:
+
+```
+GET  /catalog/search?q=고객    -> 포함  |  GET /ontology/term/고객/graph -> 포함
+GET  /ontology/concept/고객    -> 없음, withheld_dataset_count: 0
+POST /llm/search {고객}        -> 없음, withheld_dataset_count: 0
+```
+
+`withheld_dataset_count`는 짧은 목록이 전체 매핑으로 읽히지 않게 하려고 있는 필드이고, 여기서
+짧은 목록이 전체 매핑으로 읽혔습니다. 근본 원인(import 시점 고정)은 **범위 메모로** 기록돼
+있었고, 그래서 응답이 전체 커버리지를 주장한다는 사실은 기록돼 있지 않았습니다.
+
+**수리:** 읽는 곳에서 파생(`concept_dataset_index()`). 재구축 비용은 `resolve_terms` 자신의
+2.5%이므로 캐시도 무효화도 새 모듈 상태도 없습니다 — 오히려 복원 대상 상태가 하나 줄었습니다.
+거짓이 된 산문 다섯 곳(requirements 비고 둘, implementation-compliance, README,
+ontology_version·api 주석)을 같이 좁혔습니다.
+
+### 닫지 않은 것
+
+맵은 여전히 버전 범위 밖입니다 — 매핑이 바뀌어도 `ontology_revision`은 움직이지 않고
+`sdp:datasetMappingIsVersioned false`는 그대로 참입니다. tenant 술어도 여전히 맵에는 없고
+`concept_assets`가 scope를 적용합니다.
+
 ## 가정 질문의 답이 다른 tenant의 원장에 라벨 없이 기록됐습니다 (2026-10-27 13:30Z)
 
 `POST /policy/decision`의 행은 subject의 tenant 원장에 들어가고, `provenance` 라벨은

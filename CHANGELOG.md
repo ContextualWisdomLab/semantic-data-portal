@@ -54,9 +54,9 @@ gap-baseline 문서를 건드렸고, 나머지 138개는 건드리지 않았습�
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest (3.11)                1896 passed, 31 skipped
-    pytest (3.12, tests.yml의 핀) 1896 passed, 31 skipped — CI가 쓰는 인터프리터
-    pytest (파일 순서 정/역/난수)  각 1896 passed, 31 skipped — 순서 무관
+    pytest (3.11)                1902 passed, 31 skipped
+    pytest (3.12, tests.yml의 핀) 1902 passed, 31 skipped — CI가 쓰는 인터프리터
+    pytest (파일 순서 정/역/난수)  각 1902 passed, 31 skipped — 순서 무관
                                  (이 head의 열 번은 전부 깨끗합니다. 앞선 head
                                   `c4ac6b5`의 트리에서는 3.11 shuffled-31337 1회차가
                                   1848 + 실패 1건이었습니다 —
@@ -90,7 +90,7 @@ ClusterFuzzLite 하네스 import 가드 3건으로 1523에,
 (행 레벨 필터 정직성 9건, 드래프트 거부 증빙 페어링 11건, 참된 거부 이유 14건, 배포
 endpoint 자격증명·patch 계약 10건)로 1837에, 같은 라운드의 뒤이은 두 수리(patch
 confidence 정직성 5건, facet 어휘 공표 7건)로 1849에, 가정 결정 라벨 42건과 완전성 숫자 합치 5건으로
-**1896**에 와 있습니다(skip이
+1896에, 발견 가능성 6건으로 **1902**에 와 있습니다(skip이
 23 → 31로 는 것은 새 가드 둘이 `measured`가 아닌 KPI 넷에
 대해 skip하기 때문입니다 — 그 skip 자체가 분기가 측정된 증거이고, 같은 파일의
 `test_at_least_one_kpi_exercises_each_branch`가 양쪽 분기에 사례가 있음을 단언합니다)
@@ -125,6 +125,53 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 **이 문장이 결함을 가려 줬습니다**: 미러가 돈다는 것은 참이지만, 그 하네스는 아래 항목이
 고치기 전까지 ClusterFuzzLite 이미지에서 **import에서 죽고 있었고** 입력을 하나도 퍼징하지
 않았습니다. "미러가 있으니 됐다"는 커버리지 주장이 아닙니다.
+
+### Fixed — 게시한 데이터셋이 **발견 라우트 둘에 보이지 않으면서**, 그 둘은 아무것도 withheld하지 않았다고 공표했습니다 (high, 구매자 체감)
+
+`ontology._INDEX`가 **import 시점에 한 번** 만들어지므로, 기동 후 등록·게시된 데이터셋은
+개념↔dataset 맵에 영원히 들어가지 못했습니다. `고객`을 term으로 선언한 데이터셋을 온보딩한
+뒤 `user=data-admin`으로 재면:
+
+```
+GET  /catalog/search?q=고객      -> 6건, 새 데이터셋 포함
+GET  /ontology/term/고객/graph   -> 5건, 새 데이터셋 포함
+GET  /ontology/concept/고객      -> 4건, 없음.  withheld_dataset_count: 0
+POST /llm/search {고객}          -> 4건, 없음.  withheld_dataset_count: 0
+```
+
+`withheld_dataset_count`는 README가 **"짧은 목록이 전체 매핑으로 읽히지 않도록"** 도입한
+필드이고, 여기서 짧은 목록이 전체 매핑으로 읽혔습니다 — 소유자에게 재시도·에스컬레이션·
+불신의 신호가 하나도 없습니다. 그리고 README가 "같은 사실을 서비스하는 형제 라우트"라고
+부르는 둘이 같은 개념·같은 호출자에 4건과 5건을 돌려줍니다.
+
+**근본 원인은 기록돼 있었고, 범위 메모로 기록돼 있었습니다.** ONT-004가 "built once at
+import and no registration updates it", `implementation-compliance.md`가 "import 시점에
+고정됩니다"라고 적고, 어휘 export가 `sdp:datasetMappingIsVersioned false`를 공표합니다.
+맵이 **버전 범위 밖**이라는 것은 수리 후에도 참입니다. 기록되지 않은 것은 **그래서 응답이
+전체 커버리지를 주장했다**는 사실입니다.
+
+수리는 읽는 곳에서 **파생**시키는 것입니다(`concept_dataset_index()`). 비용을 재서
+결정했습니다 — 재구축은 `resolve_terms` 자신의 2000회 148.9ms에 대해 2000회 3.7ms,
+**2.5%**입니다(5개 데이터셋·10개 키). 그래서 일관성을 유지할 캐시도, 무효화 신호도,
+`tests/conftest.py`가 복원할 새 모듈 상태도 없습니다 — **오히려 상태 하나가 줄었습니다.**
+`_INDEX` 스냅샷이 conftest의 복원 목록과 `test_module_state_coverage.py`의 분류 목록에서
+빠지고, 그 동결을 우회하려고 `ontology._INDEX = ontology._build_index()`를 손으로 호출하던
+테스트 둘도 그 줄을 버렸습니다. 삽입 순서는 여전히 `list_datasets()`를 따르므로 문서가
+공표한 tie-break 동작은 그대로입니다.
+
+**변이 둘, 전부 red.** 그리고 첫 변이는 제 가드가 **놓쳤습니다**: 스냅샷을 `_INDEX`가 아닌
+다른 이름으로 되살렸더니 `hasattr(ontology, "_INDEX")` 검사를 통과하고, 저장소의 일반
+모듈-상태 가드만 잡았습니다. 이름 하나가 아니라 **두 reader가 파생 함수를 호출하는지**를
+보도록 고쳤습니다.
+
+**거짓이 된 산문 다섯 곳을 같이 고쳤습니다**: `requirements.py`의 ONT-004·LLM-003 비고(재생성),
+`implementation-compliance.md`, `README.md`, `ontology_version.py` docstring 둘, `api.py`
+주석. 각각 "import 시점 고정"을 "revision이 추적하지 않음"으로 좁히고, 고정이 별개 결함이었고
+수리됐다고 적습니다.
+
+**닫지 않은 것.** 개념↔dataset 맵은 여전히 **버전 범위 밖**입니다 — 매핑이 바뀌어도
+`ontology_revision`은 움직이지 않고, `sdp:datasetMappingIsVersioned false`는 그대로 참입니다.
+그리고 맵에는 여전히 tenant 술어가 없습니다(`concept_assets`가 scope를 적용합니다).
 
 ### Security — 가정 질문의 답이 **다른 tenant의 원장에 라벨 없이** 기록됐습니다. 세 분기 (high)
 
