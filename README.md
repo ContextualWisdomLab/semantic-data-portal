@@ -520,7 +520,18 @@ SDP_CONNECTOR_TIMEOUT_MS='2s'          gate 통과, probe 라우트 400
 - `GET /catalog/datasets/{dataset_id}/validate`
 - `GET /catalog/datasets/{dataset_id}/semantic-validation`
 - `POST /policy/decision`
-- `GET /policy/decisions`
+- `GET /policy/decisions?limit=&offset=&resource=&decision_id=&user=` — 증빙 읽기.
+  `decision_id`는 호출자가 자기 200 응답에서 받은 `policy_decision_id`로 **그 행만**
+  집어 오고, `offset`은 최신순 정렬에서 그만큼 건너뛴다. 둘이 없던 동안에는 모든 store가
+  최신순으로 자르기만 했으므로 **호출자 자신의 행이 가장 먼저 밀려났다**: 자기 preview가
+  돌려준 decision id가 직후에는 조회되고 그 뒤 600건이 쌓이면 어떤 `limit`으로도 조회되지
+  않았다. `offset`은 깊이를 주지만 **안정적인 커서가 아니다** — 증빙 읽기 자체가 결정 행을
+  하나 남기므로(이 제품의 불변식) 연속한 두 요청의 페이지는 그 수만큼 겹친다. 안정 커서는
+  decision의 `recorded_at` 공표가 선행 조건이고 그것은 POL-005가 미구현으로 기록한다.
+- `GET /audit/events?limit=&offset=&resource=&decision_id=&user=` — 같은 선택자.
+- `GET /catalog/datasets/{dataset_id}/audit?limit=&offset=&user=` — 데이터셋 1건의 감사
+  행. `offset`이 없던 동안에는 자격증명 없는 거부 600건이 최신 200행을 채워 그 데이터셋의
+  **정당한 접근 이력 전체**를 조회 불가로 밀어냈다.
 - `POST /ontology/resolve` — `defined_in_vocabulary`로 glossary가 **정의하지 않은**
   dataset 선언 용어(캠페인·전환·비즈니스 용어)를 구분해 게시한다
 - `GET /ontology/concept/{concept}`

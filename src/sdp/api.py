@@ -1314,6 +1314,7 @@ def dataset_related(
 def dataset_audit_events(
     dataset_id: str,
     limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0, description="건너뛸 행 수. 최신순 정렬 기준."),
     user: str = Query(default="anonymous"),
 ) -> list[dict[str, Any]]:
     # The same ledger behind a per-dataset path, so it carries the same gate plus
@@ -1331,7 +1332,9 @@ def dataset_audit_events(
         raise HTTPException(status_code=404, detail="dataset not found")
     return [
         event.model_dump()
-        for event in get_dataset_audit_events(dataset_id, limit=limit, tenant_ids=tenant_ids)
+        for event in get_dataset_audit_events(
+            dataset_id, limit=limit, tenant_ids=tenant_ids, offset=offset
+        )
     ]
 
 
@@ -1688,13 +1691,31 @@ def _authorize_evidence_read(user: str) -> tuple[Any, list[str] | None]:
 @app.get("/audit/events")
 def list_events(
     limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0, description="건너뛸 행 수. 최신순 정렬 기준."),
     resource: str | None = Query(default=None),
+    decision_id: str | None = Query(
+        default=None, description="이 policy decision id에 묶인 행만 반환합니다."
+    ),
     user: str = Query(default="anonymous"),
 ) -> list[dict[str, Any]]:
+    # ``offset`` and ``decision_id`` exist because a caller could not reach the
+    # rows its own 200 named: every store orders newest-first and then truncates,
+    # so the caller's own row is the first to fall out. Measured, a
+    # ``policy_decision_id`` from ``POST /browse/{id}/preview`` was reachable
+    # immediately and unreachable after 600 further requests, while ``offset``,
+    # ``cursor`` and ``decision_id`` were accepted and silently ignored - the
+    # only selector offered was ``resource``, which is exactly the dimension that
+    # fills up.
     _, tenant_ids = _authorize_evidence_read(user)
     return [
         event.model_dump()
-        for event in list_audit_events(limit=limit, resource=resource, tenant_ids=tenant_ids)
+        for event in list_audit_events(
+            limit=limit,
+            resource=resource,
+            tenant_ids=tenant_ids,
+            decision_id=decision_id,
+            offset=offset,
+        )
     ]
 
 
@@ -1778,13 +1799,31 @@ def policy_decision(payload: dict[str, str]) -> dict[str, Any]:
 @app.get("/policy/decisions")
 def policy_decisions(
     limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0, description="건너뛸 행 수. 최신순 정렬 기준."),
     resource: str | None = Query(default=None),
+    decision_id: str | None = Query(
+        default=None, description="이 decision id의 행만 반환합니다."
+    ),
     user: str = Query(default="anonymous"),
 ) -> list[dict[str, Any]]:
+    # ``offset`` and ``decision_id`` exist because a caller could not reach the
+    # rows its own 200 named: every store orders newest-first and then truncates,
+    # so the caller's own row is the first to fall out. Measured, a
+    # ``policy_decision_id`` from ``POST /browse/{id}/preview`` was reachable
+    # immediately and unreachable after 600 further requests, while ``offset``,
+    # ``cursor`` and ``decision_id`` were accepted and silently ignored - the
+    # only selector offered was ``resource``, which is exactly the dimension that
+    # fills up.
     _, tenant_ids = _authorize_evidence_read(user)
     return [
         decision.model_dump()
-        for decision in list_policy_decisions(resource=resource, limit=limit, tenant_ids=tenant_ids)
+        for decision in list_policy_decisions(
+            resource=resource,
+            limit=limit,
+            tenant_ids=tenant_ids,
+            decision_id=decision_id,
+            offset=offset,
+        )
     ]
 
 

@@ -1347,6 +1347,8 @@ def list_audit_events(
     limit: int = 100,
     resource: str | None = None,
     tenant_ids: list[str] | None = None,
+    decision_id: str | None = None,
+    offset: int = 0,
 ) -> list[AuditEvent]:
     """List audit events, optionally scoped to a set of tenants.
 
@@ -1354,23 +1356,38 @@ def list_audit_events(
     platform-admin crossing; an empty list yields no rows. The in-memory fallback
     log is filtered the same way the stores filter in SQL, so a reader sees the
     same scope whichever backend is configured.
+
+    ``decision_id`` and ``offset`` exist because a caller could not reach the rows
+    its own ``200`` named: this function sorted newest-first and returned
+    ``[:limit]``, so 600 refused attempts by an unauthenticated caller pushed a
+    dataset's legitimate access history out of reach entirely. The id filter is
+    pushed into the store, and the persisted page is over-fetched to
+    ``offset + limit`` **before** the merge, because slicing after a merge of two
+    differently-sized pages would otherwise drop rows the deeper page holds.
     """
     events = list(_AUDIT_LOG)
     if resource:
         events = [event for event in events if event.resource == resource]
+    if decision_id:
+        events = [event for event in events if event.decision_id == decision_id]
     events = [event for event in events if tenant_is_in_scope(audit_tenant_id(event), tenant_ids)]
 
     # Always merge: with no store configured the evidence module keeps its own
     # fallback log, which is where the OIDC mapping events live. Deduping by id
     # absorbs the overlap with _AUDIT_LOG.
-    persisted = list_persisted_audit_events(resource=resource, limit=limit, tenant_ids=tenant_ids)
+    persisted = list_persisted_audit_events(
+        resource=resource,
+        limit=offset + limit,
+        tenant_ids=tenant_ids,
+        decision_id=decision_id,
+    )
     by_id = {event.id: event for event in events}
     for event in persisted:
         by_id[event.id] = event
     events = list(by_id.values())
 
     events = sorted(events, key=lambda row: row.created_at, reverse=True)
-    return events[:limit]
+    return events[offset : offset + limit]
 
 
 # A published count must not be the size of the page it was read from.
@@ -1410,9 +1427,21 @@ def count_audit_events(
 
 
 def get_dataset_audit_events(
-    dataset_id: str, *, limit: int = 100, tenant_ids: list[str] | None = None
+    dataset_id: str,
+    *,
+    limit: int = 100,
+    tenant_ids: list[str] | None = None,
+    offset: int = 0,
 ) -> list[AuditEvent]:
-    return list_audit_events(limit=limit, resource=dataset_id, tenant_ids=tenant_ids)
+    """One dataset's audit rows, newest-first, starting at ``offset``.
+
+    The per-dataset path a steward opens had no way to page either: 600 refused
+    attempts filled the newest 200 rows and pushed the dataset's legitimate
+    access history out of reach.
+    """
+    return list_audit_events(
+        limit=limit, resource=dataset_id, tenant_ids=tenant_ids, offset=offset
+    )
 
 
 def mapping_candidates(dataset: Dataset, concept: str) -> list[str]:

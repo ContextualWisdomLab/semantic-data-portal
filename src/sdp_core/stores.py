@@ -221,6 +221,8 @@ class SQLiteEvidenceStore:
         resource: str | None = None,
         limit: int = 100,
         tenant_ids: list[str] | None = None,
+        decision_id: str | None = None,
+        offset: int = 0,
     ) -> list[PolicyDecision]:
         """List policy decisions, optionally scoped to a set of tenants."""
         conditions: list[str] = []
@@ -228,6 +230,9 @@ class SQLiteEvidenceStore:
         if resource:
             conditions.append("resource = ?")
             params = (*params, resource)
+        if decision_id:
+            conditions.append("decision_id = ?")
+            params = (*params, decision_id)
         clause, tenant_params = _tenant_scope_clause(tenant_ids, "?")
         if clause:
             conditions.append(clause)
@@ -235,8 +240,8 @@ class SQLiteEvidenceStore:
         sql = "SELECT payload FROM policy_decisions"
         if conditions:
             sql += " WHERE " + " AND ".join(conditions)
-        sql += " ORDER BY recorded_at DESC LIMIT ?"
-        params = (*params, limit)
+        sql += " ORDER BY recorded_at DESC LIMIT ? OFFSET ?"
+        params = (*params, limit, offset)
 
         with self._connect() as connection:
             rows = connection.execute(sql, params).fetchall()
@@ -271,6 +276,8 @@ class SQLiteEvidenceStore:
         resource: str | None = None,
         limit: int = 100,
         tenant_ids: list[str] | None = None,
+        decision_id: str | None = None,
+        offset: int = 0,
     ) -> list[AuditEvent]:
         """List audit events, optionally scoped to a set of tenants."""
         conditions: list[str] = []
@@ -278,6 +285,9 @@ class SQLiteEvidenceStore:
         if resource:
             conditions.append("resource = ?")
             params = (*params, resource)
+        if decision_id:
+            conditions.append("decision_id = ?")
+            params = (*params, decision_id)
         clause, tenant_params = _tenant_scope_clause(tenant_ids, "?")
         if clause:
             conditions.append(clause)
@@ -285,8 +295,8 @@ class SQLiteEvidenceStore:
         sql = "SELECT payload FROM audit_events"
         if conditions:
             sql += " WHERE " + " AND ".join(conditions)
-        sql += " ORDER BY created_at DESC LIMIT ?"
-        params = (*params, limit)
+        sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        params = (*params, limit, offset)
 
         with self._connect() as connection:
             rows = connection.execute(sql, params).fetchall()
@@ -475,6 +485,8 @@ class PostgresEvidenceStore:
         resource: str | None = None,
         limit: int = 100,
         tenant_ids: list[str] | None = None,
+        decision_id: str | None = None,
+        offset: int = 0,
     ) -> list[PolicyDecision]:
         """List policy decisions, optionally scoped to a set of tenants.
 
@@ -486,6 +498,9 @@ class PostgresEvidenceStore:
         if resource:
             conditions.append("resource = %s")
             params = (*params, resource)
+        if decision_id:
+            conditions.append("decision_id = %s")
+            params = (*params, decision_id)
         clause, tenant_params = _tenant_scope_clause(tenant_ids, "%s")
         if clause:
             conditions.append(clause)
@@ -493,8 +508,8 @@ class PostgresEvidenceStore:
         sql = "SELECT payload FROM policy_decisions"
         if conditions:
             sql += " WHERE " + " AND ".join(conditions)
-        sql += " ORDER BY created_at DESC LIMIT %s"
-        params = (*params, limit)
+        sql += " ORDER BY created_at DESC LIMIT %s OFFSET %s"
+        params = (*params, limit, offset)
 
         with self._connect() as connection:
             rows = connection.execute(sql, params).fetchall()
@@ -538,6 +553,8 @@ class PostgresEvidenceStore:
         resource: str | None = None,
         limit: int = 100,
         tenant_ids: list[str] | None = None,
+        decision_id: str | None = None,
+        offset: int = 0,
     ) -> list[AuditEvent]:
         """List audit events, optionally scoped to a set of tenants.
 
@@ -549,6 +566,9 @@ class PostgresEvidenceStore:
         if resource:
             conditions.append("resource = %s")
             params = (*params, resource)
+        if decision_id:
+            conditions.append("decision_id = %s")
+            params = (*params, decision_id)
         clause, tenant_params = _tenant_scope_clause(tenant_ids, "%s")
         if clause:
             conditions.append(clause)
@@ -556,8 +576,8 @@ class PostgresEvidenceStore:
         sql = "SELECT payload FROM audit_events"
         if conditions:
             sql += " WHERE " + " AND ".join(conditions)
-        sql += " ORDER BY created_at DESC LIMIT %s"
-        params = (*params, limit)
+        sql += " ORDER BY created_at DESC LIMIT %s OFFSET %s"
+        params = (*params, limit, offset)
 
         with self._connect() as connection:
             rows = connection.execute(sql, params).fetchall()

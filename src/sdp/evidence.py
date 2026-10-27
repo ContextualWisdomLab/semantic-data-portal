@@ -237,33 +237,70 @@ def _log_snapshot(log: list[Any]) -> list[Any]:
 
 
 def list_persisted_audit_events(
-    *, resource: str | None = None, limit: int = 100, tenant_ids: list[str] | None = None
+    *,
+    resource: str | None = None,
+    limit: int = 100,
+    tenant_ids: list[str] | None = None,
+    decision_id: str | None = None,
 ) -> list[AuditEvent]:
+    """Audit events from the configured store, or this module's fallback log.
+
+    ``decision_id`` is pushed to the store rather than filtered after the page,
+    because filtering a newest-first page cannot reach a row the page does not
+    contain - which is the defect ``catalog.list_audit_events`` documents. Both
+    SQL stores carry it as a first-class column.
+    """
     if _STORE:
-        return _STORE.list_events(resource=resource, limit=limit, tenant_ids=tenant_ids)
+        return _STORE.list_events(
+            resource=resource, limit=limit, tenant_ids=tenant_ids, decision_id=decision_id
+        )
 
     events = [
         event
         for event in reversed(_log_snapshot(_AUDIT_EVENT_LOG))
         if (not resource or event.resource == resource)
+        and (not decision_id or event.decision_id == decision_id)
         and tenant_is_in_scope(_audit_tenant_id(event), tenant_ids)
     ]
     return events[:limit]
 
 
 def list_policy_decisions(
-    *, resource: str | None = None, limit: int = 100, tenant_ids: list[str] | None = None
+    *,
+    resource: str | None = None,
+    limit: int = 100,
+    tenant_ids: list[str] | None = None,
+    decision_id: str | None = None,
+    offset: int = 0,
 ) -> list[PolicyDecision]:
+    """Decisions newest-first, optionally by decision id, starting at ``offset``.
+
+    A caller could not reach the rows its own ``200`` named. Every store orders
+    newest-first and then truncates - ``decisions[:limit]`` here, ``ORDER BY ...
+    DESC LIMIT ?`` in SQLite and Postgres - so the caller's own row is the first
+    to fall out. Measured: a ``policy_decision_id`` handed back by ``POST
+    /browse/{id}/preview`` was reachable immediately and unreachable after 600
+    further requests, while ``offset``, ``cursor`` and ``decision_id`` were
+    accepted and silently ignored. These are the two selectors a caller actually
+    holds.
+    """
     if _STORE:
-        return _STORE.list_decisions(resource=resource, limit=limit, tenant_ids=tenant_ids)
+        return _STORE.list_decisions(
+            resource=resource,
+            limit=limit,
+            tenant_ids=tenant_ids,
+            decision_id=decision_id,
+            offset=offset,
+        )
 
     decisions = [
         decision
         for decision in reversed(_log_snapshot(_POLICY_DECISION_LOG))
         if (not resource or decision.resource == resource)
+        and (not decision_id or decision.decision_id == decision_id)
         and tenant_is_in_scope(_policy_tenant_id(decision), tenant_ids)
     ]
-    return decisions[:limit]
+    return decisions[offset : offset + limit]
 
 
 def count_policy_decisions(
@@ -283,8 +320,15 @@ def count_policy_decisions(
 
 
 def list_persisted_policy_decisions(
-    *, resource: str | None = None, limit: int = 100, tenant_ids: list[str] | None = None
+    *,
+    resource: str | None = None,
+    limit: int = 100,
+    tenant_ids: list[str] | None = None,
+    decision_id: str | None = None,
 ) -> list[PolicyDecision]:
+    """Decisions from the configured store only, or nothing when none is configured."""
     if not _STORE:
         return []
-    return _STORE.list_decisions(resource=resource, limit=limit, tenant_ids=tenant_ids)
+    return _STORE.list_decisions(
+        resource=resource, limit=limit, tenant_ids=tenant_ids, decision_id=decision_id
+    )
