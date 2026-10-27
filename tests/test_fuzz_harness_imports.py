@@ -43,6 +43,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from importlib.metadata import packages_distributions
 from pathlib import Path, PurePosixPath
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -164,6 +165,103 @@ def oracle_module() -> str:
     # across lines - reporting "no longer imports the oracle" about an import
     # that was right there.
     return modules.pop()
+
+
+def _third_party_top_level_imports(path: Path) -> set[str]:
+    """Top-level module names a file imports that are neither local nor stdlib."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names |= {alias.name.split(".")[0] for alias in node.names}
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            names.add(node.module.split(".")[0])
+    local = {"sdp", "sdp_core", "tests", "fuzz", "scripts"}
+    return {
+        name
+        for name in names
+        if name not in local and name not in sys.stdlib_module_names
+    }
+
+
+def _image_installed_distributions() -> set[str]:
+    """Distribution names the image installs, read off the Dockerfile's own files."""
+    installed: set[str] = set()
+    for source, _ in image_spec()["copies"]:  # type: ignore[misc]
+        if not source.endswith(".txt"):
+            continue
+        text = (REPO_ROOT / source).read_text(encoding="utf-8")
+        installed |= {
+            match.group(1).lower().replace("_", "-")
+            for match in re.finditer(r"^([A-Za-z0-9_.\-]+)==", text, re.M)
+        }
+    return installed
+
+
+def test_the_harness_imports_nothing_the_image_does_not_install() -> None:
+    """The other half of the sandbox's premise: the file set *and* the packages.
+
+    The sandbox below reproduces the image's ``COPY`` set faithfully, and runs
+    the probe with **this** interpreter - whose site-packages are the
+    development environment's, not the image's. The image installs exactly
+    ``requirements.txt`` and ``fuzz-requirements.txt``. So a new third-party
+    import in the harness or its oracle would pass the sandbox and kill the
+    image at import, which is the failure this file exists to catch, one layer
+    up again.
+
+    Scoped to the harness and its oracle on purpose. ``sdp``'s own imports are
+    covered by ``requirements.txt`` being the application's lock - an undeclared
+    import there breaks installing the app at all, not just fuzzing - whereas
+    these two files are the only ones the image needs *in addition*.
+
+    Today the answer is ``atheris`` and nothing else; the point is that the next
+    import is checked rather than assumed.
+    """
+    harness_imports = _third_party_top_level_imports(HARNESS)
+    oracle_imports = _third_party_top_level_imports(
+        REPO_ROOT / (oracle_module().replace(".", "/") + ".py")
+    )
+    required = harness_imports | oracle_imports
+    installed = _image_installed_distributions()
+    assert installed, "no pinned distributions were read off the image's requirement files"
+
+    mapping = packages_distributions()
+    unresolved: list[str] = []
+    missing: list[str] = []
+    for module in sorted(required):
+        # The module name as a distribution name, **first**. Consulting
+        # ``packages_distributions()`` first made this guard's verdict depend on
+        # the *local* environment rather than on the repository: ``atheris`` has
+        # no wheel for this repo's 3.11 venv, so the mapping came back empty and
+        # the guard failed its fail-closed branch there while passing on 3.12.
+        # A guard that answers differently per interpreter is not measuring the
+        # image. The direct match covers the ordinary case (``atheris`` ships as
+        # ``atheris``) without needing the package present at all.
+        if module.lower().replace("_", "-") in installed:
+            continue
+        distributions = mapping.get(module)
+        if not distributions:
+            unresolved.append(module)
+            continue
+        normalised = {name.lower().replace("_", "-") for name in distributions}
+        if not normalised & installed:
+            missing.append(f"{module} (from {sorted(distributions)})")
+
+    assert not unresolved, (
+        f"these imports are not pinned under their own name and this "
+        f"environment cannot map them to a distribution either: {unresolved}. "
+        "Either the image does not install them - add the pin to "
+        "requirements.txt or fuzz-requirements.txt - or the distribution is "
+        "named differently from the module, in which case install it here or "
+        "record the mapping in this guard."
+    )
+    assert not missing, (
+        "the harness or its oracle imports packages the ClusterFuzzLite image "
+        f"does not install: {missing}. The image installs only "
+        f"{sorted(installed)}; add the pin to requirements.txt or "
+        "fuzz-requirements.txt, or the harness dies at import with nothing "
+        "fuzzed - exactly the breakage this file exists to catch."
+    )
 
 
 def test_the_image_contains_the_oracle_the_harness_imports() -> None:
