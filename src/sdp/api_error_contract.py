@@ -110,7 +110,7 @@ ROUTE_REFUSALS: dict[tuple[str, str], tuple[int, ...]] = {
     ("GET", "/catalog/datasets/{dataset_id}"): (403, 404),
     ("PATCH", "/catalog/datasets/{dataset_id}"): (400, 403, 404, 409),
     ("GET", "/catalog/datasets/{dataset_id}/audit"): (403, 404),
-    ("POST", "/catalog/datasets/{dataset_id}/deprecate"): (403, 404, 409),
+    ("POST", "/catalog/datasets/{dataset_id}/deprecate"): (400, 403, 404, 409),
     ("GET", "/catalog/datasets/{dataset_id}/join-candidates"): (403, 404),
     ("GET", "/catalog/datasets/{dataset_id}/jsonld"): (403, 404),
     ("GET", "/catalog/datasets/{dataset_id}/lineage"): (403, 404),

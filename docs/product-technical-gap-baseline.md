@@ -3704,6 +3704,43 @@ counts: {'고객': number, '고객행동': number, '매출': number, '온톨로�
 
 이 절은 측정 기록이고 병합 허가가 아닙니다.
 
+## 공표된 `maxLength: 512`가 **어디에서도 규칙이 아니었습니다** (2026-10-27 04:00Z)
+
+`api_request_contract`가 본문 속성 다섯(카탈로그 mutation 넷의 `reason`, patch review의
+`comment`)에 `maxLength: 512`를 공표합니다. 측정:
+
+    publish reason 1000자  -> 200, audit의 change_reason 길이 512  (조용한 truncation)
+    review comment 1000자  -> 200, review_comment 길이 1000        (한도 없음)
+
+하나의 공표 아래 서로 다른 두 가지 잘못된 동작입니다. truncation 쪽이 더 나쁩니다 — 사람
+auditor가 읽는 행이 호출자가 쓰지 않은 지점에서 끊긴 글을 담고, 200은 그걸 말하지 않습니다.
+
+### 거부로 고쳤습니다
+
+공표된 한도를 참으로 만드는 유일한 선택입니다. 한도를 넓히는 쪽은 이미 공표된 숫자를
+조용히 바꾸는 것이라 하지 않았습니다.
+
+### 기존 가드 넷이 반응했습니다 (전부 옳게)
+
+* `test_change_reason_evidence.py`가 truncation을 단언하고 있었습니다 — 행동을 기록하고
+  판단하지 않은 테스트. 이 라운드 두 번째 같은 형태입니다.
+* 본문 키 스캔이 `payload.get(field)`를 해석 불가로 보고 — 동적 키는 문서와 대조할 수
+  없으므로 옳습니다. 헬퍼가 값을 받도록 바꿔 리터럴을 호출 지점에 남겼습니다.
+* error 계약 가드가 `deprecate`의 새 400이 미공표라고 보고 — 테이블에 넣었습니다.
+
+### 제 structural 가드가 자기 설명문에 걸렸습니다
+
+`"[:MAX_CHANGE_REASON_CHARS]"` 문자열 검사가 **지운 코드를 인용한 docstring**에 걸렸습니다.
+산문과 코드를 구별하지 못하는 가드는 다음 사람에게 설명을 쓰지 말라고 압박합니다. 구문
+트리로 바꿨습니다.
+
+### 닫지 않은 것
+
+`maxLength`가 아닌 다른 공표 제약(`minLength`, `pattern`, 숫자 범위)이 실제로 강제되는지는
+전수 측정하지 않았습니다. 이 라운드에서 센 것은 `maxLength` 다섯 개뿐입니다.
+
+이 절은 측정 기록이고 병합 허가가 아닙니다.
+
 ## 드래프트가 **고쳐 쓴** 테이블 이름을 "카탈로그가 선언한 relation"이라고 공표했습니다 (2026-10-27 03:45Z)
 
 `source_relation_name`이 선언 이름을 `_safe_identifier`로 통과시켰고, 드래프트는 그 고쳐 쓴

@@ -226,16 +226,18 @@ def _change_reason(payload: dict[str, Any] | None) -> str | None:
     whitespace-only string is ``None``: "the caller sent an empty reason" and
     "the caller sent none" are the same fact, and recording the first as a
     reason would put an empty string where a ledger reader expects prose.
+
+    Over the limit is **refused**, not truncated. It used to end
+    ``return reason[:MAX_CHANGE_REASON_CHARS]``, so a 1000-character reason
+    answered 200 and the audit row a human auditor reads carried 512 characters
+    the caller did not choose to end there - with nothing in the response saying
+    so. ``api_request_contract`` publishes ``maxLength: 512`` on this property,
+    which a client reads as "longer is refused"; refusing is what makes that
+    true without discarding the caller's words.
     """
     if not payload:
         return None
-    reason = payload.get("reason")
-    if not isinstance(reason, str):
-        return None
-    reason = reason.strip()
-    if not reason:
-        return None
-    return reason[:MAX_CHANGE_REASON_CHARS]
+    return _bounded_prose(payload.get("reason"), "reason")
 
 
 def _audit_refused_catalog_mutation(
@@ -291,7 +293,53 @@ def _audit_refused_catalog_mutation(
 
 # A reason is prose for a human auditor, and the payload is caller-supplied, so
 # it is bounded like every other caller-supplied string this product retains.
+# This is the number ``api_request_contract`` publishes as ``maxLength`` on all
+# five prose properties, and ``tests/test_published_length_limits_are_enforced.py``
+# derives the published set from that document rather than listing it again.
 MAX_CHANGE_REASON_CHARS = 512
+
+
+def _bounded_prose(value: Any, field: str) -> str | None:
+    """One caller-supplied prose value, normalised and bounded, or ``None``.
+
+    Blank is ``None`` - "sent an empty value" and "sent none" are the same
+    fact. Over ``MAX_CHANGE_REASON_CHARS`` is a 400 naming the field and the
+    limit, in the same shape as every other request refusal, because the
+    alternatives are both dishonest: truncating puts words in a caller's mouth
+    in a record built for auditors, and keeping the whole string publishes a
+    ``maxLength`` the product does not hold to.
+
+    Takes the **value**, not the payload and a key name. The first version took
+    ``(payload, field)`` and read ``payload.get(field)`` inside, which moved the
+    key out of the handler and into a variable - and
+    ``tests/test_api_request_contract.py``'s scan, which proves the published
+    body schema covers every key a handler reads, reported
+    ``['payload.get(field)']`` as a read it could not resolve. It was right to:
+    a dynamic key cannot be checked against a document. Keeping the literal at
+    the call site keeps that scan able to do its job.
+    """
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    if not value:
+        return None
+    if len(value) > MAX_CHANGE_REASON_CHARS:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "invalid_request",
+                "fields": [
+                    {
+                        "field": field,
+                        "reason": (
+                            f"must be at most {MAX_CHANGE_REASON_CHARS} characters; "
+                            f"received {len(value)}"
+                        ),
+                    }
+                ],
+            },
+        )
+    return value
 
 
 def _actor(payload: dict[str, Any] | None) -> str:
@@ -2030,12 +2078,15 @@ def ontology_patch_review(patch_id: str, payload: dict[str, str]) -> dict[str, A
             status_code=400,
             detail="reviewer is derived from the authorized actor and must not be sent in the request body",
         )
+    # ``maxLength: 512`` is published for this property too, and was enforced
+    # nowhere: a 1000-character comment was accepted and retained whole.
+    comment = _bounded_prose(payload.get("comment"), "comment") or ""
     try:
         reviewed = ontology.review_patch(
             patch_id=patch_id,
             decision=payload.get("decision", ""),
             reviewer=actor_id,
-            comment=payload.get("comment", ""),
+            comment=comment,
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=_missing_resource_detail(exc))

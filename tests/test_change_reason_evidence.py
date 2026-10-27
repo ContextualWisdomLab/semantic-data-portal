@@ -31,6 +31,7 @@ surface does not record one", which is the distinction the row exists to make.
 from __future__ import annotations
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from sdp import catalog
@@ -137,17 +138,41 @@ def test_a_blank_reason_is_the_same_fact_as_no_reason() -> None:
         assert _change_reason({"reason": wrong}) is None, repr(wrong)
 
 
-def test_a_reason_is_bounded_like_every_other_retained_caller_string() -> None:
-    """The payload is caller-supplied and the row is retained."""
+def test_a_reason_over_the_bound_is_refused_not_truncated() -> None:
+    """The payload is caller-supplied and the row is retained, so it is bounded.
+
+    This test used to assert the **truncation**::
+
+        assert len(_change_reason({"reason": long})) == MAX_CHANGE_REASON_CHARS
+        ... -> 200, recorded length == MAX_CHANGE_REASON_CHARS
+
+    which recorded the behaviour rather than judging it.
+    ``api_request_contract`` publishes ``maxLength: 512`` on this property, so a
+    client reads "longer is refused"; what happened was 200 and an audit row
+    carrying 512 characters the caller did not choose to end there, with nothing
+    in the response saying so. For a value whose whole purpose is prose a human
+    auditor will read, putting words in the caller's mouth is the worse of the
+    two failures. It is refused now.
+    """
     long = "가" * (MAX_CHANGE_REASON_CHARS + 500)
-    assert len(_change_reason({"reason": long})) == MAX_CHANGE_REASON_CHARS
+    with pytest.raises(HTTPException) as refused:
+        _change_reason({"reason": long})
+    assert refused.value.status_code == 400
+    assert str(MAX_CHANGE_REASON_CHARS) in str(refused.value.detail)
+
     response = client.patch(
         f"/catalog/datasets/{_DATASET}",
         json={"actor": "admin", "title": "상한 확인", "reason": long},
     )
-    assert response.status_code == 200, response.text
-    recorded = _latest("dataset.patch").details["change_reason"]
-    assert len(recorded) == MAX_CHANGE_REASON_CHARS
+    assert response.status_code == 400, response.text
+
+    at_limit = "가" * MAX_CHANGE_REASON_CHARS
+    accepted = client.patch(
+        f"/catalog/datasets/{_DATASET}",
+        json={"actor": "admin", "title": "상한 확인", "reason": at_limit},
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert _latest("dataset.patch").details["change_reason"] == at_limit
 
 
 def test_the_reason_is_stripped_not_echoed_verbatim() -> None:
