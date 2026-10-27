@@ -21,15 +21,28 @@ claim that disagrees with the code producing it. This file is the mechanism that
 keeps them honest: it fetches every documented operation and validates the live
 response against what is published. Regenerate the module with::
 
-    PYTHONPATH=src python3 <<'EOF'
-    # see scratchpad/gen_response_contract.py - executes each GET under the
-    # anonymous, ?user=admin and ?actor=admin probes, unions the observed
-    # shapes, and rewrites src/sdp/api_response_contract.py
-    EOF
+    PYTHONPATH=src python3 scripts/generate_response_contract.py
+
+That command used to point at a heredoc referring to
+``scratchpad/gen_response_contract.py``, and **no such file existed** - this
+docstring even described the generator as living "outside the repository", and
+the probe configuration was duplicated here with a comment saying so. A rule
+nobody can run is not a rule: the module had been hand-edited, and regenerating
+it changed exactly two mis-indented regions. The generator is now in the
+repository, this file imports its probe configuration instead of copying it, and
+``test_regenerating_reproduces_the_committed_module`` holds the committed module
+to the generator's output.
 
 Reverse-verified: narrowing one published property's type (``number`` ->
-``string``) fails ``test_every_published_schema_matches_the_live_response``, and
-deleting a route's entry fails ``test_every_json_get_operation_is_covered``.
+``string``) fails ``test_every_published_schema_matches_the_live_response``,
+deleting a route's entry fails ``test_every_json_get_operation_is_covered``, and
+hand-editing the module fails the idempotence check. Each generator rule is
+defended by the guard that exists for it, checked by mutating the generator and
+*regenerating*: dropping the data-keyed-map rule fails
+``test_a_new_domain_does_not_break_the_published_facets_schema``, probing one
+connector instead of every one fails
+``test_the_probe_schema_covers_every_connector_not_only_the_one_probed``, and
+confusing "observed null" with "nothing observed" fails the live-response check.
 """
 
 from __future__ import annotations
@@ -52,39 +65,30 @@ from sdp.api_response_contract import (  # noqa: E402
 
 client = TestClient(app)
 
-# Path parameters and required query parameters, matching the generator. Kept
-# here too so this file can drive every operation without importing the
-# generator, which lives outside the repository.
-PATH_SUBSTITUTIONS = {
-    "{dataset_id}": "crm-customer-master",
-    "{node_id}": "crm-customer-master",
-    "{connector_id}": "sql_connector",
-    "{concept}": "고객",
-    "{term}": "고객",
-}
-REQUIRED_QUERY = {
-    "/catalog/search": {"q": "고객"},
-    "/ontology/search": {"q": "고객"},
-    "/catalog/datasets/{dataset_id}/schema-diff": {
-        "from_version": "1.0.0",
-        "to_version": "1.0.0",
-    },
-    "/enterprise/connectors/{connector_id}/probe": {"dataset_id": "crm-customer-master"},
-}
+# The probe configuration is **imported** from the generator, not copied. It
+# used to be duplicated here with the comment "kept here too so this file can
+# drive every operation without importing the generator, which lives outside the
+# repository" - and that was the defect: the generator existed nowhere, so the
+# module's "derived, never hand-written" rule could not be followed and the file
+# had since been hand-edited (two mis-indented regions gave it away). The script
+# is now at ``scripts/generate_response_contract.py`` and this file holds it to
+# its output.
+from scripts.generate_response_contract import (  # noqa: E402
+    PATH_SUBSTITUTIONS,
+    PROBES,
+    REQUIRED_QUERY,
+    fill_path as _url,
+    generate as _regenerate,
+)
 
-
-def _url(path: str) -> str:
-    filled = path
-    for placeholder, value in PATH_SUBSTITUTIONS.items():
-        filled = filled.replace(placeholder, value)
-    return filled
+GENERATOR = Path(__file__).resolve().parents[1] / "scripts" / "generate_response_contract.py"
 
 
 def _fetch(path: str):
-    """The first probe that reaches 200, as the generator did."""
+    """The first probe that reaches 200, as the generator does."""
     base = dict(REQUIRED_QUERY.get(path, {}))
     last = None
-    for params in ({}, {"user": "admin"}, {"actor": "admin"}):
+    for params in PROBES:
         response = client.get(_url(path), params={**base, **params})
         last = response
         if response.status_code == 200:
@@ -106,6 +110,18 @@ def _violations(value: object, schema: dict, path: str = "$") -> list[str]:
     if expected == "object":
         if not isinstance(value, dict):
             return [f"{path}: published object, got {type(value).__name__}"]
+        if "additionalProperties" in schema:
+            # A data-keyed map: every key's value is described by one schema.
+            # The construct exists because four nodes are keyed by data
+            # (``audit/events[].details``, ``/catalog/facets.counts``,
+            # ``dataset_status_counts``, ``/policy/decisions[].obligations``)
+            # and publishing the seed's observed keys as a field list handed a
+            # client a struct where the product returns a map.
+            values = schema["additionalProperties"]
+            found = []
+            for key, item in value.items():
+                found.extend(_violations(item, values, f"{path}.{key}"))
+            return found
         properties = schema.get("properties")
         if properties is None:
             return []  # "an object", no claim about keys
@@ -324,4 +340,71 @@ def test_the_probe_schema_covers_every_connector_not_only_the_one_probed() -> No
     assert len(answered) >= 4, (
         "fewer pairs answered 200 than the seed catalogue provides, so this "
         f"validated almost nothing: {answered}"
+    )
+
+
+def test_the_generator_the_docstrings_name_exists() -> None:
+    """Both docstrings told the reader to run a script that was nowhere.
+
+    ``api_response_contract`` said "derived by executing the routes, not written
+    by hand... Regenerate with the script recorded in that test's docstring",
+    and this file's docstring pointed at a heredoc in a scratchpad. Neither the
+    repository nor that scratchpad held it, so the rule was unfollowable and the
+    module was hand-edited instead.
+    """
+    assert GENERATOR.is_file(), GENERATOR
+    source = GENERATOR.read_text()
+    assert "PYTHONPATH=src python3 scripts/generate_response_contract.py" in source
+
+
+@pytest.mark.parametrize("module", ["src/sdp/api_response_contract.py"])
+def test_regenerating_reproduces_the_committed_module(module: str) -> None:
+    """The property that makes "derived, not hand-written" checkable.
+
+    Running the generator must reproduce the committed file byte for byte, so a
+    hand edit fails here instead of being invisible. Regenerating at ``a2f50c2``
+    changed exactly two regions, both mis-indented insertions from ``8cda569``
+    and ``41dffb1``.
+    """
+    committed = (Path(__file__).resolve().parents[1] / module).read_text()
+    assert _regenerate() == committed, (
+        "the committed response contract is not what the generator produces - "
+        "run: PYTHONPATH=src python3 scripts/generate_response_contract.py"
+    )
+
+
+def test_a_new_domain_does_not_break_the_published_facets_schema() -> None:
+    """The map rule, from the buyer's side rather than the generator's.
+
+    ``counts`` was published as five properties named after the seed's Korean
+    domain values, so a client generated from the document got a five-field
+    struct for a map and any catalog but the demo seed broke it. Onboarding one
+    dataset in a new domain is enough to show it.
+    """
+    from sdp.catalog import get_dataset
+    import json as _json
+
+    seed = _json.loads(get_dataset("crm-customer-master").model_dump_json())
+    body = {
+        **{
+            key: item
+            for key, item in seed.items()
+            if key
+            not in {"created_at", "updated_at", "version", "schema_version", "status"}
+        },
+        "id": "facets-map-probe",
+        "title": "facets map probe",
+        "domain": "지표프로브",
+        "owner": "facets-map-probe",
+        "actor": "admin",
+    }
+    created = client.post("/catalog/datasets", json=body)
+    assert created.status_code == 200, created.text
+
+    response = client.get("/catalog/facets", params={"user": "admin"})
+    assert response.status_code == 200, response.text
+    assert "지표프로브" in response.json()["counts"], response.json()
+    published = RESPONSE_SCHEMAS[("GET", "/catalog/facets")]
+    assert _violations(response.json(), published) == [], _violations(
+        response.json(), published
     )

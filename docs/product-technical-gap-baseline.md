@@ -3631,6 +3631,79 @@ production 호출자는 둘뿐이고 둘 다 해석을 넘깁니다 — 전수 �
 
 이 절은 측정 기록이고 병합 허가가 아닙니다.
 
+## 공표 응답 계약을 재생성하는 스크립트가 **존재하지 않았습니다** (2026-10-27 01:40Z)
+
+`api_response_contract`의 docstring은 "These schemas are derived by executing the routes,
+**not written by hand**"이고, 손으로 쓴 응답 스키마는 이 제품이 거부하기 위해 존재하는 바로
+그 drift라고 적습니다. 그리고 "Regenerate with the script recorded in that test's
+docstring"이라고 안내합니다. 그 테스트의 docstring은 scratchpad의 heredoc을 가리키고,
+**그 파일은 저장소에도 scratchpad에도 없습니다.** 테스트 자신이 "the generator, which lives
+outside the repository"라고 적고 있었고, probe 설정을 "복사해 둔다"는 주석과 함께 중복으로
+갖고 있었습니다.
+
+**실행할 수 없는 규칙은 규칙이 아닙니다.** 그래서 그 파일은 손으로 편집되어 있었습니다 —
+`a2f50c2`에서 재생성해 보니 바뀐 곳이 **정확히 두 군데**이고 둘 다 들여쓰기가 주변 블록과
+맞지 않는 삽입(`8cda569`의 `probe_semantics`, `41dffb1`의 alert 카운터)이었습니다.
+**들여쓰기가 증거입니다.**
+
+### 재구성이 드러낸 것
+
+커밋된 파일을 그대로 재현하려 하자 생성기가 세 가지를 모르고 있었습니다. 셋 다 제품 쪽
+사실이고, 알아낸 방법은 전부 **테스트가 red로 알려 준 것**입니다.
+
+1. **path placeholder 하나에 값 하나**로는 부족합니다. probe 라우트의 행은 connector와
+   dataset에 따라 달라지므로, `sql_connector`/`crm-customer-master` 한 쌍에서 파생한 스키마는
+   다른 쌍이 돌려주는 키 **열한 개**를 빠뜨립니다. 이제 placeholder마다 여러 값을 union하고,
+   connector·dataset id는 **제품에서 읽습니다** — 손으로 적은 목록이 이 파일의 짧은 수명
+   안에서 이미 한 번 낡았습니다(`api_connector`·`file_connector`로 추측했는데 제품은
+   `rest_connector`·`file_lake_connector`입니다). 테스트도 같은 두 출처를 읽으므로 양쪽이
+   **구성상** 일치합니다.
+2. **"아직 관찰 없음"과 "관찰했고 아무 타입이나"를 같은 `{}`로 적으면 안 됩니다.** 어떤
+   데이터셋에서 `null`이고 다른 데이터셋에서 문자열인 필드가 `string`으로 공표되어, 라이브
+   응답 `steward: None`이 계약 테스트를 깨뜨렸습니다 — 생성기가 만족시키려고 존재하는 그
+   테스트입니다. sentinel을 분리했습니다.
+3. **키가 데이터인 객체**는 `properties`가 아니라 `additionalProperties`로 공표해야 합니다 —
+   아래 절.
+
+### `/catalog/facets`의 `counts`가 시드의 도메인 값을 **필드 이름**으로 공표했습니다
+
+```
+counts: {'고객': number, '고객행동': number, '매출': number, '온톨로지': number, '마케팅': number}
+```
+
+문서로 클라이언트를 생성하면 map이어야 할 자리에 **필드 다섯 개짜리 struct**가 나옵니다.
+데모 시드가 아닌 어떤 카탈로그에서도 깨지고, 시드 데이터가 타입 정의로 새어 나갑니다.
+생성기는 **두 번째 카탈로그 상태**를 찍어 map과 field list를 구분합니다(새 도메인 데이터셋
+하나를 공개 API로 온보딩). 다른 상태에만 있는 키는 데이터이고, 단지 **없는** 키는 아닙니다 —
+`required`를 공표하지 않으므로 조건부 필드는 정상입니다.
+
+데이터 키 노드는 넷입니다: `/catalog/facets.counts`, `audit/events[].details`,
+`dataset_status_counts`, `/policy/decisions[].obligations`. 전부 값이 카탈로그·요청에 따라
+달라지는 자리입니다.
+
+**첫 판 규칙이 과도하게 발화했습니다.** 배열의 경우 union된 item properties를 두 번째 상태의
+**첫 원소**와만 비교해서, 원소가 서로 다른 모양인 배열(observability의 alerts, SHACL shape
+목록, JSON-LD `@graph`)이 전부 타입 없는 map으로 붕괴했습니다. 원소들의 키 집합을 union해서
+비교하도록 고쳤고, 발화 지점이 9곳에서 4곳으로 줄었습니다.
+
+### 지금 지켜지는 성질
+
+* `scripts/generate_response_contract.py`가 **저장소에** 있고, docstring이 안내하는 명령이
+  실제로 그 파일을 가리킵니다.
+* 재생성이 커밋된 모듈을 **byte 단위로** 재현해야 합니다 — 손 편집이 이제 테스트를
+  깨뜨립니다(두 번 연속 실행이 "already up to date").
+* 테스트가 probe 설정을 생성기에서 **import**합니다. 사본 둘은 맞춰 둘 것이 하나 더
+  생기는 것이고, 그 사본이 이 결함의 일부였습니다.
+* 생성기의 각 규칙이 **그 규칙을 위한 가드**로 방어됩니다. 생성기를 변이시키고 **재생성한
+  뒤** 확인했습니다: map 규칙 제거 → facets 행동 테스트 red, connector 하나만 찍기 →
+  connector 전수 테스트 red, null/미관찰 혼동 → 라이브 일치 테스트 red. 생성기 파일 삭제는
+  수집 단계에서 error, 계약 손 편집은 멱등성 테스트 red.
+
+16개 라우트의 스키마가 바뀌었고(42개 항목·순서 동일), 전부 더 **넓은 관찰**의 결과입니다 —
+공표가 좁아진 라우트는 없습니다.
+
+이 절은 측정 기록이고 병합 허가가 아닙니다.
+
 ## 운영 메모
 
 - Database objects: 두 단어 이상 `snake_case`, 3NF. Catalog plane 테이블은 #73의 `migrations/0002_ontology_catalog_plane.sql`.
