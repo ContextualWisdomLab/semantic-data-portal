@@ -529,6 +529,10 @@ SDP_CONNECTOR_TIMEOUT_MS='2s'          gate 통과, probe 라우트 400
   하나 남기므로(이 제품의 불변식) 연속한 두 요청의 페이지는 그 수만큼 겹친다. 안정 커서는
   decision의 `recorded_at` 공표가 선행 조건이고 그것은 POL-005가 미구현으로 기록한다.
 - `GET /audit/events?limit=&offset=&resource=&decision_id=&user=` — 같은 선택자.
+  **스코프 없이 읽으면 자기 읽기가 섞인다**: 증빙 읽기를 인가하는 결정도 원장에 쌓이고
+  `resource: "evidence"`를 달기 때문에, 30번 읽으면 무필터 뷰의 31행 중 30행이 그것이다.
+  데이터 접근만 보려면 `?resource=<dataset_id>`로 스코프한다(그 필터가 evidence 행을 완전히
+  제외한다). 기본 뷰에서 숨기지는 않는다 — 누가 원장을 읽었는지도 감사 대상이다.
 - `GET /catalog/datasets/{dataset_id}/audit?limit=&offset=&user=` — 데이터셋 1건의 감사
   행. `offset`이 없던 동안에는 자격증명 없는 거부 600건이 최신 200행을 채워 그 데이터셋의
   **정당한 접근 이력 전체**를 조회 불가로 밀어냈다.
