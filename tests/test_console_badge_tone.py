@@ -244,7 +244,7 @@ def test_the_console_uses_innerhtml_and_escapes_everything_it_interpolates() -> 
     offenders = []
     for literal in literals:
         for expression in _interpolations(literal):
-            if expression.startswith("esc(") or literal_branches.match(expression):
+            if _is_one_esc_call(expression) or literal_branches.match(expression):
                 continue
             offenders.append(expression)
     assert not offenders, (
@@ -252,10 +252,56 @@ def test_the_console_uses_innerhtml_and_escapes_everything_it_interpolates() -> 
     )
 
 
+def _is_one_esc_call(expression: str) -> bool:
+    """Whether ``expression`` is exactly one ``esc(...)`` call and nothing else.
+
+    ``expression.startswith("esc(")`` was the predicate, and it accepts
+    ``esc(row.a) + row.raw_value`` - raw data concatenated into an
+    ``innerHTML`` template literal, past a guard whose whole purpose is to stop
+    that. Measured: injecting that interpolation left this file green.
+
+    So the matching parenthesis has to be the **last** character. A nested call
+    (``esc(fmt(x))``) still passes, which is why the depth is counted rather
+    than the string merely ending in ``)``.
+    """
+    if not expression.startswith("esc("):
+        return False
+    depth = 0
+    for index, char in enumerate(expression):
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return index == len(expression) - 1
+    return False
+
+
 def test_the_escaper_covers_every_html_metacharacter() -> None:
-    """``esc`` is the whole defence above, so what it replaces is asserted here."""
+    r"""``esc`` is the whole defence above, so both of its halves are asserted.
+
+    The first version of this checked only that the five entity strings appear
+    somewhere in the escaper's source. The entities live in a lookup object; the
+    characters that get replaced are decided by a **separate** regex character
+    class. So narrowing ``/[&<>"']/g`` to ``/[&]/g`` leaves every entity string
+    in place, stops escaping ``<``, ``>``, ``"`` and ``'``, and this test stayed
+    green - measured. A guard that reads the table while the regex decides is
+    not guarding the decision.
+
+    Both halves are read here: the class must contain the character, and the
+    table must map it to its entity. Either one missing is an unescaped
+    metacharacter reaching ``innerHTML``.
+    """
     script = _console().split("<script>", 1)[-1]
     escaper = script.split("const esc =", 1)[1].split("const pct", 1)[0]
+
+    character_class = re.search(r"\.replace\(\s*/\[([^\]]*)\]/[a-z]*", escaper)
+    assert character_class is not None, (
+        "the escaper no longer replaces on a regex character class; this guard "
+        f"reads that class and must be updated with it: {escaper}"
+    )
+    replaced = character_class.group(1)
+
     for character, entity in (
         ("&", "&amp;"),
         ("<", "&lt;"),
@@ -263,4 +309,8 @@ def test_the_escaper_covers_every_html_metacharacter() -> None:
         ('"', "&quot;"),
         ("'", "&#39;"),
     ):
+        assert character in replaced, (
+            f"{character!r} is not in the escaper's character class {replaced!r}, "
+            "so it is never replaced however complete the entity table is"
+        )
         assert entity in escaper, (character, entity, escaper)
