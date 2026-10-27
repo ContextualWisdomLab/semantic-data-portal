@@ -60,13 +60,82 @@ _SAMPLE_DATATYPE_VALUES: Dict[str, tuple[str, ...]] = {
 
 _SAMPLE_ROW_COUNT = 2
 
+# The declared spellings each sample family answers for. A warehouse writes
+# ``double``, ``bigint``, ``float`` and ``datetime`` as often as the six keys
+# ``_SAMPLE_DATATYPE_VALUES`` happened to hold, and a type with no entry fell
+# through to ``f"{column.name}-sample-{n}"``: a dataset declaring
+# ``touch_revenue_krw: double`` was served the string
+# ``"touch_revenue_krw-sample-1"``, which is not merely synthetic but unparseable
+# as its own declared type, so a consumer binding the rows to the published
+# schema breaks. One table, read by one picker.
+_SAMPLE_DATATYPE_FAMILIES: Dict[str, tuple[str, ...]] = {
+    "boolean": ("bool", "boolean"),
+    "date": ("date",),
+    "decimal": ("decimal", "double", "double precision", "float", "money", "numeric", "number", "real"),
+    "integer": ("bigint", "int", "int2", "int4", "int8", "integer", "long", "serial", "smallint"),
+    "iri": ("iri", "uri", "url"),
+    "timestamp": ("datetime", "time", "timestamp", "timestamptz", "timestamp with time zone"),
+}
+
+
+def _sample_datatype_family(datatype: str) -> str | None:
+    """Which sample family a declared datatype belongs to, or ``None``.
+
+    Case and length modifiers are stripped, so ``DOUBLE PRECISION`` and
+    ``numeric(18,2)`` resolve like ``double`` and ``numeric``. ``None`` is the
+    honest answer for a type this sampler cannot shape a value like - the preview
+    publishes those column names rather than letting the mismatch pass as data.
+    """
+    normalized = datatype.strip().lower().split("(")[0].strip()
+    if not normalized:
+        return None
+    for family, spellings in _SAMPLE_DATATYPE_FAMILIES.items():
+        if normalized in spellings or normalized == family:
+            return family
+    return None
+
 
 def _sample_value(column: ColumnMetadata, row_index: int) -> str:
     """Pick this column's demo value for one sample row, deterministically."""
-    values = _SAMPLE_COLUMN_VALUES.get(column.name) or _SAMPLE_DATATYPE_VALUES.get(column.datatype)
+    values = _SAMPLE_COLUMN_VALUES.get(column.name)
+    if not values:
+        family = _sample_datatype_family(column.datatype)
+        if family:
+            values = _SAMPLE_DATATYPE_VALUES.get(family)
     if values:
         return values[row_index % len(values)]
     return f"{column.name}-sample-{row_index + 1}"
+
+
+def _declared_source_row_count(dataset: Dataset) -> int | None:
+    """The row count the catalog declares for this dataset's source, if any.
+
+    Read from the dataset's own ``profile`` rather than recomputed, and ``None``
+    when the profile declares none or declares it unparseably - absent is not
+    zero, and a dataset with no declared size must not read as an empty one.
+    """
+    raw = (getattr(dataset, "profile", None) or {}).get("row_count")
+    if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _untyped_sample_columns(dataset: Dataset) -> List[str]:
+    """Columns whose sample value cannot be shaped like their declared type.
+
+    Named in the response rather than left for a consumer to discover by parse
+    failure. A column the demo seed describes by name is typed by that
+    description, so it is not listed.
+    """
+    return [
+        column.name
+        for column in dataset.schema
+        if column.name not in _SAMPLE_COLUMN_VALUES
+        and _sample_datatype_family(column.datatype) is None
+    ]
 
 
 def _sample_rows(dataset: Dataset) -> List[Dict[str, Any]]:
@@ -250,6 +319,29 @@ def preview(
         "masking_summary": {"masked_columns": masked_columns},
         "has_more": offset + len(masked) < len(rows),
         "sampling_note": "샘플 결과이며 전체 데이터 대표성을 보장하지 않습니다.",
+        # The machine-readable half of that sentence, in the vocabulary the
+        # sibling data-bearing route already publishes
+        # (``/browse/query``'s ``execution.measurement_status`` /
+        # ``rows_source`` / ``row_count_source``). Measured before this, the
+        # preview's only provenance was the Korean note above, while
+        # ``has_more: false`` with two rows said the preview had shown
+        # everything - for ``crm-event`` the profile route says 54,000,000 rows.
+        # An integrator who learned from ``/browse/query`` that simulated
+        # figures are labelled had every reason to read these rows as real.
+        "sample_provenance": {
+            "rows_source": "fixed_mock_sample",
+            "measurement_status": "synthetic_sample_no_real_data",
+            "row_count_source": "fixed_sample_size_below_catalog_profile_estimate",
+            "sample_row_count": len(masked),
+            # What the catalog declares the source holds, so ``has_more: false``
+            # cannot be read as "this is the whole dataset". ``None`` when the
+            # dataset declares no row count - absent, not zero.
+            "declared_source_row_count": _declared_source_row_count(dataset),
+            # Columns whose sample value cannot be shaped like the type they are
+            # declared as; a consumer binding rows to the published schema will
+            # fail to parse exactly these.
+            "untyped_sample_columns": _untyped_sample_columns(dataset),
+        },
         "policy_decision_id": decision.decision_id,
         # ``applied_row_filter`` stood here. The name was the defect: it asserted
         # that a row-level control governed the rows above, and the slice above

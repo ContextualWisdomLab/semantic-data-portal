@@ -84,6 +84,7 @@ NOT_RUNTIME_MUTATED = frozenset(
         "sdp.authz._DEFAULT_OIDC_GROUP_ROLE_MAP",
         "sdp.authz._SUBJECTS",
         "sdp.browse._SAMPLE_COLUMN_VALUES",
+        "sdp.browse._SAMPLE_DATATYPE_FAMILIES",
         "sdp.browse._SAMPLE_DATATYPE_VALUES",
         "sdp.catalog._REQUIRED_METADATA_FIELDS",
         "sdp.config._DEFAULT_CONFIG",
