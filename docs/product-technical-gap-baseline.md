@@ -3769,6 +3769,28 @@ counts: {'고객': number, '고객행동': number, '매출': number, '온톨로�
 
 이 절은 측정 기록이고 병합 허가가 아닙니다.
 
+## 어휘 쓰기 둘이 아무것도 게시하지 않고 게시했다고 답했습니다 (2026-10-27 16:30Z)
+
+```
+review(approve) on 고객  -> 200 published_concept '고객' · revision 1->1 · digest 그대로
+                            감사 행 result: 'approved_without_publication'
+upsert 고객              -> 200 published_concept '고객' · revision 2->2 · digest 그대로
+POST /ontology/concepts {..., ontology_content_digest: 'deadbeef'*8} -> 200 (pin 무시, 버전 신원 없음)
+```
+
+승인이 게시된 정의를 덮어쓰지 않는 것은 의도된 설계이고, 원장은 어느 쪽인지 이미 말합니다 —
+응답만 말하지 않았습니다. 그리고 읽기 라우트가 409/400으로 집행하는 pin 토큰을 두 쓰기가
+조용히 버렸습니다(타입 있는 요청 모델에서 pydantic이 알 수 없는 필드를 버립니다).
+
+**수리:** `publication_status`(`published`/`existing_definition_kept`)를 두 응답에 공표하고
+`published_concept`는 실제 게시에만 이름을 싣습니다. 두 쓰기가 첫 쓰기 전에 읽기와 같은
+헬퍼로 pin을 검사하고 `ontology_version`을 스탬프합니다.
+
+### 닫지 않은 것
+
+이미 게시된 정의를 **개정하는 경로 자체는 없습니다**(ONT-005 별개 범위). 이 수리는 그 사실을
+말하게 만든 것입니다.
+
 ## preview가 합성 행을 아무 표시 없이 내보냈습니다 (2026-10-27 15:55Z)
 
 ```

@@ -55,9 +55,9 @@ gap-baseline 문서를 건드렸고, 나머지 148개는 건드리지 않았습�
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest (3.11)                1931 passed, 31 skipped
-    pytest (3.12, tests.yml의 핀) 1931 passed, 31 skipped — CI가 쓰는 인터프리터
-    pytest (파일 순서 정/역/난수)  각 1931 passed, 31 skipped — 순서 무관
+    pytest (3.11)                1941 passed, 31 skipped
+    pytest (3.12, tests.yml의 핀) 1941 passed, 31 skipped — CI가 쓰는 인터프리터
+    pytest (파일 순서 정/역/난수)  각 1941 passed, 31 skipped — 순서 무관
                                  (이 head의 열 번은 전부 깨끗합니다. 앞선 head
                                   `c4ac6b5`의 트리에서는 3.11 shuffled-31337 1회차가
                                   1848 + 실패 1건이었습니다 —
@@ -91,7 +91,7 @@ ClusterFuzzLite 하네스 import 가드 3건으로 1523에,
 (행 레벨 필터 정직성 9건, 드래프트 거부 증빙 페어링 11건, 참된 거부 이유 14건, 배포
 endpoint 자격증명·patch 계약 10건)로 1837에, 같은 라운드의 뒤이은 두 수리(patch
 confidence 정직성 5건, facet 어휘 공표 7건)로 1849에, 가정 결정 라벨 42건과 완전성 숫자 합치 5건으로
-1896에, 발견 가능성 6건으로 1902에, 쓰기 에코 재전송 8건으로 1910에, 증빙 도달성 10건으로 1920에, preview 출처 공표 11건으로 **1931**에 와 있습니다(skip이
+1896에, 발견 가능성 6건으로 1902에, 쓰기 에코 재전송 8건으로 1910에, 증빙 도달성 10건으로 1920에, preview 출처 공표 11건으로 1931에, 어휘 쓰기 정직성 10건으로 **1941**에 와 있습니다(skip이
 23 → 31로 는 것은 새 가드 둘이 `measured`가 아닌 KPI 넷에
 대해 skip하기 때문입니다 — 그 skip 자체가 분기가 측정된 증거이고, 같은 파일의
 `test_at_least_one_kpi_exercises_each_branch`가 양쪽 분기에 사례가 있음을 단언합니다)
@@ -126,6 +126,55 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 **이 문장이 결함을 가려 줬습니다**: 미러가 돈다는 것은 참이지만, 그 하네스는 아래 항목이
 고치기 전까지 ClusterFuzzLite 이미지에서 **import에서 죽고 있었고** 입력을 하나도 퍼징하지
 않았습니다. "미러가 있으니 됐다"는 커버리지 주장이 아닙니다.
+
+### Fixed — 어휘 쓰기 둘이 **아무것도 게시하지 않고 게시했다고** 답했고, 공표된 pin 토큰을 조용히 무시했습니다 (medium x2)
+
+승인은 이미 게시된 정의를 덮어쓰지 않습니다 — 등록기가 저장된 레코드를 그대로 돌려주는 것은
+**의도된 설계**입니다. 감사 원장은 어느 쪽인지 이미 말합니다(`approved_without_publication`,
+`upserted_without_publication`). **응답은 말하지 않았습니다.**
+
+```
+POST /ontology/patches {concept: 고객, suggestion: 개정 정의}  -> 200
+POST /ontology/patches/{id}/review {decision: approve}        -> 200
+  status 'approved' · published_concept '고객' · concept_already_published True
+  revision 1 -> 1 · content_digest 그대로
+  감사 행 result: 'approved_without_publication'
+
+POST /ontology/concepts {concept: 고객, definition: 다시 쓴 정의} -> 200
+  status 'upserted' · published_concept '고객'
+  revision 2 -> 2 · content_digest 그대로
+```
+
+한 요청이 `published_concept: 고객`을 만들어 내는데 어휘는 그대로이고, 정직한 라벨은
+**큐레이터가 읽지 않는 원장에만** 있었습니다.
+
+같은 두 라우트가 **버전 신원을 아예 공표하지 않았고** 공표된 pin 토큰을 조용히 받아들였습니다:
+
+```
+POST /ontology/concepts {..., ontology_content_digest: 'deadbeef'*8} -> 200
+  응답 키: concept, concept_already_published, concept_validation,
+           published_concept, status            (version도 digest도 없음)
+```
+
+`GET /ontology/search`와 `POST /ontology/resolve`는 **같은 토큰**을 불일치 409·형식 오류
+400으로 집행하고 자기가 답한 버전을 스탬프합니다. 쓰기 전에 "어휘가 digest X라고 믿는다"고
+고정한 호출자는 집행도 스탬프도 받지 못했습니다. `POST /ontology/concepts`는 타입이 있는
+요청 모델을 쓰므로 pydantic이 **알 수 없는 필드를 버립니다** — 그래서 조용했습니다.
+
+수리: `register_concept`가 `publication_status`를 돌려주고(`published`/
+`existing_definition_kept`, 상수 한 쌍), 두 응답이 그것을 공표하며 `published_concept`는
+**실제로 게시했을 때만** 개념을 이름 짓습니다(`concept`가 여전히 주제를 이름 지으므로 잃는
+정보는 없습니다). 그리고 두 쓰기가 첫 쓰기 **전에** 읽기 라우트와 같은 헬퍼로 pin을 검사하고
+자기가 만든 버전을 `ontology_version`으로 스탬프합니다. 요청 계약 문서에 키를 더했습니다.
+
+**변이 일곱, 전부 red** — M3(두 라벨의 **값을 서로 교환**)은 처음 green이었습니다. 이 파일의
+다른 모든 단언이 응답을 **상수와** 비교하므로, 상수가 바뀌면 비교의 양쪽이 같이 움직여
+아무것도 깨지지 않습니다. 소비자가 분기하는 것은 리터럴이므로 리터럴을 고정하는 테스트를
+더했습니다(그리고 게시하지 않은 쪽 라벨이 `publish`로 시작하지 않는지도).
+
+**닫지 않은 것.** 이미 게시된 정의를 **개정하는 경로 자체는 없습니다** — 승인은 여전히
+덮어쓰지 않고, 이 수리는 그 사실을 **말하게** 만든 것입니다. 개정 경로는 ONT-005의 별개
+범위입니다.
 
 ### Fixed — preview가 **합성 행을 아무 표시 없이** 내보냈고, 형제 라우트는 자기 mock을 전부 라벨합니다 (medium, 구매자 체감)
 
