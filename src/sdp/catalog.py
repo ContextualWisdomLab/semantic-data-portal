@@ -682,10 +682,36 @@ def search_catalog(
     return by_token[:limit]
 
 
+# The dimensions `GET /catalog/facets` counts. A constant rather than a literal
+# inside the function, because the enforced set was published nowhere: README did
+# not mention the route, OpenAPI published `field` as a bare string with no enum
+# and no description, and the refusal named neither the rejected value nor the
+# supported set - so the only way to learn a valid value was to read the literal.
+#
+# ``tags`` and ``terms`` are new members, and they are the two a buyer tries
+# first: ``docs/prd-trd.md`` publishes ``businessTerms`` as "keyword + facet" and
+# CAT-001 names ``tags`` as a search/facet dimension, while both answered 400.
+# The counter below has always had a list-valued branch that no member could
+# reach - the other six are scalars - so the capability existed for exactly the
+# dimensions the route refused.
+FACET_FIELDS = frozenset(
+    {
+        "domain",
+        "license",
+        "owner",
+        "sensitivity",
+        "status",
+        "tags",
+        "terms",
+        "update_frequency",
+    }
+)
+
+
 def list_facet_counts(
     field: str, query: Optional[str] = None, *, tenant_ids: list[str] | None = None
 ) -> Dict[str, int]:
-    if field not in {"domain", "owner", "sensitivity", "update_frequency", "license", "status"}:
+    if field not in FACET_FIELDS:
         raise ValueError("unsupported facet field")
 
     if query:

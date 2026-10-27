@@ -42,6 +42,7 @@ from .catalog import (
     get_related_datasets,
     list_audit_events,
     list_datasets,
+    FACET_FIELDS,
     list_facet_counts,
     patch_dataset,
     published_distribution,
@@ -936,14 +937,34 @@ def catalog_search(
 @app.get("/catalog/facets")
 def catalog_facets(
     q: str | None = Query(default=None, max_length=2000),
-    field: str = Query(default="domain"),
+    field: str = Query(
+        default="domain",
+        # Derived from the engine's own set, so the published document cannot go
+        # stale against it. The parameter was published as a bare string with no
+        # enum and no description, and the route is absent from README, so a
+        # buyer had no way to find a valid value except by reading the source.
+        description=(
+            "집계할 facet 차원. 지원 값: " + ", ".join(sorted(FACET_FIELDS)) + "."
+        ),
+    ),
     user: str = Query(default="anonymous"),
 ) -> dict[str, Any]:
     tenant_ids = _authorize_catalog_discovery(user)
     try:
         counts = list_facet_counts(field, query=q, tenant_ids=tenant_ids)
     except ValueError:
-        raise HTTPException(status_code=400, detail="unsupported facet field")
+        # The refusal names the rejected value and the vocabulary, which is the
+        # shape `GET /ontology/patches?status=` already answers with
+        # (`requested` + `known_statuses`). "unsupported facet field" alone told
+        # a caller that their request was invalid and nothing about what is.
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "unknown_facet_field",
+                "requested": field,
+                "known_fields": sorted(FACET_FIELDS),
+            },
+        )
     return {"field": field, "counts": counts}
 
 

@@ -507,6 +507,12 @@ SDP_CONNECTOR_TIMEOUT_MS='2s'          gate 통과, probe 라우트 400
   `source_system`, row-count `profile`, `tenant_id`은 응답에 포함되지 않는다
   (`schema_field_count`만 공개). 스키마는 정책을 평가·감사하는
   `GET /browse/{dataset_id}/schema`에서만 받는다.
+- `GET /catalog/facets?field=...&q=...` — 카탈로그 facet 집계. 지원 차원은
+  `domain`, `license`, `owner`, `sensitivity`, `status`, `tags`, `terms`,
+  `update_frequency` 여덟 개이고, 그 밖의 값은 400 + `requested`/`known_fields`로
+  거부된다(`?status=`의 `known_statuses`와 같은 모양). `tags`/`terms`는 값이 여러 개인
+  차원이므로 값별로 센다. 이 라우트는 한동안 README에도, OpenAPI 설명에도, 거부
+  사유에도 지원 목록이 없어서 유효한 값을 알려면 소스를 읽어야 했다.
 - `GET /catalog/datasets/{dataset_id}/jsonld`
 - `GET /catalog/datasets/{dataset_id}/validate`
 - `GET /catalog/datasets/{dataset_id}/semantic-validation`
