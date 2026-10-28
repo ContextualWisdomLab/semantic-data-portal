@@ -1,0 +1,1293 @@
+"""Counters must report real counts, and parsers must raise their documented type.
+
+Measured at HEAD before these contracts:
+
+* ``sdp_request_observations_total`` saturated at **25** while the ring buffer
+  holds 500, because the gauge was ``len()`` of a page capped at 25. The audit and
+  policy gauges saturated at 500 and the export-error gauge at 50 — every evidence
+  counter on ``/metrics`` and ``/enterprise/observability`` was a page size.
+* ``graph_store._relationship_label("broader\\n")`` raised ``KeyError('\\n')``
+  instead of the ``ValueError`` its docstring promises: ``re.match`` with a
+  trailing ``$`` also matches before a final newline, so the input passed the
+  regex guard and then failed the alphabet lookup. ``POST /graph/edges`` turned
+  that into a 500.
+* ``/browse/{id}/preview`` coerced pagination with a bare ``int(...)`` inside a
+  ``try`` catching only ``ValueError``/``KeyError``/``PermissionError``, so a JSON
+  array, object or null for ``limit``/``offset`` produced a 500 instead of a 400.
+* ``_sink_status`` routed only non-``file`` schemes through the redaction helper,
+  so a ``file://`` sink published its absolute server path — and, for the UNC form
+  the parser deliberately supports, an internal hostname.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+import sys
+import time
+from typing import Any
+
+import pytest
+from fastapi.testclient import TestClient
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from sdp import graph_store, observability as obs  # noqa: E402
+from sdp.api import app  # noqa: E402
+
+client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def _clean():
+    obs.reset_request_observability()
+    try:
+        yield
+    finally:
+        obs.reset_request_observability()
+
+
+def test_request_observation_gauge_is_not_a_page_size() -> None:
+    """It was ``len(list_request_observations(limit=25))``, so it stuck at 25."""
+    for index in range(60):
+        obs.record_request_observation(
+            {"event": "http_request", "status_code": 200, "n": index}, export=False
+        )
+    manifest = obs.build_observability_manifest()
+    assert manifest["metrics"]["request_observations_total"] == 60
+
+    metrics_text = obs.prometheus_metrics_text()
+    assert "sdp_request_observations_total 60" in metrics_text
+
+
+def test_export_error_gauge_is_not_a_page_size() -> None:
+    for index in range(55):
+        obs.record_observability_export_error(f"boom-{index}")
+    manifest = obs.build_observability_manifest()
+    # The buffer itself is a bounded ring (maxlen 50), so the honest count is the
+    # buffer size, not the page size — and never more than the buffer holds.
+    assert manifest["metrics"]["observability_export_errors_total"] == len(obs._EXPORT_ERRORS)
+    assert manifest["metrics"]["observability_export_errors_total"] > 5
+
+
+def test_relationship_label_raises_its_documented_error_type() -> None:
+    """``$`` also matches before a trailing newline, so the guard let it through."""
+    with pytest.raises(ValueError):
+        graph_store._relationship_label("broader\n")
+    with pytest.raises(ValueError):
+        graph_store._relationship_label("bro der")
+    assert graph_store._relationship_label("broader") == "BROADER"
+
+
+def test_graph_edge_with_a_trailing_newline_is_a_400_not_a_500() -> None:
+    response = client.post(
+        "/graph/edges",
+        json={"edge_type": "broader\n", "source_id": "고객", "target_id": "이탈", "actor": "admin"},
+    )
+    assert response.status_code == 400, response.text
+
+
+@pytest.mark.parametrize("bad", [[], {}, [1], {"a": 1}, True])
+def test_preview_pagination_type_error_is_a_400_not_a_500(bad) -> None:
+    """A non-numeric JSON value for a pagination field is a bad request, not a 500."""
+    response = client.post(
+        "/browse/crm-customer-master/preview",
+        json={"user": "analyst", "purpose": "analysis", "limit": bad},
+    )
+    assert response.status_code == 400, f"{bad!r} -> {response.status_code}"
+
+
+def test_preview_pagination_null_means_unset() -> None:
+    """``null`` is how many clients serialize an absent field, so it takes the
+    default rather than being refused. The defect being fixed was the 500; this
+    distinction is deliberate, not an oversight."""
+    response = client.post(
+        "/browse/crm-customer-master/preview",
+        json={"user": "analyst", "purpose": "analysis", "limit": None, "offset": None},
+    )
+    assert response.status_code == 200, response.text
+
+
+def test_file_sink_path_is_not_published(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A UNC file sink published its internal hostname — the very authority
+    component the redaction helper exists to suppress."""
+    # The UNC form is now refused outright rather than redacted: on POSIX a
+    # ``file://host/path`` URL is not a path the container can write, and
+    # folding the authority into the path is what made README's own documented
+    # value resolve to the filesystem root. The manifest must still not publish
+    # the hostname or the tenant segment in saying so.
+    monkeypatch.setenv(
+        "SDP_LOG_SINK_URL", "file://logs.internal.corp/sdp-prod/tenant-acme/requests.ndjson"
+    )
+    status = obs._sink_status()
+    assert status["scheme"] == "file"
+    assert status["configured"] is False
+    assert status["invalid_configuration"]
+    assert "logs.internal.corp" not in str(status)
+    assert "tenant-acme" not in str(status)
+
+    monkeypatch.setenv("SDP_LOG_SINK_URL", "file:///srv/sdp/private/requests.ndjson")
+    local = obs._sink_status()
+    assert "/srv/sdp/private" not in str(local)
+    assert local["configured"] is True
+
+
+# --- the sink must not bound API throughput when it is down ---------------
+
+
+def test_sink_breaker_stops_paying_the_timeout_for_a_dead_sink(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Moving the export off the event loop removed the *serialization*, but every
+    request still paid the full ``SDP_LOG_SINK_TIMEOUT_MS`` in a worker thread, and
+    the same bounded anyio threadpool serves every sync route. Measured against a
+    socket that accepts and never answers, 40 concurrent ``/health`` took 1.95s
+    with a 500ms timeout, and one episode filled all 50 export-error slots.
+
+    After a run of failures the breaker opens and the export is skipped until the
+    cooldown expires, so a telemetry outage stops being an API throughput ceiling.
+    """
+    import time
+
+    monkeypatch.setenv("SDP_LOG_SINK_URL", "https://sink.example/ingest")
+    attempts = {"n": 0}
+
+    def _always_fails(request, timeout=None):
+        attempts["n"] += 1
+        raise OSError("sink unreachable")
+
+    monkeypatch.setattr(obs, "urlopen", _always_fails)
+
+    for _ in range(obs.SINK_FAILURE_THRESHOLD):
+        obs.record_request_observation({"event": "http_request"}, export=True)
+    assert attempts["n"] == obs.SINK_FAILURE_THRESHOLD
+
+    state = obs.sink_breaker_state()
+    assert state["open"] is True
+    assert state["consecutive_failures"] >= obs.SINK_FAILURE_THRESHOLD
+
+    # Further observations are buffered but no longer touch the sink.
+    before = attempts["n"]
+    for _ in range(20):
+        obs.record_request_observation({"event": "http_request"}, export=True)
+    assert attempts["n"] == before, "the breaker is open; the sink must not be attempted"
+    assert obs.sink_breaker_state()["skipped_exports"] == 20
+
+    # The skip is reported, not silent.
+    manifest = obs.build_observability_manifest()
+    assert manifest["structured_logs"]["sink_breaker"]["open"] is True
+
+
+def test_sink_breaker_closes_after_the_cooldown(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SDP_LOG_SINK_URL", "https://sink.example/ingest")
+
+    def _always_fails(request, timeout=None):
+        raise OSError("sink unreachable")
+
+    monkeypatch.setattr(obs, "urlopen", _always_fails)
+    for _ in range(obs.SINK_FAILURE_THRESHOLD):
+        obs.record_request_observation({"event": "http_request"}, export=True)
+    assert obs.sink_breaker_state()["open"] is True
+
+    # Expire the cooldown rather than sleeping through it.
+    monkeypatch.setattr(obs, "SINK_COOLDOWN_SECONDS", 0.0)
+    obs._SINK_BREAKER["open_until"] = 0.0
+    assert obs.sink_breaker_state()["open"] is False
+
+    class _Ok:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(obs, "urlopen", lambda request, timeout=None: _Ok())
+    obs.record_request_observation({"event": "http_request"}, export=True)
+    assert obs.sink_breaker_state()["consecutive_failures"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# A sink URL that carries its own credential must work, and the credential must
+# not reach the connection host, the published status, or the retained errors.
+#
+# ``urllib.request.Request`` keeps the authority verbatim, userinfo included, as
+# the connection host, so the documented push-URL form of every common log sink
+# could not work. Measured before the repair with
+# ``SDP_LOG_SINK_URL=https://sdp-ingest:s3cr3t-token@logs.example.net/push``:
+#
+#     urllib connects to   sdp-ingest:s3cr3t-token@logs.example.net
+#     http.client         -> InvalidURL: nonnumeric port
+#     _sink_status()      -> {"configured": true, "target": "logs.example.net"}
+#
+# Every export failed while the manifest reported a configured sink, and the
+# InvalidURL message quotes the authority, so ``str(exc)`` carried the credential
+# into the retained _EXPORT_ERRORS ring.
+# --------------------------------------------------------------------------- #
+
+
+def _sink_requests(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    """Capture what the export would actually put on the wire."""
+    sent: list[Any] = []
+
+    class _Ok:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def _capture(request, timeout=None):
+        sent.append(request)
+        return _Ok()
+
+    monkeypatch.setattr(obs, "urlopen", _capture)
+    return sent
+
+
+def test_a_credential_bearing_sink_url_is_connectable(monkeypatch: pytest.MonkeyPatch) -> None:
+    sent = _sink_requests(monkeypatch)
+    monkeypatch.setenv(
+        "SDP_LOG_SINK_URL", "https://sdp-ingest:s3cr3t-token@logs.example.net/loki/api/v1/push"
+    )
+    obs.record_request_observation({"event": "http_request"}, export=True)
+
+    assert obs.sink_breaker_state()["consecutive_failures"] == 0, (
+        f"the export failed: {obs.list_observability_export_errors()}"
+    )
+    assert len(sent) == 1
+    request = sent[0]
+    # The host urllib dials - this was the userinfo-bearing authority.
+    assert request.host == "logs.example.net"
+    assert "s3cr3t-token" not in request.full_url
+    assert "sdp-ingest" not in request.full_url
+    assert request.full_url == "https://logs.example.net/loki/api/v1/push"
+
+
+def test_the_sink_credential_moves_into_the_authorization_header(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Where it belongs, and in both forms a sink URL expresses it."""
+    import base64
+
+    sent = _sink_requests(monkeypatch)
+    monkeypatch.setenv("SDP_LOG_SINK_URL", "https://user:p%40ss%3Aword@logs.example.net/push")
+    obs.record_request_observation({"event": "http_request"}, export=True)
+    header = sent[-1].get_header("Authorization")
+    assert header.startswith("Basic ")
+    # Percent-decoded: a password containing @ or : has to be encoded in the URL.
+    assert base64.b64decode(header.split()[1]).decode() == "user:p@ss:word"
+
+    monkeypatch.setenv("SDP_LOG_SINK_URL", "https://deadbeefcafe@logs.example.net/push")
+    obs.record_request_observation({"event": "http_request"}, export=True)
+    assert sent[-1].get_header("Authorization") == "Bearer deadbeefcafe"
+
+    monkeypatch.setenv("SDP_LOG_SINK_URL", "https://logs.example.net/push")
+    obs.record_request_observation({"event": "http_request"}, export=True)
+    assert sent[-1].get_header("Authorization") is None, (
+        "a credential-free sink URL must not grow an empty Authorization header"
+    )
+
+
+def test_no_sink_credential_reaches_the_published_status_or_the_error_ring(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The reason the credential is split out before urllib sees it."""
+    monkeypatch.setenv(
+        "SDP_LOG_SINK_URL", "https://sdp-ingest:s3cr3t-token@logs.example.net/push"
+    )
+
+    def _fails(request, timeout=None):
+        # A real failure quotes the URL it was given; that URL is now
+        # credential-free, so the retained message cannot carry the secret.
+        raise OSError(f"cannot reach {request.full_url}")
+
+    monkeypatch.setattr(obs, "urlopen", _fails)
+    obs.record_request_observation({"event": "http_request"}, export=True)
+
+    published = str(obs.build_observability_manifest())
+    retained = str(obs.list_observability_export_errors())
+    for secret in ("s3cr3t-token", "sdp-ingest"):
+        assert secret not in published, "the manifest is unauthenticated"
+        assert secret not in retained, "export errors are retained for the process lifetime"
+
+
+def test_an_unconnectable_http_sink_is_not_reported_as_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``configured`` means "set AND writable" for http, as it already did for file."""
+    for sink_url, expected in (
+        ("https:///push", "must name a host"),
+        ("https://host:notaport/push", "port that is not a number"),
+    ):
+        monkeypatch.setenv("SDP_LOG_SINK_URL", sink_url)
+        status = obs._sink_status()
+        assert status["configured"] is False, sink_url
+        assert expected in status["invalid_configuration"], status
+
+
+# --------------------------------------------------------------------------- #
+# A gate may only measure capabilities that exist - the alert path.
+# --------------------------------------------------------------------------- #
+
+
+def test_the_alert_webhook_is_in_neither_readiness_list() -> None:
+    """Delivery exists, so the declaration is retired - and it is still not a gate.
+
+    For as long as nothing delivered, ``SDP_ALERT_WEBHOOK_URL`` sat in
+    ``declared_unimplemented_environment``: its only read in the whole package
+    was ``observability._sink_status`` taking ``bool()`` of it for the
+    ``alert_webhook_configured`` field, so a gate it could clear would have
+    measured a capability that did not exist - exactly like
+    ``SDP_EVIDENCE_RETENTION_DAYS`` before it.
+
+    Both halves of this test are the correction. The declaration goes, because a
+    stale "this is not implemented" misleads the same buyer as a premature "this
+    is", and the retraction has to be mechanical or it goes stale again - the
+    alert prose in this repository has now done so three times.
+
+    It did **not** move into ``required_environment``, and that is the half worth
+    pinning rather than assuming. ``production._is_set`` gates on a non-blank
+    string and nothing else, so requiring the variable would let ``'banana'``
+    clear the gate, and ``'banana'`` has no scheme: measured below through the
+    delivery path's own configuration gate, it cannot be posted to at all. That
+    is the defect ``declared_unimplemented_environment`` exists to refuse,
+    arriving from the other direction. Alerting is optional - an operator who
+    wants no outbound POST sets nothing, and routing is a no-op - so the variable
+    belongs in ``current_evidence`` beside its consumers and tests.
+    """
+    from sdp_core.production import (
+        enterprise_production_readiness_manifest,
+        production_integration_registry,
+    )
+
+    integration = next(
+        item
+        for item in production_integration_registry()
+        if item.id == "request_observability_export"
+    )
+    assert "SDP_ALERT_WEBHOOK_URL" not in integration.required_environment
+    assert integration.declared_unimplemented_environment == []
+    manifest = enterprise_production_readiness_manifest({})
+    assert "request_observability_export" not in manifest.unimplemented_environment
+    # Listed as evidence instead, with the consumers that make it real.
+    assert "SDP_ALERT_WEBHOOK_URL" in integration.current_evidence
+    assert "sdp.observability.alert_routing_state" in integration.current_evidence
+
+    # Why it is not a gate, measured rather than asserted: the value that would
+    # clear a presence-only gate is one the delivery path refuses outright.
+    with pytest.raises(obs.SinkConfigurationError, match="http or https scheme"):
+        obs._alert_request_parts("banana")
+
+
+def test_setting_the_alert_webhook_cannot_clear_the_readiness_gate() -> None:
+    """Unchanged assertion, different reason - and the reason is why it is kept.
+
+    This used to hold because the variable routed nothing. It now holds because
+    alerting is optional and deliberately gates nothing: ``_is_set`` would accept
+    any non-blank string, including the two below that can never be delivered to,
+    so a gate on this name would measure the presence of a string rather than the
+    existence of a delivery path.
+    """
+    from sdp_core.production import enterprise_production_readiness_manifest
+
+    base = {"SDP_LOG_SINK_URL": "file:///data/requests.jsonl", "SDP_REQUEST_ID_HEADER": "X-Request-Id"}
+    without = enterprise_production_readiness_manifest(base)
+    for value in ("https://alerts.example/hook", "banana", "0"):
+        with_variable = enterprise_production_readiness_manifest(
+            {**base, "SDP_ALERT_WEBHOOK_URL": value}
+        )
+        assert with_variable.paid_pilot_ready == without.paid_pilot_ready
+        assert with_variable.missing_environment == without.missing_environment
+
+
+def test_each_published_alert_rule_says_whether_it_is_evaluated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A list named "alerts" beside ``alert_webhook_configured: true`` read as monitoring.
+
+    The conditions are kept - they are the right ones - and every surface says
+    which of them this service computes and which it delivers. Two are measured
+    in process; ``central_workflow_backlog`` is about GitHub Actions run state
+    this service does not observe, so it stays declared, says why, and declares
+    that it is not routable. The top-level keys point at the per-rule flags
+    rather than making one claim for all three, which is the thing that would be
+    false however it was written.
+
+    Both flags are enumerated over every published rule rather than checked on
+    the two this test names, because "evaluated" and "routable" are independent
+    and a rule carrying one without the other is the shape a reader assumes
+    away: a routable rule that is not evaluated promises a delivery nothing can
+    trigger.
+    """
+    monkeypatch.setenv("SDP_ALERT_WEBHOOK_URL", "https://alerts.example/hook")
+    manifest = obs.build_observability_manifest()
+
+    assert manifest["alert_evaluation"] == "per_rule"
+    assert manifest["alert_routing"] == "implemented"
+    assert manifest["alerts"], "the declared conditions must stay published"
+    by_id = {alert["id"]: alert for alert in manifest["alerts"]}
+
+    for rule_id, rule in by_id.items():
+        assert isinstance(rule["routable"], bool), rule_id
+        if rule["routable"]:
+            assert rule["evaluated"] is True, (
+                f"{rule_id} is declared routable while nothing evaluates it, so "
+                "its delivery can never be triggered"
+            )
+    assert sorted(
+        rule_id for rule_id, rule in by_id.items() if rule["routable"]
+    ) == sorted(obs.ROUTABLE_ALERT_RULE_IDS)
+
+    gap = by_id["policy_audit_gap"]
+    assert gap["evaluated"] is True
+    assert gap["evaluation"] == "measured_in_process"
+    assert isinstance(gap["observed_total"], int)
+    assert gap["firing"] is (gap["observed_total"] > 0)
+    # Narrower than the condition the rule was declared with, and it says so
+    # rather than letting the id imply coverage it does not have.
+    assert gap["declared_condition"]
+    assert gap["not_covered"]
+
+    probe = by_id["connector_probe_failure"]
+    assert probe["evaluated"] is True
+    assert probe["declared_condition"] == "connector probe failure"
+    assert probe["condition"] != probe["declared_condition"], (
+        "the computed condition is narrower than the name it was declared with; "
+        "publishing one string for both hides exactly that gap"
+    )
+
+    backlog = by_id["central_workflow_backlog"]
+    assert backlog["evaluated"] is False
+    assert backlog["routable"] is False
+    assert backlog["evaluation"] == "declared_not_evaluated"
+    assert "GitHub Actions" in backlog["not_evaluated_because"]
+
+    sink = manifest["structured_logs"]["sink"]
+    assert sink["alert_webhook_configured"] is True
+    assert sink["alert_webhook_routing"] == "implemented"
+    # The capability claim is made good by a measurement published beside it,
+    # not by the status string alone.
+    assert manifest["alert_delivery"]["routable_rules"] == len(
+        obs.ROUTABLE_ALERT_RULE_IDS
+    )
+
+
+def test_the_alert_webhook_value_is_read_one_way_and_stashed_nowhere() -> None:
+    """The successor to the guard that proved nothing routed.
+
+    That guard asserted three things about ``SDP_ALERT_WEBHOOK_URL`` - two files
+    mention it, one ``os.getenv`` read, that read's exact text - and its
+    docstring promised a tripwire the body did not set: measured, a
+    ``_deliver_alert`` that POSTed through ``urlopen``, fed from the existing
+    read via one ``_ALERT_TARGET["url"] = alert_webhook_url``, left it **passing**
+    (3 passed). A fourth assertion was added, that the value is loaded only as
+    ``bool(...)``, and that one did trip when delivery landed. It is rewritten
+    here deliberately, which is what its own docstring asked of whoever added
+    routing.
+
+    Routing needs the string, so "it goes nowhere but a boolean" is no longer
+    the invariant. Two others replace it, and neither is covered by any
+    behaviour test:
+
+    *Every read is the same expression.* There are three now - the published
+    ``alert_webhook_configured`` flag, the published ``webhook_configured``
+    counter, and the delivery decision - and they must agree, because the
+    manifest's claim about configuration is only honest if the code that
+    delivers asks the same question. Measured with
+    ``SDP_ALERT_WEBHOOK_URL="   "``: the stripped read is falsy and
+    ``_sink_status`` publishes ``alert_webhook_configured: false``, while an
+    unstripped read of the same variable is **truthy**. A delivery path reading
+    it unstripped would therefore hand ``"   "`` to
+    ``_alert_request_parts`` - measured, ``SinkConfigurationError`` - and post
+    nothing while the manifest said unconfigured and the failure counter rose:
+    the "published number disagrees with the code enforcing it" shape, from a
+    one-call difference. Compared through the AST rather than by grepping,
+    because two spellings of the same string are the thing being ruled out.
+
+    *The value is never stashed.* Every assignment of a read targets a plain
+    local name, never a subscript or an attribute. ``observability`` holds the
+    module-level containers that
+    ``tests/test_alert_routing_disclosure.py::test_a_credential_bearing_alert_webhook_never_reaches_a_published_surface``
+    scans by reflection, and a webhook with userinfo is an operator credential;
+    ``_ALERT_TARGET["url"] = ...`` is one line and puts it in that set, one
+    published key from an anonymous reader. The disclosure test catches it only
+    once a delivery has been attempted through the seam it patches, so this is
+    the cheaper guard that does not need the traffic.
+    """
+    import ast
+    import pathlib
+
+    source_root = pathlib.Path(obs.__file__).resolve().parents[1]
+    mentions = sorted(
+        path.relative_to(source_root).as_posix()
+        for path in source_root.rglob("*.py")
+        if "SDP_ALERT_WEBHOOK_URL" in path.read_text()
+    )
+    assert mentions == ["sdp/observability.py", "sdp_core/production.py"], mentions
+
+    tree = ast.parse((source_root / "sdp" / "observability.py").read_text())
+    # One read is ``os.getenv(name, default)`` wrapped in ``.strip()``. Both are
+    # ``Call`` nodes containing the name and the outer one encloses the inner,
+    # so they are collected by what they are rather than by how their text
+    # begins: the first version of this check filtered on "starts with
+    # os.getenv(", kept both halves of every read, and reported the product's
+    # single spelling as two.
+    getenv_reads = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and ast.unparse(node.func) == "os.getenv"
+        and "SDP_ALERT_WEBHOOK_URL" in ast.unparse(node)
+    ]
+    assert getenv_reads, "the variable is no longer read through os.getenv; re-point this guard"
+    defaults = sorted({ast.unparse(node) for node in getenv_reads})
+    assert defaults == ["os.getenv('SDP_ALERT_WEBHOOK_URL', '')"], (
+        "the alert webhook variable is read with more than one default, so the "
+        "configuration the manifest publishes and the configuration delivery "
+        f"acts on can disagree: {defaults}"
+    )
+    stripped = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "strip"
+        and ast.unparse(node) == "os.getenv('SDP_ALERT_WEBHOOK_URL', '').strip()"
+    ]
+    assert len(stripped) == len(getenv_reads), (
+        f"{len(getenv_reads) - len(stripped)} read(s) of the alert webhook are "
+        "not stripped; measured with the value \"   \", a stripped read is falsy "
+        "and the manifest publishes alert_webhook_configured: false while an "
+        "unstripped read of the same variable is truthy"
+    )
+
+    # Which functions *read* it, by node identity - not which functions mention
+    # the name. ``_alert_request_parts`` names the variable in the message it
+    # raises when the scheme is unusable, and a text match counted that as a
+    # fourth consumer: the same mistake as asking whether a statement contains
+    # something impermissible instead of asking what each load does.
+    reading_nodes = {id(node) for node in getenv_reads}
+    enclosing = {
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+        and any(id(inner) in reading_nodes for inner in ast.walk(node))
+    }
+    assert enclosing == {
+        "_sink_status",
+        "alert_routing_state",
+        "_begin_alert_delivery_locked",
+    }, (
+        "the alert webhook is read outside the three functions that need it - "
+        "the two published status fields and the delivery decision - so there is "
+        f"a fourth consumer to account for: {sorted(enclosing)}. The decision "
+        "moved from _route_alert to _begin_alert_delivery when the wait was "
+        "split into a synchronous and an awaited form, and again into "
+        "_begin_alert_delivery_locked when the request-thread guard was added "
+        "around it. This assertion is what reported each move rather than "
+        "letting it pass."
+    )
+    assert len(getenv_reads) == len(enclosing), (
+        "one of those functions reads the variable more than once; a second read "
+        "in the same function is a second chance for the two to drift apart"
+    )
+
+    # A stash is about **scope**, not about the kind of target. The first
+    # version of this check excluded every ``ast.Name`` target, which excluded
+    # the one case its own message names twice: a module-level
+    # ``_WEBHOOK = os.environ.get("SDP_ALERT_WEBHOOK_URL", "")`` is a Name, and
+    # it is exactly the module-level store that would put an operator
+    # credential in the set ``GET /enterprise/observability`` answers from. A
+    # function-local Name is a transient and is fine. Measured: that stash
+    # through ``os.environ.get`` - which the ``os.getenv`` read count above does
+    # not see - left the whole test green.
+    module_level = {id(node) for node in tree.body if isinstance(node, ast.Assign)}
+    stashes = [
+        ast.unparse(target)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and "SDP_ALERT_WEBHOOK_URL" in ast.unparse(node.value)
+        for target in node.targets
+        if not isinstance(target, ast.Name) or id(node) in module_level
+    ]
+    assert stashes == [], (
+        "the alert webhook value is stashed outside the function that read it "
+        f"({stashes}); a module-level store, a container or an attribute puts "
+        "an operator credential in the set GET /enterprise/observability "
+        "answers from"
+    )
+
+
+def test_no_published_text_still_says_the_alert_rules_are_not_delivered() -> None:
+    """The sibling of the unevaluated-conditions guard, for the other half.
+
+    That guard exists because "no code evaluates the published alert conditions"
+    was true, then false, and survived the change in three separate places found
+    one round apart - the comment above the alert block in ``observability.py``,
+    the comment justifying ``declared_unimplemented_environment`` in
+    ``production.py``, and the paragraph in ``README.md``. Delivery has now
+    landed in exactly the same shape, and the same three documents plus
+    ``CLAUDE.md`` and ``docs/implementation-compliance.md`` each carried a
+    sentence saying nothing was delivered. A guard for the evaluation claim and
+    none for the delivery claim would have caught the first recurrence and
+    missed the second.
+
+    Scoped to claims about **delivery**, and in the past tense where the history
+    is worth keeping: the four test families added with routing describe the head
+    they were measured against, and saying so is not the defect. What is banned
+    is a present-tense claim that this service delivers nothing, in either
+    language.
+
+    Whitespace-normalised, because its sibling was not and a line-wrapped copy of
+    a banned sentence was live on ``main`` while that test was green.
+
+    The banned fragments are deliberately **not** quoted in this docstring, and
+    the explanations above are paraphrases for that reason. Four guards this
+    cycle were written against a list that included their own prose, so each one
+    searched for a string it had just introduced and reported the file it lived
+    in - a guard checked against itself rather than against the product.
+    """
+    import pathlib
+    import re
+
+    repo_root = pathlib.Path(obs.__file__).resolve().parents[2]
+    routable = [
+        alert
+        for alert in obs.build_observability_manifest()["alerts"]
+        if alert.get("routable")
+    ]
+    assert routable, "if no rule is routable any more, this guard is the wrong one"
+
+    stale = tuple(
+        head + tail
+        for head, tail in (
+            ("no code posts to ", "SDP_ALERT_WEBHOOK_URL"),
+            ("nothing posts ", "to it"),
+            ("Nothing is routed ", "anywhere"),
+            ("Alert routing is ", "NOT implemented"),
+            ("neither is ", "delivered"),
+            ("이 URL로 POST하는 ", "코드는 없"),
+            ("설정 여부만 보고하고 ", "라우팅하지 않"),
+            ("어느 쪽도 ", "전달되지 않"),
+            ("전달만 ", "없"),
+        )
+    )
+    searched = [repo_root / "README.md", repo_root / "CLAUDE.md"]
+    searched += sorted((repo_root / "docs").rglob("*.md"))
+    searched += sorted((repo_root / "src").rglob("*.py"))
+    searched += sorted((repo_root / "tests").rglob("*.py"))
+
+    offenders = []
+    for candidate in searched:
+        if not candidate.is_file():
+            continue
+        # Case-folded. The live sentence in ``observability.py`` differed from
+        # its banned fragment by one capital letter and passed this guard for a
+        # whole round: the fourth site of the exact recurrence the commit set
+        # said it had closed mechanically.
+        flat = re.sub(r"\s+", " ", candidate.read_text(encoding="utf-8")).lower()
+        for fragment in stale:
+            if fragment.lower() in flat:
+                offenders.append(
+                    f"{candidate.relative_to(repo_root).as_posix()}: {fragment!r}"
+                )
+    assert offenders == [], (
+        "these texts say the published alert rules are not delivered, and "
+        f"{len(routable)} of them are routable with alert_routing "
+        f"{obs.build_observability_manifest()['alert_routing']!r}: {offenders}"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# The breaker's missing third state.
+#
+# It had only closed and open. Once ``open_until`` elapsed, every request
+# attempted the dead sink again, concurrently, each paying the full
+# SDP_LOG_SINK_TIMEOUT_MS from the same bounded anyio threadpool that serves
+# every sync route. Measured on the real async path against a sink that accepts
+# and never answers, 20 concurrent requests arriving the instant the cooldown
+# expired: 8 sink attempts with an 8-slot pool, 20 with an unbounded one - once
+# per cooldown, for as long as the outage lasts.
+# --------------------------------------------------------------------------- #
+
+
+def _trip_the_breaker(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
+    monkeypatch.setenv("SDP_LOG_SINK_URL", "https://sink.example/ingest")
+    attempts = {"n": 0}
+
+    def _always_fails(request, timeout=None):
+        attempts["n"] += 1
+        raise OSError("sink unreachable")
+
+    monkeypatch.setattr(obs, "urlopen", _always_fails)
+    for _ in range(obs.SINK_FAILURE_THRESHOLD):
+        obs.record_request_observation({"event": "http_request"}, export=True)
+    assert obs.sink_breaker_state()["open"] is True
+    attempts["n"] = 0
+    return attempts
+
+
+def test_a_cooldown_expiry_costs_one_probe_not_one_per_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts = _trip_the_breaker(monkeypatch)
+
+    # Expire the cooldown rather than sleeping through it.
+    obs._SINK_BREAKER["open_until"] = 0.0
+    assert obs.sink_breaker_state()["half_open"] is True
+
+    for _ in range(20):
+        obs.record_request_observation({"event": "http_request"}, export=True)
+    assert attempts["n"] == 1, (
+        "every request after the cooldown attempted the dead sink; the half-open "
+        "state exists so exactly one does"
+    )
+    state = obs.sink_breaker_state()
+    assert state["probes_started"] == 1
+    assert state["open"] is True, "the failed probe must re-arm the cooldown"
+    assert state["skipped_exports"] == 19
+
+
+def test_each_cooldown_expiry_gets_a_fresh_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failed probe must not latch the breaker shut forever."""
+    attempts = _trip_the_breaker(monkeypatch)
+    for expected in (1, 2, 3):
+        obs._SINK_BREAKER["open_until"] = 0.0
+        obs.record_request_observation({"event": "http_request"}, export=True)
+        assert attempts["n"] == expected
+        assert obs.sink_breaker_state()["probes_started"] == expected
+
+
+def test_a_successful_probe_closes_the_breaker_for_everyone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Recovery must still be immediate, not one request per cooldown."""
+    _trip_the_breaker(monkeypatch)
+
+    class _Ok:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    sent = {"n": 0}
+
+    def _recovered(request, timeout=None):
+        sent["n"] += 1
+        return _Ok()
+
+    monkeypatch.setattr(obs, "urlopen", _recovered)
+    obs._SINK_BREAKER["open_until"] = 0.0
+
+    for _ in range(10):
+        obs.record_request_observation({"event": "http_request"}, export=True)
+    assert sent["n"] == 10, "the probe succeeded; every later export must go through"
+    state = obs.sink_breaker_state()
+    assert state["open"] is False
+    assert state["half_open"] is False
+    assert state["consecutive_failures"] == 0
+    assert state["probe_in_flight"] is False
+
+
+def test_only_one_of_many_concurrent_callers_probes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The property the single-probe claim rests on, exercised concurrently.
+
+    Exports run in worker threads via ``to_thread.run_sync``, so the
+    read-decide-write on the breaker counters is genuinely concurrent and
+    "exactly one probe" cannot hold without the lock.
+    """
+    import threading
+
+    monkeypatch.setenv("SDP_LOG_SINK_URL", "https://sink.example/ingest")
+    attempts = {"n": 0}
+    counter_lock = threading.Lock()
+    release = threading.Event()
+
+    def _slow_dead_sink(request, timeout=None):
+        with counter_lock:
+            attempts["n"] += 1
+        release.wait(timeout=5)  # hold the probe open while the others arrive
+        raise OSError("sink unreachable")
+
+    monkeypatch.setattr(obs, "urlopen", _slow_dead_sink)
+    for _ in range(obs.SINK_FAILURE_THRESHOLD):
+        release.set()
+        obs.record_request_observation({"event": "http_request"}, export=True)
+    release.clear()
+    attempts["n"] = 0
+    obs._SINK_BREAKER["open_until"] = 0.0
+
+    threads = [
+        threading.Thread(
+            target=obs.record_request_observation, args=({"event": "http_request"},)
+        )
+        for _ in range(20)
+    ]
+    for thread in threads:
+        thread.start()
+    # The probe is blocked in the sink; every other caller must have skipped.
+    for _ in range(500):
+        if obs.sink_breaker_state()["skipped_exports"] >= 19:
+            break
+        time.sleep(0.01)
+    assert attempts["n"] == 1, attempts
+    assert obs.sink_breaker_state()["probe_in_flight"] is True
+    release.set()
+    for thread in threads:
+        thread.join(timeout=5)
+    assert attempts["n"] == 1, "a second caller probed while the first was in flight"
+
+
+# --------------------------------------------------------------------------- #
+# A published count must not be the size of the page it was read from.
+#
+# ``sdp_request_observations_total`` had this defect and was fixed; the audit and
+# policy gauges were read the same way and were left behind. Measured with 700
+# governed mutations in the ledger:
+#
+#     catalog._AUDIT_LOG                               700
+#     /metrics sdp_audit_events_observed_total          500
+#     /enterprise/evidence-pack audit_event_count       500
+#     /enterprise/observability audit_events_observed   500
+#
+# Three published surfaces reported 500 for 700 events, each taking ``len()`` of
+# a ``list_*(limit=500)`` page. These are the numbers a procurement reader uses
+# to judge whether the governance trail is real.
+# --------------------------------------------------------------------------- #
+
+
+def _flood_audit_events(count: int) -> int:
+    from sdp import catalog
+
+    for index in range(count):
+        catalog.ingest_event(
+            event_type="probe.event",
+            actor="admin",
+            dataset_id="crm-event",
+            decision="allowed",
+            reason="probe",
+            decision_id=f"count-probe-{index}",
+            details={},
+        )
+    return len(catalog._AUDIT_LOG)
+
+
+def test_the_audit_gauge_exceeds_the_page_it_is_read_from() -> None:
+    real = _flood_audit_events(700)
+    assert real >= 700, real
+
+    metrics = {
+        line.split()[0]: float(line.split()[1])
+        for line in client.get("/metrics").text.splitlines()
+        if line and not line.startswith("#") and len(line.split()) == 2
+    }
+    assert metrics["sdp_audit_events_observed_total"] == real, metrics
+
+    pack = client.get("/enterprise/evidence-pack").json()
+    assert pack["audit_event_count"] == real, pack["audit_event_count"]
+    assert pack["audit_event_count_is_lower_bound"] is False
+
+    observability = client.get("/enterprise/observability").json()["metrics"]
+    assert observability["audit_events_observed_total"] == real
+
+
+def test_a_saturated_count_is_declared_a_lower_bound(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The ceiling exists for the store-backed path; hitting it must not lie.
+
+    A count that reaches its bound is published as a lower bound rather than as
+    the count - the rule this product applies to every truncated list.
+    """
+    from sdp import catalog
+
+    _flood_audit_events(20)
+    monkeypatch.setattr(catalog, "EVIDENCE_COUNT_CEILING", 5)
+    count, is_lower_bound = catalog.count_audit_events()
+    assert count == 5
+    assert is_lower_bound is True
+
+
+def test_no_published_count_is_the_length_of_a_paged_read() -> None:
+    """The enumeration that catches the next instance, by AST rather than by eye.
+
+    The defect shape is: a variable assigned from ``list_*(..., limit=N)`` whose
+    ``len()`` is then published under a ``*_count`` or ``*_total`` key. It has
+    now appeared three times (request observations, audit events, policy
+    decisions) and been fixed twice, each time for the surface that was
+    reported.
+    """
+    import ast
+    import pathlib
+
+    source_root = pathlib.Path(__file__).resolve().parents[1] / "src"
+    offenders: list[str] = []
+
+    for path in source_root.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        paged: set[str] = set()
+        for node in ast.walk(tree):
+            # X = list_something(..., limit=...)
+            if (
+                isinstance(node, ast.Assign)
+                and isinstance(node.value, ast.Call)
+                and any(kw.arg == "limit" for kw in node.value.keywords)
+            ):
+                callee = node.value.func
+                name = getattr(callee, "id", None) or getattr(callee, "attr", None) or ""
+                if name.startswith("list_"):
+                    for target in node.targets:
+                        if isinstance(target, ast.Name):
+                            paged.add(target.id)
+        if not paged:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Dict):
+                continue
+            for key, value in zip(node.keys, node.values):
+                if not isinstance(key, ast.Constant) or not isinstance(key.value, str):
+                    continue
+                if not (key.value.endswith("_count") or key.value.endswith("_total")):
+                    continue
+                if (
+                    isinstance(value, ast.Call)
+                    and getattr(value.func, "id", "") == "len"
+                    and value.args
+                    and isinstance(value.args[0], ast.Name)
+                    and value.args[0].id in paged
+                ):
+                    offenders.append(
+                        f"{path.relative_to(source_root)}:{key.lineno} "
+                        f"{key.value} = len({value.args[0].id}) (a paged read)"
+                    )
+
+    assert not offenders, (
+        "these published counts are the size of the page they were read from, "
+        f"so they saturate instead of counting: {offenders}"
+    )
+
+
+def test_the_log_correlation_key_is_not_read_from_a_request_header() -> None:
+    """``evidence_ids`` must stay a server fact, pinned at source level.
+
+    The field is the key that ties a request log row to ``/policy/decisions``
+    and ``/audit/events``, and it was read from the caller-supplied
+    ``X-SDP-Evidence-Ids`` header - so the caller a row is about chose the row's
+    correlation key. Measured: a governed preview exported two forged ids while
+    the decision the server recorded, ``4ff4d6c7-...``, appeared nowhere in the
+    log. No route set the header either, so the ordinary row carried an empty
+    list under a published field name that claimed correlation.
+
+    Behaviour is covered by ``tests/test_request_evidence_correlation.py``; this
+    is the drift guard, because the defect was one ``_header_value`` call and
+    would come back the same way.
+
+    Parsed rather than searched, for the reason the backend-rule contract test
+    gives: a substring check over the source would also fire on the comments
+    that explain why the header is gone, and those are worth keeping. Comments
+    are not in the AST at all, so parsing keeps them for free.
+
+    What is banned is the header name appearing as a **string literal anywhere
+    in ``src``**, in any capitalisation, docstrings excepted. The first version
+    of this guard banned only passing it to a call, and justified that with "which is what reading it
+    requires" - which is false. Two ordinary shapes evade it: hoisting the name
+    to a module constant (``_HEADER = "X-SDP-Evidence-Ids"`` then
+    ``_header_value(headers, _HEADER, "")``, whose call argument is an
+    ``ast.Name``), and a mapping read (``headers["X-SDP-Evidence-Ids"]``, an
+    ``ast.Subscript``). Either one fully restores the caller-controlled
+    correlation key while this guard stays green. Banning the literal covers
+    every way of naming it, and the header cannot be read without naming it.
+    """
+    import ast
+    import pathlib
+
+    source_root = pathlib.Path(obs.__file__).resolve().parents[1]
+    header = "x-sdp-evidence-ids"
+    reads: list[str] = []
+    for source_path in sorted(source_root.rglob("*.py")):
+        text = source_path.read_text()
+        # Case-insensitively, because HTTP header names are. The first version
+        # of this guard compared the canonical spelling exactly, and
+        # ``request.headers.get("x-sdp-evidence-ids")`` is an ordinary working
+        # read of the same header - Starlette's ``Headers.get`` is
+        # case-insensitive and this repository's own ``_header_value`` falls
+        # back to a lowercasing scan - so the lowercase spelling restored
+        # caller control of the published correlation key with the guard green.
+        if header not in text.lower():
+            continue
+        tree = ast.parse(text)
+        docstrings = set()
+        for node in ast.walk(tree):
+            if not isinstance(
+                node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+            ):
+                continue
+            body = getattr(node, "body", None) or []
+            first = body[0] if body else None
+            if (
+                isinstance(first, ast.Expr)
+                and isinstance(first.value, ast.Constant)
+                and isinstance(first.value.value, str)
+            ):
+                docstrings.add(id(first.value))
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and node.value.lower() == header
+                and id(node) not in docstrings
+            ):
+                reads.append(
+                    f"{source_path.relative_to(source_root).as_posix()}:{node.lineno}"
+                )
+    assert reads == [], f"the log's evidence ids are named in src as a literal: {reads}"
+
+
+def test_every_published_node_breakdown_sums_to_its_own_total() -> None:
+    """A breakdown whose parts do not add up is as wrong as a bad total.
+
+    The whole-suite graph-store leak was published in three places as a total of
+    277 with a three-kind breakdown - dataset, column and concept - whose parts
+    add to 275. Two ``service`` nodes (``authz-node``, ``svc-A``) were omitted,
+    so every one of the three was internally inconsistent. The figures are
+    described rather than written out here, because written out they are a
+    breakdown and this guard flagged its own explanation - the fourth time in
+    this cycle a mechanical check has fired on the prose documenting it.
+    Nothing mechanical caught the original - the
+    figures come from a measurement taken with the fixture's restore disabled,
+    which no test can reproduce in passing - and the first repair fixed two of
+    the three sites, which is the fourth time in this cycle a claim published in
+    N places was fixed in fewer than N.
+
+    So this checks the **arithmetic** rather than the measurement. It needs no
+    re-measurement, it covers every site at once, and it is the part that was
+    actually wrong. What it cannot do is notice a *correct*-summing breakdown
+    whose numbers are stale or invented; that still needs a reviewer
+    re-measuring, which is how this one was found.
+    """
+    import pathlib
+    import re
+
+    repo_root = pathlib.Path(obs.__file__).resolve().parents[2]
+    # Two published shapes: "<total> nodes (<n> dataset, <n> column, ...)" and
+    # the Korean "노드 <total>건 누출 (dataset <n> · column <n> · ...)". Written
+    # with placeholders for the same reason the figures above are described: a
+    # literal example here is itself a breakdown this guard would read.
+    patterns = (
+        re.compile(r"(\d+) nodes \(([^)]*)\)"),
+        re.compile(r"노드 (\d+)건 누출 \(([^)]*)\)"),
+    )
+    searched = [repo_root / "README.md", repo_root / "CLAUDE.md", repo_root / "CHANGELOG.md"]
+    searched += sorted((repo_root / "docs").rglob("*.md"))
+    searched += sorted((repo_root / "src").rglob("*.py"))
+    searched += sorted((repo_root / "tests").rglob("*.py"))
+
+    offenders = []
+    checked = 0
+    for candidate in searched:
+        if not candidate.is_file():
+            continue
+        flat = re.sub(r"\s+", " ", candidate.read_text(encoding="utf-8"))
+        for pattern in patterns:
+            for match in pattern.finditer(flat):
+                total = int(match.group(1))
+                parts = [int(found) for found in re.findall(r"\d+", match.group(2))]
+                if not parts:
+                    continue
+                checked += 1
+                if sum(parts) != total:
+                    offenders.append(
+                        f"{candidate.relative_to(repo_root).as_posix()}: "
+                        f"{match.group(0)!r} sums to {sum(parts)}, not {total}"
+                    )
+    assert checked >= 3, (
+        f"only {checked} node breakdowns were found; if the published figures "
+        "moved, point this guard at them rather than leaving it vacuous"
+    )
+    assert offenders == [], offenders
+
+
+def test_no_published_text_states_a_gauge_count() -> None:
+    """A gauge count written in prose goes stale the next time one is added.
+
+    ``src/sdp_core/requirements.py`` published "``/metrics`` exports seven
+    gauges", and the generated ``docs/requirements-coverage.md`` carried it.
+    Measured, ``/metrics`` emits **eight**: the seventh claim was written before
+    ``sdp_governed_requests_without_evidence_total`` was added and the commit
+    that added it did not revisit the sentence. The requirement that carries it
+    is about availability measurement, where the point is "only gauges, no
+    request-outcome counters" - the number was never the claim, so the sentence
+    no longer states one.
+
+    This bans the shape rather than correcting the number, because correcting it
+    leaves the same trap armed for the ninth gauge.
+    """
+    import pathlib
+    import re
+
+    from sdp.observability import prometheus_metrics_text
+
+    emitted = [
+        line.split()[0]
+        for line in prometheus_metrics_text().splitlines()
+        if line and not line.startswith("#")
+    ]
+    assert len(emitted) >= 8, emitted
+
+    repo_root = pathlib.Path(obs.__file__).resolve().parents[2]
+    counted = re.compile(
+        r"(exports|publishes)\s+(one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+gauges"
+    )
+    offenders = []
+    searched = [repo_root / "README.md"]
+    searched += sorted((repo_root / "docs").rglob("*.md"))
+    searched += sorted((repo_root / "src").rglob("*.py"))
+    for candidate in searched:
+        if not candidate.is_file():
+            continue
+        flat = re.sub(r"\s+", " ", candidate.read_text(encoding="utf-8"))
+        for match in counted.finditer(flat):
+            offenders.append(
+                f"{candidate.relative_to(repo_root).as_posix()}: {match.group(0)!r}"
+            )
+    assert offenders == [], (
+        f"these texts state a gauge count, and /metrics emits {len(emitted)}: "
+        f"{offenders}. Say what kind of metrics are exported, not how many."
+    )
+
+
+def test_no_published_text_still_says_the_alert_conditions_are_unevaluated() -> None:
+    """The recurrence guard for a claim that has now gone stale three times.
+
+    ``policy_audit_gap`` is computed in process. The sentence "no code evaluates
+    the published alert conditions" was true before that and false after, and it
+    survived the change in three separate places, each found one round later
+    than the last: the comment above the alert block in ``observability.py``, the
+    comment justifying ``declared_unimplemented_environment`` in
+    ``production.py``, and - the one that matters to a reader - the paragraph in
+    ``README.md``, the repository's primary published document. An operator who
+    believes it wires no monitoring to the single rule this service does compute,
+    which is the inverse of the mistake that adding the computation set out to
+    fix.
+
+    Prose, so this matches the exact recurring sentences rather than trying to
+    parse meaning. It is scoped to the claim about *evaluation*: "nothing is
+    routed" remains true and is deliberately still published in all three places.
+
+    **Whitespace-normalised**, because the first version was not and a
+    line-wrapped copy of one banned sentence was live on ``main`` while this
+    test was green. Measured, with the exact-substring form::
+
+        docs/implementation-compliance.md
+            "...이 URL로 POST하는 코드도 `GET /enterprise/observability`가 게시하는 alert
+             조건을 평가하는 코드도 없습니다."
+
+        phrase "alert 조건을 평가하는 코드도 없"
+            exact match:      no file
+            normalised match: docs/implementation-compliance.md
+
+    A markdown re-wrap defeats an exact substring, and this document is wrapped
+    at about 90 columns, so any banned sentence longer than a line was always
+    going to be split eventually. The sibling guard in
+    ``tests/test_state_isolation.py`` was written normalised for this reason;
+    this one is brought to the same standard rather than left as the weaker of
+    the pair.
+    """
+    import pathlib
+    import re
+
+    repo_root = pathlib.Path(obs.__file__).resolve().parents[2]
+    evaluated = [
+        alert
+        for alert in obs.build_observability_manifest()["alerts"]
+        if alert.get("evaluated")
+    ]
+    assert evaluated, "if no rule is evaluated any more, this guard is the wrong one"
+
+    stale = (
+        "no code evaluates the published alert conditions",
+        "No code computes any of them",
+        "alert 조건을 평가하는 코드도 없",
+        "어떤 조건도 계산하지 않",
+    )
+    searched = [repo_root / "README.md"]
+    searched += sorted((repo_root / "docs").rglob("*.md"))
+    searched += sorted((repo_root / "src").rglob("*.py"))
+    offenders = []
+    for candidate in searched:
+        if not candidate.is_file():
+            continue
+        # Collapse runs of whitespace so a sentence split across lines is still
+        # one string. Not stripping "#" here, unlike the sibling guard: these
+        # phrases occur in Python comments on purpose and the surrounding
+        # sentence is what makes them claims.
+        text = re.sub(r"\s+", " ", candidate.read_text(encoding="utf-8"))
+        for phrase in stale:
+            if phrase in text:
+                offenders.append(f"{candidate.relative_to(repo_root).as_posix()}: {phrase!r}")
+    assert offenders == [], (
+        "these published texts say nothing evaluates the alert conditions, while "
+        f"{[alert['id'] for alert in evaluated]} is evaluated: {offenders}"
+    )
+
+
+def test_the_rule_publishes_both_of_its_blind_spots() -> None:
+    """``not_covered`` must hold what the docs say it holds.
+
+    The readiness document says the rule itself publishes its narrowings as
+    ``not_covered``. A round of fixes widened that sentence to name a second
+    narrowing - a governed 2xx that recorded a decision but no audit event -
+    without widening the field, so an auditor enumerating the rule's declared
+    blind spots from ``GET /enterprise/observability`` found one of the two and
+    would conclude the other was covered. Measured, the omitted one is the
+    *normal* state: 16 of the 18 probeable governed GET routes record a decision
+    and no audit event.
+    """
+    gap = next(
+        alert
+        for alert in obs.build_observability_manifest()["alerts"]
+        if alert["id"] == "policy_audit_gap"
+    )
+    not_covered = gap["not_covered"]
+    assert "out of band" in not_covered, not_covered
+    assert "audit event" in not_covered and "BOTH" in not_covered, not_covered
+
+
+def test_no_document_states_a_stale_value_for_a_published_status_key() -> None:
+    """Derived, not enumerated: the stated value must equal the live one.
+
+    ``docs/implementation-compliance.md`` carried
+    ``alert_webhook_routing: declared_unimplemented`` for a whole round, three
+    lines after the bullet that says routing was implemented. The ban-list guard
+    beside this one did not catch it, and adding the phrase to that list would
+    make it the tenth hand-written fragment - the shape that has failed against
+    its own list five times this cycle.
+
+    So this guard reads the value out of the product and refuses any document
+    that states a different one for the same key. A rename of the status value
+    needs no edit here; a document left behind does.
+    """
+    import pathlib
+    import re
+
+    repo_root = pathlib.Path(obs.__file__).resolve().parents[2]
+    live = {
+        "alert_webhook_routing": obs.ALERT_ROUTING_STATUS,
+        "alert_routing": obs.ALERT_ROUTING_STATUS,
+        "alert_evaluation": obs.ALERT_EVALUATION_SCOPE,
+    }
+    searched = [repo_root / "README.md", repo_root / "CLAUDE.md"]
+    searched += sorted((repo_root / "docs").rglob("*.md"))
+
+    offenders = []
+    for candidate in searched:
+        if not candidate.is_file():
+            continue
+        text = candidate.read_text(encoding="utf-8")
+        for key, expected in live.items():
+            for match in re.finditer(rf"{key}`?: `?([a-z_]+)", text):
+                if match.group(1) != expected:
+                    offenders.append(
+                        f"{candidate.relative_to(repo_root).as_posix()}: "
+                        f"{key}: {match.group(1)} (live: {expected})"
+                    )
+    assert offenders == [], (
+        "these documents state a value for a published status key that the "
+        f"product does not produce: {offenders}"
+    )

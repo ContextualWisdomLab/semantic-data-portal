@@ -9,3 +9,10 @@ __pycache__/
 .hypothesis/
 build/
 dist/
+
+# Scratch git worktrees an agent review creates for its reviewers, so that
+# several can mutate a checkout at once without racing on this one. They are a
+# nested checkout of this repository: never commit them. Only this directory is
+# ignored - .claude/ itself may legitimately carry tracked files, as it does in
+# sibling repositories.
+.claude/worktrees/

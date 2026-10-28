@@ -4,15 +4,20 @@ from typing import Any
 
 from sdp_core import SourceConnector, buyer_demo_context_for_dataset, connector_registry_manifest
 
-from .catalog import get_dataset
+from . import ontology_version
+from .catalog import get_dataset, redacted_source_system
 from .credentials import connector_secret_status
 
 
 _IMPLEMENTED_PROOF = {
     "audit_event": ["/audit/events"],
-    "credential_vault": ["/enterprise/connectors/{connector_id}/probe", "SDP_CONNECTOR_SECRET_REF_PREFIX"],
+    "credential_vault": ["/enterprise/connectors/{connector_id}/probe"],
     "lineage_capture": ["/catalog/datasets/{dataset_id}/lineage"],
-    "ontology_version_pin": ["/ontology/search", "/ontology/resolve"],
+    "ontology_version_pin": [
+        "/ontology/version",
+        "/ontology/search",
+        "/ontology/resolve",
+    ],
     "pii_masking": ["/browse/{dataset_id}/preview"],
     "pii_profile": ["/catalog/datasets/{dataset_id}/profile"],
     "policy_before_query": ["/browse/query", "/policy/decision", "/policy/decisions"],
@@ -21,6 +26,144 @@ _IMPLEMENTED_PROOF = {
     "sample_budget": ["/browse/{dataset_id}/preview"],
     "timeout_ms": ["/browse/query", "/llm/draft-query"],
 }
+
+# Non-endpoint proof for a control, kept separate from ``proof_endpoints``.
+# ``credential_vault`` listed ``SDP_CONNECTOR_SECRET_REF_PREFIX`` - an
+# environment variable name - in a field called "endpoints", so a reader
+# following the list found one entry that is not a URL and no field saying what
+# it is.
+_IMPLEMENTED_CONFIG_PROOF = {
+    "credential_vault": ["SDP_CONNECTOR_SECRET_REF_PREFIX"],
+}
+
+# Controls with a check that can actually come out false for a given
+# (connector, dataset) pair, rather than an authored assertion.
+#
+# ``implemented`` was ``bool(_IMPLEMENTED_PROOF.get(control, []))``: the question
+# "is this control implemented?" was answered by "is this control's name a key
+# in the dict above, with a non-empty list?" - a dict hand-written twenty lines
+# earlier in this same file. Measured across every valid (connector, dataset)
+# pair, all four connectors and all eleven required controls:
+#
+#     controls required by any connector   11
+#     controls present in _IMPLEMENTED_PROOF 11
+#     control evidence rows reporting "planned"  0
+#
+# ``planned`` was unreachable. The one thing that could move a verdict was
+# ``credential_vault``'s secret-presence check, which is why
+# ``rest_connector``/``marketing-campaign`` is the single ``contract_only`` pair
+# in the whole matrix - the only control doing measurement was carrying the only
+# information.
+def _verify_credential_vault(connector_id: str, dataset_id: str) -> tuple[bool, dict[str, Any], str]:
+    """Runtime check for ``credential_vault``: is the secret reference present?"""
+    vault = connector_secret_status(connector_id, dataset_id)
+    gap = (
+        ""
+        if vault.secret_present
+        else "the configured secret reference is not present in this deployment"
+    )
+    return vault.secret_present, vault.public_dict(), gap
+
+
+def _verify_ontology_version_pin(connector_id: str, dataset_id: str) -> tuple[bool, dict[str, Any], str]:
+    """Runtime check for ``ontology_version_pin``: does the pin actually refuse?
+
+    This control was the clearest case of ``proof_route_served`` not being
+    evidence. It reported ``implemented`` because this build serves
+    ``/ontology/search`` and ``/ontology/resolve`` - and neither response
+    contained the string "version" anywhere, while ``ONT-004`` was recorded
+    ``not_implemented`` for exactly that reason. Serving the named route was a
+    true fact about the build and said nothing about the control.
+
+    The predicate is exercised in both directions (``version_pin_is_enforced``),
+    so this verdict can come out false: break the comparison and the control
+    stops claiming to be implemented.
+    """
+    del connector_id, dataset_id  # the vocabulary is shared, not per-dataset
+    from . import ontology
+
+    verdict = ontology_version.version_pin_is_enforced(
+        ontology.concept_vocabulary_snapshot()
+    )
+    enforced = bool(verdict.pop("enforced"))
+    gap = str(verdict.pop("gap_reason", ""))
+    return enforced, verdict, gap
+
+
+# Who owns a runtime check's outcome. ``build`` means the predicate either holds
+# or does not hold in this source tree, whatever the deployment does;
+# ``deployment`` means an operator's configuration decides it. The distinction
+# is what makes one of these two safe to page on and the other not.
+OWNER_BUILD = "build"
+OWNER_DEPLOYMENT = "deployment"
+
+# control -> (its runtime check, who owns the outcome). One collection, because
+# two hand-written collections of the same set drift and the one that decides
+# the published verdict would win silently. ``_RUNTIME_VERIFIED_CONTROLS`` and
+# ``BUILD_OWNED_RUNTIME_CONTROLS`` are both derived from it.
+_RUNTIME_CONTROL_CHECKS = {
+    "credential_vault": (_verify_credential_vault, OWNER_DEPLOYMENT),
+    "ontology_version_pin": (_verify_ontology_version_pin, OWNER_BUILD),
+}
+_RUNTIME_VERIFIED_CONTROLS = frozenset(_RUNTIME_CONTROL_CHECKS)
+BUILD_OWNED_RUNTIME_CONTROLS = frozenset(
+    control
+    for control, (_check, owner) in _RUNTIME_CONTROL_CHECKS.items()
+    if owner == OWNER_BUILD
+)
+
+# How strong the evidence behind one control row is. Published, because
+# "implemented" alone cannot distinguish these and a diligence reader assumes
+# the strongest.
+VERIFICATION_DECLARED = "declared_only"
+VERIFICATION_PROOF_ROUTE = "proof_route_served"
+VERIFICATION_RUNTIME = "runtime_probe_verified"
+
+
+def _served_route_paths() -> frozenset[str]:
+    """Route paths this application actually serves.
+
+    Imported inside the function on purpose: ``api`` imports this module, so a
+    module-level import would be a cycle. ``connector_probe`` is only ever
+    reached from a request handler or ``sdp.demo_smoke``, both long after
+    ``api`` has finished importing.
+
+    Asking the app is the point. A control's proof endpoint being a real route
+    is a fact about this build that can be false - rename or drop a route and
+    the control stops claiming to be implemented - where membership in a
+    hand-written dict cannot be.
+    """
+    from .api import app
+
+    return frozenset(
+        route.path for route in app.routes if isinstance(getattr(route, "path", None), str)
+    )
+
+
+def _named_graph(source_system: str) -> str:
+    """The SPARQL named graph, derived from the **redacted** locator.
+
+    ``dataset.source_system.removeprefix("sparql://")`` kept whatever the DSN
+    carried, so a dataset registered as
+    ``sparql://graphuser:RDFPASS999@semantic.graph/ci`` put the cleartext
+    credential into the audit event's ``details`` - which
+    ``GET /catalog/datasets/{id}/audit?user=analyst`` and
+    ``GET /audit/events?user=analyst`` return, to the roles for which the
+    governed read routes withhold ``source_system`` entirely.
+    ``connector_probe`` redacted; the adapter methods the probe advertises as
+    the product's contract (``contract_methods: ["inspect_schema", "preview"]``)
+    did not. Eight values across the four adapters were derived from the raw DSN.
+    """
+    return redacted_source_system(source_system).removeprefix("sparql://")
+
+
+def _manifest_path(source_system: str) -> str:
+    """The object-store manifest path, derived from the **redacted** locator.
+
+    Same defect as :func:`_named_graph`: an ``s3://`` DSN can carry an access
+    key id and its secret in the userinfo component.
+    """
+    return f"{redacted_source_system(source_system).rstrip('/')}/_manifest.json"
 
 
 class DemoSQLConnector(SourceConnector):
@@ -35,7 +178,7 @@ class DemoSQLConnector(SourceConnector):
             raise ValueError("dataset is not backed by the demo SQL connector")
         return {
             "dataset_id": dataset.id,
-            "source_system": dataset.source_system,
+            "source_system": redacted_source_system(dataset.source_system),
             "columns": [column.model_dump() for column in dataset.schema],
         }
 
@@ -58,8 +201,8 @@ class DemoRDFConnector(SourceConnector):
             raise ValueError("dataset is not backed by the demo RDF connector")
         return {
             "dataset_id": dataset.id,
-            "source_system": dataset.source_system,
-            "named_graph": dataset.source_system.removeprefix("sparql://"),
+            "source_system": redacted_source_system(dataset.source_system),
+            "named_graph": _named_graph(dataset.source_system),
             "columns": [column.model_dump() for column in dataset.schema],
         }
 
@@ -116,7 +259,7 @@ class DemoRDFConnector(SourceConnector):
                 "requested_offset": offset,
                 "requested_limit": limit,
                 "returned_rows": len(selected),
-                "named_graph": dataset.source_system.removeprefix("sparql://"),
+                "named_graph": _named_graph(dataset.source_system),
             },
         )
         return selected
@@ -134,8 +277,8 @@ class DemoFileLakeConnector(SourceConnector):
             raise ValueError("dataset is not backed by the demo file lake connector")
         return {
             "dataset_id": dataset.id,
-            "source_system": dataset.source_system,
-            "manifest_path": f"{dataset.source_system.rstrip('/')}/_manifest.json",
+            "source_system": redacted_source_system(dataset.source_system),
+            "manifest_path": _manifest_path(dataset.source_system),
             "columns": [column.model_dump() for column in dataset.schema],
         }
 
@@ -190,7 +333,7 @@ class DemoFileLakeConnector(SourceConnector):
                 "requested_limit": limit,
                 "returned_rows": len(selected),
                 "sample_budget": limit,
-                "manifest_path": f"{dataset.source_system.rstrip('/')}/_manifest.json",
+                "manifest_path": _manifest_path(dataset.source_system),
             },
         )
         return selected
@@ -208,7 +351,7 @@ class DemoRESTConnector(SourceConnector):
             raise ValueError("dataset is not backed by the demo REST connector")
         return {
             "dataset_id": dataset.id,
-            "source_system": dataset.source_system,
+            "source_system": redacted_source_system(dataset.source_system),
             "auth_mode": "service_account_reference",
             "columns": [column.model_dump() for column in dataset.schema],
         }
@@ -259,6 +402,19 @@ class DemoRESTConnector(SourceConnector):
         return selected
 
 
+# The adapter contract's methods, in one place, because three fields publish
+# them: ``contract_methods`` (what the adapter has) and the exercised /
+# unexercised split (what this probe invoked). Writing the split as a constant
+# beside the branch that fills it is how the first version of this got it wrong:
+# ``["inspect_schema"]`` was published unconditionally while the call above runs
+# only ``if source_adapter``, so a capability with no adapter would have reported
+# a method the code skipped. Three independent verifiers measured that state as
+# unreachable today - the registry is a module-level literal and
+# ``connector_probe`` refuses any id outside it - and it is derived anyway,
+# because an unreachable branch is the one that breaks in the deployment that
+# reaches it.
+CONTRACT_METHODS = ("inspect_schema", "preview")
+
 _SOURCE_CONNECTORS: dict[str, SourceConnector] = {
     "sql_connector": DemoSQLConnector(),
     "rdf_connector": DemoRDFConnector(),
@@ -287,36 +443,90 @@ def connector_probe(connector_id: str, dataset_id: str) -> dict[str, Any]:
     source_adapter = _SOURCE_CONNECTORS.get(connector_id)
     inspected_schema = None
     adapter_status = "planned"
+    # Which contract methods this probe actually invoked, derived from the
+    # branch that invokes them rather than written as a constant beside it.
+    exercised_methods: list[str] = []
     if source_adapter:
         inspected_schema = source_adapter.inspect_schema(dataset_id)
+        exercised_methods.append("inspect_schema")
         adapter_status = "implemented"
 
+    served = _served_route_paths()
     control_evidence = []
     satisfied_controls = 0
     for control in connector.required_controls:
         proof_endpoints = _IMPLEMENTED_PROOF.get(control, [])
-        implemented = bool(proof_endpoints)
+        config_proof = _IMPLEMENTED_CONFIG_PROOF.get(control, [])
+        missing_routes = [path for path in proof_endpoints if path not in served]
+        # A control is implemented when it names at least one proof endpoint and
+        # this build serves every endpoint it names. Both halves can be false.
+        implemented = bool(proof_endpoints) and not missing_routes
         satisfied = implemented
+        verification = (
+            VERIFICATION_PROOF_ROUTE if implemented else VERIFICATION_DECLARED
+        )
         evidence_payload: dict[str, Any] = {
             "control": control,
             "status": "implemented" if implemented else "planned",
             "proof_endpoints": proof_endpoints,
+            "config_proof": config_proof,
+            "verification": verification,
         }
-        if control == "credential_vault":
-            vault = connector_secret_status(connector_id, dataset_id)
-            evidence_payload.update(vault.public_dict())
-            satisfied = implemented and vault.secret_present
+        if not proof_endpoints:
+            evidence_payload["gap_reason"] = "no proof endpoint is declared for this control"
+        elif missing_routes:
+            evidence_payload["gap_reason"] = (
+                "this build does not serve every declared proof endpoint: "
+                + ", ".join(missing_routes)
+            )
+        runtime_entry = _RUNTIME_CONTROL_CHECKS.get(control)
+        if runtime_entry is not None:
+            runtime_check, owner = runtime_entry
+            evidence_payload["runtime_check_owner"] = owner
+            observed, observation, gap_reason = runtime_check(connector_id, dataset_id)
+            evidence_payload.update(observation)
+            satisfied = implemented and observed
+            # These controls' verdicts are backed by a runtime observation of
+            # the control's own effect; the rest rest on the route existing.
+            evidence_payload["verification"] = (
+                VERIFICATION_RUNTIME if satisfied else evidence_payload["verification"]
+            )
+            if gap_reason:
+                evidence_payload["gap_reason"] = gap_reason
         satisfied_controls += int(satisfied)
         control_evidence.append(evidence_payload)
 
+    # The honest shape of the evidence, published rather than left to be inferred
+    # from eleven rows that all said "implemented".
+    control_verification_counts = {
+        level: sum(1 for row in control_evidence if row["verification"] == level)
+        for level in (
+            VERIFICATION_RUNTIME,
+            VERIFICATION_PROOF_ROUTE,
+            VERIFICATION_DECLARED,
+        )
+    }
+
     ready_for_demo = adapter_status == "implemented" and satisfied_controls == len(connector.required_controls)
-    return {
+    probe = {
         "connector_id": connector.id,
         "dataset_id": dataset.id,
         "source_type": connector.source_type,
-        "source_system": dataset.source_system,
+        "source_system": redacted_source_system(dataset.source_system),
         "status": "ready_for_demo" if ready_for_demo else "contract_only",
-        "contract_methods": ["inspect_schema", "preview"],
+        "contract_methods": list(CONTRACT_METHODS),
+        # Which of those this probe actually invoked. ``contract_methods`` is
+        # true about the adapter - both methods exist on all four - but no route
+        # in this build calls an adapter's ``preview``: the only call site is
+        # ``source_adapter.inspect_schema`` above, and ``/browse/{id}/preview``
+        # runs ``browse.preview`` instead. So a reader taking the pair as "the
+        # probe exercised these" was taking one of the two on trust. Published
+        # rather than left to be inferred, the way ``verdict_basis`` and
+        # ``control_verification_counts`` are.
+        "exercised_contract_methods": list(exercised_methods),
+        "unexercised_contract_methods": [
+            method for method in CONTRACT_METHODS if method not in exercised_methods
+        ],
         "adapter_status": adapter_status,
         "data_contract": {
             "schema_fields": len(inspected_schema["columns"]) if inspected_schema else len(dataset.schema),
@@ -326,5 +536,116 @@ def connector_probe(connector_id: str, dataset_id: str) -> dict[str, Any]:
         },
         "demo_context": buyer_demo_context_for_dataset(dataset.id),
         "control_evidence": control_evidence,
+        "control_verification_counts": control_verification_counts,
+        # What ``status: ready_for_demo`` does and does not assert. A probe
+        # verdict is evidence that the declared controls are wired, not that each
+        # one was exercised against this dataset.
+        "verdict_basis": (
+            "adapter_implemented + every required control's declared proof endpoint "
+            "is served by this build + any runtime-verified control passed"
+        ),
         "proof": connector.proof,
     }
+    # The one chokepoint, placed after the result is built and before it is
+    # returned. ``demo_smoke`` calls this function directly four times and
+    # twenty-odd tests call it directly too, so a counter hooked at the route
+    # would miss every one of them; a counter in the middleware would miss those
+    # and also count nothing for a probe that raised. Being here, after the two
+    # caller-caused refusals above have already raised, is also what excludes
+    # them for free: an unsupported connector id, an unknown dataset id and the
+    # 15 of 20 seed pairs whose scheme does not back the dataset never reach it.
+    #
+    # Imported inside the function on purpose. ``observability`` imports
+    # ``sdp.api`` at call time for the latency-budget report and ``sdp.api``
+    # imports this module, so a module-level import here is a cycle - the same
+    # pattern the served-route check above already uses.
+    from .observability import note_connector_probe
+
+    note_connector_probe(
+        connector.id,
+        connector_probe_failure_reason(probe),
+        probe["control_verification_counts"],
+    )
+    return probe
+
+
+def connector_probe_failure_reason(probe: dict[str, Any]) -> str:
+    """The ``connector_probe_failure`` alert condition, as a function of one probe.
+
+    Returns the reason an operator should be paged, or ``""`` when this outcome
+    is not one. The three reasons are the parts of the probe's own
+    ``verdict_basis`` that the **build** owns, and none is caller-controlled or
+    configuration:
+
+    * the connector registry declares an adapter this build does not implement
+      (``adapter_status`` is not ``implemented``);
+    * a required control's declared proof endpoint is not served by this build,
+      which is what leaves its row at ``VERIFICATION_DECLARED``;
+    * a **build-owned** runtime-verified control's own effect stopped holding,
+      which leaves its row short of ``VERIFICATION_RUNTIME``.
+
+    The third was missing, and it was the one that matters most: it is the only
+    conjunct of ``verdict_basis`` whose *effect* is measured rather than
+    inferred from a route existing. ``verdict_basis`` has three conjuncts and
+    this function keyed on two. Measured with the pin comparison broken at
+    source - which ``_verify_ontology_version_pin``'s own docstring says stops
+    the control claiming to be implemented - the ``rdf_connector`` probe
+    degraded to ``contract_only`` and carried a ``gap_reason``, while the row's
+    ``verification`` stayed ``proof_route_served`` (the route *is* served), so
+    this function returned ``""``, the critical rule reported
+    ``observed_total: 0, firing: False`` and ``sdp_connector_probe_failures_total``
+    stayed 0 on a genuine build defect. Three published surfaces asserted the
+    opposite coverage. ``python -m sdp.demo_smoke`` did fail, because its ready
+    gate asserts ``status == "ready_for_demo"`` for that pair - so the blast
+    radius was reduced, not removed, and the runtime alert and the gauge were
+    still wrong.
+
+    ``credential_vault`` is the other runtime-verified control and stays
+    excluded: its outcome is an operator's ``SDP_CONNECTOR_SECRET_*``
+    configuration, so paging on it would page on the demo image as shipped. The
+    ownership is declared once, in ``_RUNTIME_CONTROL_CHECKS``, and both the
+    exclusion and this clause are derived from it.
+
+    Deliberately **not** keyed on ``probe["status"]`` or on the presence of a
+    ``gap_reason``. Measured over the seed catalogue, the one ``contract_only``
+    pair - ``rest_connector``/``marketing-campaign`` - carries a ``gap_reason``
+    on its ``credential_vault`` row because the optional
+    ``SDP_CONNECTOR_SECRET_REST_CONNECTOR_MARKETING_CAMPAIGN_TOKEN`` is unset,
+    while that row's ``verification`` stays ``proof_route_served``. Setting the
+    one variable flips the pair to ``ready_for_demo``, and ``demo_smoke`` asserts
+    ``adapter_status == "implemented"`` rather than ``status == "ready_for_demo"``
+    and reports ``ready: True`` with the pair exactly as shipped. So a condition
+    reading either of those fields fires on the demo image, which is the
+    standing complaint this repository treats as a defect in its own words.
+
+    Measured, both reasons are zero across all 20 seed pairs: ``adapter_status``
+    is ``implemented`` for all four connectors and ``declared_only`` is 0 in
+    every pair's ``control_verification_counts``.
+    """
+    if probe["adapter_status"] != "implemented":
+        return (
+            "the connector registry declares "
+            f"{probe['connector_id']} but this build implements no adapter for it"
+        )
+    unserved = [
+        row["control"]
+        for row in probe["control_evidence"]
+        if row["verification"] == VERIFICATION_DECLARED
+    ]
+    if unserved:
+        return (
+            "this build does not serve the declared proof endpoint of: "
+            + ", ".join(sorted(unserved))
+        )
+    unverified = [
+        row["control"]
+        for row in probe["control_evidence"]
+        if row["control"] in BUILD_OWNED_RUNTIME_CONTROLS
+        and row["verification"] != VERIFICATION_RUNTIME
+    ]
+    if unverified:
+        return (
+            "a build-owned control's own effect did not hold at runtime: "
+            + ", ".join(sorted(unverified))
+        )
+    return ""

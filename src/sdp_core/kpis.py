@@ -13,7 +13,37 @@ class SaleabilityKPI(BaseModel):
     source_endpoints: list[str]
     owner: str
     guardrails: list[str] = Field(default_factory=list)
+    # ``status`` is about the **feature**: are the surfaces this KPI names
+    # shipped. It is not about whether anyone computes the number.
     status: str = Field(pattern="^(implemented|planned|external)$")
+    # ``measured`` is the other half, and it was missing. A KPI published
+    # ``implemented`` with a numeric target reads as a measured result, and
+    # ``nl_catalog_search_success`` shipped that way with ``>=80 percent``
+    # while its identifier occurred exactly once in all of ``src/`` - its own
+    # declaration. No golden set, no eval harness, no value on any endpoint.
+    #
+    # Flipping that KPI to ``planned`` would have been the same defect from the
+    # other side: its surfaces are shipped and answer 200, and this repository
+    # already wrote down that "a stale 'this is not implemented' misleads the
+    # same buyer as a premature 'this is'". So feature status and measurement
+    # status are separate fields now.
+    measured: bool = False
+    # Where this KPI's own figure is published, as ``endpoint#key``. Empty when
+    # ``measured`` is false, and checked against the live response - a pointer
+    # that does not resolve is worse than none.
+    #
+    # *Resolving is not the property.* The first three pointers written here
+    # all resolved, to the string ``'pass'``: they named the
+    # ``saleability_gates`` verdict that sits next to each number instead of
+    # the number. A verdict is the product's own opinion of the measurement,
+    # so publishing it in the measurement's place leaves the reader unable to
+    # compare anything to the target themselves. The pointer must name a
+    # figure, and ``tests/test_kpi_measurement_disclosure.py`` now checks that
+    # it resolves to a number and does not name the gate block.
+    measurement_surface: str = ""
+    # Required when the feature is ``implemented``, the target carries a number
+    # and nothing computes it. This is the disclosure that was absent.
+    measurement_gap: str = ""
 
 
 class KPIFramework(BaseModel):
@@ -47,12 +77,31 @@ def enterprise_kpi_framework() -> KPIFramework:
                 label="Metadata completeness",
                 decision_question="Are buyer priority datasets complete enough for diligence and analyst use?",
                 definition="Share of priority datasets with owner, steward, schema, lineage, quality, freshness, license, and sensitivity present.",
-                target=">=90 percent display coverage",
+                # This target was published with ``status: implemented`` while
+                # nothing in the code compared anything to 0.90 - the only
+                # thresholds in the evidence path were 0.95 on
+                # ``metadata_validation_pass_rate`` (a different, stricter
+                # measure: the share of datasets with *no* missing field) and
+                # 0.7 on ontology coverage. A target nothing compares to is not
+                # a gate. ``/enterprise/evidence-pack`` now measures and gates
+                # this one, so the number and the target meet.
+                target=">=90 percent mean metadata_completeness across datasets",
                 cadence="dataset onboarding review",
-                source_endpoints=["/catalog/datasets/{dataset_id}/validate", "/catalog/datasets/{dataset_id}/lineage"],
+                source_endpoints=[
+                    "/catalog/datasets/{dataset_id}/validate",
+                    "/catalog/datasets/{dataset_id}",
+                    "/enterprise/evidence-pack",
+                ],
                 owner="data steward",
                 guardrails=["Completeness must not hide failed validation.", "Deprecated datasets stay visible with status."],
                 status="implemented",
+                measured=True,
+                # The published figure is ``mean_metadata_completeness`` - the
+                # key differs from the gate's name, which is part of why the
+                # gate was pointed at by mistake.
+                measurement_surface=(
+                    "/enterprise/evidence-pack#mean_metadata_completeness"
+                ),
             ),
             SaleabilityKPI(
                 id="policy_audit_coverage",
@@ -65,6 +114,11 @@ def enterprise_kpi_framework() -> KPIFramework:
                 owner="security",
                 guardrails=["No preview or query path may bypass policy.", "Audit payloads must not contain secrets."],
                 status="implemented",
+                measured=True,
+                measurement_surface=(
+                    "/enterprise/observability#metrics."
+                    "governed_requests_without_evidence_total"
+                ),
             ),
             SaleabilityKPI(
                 id="demo_setup_minutes",
@@ -91,18 +145,51 @@ def enterprise_kpi_framework() -> KPIFramework:
                 owner="ontology engineer",
                 guardrails=["Hallucinated table or column count must be zero in demo scripts."],
                 status="implemented",
+                measured=False,
+                measurement_gap=(
+                    "이 KPI의 값은 어디에서도 계산되지 않습니다. 선언된 target "
+                    ">=80 percent와 비교되는 코드가 없고, curated question set도 "
+                    "eval harness도 트리에 없습니다(PRD epic E5-S4, 미구현). "
+                    "feature는 동작합니다 — /llm/search는 결정적 alias 조회이고 "
+                    "해결되지 않는 질문에는 자산을 지어내지 않습니다. 측정되지 "
+                    "않는 것은 recall(실제 구매자 질문이 얼마나 해결되는가)이며 "
+                    "hallucination rate가 아닙니다."
+                ),
             ),
             SaleabilityKPI(
                 id="ontology_mapping_coverage",
                 label="Ontology mapping coverage",
                 decision_question="Are enough critical buyer terms mapped for a credible pilot?",
-                definition="Share of buyer critical glossary terms mapped to approved concepts or active steward patch proposals.",
+                # The "or active steward patch proposals" clause contradicted
+                # this KPI's own guardrail below, and the implementation
+                # honoured the guardrail. The definition is corrected to the
+                # stricter reading rather than the number loosened to match the
+                # looser one. The denominator is the glossary, which is what
+                # "share of ... terms" means; it used to be "mappings that
+                # happen to exist", so the metric rose when mappings were
+                # deleted.
+                definition="Share of registered glossary concepts with at least one approved business mapping. Mappings naming a concept the ontology does not define are excluded from both numerator and denominator and reported as unregistered_mapping_concept_count.",
                 target=">=70 percent",
                 cadence="domain onboarding review",
-                source_endpoints=["/ontology/search", "/ontology/resolve", "/ontology/patches"],
+                # The endpoints that actually produce this number, not the ones
+                # a reader might associate with the topic. ``/ontology/patches``
+                # was listed and the measurement never reads the patch queue -
+                # a diligence reader following the published evidence fetched a
+                # queue that contributes nothing. The inputs are the glossary
+                # (the denominator) and each dataset's mappings (the numerator);
+                # the evidence pack is where the computed figure is published.
+                source_endpoints=[
+                    "/ontology/concepts",
+                    "/catalog/datasets/{dataset_id}",
+                    "/enterprise/evidence-pack",
+                ],
                 owner="ontology engineer",
                 guardrails=["Proposed mappings are not treated as approved mappings."],
                 status="implemented",
+                measured=True,
+                measurement_surface=(
+                    "/enterprise/evidence-pack#ontology_mapping_coverage"
+                ),
             ),
             SaleabilityKPI(
                 id="validation_pass_rate",
@@ -119,6 +206,16 @@ def enterprise_kpi_framework() -> KPIFramework:
                 owner="data steward",
                 guardrails=["Critical validation failures block publish."],
                 status="implemented",
+                measured=True,
+                # The earlier note here said the raw rate "is not" published.
+                # That was wrong: ``/enterprise/evidence-pack`` publishes
+                # ``metadata_validation_pass_rate`` at its top level, and this
+                # pointer named the same-named *gate verdict* one level down.
+                # The defect was the pointer, not a missing measurement - and
+                # deferring it on a false premise is how it survived a commit.
+                measurement_surface=(
+                    "/enterprise/evidence-pack#metadata_validation_pass_rate"
+                ),
             ),
             SaleabilityKPI(
                 id="clean_pr_queue",

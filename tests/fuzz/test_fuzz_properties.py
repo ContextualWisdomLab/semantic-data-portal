@@ -15,15 +15,19 @@ surfaces CodeGraph flagged as highest value:
 
 from __future__ import annotations
 
+import string
+
 import pydantic
 import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
+from sdp import orchestrator
 from sdp.domain import (
     DatasetCreateRequest,
     QueryDraftRequest,
     QueryExecutionRequest,
+    QueryExecutionResponse,
 )
 from tests.fuzz import invariants
 
@@ -134,6 +138,14 @@ exec_request = st.builds(
     language=st.sampled_from(["SQL", "sql", "python", "  SQL  ", "x"]),
     user=st.sampled_from(["analyst", "anonymous", "admin"]),
     purpose=st.sampled_from(["analysis", "external-export"]),
+    # min_size=1 is correct *now*: `dataset_ids` is a required field with
+    # min_length=1, so the validating constructor refuses the empty list and the
+    # HTTP boundary answers 400. It was not correct before - the field defaulted
+    # to `[]` while declaring that minimum, pydantic does not validate defaults,
+    # and this generator's own min_size=1 meant the property suite could never
+    # reach the input that crashed the route with a 500. The empty list is now
+    # unreachable through the contract, so it is exercised deliberately below via
+    # model_construct instead of being left to chance here.
     dataset_ids=st.lists(
         st.sampled_from(["crm-customer-master", "crm-event", "nope"]),
         min_size=1,
@@ -191,3 +203,88 @@ def test_dto_parsing_only_raises_validation_error(model, payload):
         # e.g. a payload key collides with a positional-only/duplicate arg;
         # still a controlled parse failure, not a logic crash.
         pass
+
+
+def test_execute_query_answers_a_bypassed_empty_dataset_list() -> None:
+    """The executor's own guard, reached past the contract.
+
+    ``dataset_ids`` is required with ``min_length=1``, so the validating
+    constructor and the HTTP boundary both refuse an empty list and this is the
+    only way to reach ``execute_query`` with one. The fuzz contract in
+    ``tests/fuzz/README.md`` is that the executor *always* returns a well-formed
+    response; before the repair it raised ``IndexError`` on
+    ``req.dataset_ids[0]``, which the HTTP layer surfaced as a 500.
+    """
+    request = QueryExecutionRequest.model_construct(
+        language="SQL",
+        user="analyst",
+        purpose="analysis",
+        dataset_ids=[],
+        query="select 1",
+        dry_run=False,
+    )
+    response = orchestrator.execute_query(request)
+    assert isinstance(response, QueryExecutionResponse)
+    assert response.status == "REJECTED"
+    assert response.warnings == ["dataset_ids_required"]
+
+
+@settings(max_examples=60, suppress_health_check=[HealthCheck.too_slow])
+@given(
+    query=st.text(max_size=96),
+    source_system=st.text(max_size=64),
+    declared_relation=st.one_of(st.none(), st.text(max_size=48)),
+)
+def test_validate_sql_query_holds_invariants(query, source_system, declared_relation):
+    """The Hypothesis half of ``fuzz/fuzz_query_safety.py``'s oracle.
+
+    Both engines call the same invariant, so the crash oracle cannot differ
+    between the always-on suite and the coverage-guided run.
+    """
+    invariants.check_validate_sql_query(query, source_system, declared_relation)
+
+
+@st.composite
+def _authorised_name_and_near_miss(draw):
+    """An underscore-joined relation, and a reference that is not it.
+
+    The broad strategy above draws ``query`` and ``declared_relation``
+    independently, so it never lands on a pair where the reference differs from
+    the authorised name *only* by a character that normalises back onto it -
+    which is exactly the region where the allow-list was weakest. Reverting the
+    repair leaves that test green; it reddens this one. Generation has to
+    construct the coincidence, not wait for it.
+    """
+    parts = draw(
+        st.lists(
+            st.text(alphabet=string.ascii_lowercase, min_size=1, max_size=6),
+            min_size=2,
+            max_size=4,
+        )
+    )
+    authorised = "_".join(parts)
+    near_miss = invariants.near_miss_reference(
+        authorised,
+        draw(st.sampled_from(invariants.COLLIDING_SEPARATORS)),
+        draw(st.integers(min_value=0, max_value=8)),
+    )
+    assert near_miss is not None, authorised  # min_size=2 guarantees an underscore
+    return authorised, near_miss
+
+
+@settings(max_examples=120, suppress_health_check=[HealthCheck.too_slow])
+@given(pair=_authorised_name_and_near_miss())
+def test_a_reference_that_only_normalises_onto_the_relation_is_refused(pair):
+    """The allow-list's weakest region, reached by construction.
+
+    One separator per example on purpose: two ``$`` would trip the dollar-quote
+    guard and the statement would be refused for a reason that is not the one
+    under test.
+    """
+    authorised, near_miss = pair
+    assert near_miss != authorised
+    invariants.check_validate_sql_query(
+        f"select 1 from {near_miss} limit 1",
+        "postgresql://analytics.dw/customer",
+        authorised,
+    )

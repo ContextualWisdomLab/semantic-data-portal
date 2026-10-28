@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 프로젝트 개요
 
-온톨로지 기반 데이터 카탈로그/브라우징 플랫폼 MVP. FastAPI 단일 앱(`sdp.api:app`)이 카탈로그 검색, 온톨로지 용어 해석, 정책 기반 브라우징(민감 컬럼 마스킹), SQL draft 오케스트레이션, enterprise 증빙(evidence) 엔드포인트를 제공한다. PRD/TRD 원문은 `docs/prd-trd.md`, 요구사항 대응 매트릭스는 `docs/implementation-compliance.md`에 있다.
+온톨로지 기반 데이터 카탈로그/브라우징 플랫폼 MVP. FastAPI 단일 앱(`sdp.api:app`)이 카탈로그 검색, 온톨로지 용어 해석, 정책 기반 브라우징(민감 컬럼 마스킹), SQL draft 오케스트레이션, enterprise 증빙(evidence) 엔드포인트를 제공한다. PRD/TRD 원문은 `docs/prd-trd.md`, 요구사항 전수 대응 매트릭스는 `docs/requirements-coverage.md`(생성 문서 — `src/sdp_core/requirements.py`가 PRD를 파싱해 만든다), 일부 요구사항의 서술형 증빙은 `docs/implementation-compliance.md`에 있다.
 
 ## 자주 쓰는 명령어
 
@@ -45,8 +45,16 @@ docker compose --profile postgres up --build
 
 ```bash
 uv pip compile pyproject.toml --generate-hashes -o requirements.txt
-uv pip compile pyproject.toml --extra dev --generate-hashes -o requirements-dev.txt
+uv pip compile pyproject.toml --extra dev --generate-hashes --universal \
+  --python-version 3.12 --constraint constraints-dev.txt -o requirements-dev.txt
 ```
+
+각 lock 파일의 헤더 주석이 자신을 재생성하는 정확한 명령이고,
+`tests/test_dependency_locks.py`가 그 헤더와 내용을 함께 강제한다.
+`constraints-dev.txt`는 dev lock을 **CI가 실제로 테스트하는 버전**에 묶는다 —
+dev extra를 자유 해석하면 `hypothesis`/`SQLAlchemy`가 CI pin보다 높은 minor로
+잡히고, SQLAlchemy는 `src/sdp/graph_store.py`와 `src/sdp/config.py`가 올라서는
+라이브러리이므로 로컬이 green인데 CI가 red인 상황이 만들어진다.
 
 supply-chain 하드닝 유지: base image는 digest-pinned(`python:3.12-slim@sha256:...`), 컨테이너는 non-root(uid 10001), GitHub Actions는 commit SHA로 pin. Dockerfile/requirements/workflow를 수정할 때 이 속성을 되돌리지 말 것.
 
@@ -78,18 +86,35 @@ supply-chain 하드닝 유지: base image는 digest-pinned(`python:3.12-slim@sha
 
 ### docker-compose 서비스 구성
 
-- `semantic-data-portal` (기본): 앱 단독, `SDP_SQLITE_PATH=/data/sdp-evidence.sqlite3` + `sdp-evidence` volume, 8000 포트, `/health` healthcheck.
+- `semantic-data-portal` (기본): 앱 단독, `SDP_SQLITE_PATH=/data/sdp-evidence.sqlite3` + `sdp-evidence` volume, 8000 포트, `/healthz` healthcheck (`Dockerfile`/`docker-compose.yml`가 조회하는 경로. 상수를 돌려주는 `/health`가 아니라 백엔드 준비 상태를 보고 503을 낼 수 있는 쪽이다).
 - `--profile postgres` 활성화 시: `postgres`(digest-pinned `postgres:16-alpine`, loopback host port 54329) + `semantic-data-portal-postgres`(필수 `POSTGRES_PASSWORD`/`SDP_DATABASE_URL`, `POSTGRES_USER` 기본값은 `sdp_app`, 호스트 8001) 추가. 두 앱 인스턴스로 SQLite/Postgres store protocol 동등성을 검증하는 구성이다.
 
 ### Fuzzing
 
-`fuzz/fuzz_query_safety.py`는 Atheris로 `validate_sql_query` invariant를 검사한다. Atheris wheel은 Linux x86_64 전용(`fuzz-requirements.txt`)이며 `.clusterfuzzlite/Dockerfile` 이미지에서 `python fuzz/fuzz_query_safety.py -runs=1000`으로 실행된다.
+`fuzz/fuzz_query_safety.py`는 Atheris로 `validate_sql_query` invariant를 검사한다. Atheris wheel은 Linux x86_64 전용(`fuzz-requirements.txt`)이다.
+
+**이 하네스를 실제로 돌리는 파이프라인은 없다.** `.clusterfuzzlite/Dockerfile`은 entrypoint로
+`python fuzz/fuzz_query_safety.py -runs=1000`을 선언하지만,
+**어떤 워크플로도 이 이미지를 빌드하거나 실행하지 않는다** — 이 저장소의 워크플로는 `tests.yml`·`fuzz.yml`·
+`scorecard-analysis.yml` 셋이고 어느 것도 ClusterFuzzLite를 참조하지 않으며, 그런 워크플로가
+커밋된 적도 없다. 조직 중앙 워크플로 중 ClusterFuzzLite를 돌리는 것은
+`fast-mlsirm-cflite_pr.yml` 하나이고 `on: workflow_call`이라 호출자가 있어야 도는데, 여기엔
+호출자가 없다. 그래서 `.clusterfuzzlite/`의 역할은 Scorecard discovery marker이고, 이 하네스는
+지금까지 **한 번도 실행된 적이 없다**.
+
+그 invariant 자체는 **도는 곳에서 검사된다** — `fuzz.yml`의 Hypothesis job이
+`tests/fuzz/test_fuzz_properties.py`를 돌리고 그 파일이 같은 공유 oracle
+(`tests/fuzz/invariants.py`)을 호출하며, Atheris job은 `tests/fuzz/run_atheris.sh`로
+`tests/fuzz/atheris/` 하네스 넷을 돈다. 빠진 것은 공표된 실행 장소이고 커버리지가 아니다.
+하네스 자체를 지키는 것은 `tests/test_fuzz_harness_imports.py`(import + 이미지 COPY 집합)
+하나뿐이며, `tests/test_fuzzing_posture_is_what_runs.py`가 이 문단과 파이프라인 상태를
+**양방향으로** 묶는다 — 나중에 ClusterFuzzLite를 붙이면 이 문단이 red가 된다.
 
 ## 주요 컨벤션
 
 - **에러 매핑**: 도메인 모듈은 `KeyError`(→404), `ValueError`(→400), `PermissionError`(→403)를 raise하고, `api.py` 라우트가 `HTTPException`으로 변환한다. 도메인 계층에서 HTTPException을 직접 raise하지 않는다.
-- **테스트 격리**: `tests/test_api.py`의 autouse fixture `isolate_in_memory_app_state`가 `catalog._DATA`, `_AUDIT_LOG`, `_SCHEMA_HISTORY`, `evidence._POLICY_DECISION_LOG`, observability buffer를 snapshot/restore한다. 모듈 레벨 mutable 상태를 새로 추가하면 이 fixture에도 반영해야 테스트 간 오염이 없다.
+- **테스트 격리**: `tests/conftest.py`의 autouse fixture `restore_in_memory_app_state`가 모든 테스트에 적용되어 `catalog._DATA`/`_AUDIT_LOG`/`_SCHEMA_HISTORY`, `evidence._POLICY_DECISION_LOG`/`_AUDIT_EVENT_LOG`, `ontology._CONCEPT_DEFINITIONS`/`_ALIAS_TO_CANONICAL`/`_ONTOLOGY_PATCHES`/`_INDEX`, observability buffer를 snapshot/restore한다. 모듈 레벨 mutable 상태를 새로 추가하면 이 fixture에 반영해야 하고, `tests/test_state_isolation.py`가 매 테스트 시작 시점의 baseline을 단언한다. (이전에는 `tests/test_api.py`에만 있었고 20여 개 파일에는 fixture가 없어서, 파일 순서를 뒤집으면 5건이 실패했다. 파일별로 하나씩 추가하는 방식은 이 저장소에서 반복적으로 실패한 패턴이다.) **그래프 스토어 싱글턴도 복원 대상이다** — 한동안 제외되어 있었고(제품 API를 테스트용으로 만들 수 없다는 이유), fixture가 `catalog._DATA`를 다루는 방식 그대로 backend collection을 복사하는 것으로 해결했다. 제외 상태에서 측정하면 전체 스위트가 노드 277건·간선 233건을 누출했고, 복원하면 0·0이다. `tests/test_state_isolation.py`의 `test_the_graph_store_starts_from_the_catalog_and_the_vocabulary`가 baseline을 카탈로그·어휘에서 **파생**해 단언한다(노드 수를 세지 않으므로 seed가 바뀌어도 고치지 않는다).
 - **디자인 토큰**: `/enterprise/console` CSS는 임의 hex/px 리터럴 대신 `design_tokens.py`의 `var(--sdp-*)` 변수만 참조한다. 토큰 3계층(primitive/semantic/component)과 Figma 매핑 규칙은 `docs/design-tokens.md` 참조, `tests/test_design_tokens.py`가 무회귀를 강제한다.
-- **환경 변수**: 모두 `SDP_` prefix — evidence store(`SDP_DATABASE_URL`, `SDP_DATABASE_SSLMODE`, `SDP_SQLITE_PATH`), observability(`SDP_LOG_SINK_URL`, `SDP_REQUEST_ID_HEADER`, `SDP_ALERT_WEBHOOK_URL`), OIDC(`SDP_OIDC_ISSUER`, `SDP_OIDC_AUDIENCE`, `SDP_OIDC_JWKS_URL`, `SDP_OIDC_GROUP_ROLE_MAP`), connector secret(`SDP_CONNECTOR_SECRET_REF_PREFIX` 기준 `SDP_CONNECTOR_SECRET_*` env reference — 값은 presence만 검증하고 API 응답에 노출 금지).
+- **환경 변수**: 모두 `SDP_` prefix. **전수 목록·기본값·paid-pilot gate 여부는 README의 `## 환경 변수 전수 목록` 표가 원천이고, `tests/test_environment_documentation.py`가 `src/`에서 집합을 파생해 그 표와 이 파일 양쪽에 다 있는지 강제합니다** — 전에는 어디도 전수 목록이 아니어서 23개 중 9개가 두 문서 중 한쪽 이상에서 빠져 있었고, 그중 둘은 `required_environment`였습니다. 새 변수를 읽으면 두 곳 모두에 적어야 테스트가 통과합니다. 분류: evidence store(`SDP_DATABASE_URL`, `SDP_DATABASE_SSLMODE`, `SDP_SQLITE_PATH`), 그래프/config store(`SDP_DATABASE_DSN`, `SDP_CONFIG_NAMESPACE`, `SDP_ENV`), observability(`SDP_LOG_SINK_URL` — `file:///absolute/path` 또는 http(s); URL의 credential은 `Authorization` 헤더로 분리, `SDP_REQUEST_ID_HEADER`, `SDP_LOG_SINK_TIMEOUT_MS`; `SDP_ALERT_WEBHOOK_URL`은 **구현되었고 선택 사항** — 설정하지 않으면 라우팅은 no-op이고, 설정하면 routable rule이 not-firing→firing으로 전이할 때 episode당 1회 POST한다 (`SDP_ALERT_TIMEOUT_MS` 기본 500ms, 재시도 없음; userinfo는 `Authorization` 헤더로 분리하고 실패는 예외 타입·단계만 보관 — URL은 어디에도 남기지 않는다)), OIDC(`SDP_OIDC_ISSUER`, `SDP_OIDC_AUDIENCE`, `SDP_OIDC_JWKS` 또는 `SDP_OIDC_JWKS_URL` **택1**, `SDP_OIDC_GROUP_ROLE_MAP`, `SDP_OIDC_JWKS_TIMEOUT_SECONDS` 기본 2초, `SDP_OIDC_JWKS_TTL_SECONDS` 기본 300초), connector secret(`SDP_CONNECTOR_SECRET_REF_PREFIX` 기준 `SDP_CONNECTOR_SECRET_*` env reference — 값은 presence만 검증하고 API 응답에 노출 금지; `SDP_CONNECTOR_VAULT_PROVIDER`는 **`env` 하나만 구현**, `SDP_CONNECTOR_TIMEOUT_MS`는 **1 이상의 정수**이고 둘 다 값 도메인을 `environment_value_rules`로 선언해 gate가 거절합니다), 그리고 `SDP_EVIDENCE_RETENTION_DAYS`는 **선언만 되고 구현되지 않음**(어느 store에도 prune 경로가 없어 설정해도 아무 일도 일어나지 않고, manifest가 `unimplemented_environment`로 공표).
 - **문서/문자열 언어**: README·docs와 사용자 노출 메시지(정책 사유 등)는 한국어 + 영문 기술 용어 혼용이다. 기존 스타일을 유지한다.
-- 기능을 추가하면 README의 API 목록/구현 대응 표와 `docs/implementation-compliance.md`의 매트릭스를 함께 갱신한다.
+- 기능을 추가하면 README의 API 목록/구현 대응 표를 함께 갱신한다. 요구사항 상태가 바뀌면 `src/sdp_core/requirements.py`의 `REQUIREMENT_COVERAGE`를 고치고 `PYTHONPATH=src python -m sdp_core.requirements`로 `docs/requirements-coverage.md`를 재생성한다 (생성 문서를 직접 편집하면 `tests/test_requirements_coverage.py`가 실패한다). `docs/implementation-compliance.md`는 서술형 증빙이므로 해당 요구사항의 경계가 바뀔 때 갱신한다.

@@ -8,7 +8,7 @@ services:
     environment:
       SDP_SQLITE_PATH: /data/sdp-evidence.sqlite3
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - sdp-evidence:/data
     healthcheck:
@@ -16,7 +16,7 @@ services:
         - CMD
         - python
         - -c
-        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).read()"
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2).read()"
       interval: 30s
       timeout: 3s
       retries: 3
@@ -39,7 +39,7 @@ services:
         fi
         exec uvicorn sdp.api:app --host 0.0.0.0 --port 8000
     ports:
-      - "8001:8000"
+      - "127.0.0.1:8001:8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -48,7 +48,7 @@ services:
         - CMD
         - python
         - -c
-        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).read()"
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2).read()"
       interval: 30s
       timeout: 3s
       retries: 3
@@ -143,7 +143,7 @@ services:
         condition: service_healthy
     ports:
       # 8002 on the host: the default sqlite service already binds 8000.
-      - "8002:8000"
+      - "127.0.0.1:8002:8000"
 
 volumes:
   sdp-evidence:

@@ -379,17 +379,28 @@ def buyer_demo_datasets(domain_id: str = "customer_intelligence") -> list[Datase
     return _customer_intelligence_datasets()
 
 
+def classify_source_type(source_system: str) -> str:
+    """Which kind of system a dataset's ``source_system`` locator names.
+
+    Extracted from ``buyer_demo_dataset_summaries``, which classified it inline.
+    The drafter needs the same answer - it must not emit relational SQL for a
+    graph store, an object prefix or a REST endpoint - and a second copy of the
+    rule would drift, which this repository has recorded the cost of more than
+    once. One derivation, two readers.
+    """
+    if source_system.startswith("postgresql://"):
+        return "sql"
+    if source_system.startswith("sparql://"):
+        return "rdf"
+    if source_system.startswith(("https://", "http://")):
+        return "api"
+    return "file_lake"
+
+
 def buyer_demo_dataset_summaries(domain_id: str = "customer_intelligence") -> list[BuyerDemoDatasetSummary]:
     summaries = []
     for dataset in buyer_demo_datasets(domain_id):
-        if dataset.source_system.startswith("postgresql://"):
-            source_type = "sql"
-        elif dataset.source_system.startswith("sparql://"):
-            source_type = "rdf"
-        elif dataset.source_system.startswith("https://") or dataset.source_system.startswith("http://"):
-            source_type = "api"
-        else:
-            source_type = "file_lake"
+        source_type = classify_source_type(dataset.source_system)
         summaries.append(
             BuyerDemoDatasetSummary(
                 id=dataset.id,

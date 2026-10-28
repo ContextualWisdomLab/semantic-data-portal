@@ -1,0 +1,6751 @@
+# CHANGELOG
+
+이 문서는 `claude/semantic-portal-pr-merge-e5a48k` 브랜치(PR
+[#102](https://github.com/ContextualWisdomLab/semantic-data-portal/pull/102))가
+베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **327개** 커밋 중 176개가
+gap-baseline 문서를 건드렸고, 나머지 151개는 건드리지 않았습니다. 이 숫자는 **이 줄을 담은
+커밋을 포함한** 값입니다 — 측정 시점의 326에 이 커밋을 더한 것(이 커밋은 gap 문서를
+건드립니다).
+
+**그 176/151 분할은 "제품 변경 151건"을 뜻하지 않습니다.** 측정 명령이 세는 것은 "그 문서를
+건드렸는가"뿐이고, 이 브랜치의 수리 커밋은 거의 전부 같은 커밋에서 코드와 기록을 같이
+바꿉니다. 코드가 바뀐 커밋은 **183개**, 문서만 바꾼 커밋은 **144개**입니다(이 커밋 포함 — 측정값
+182/144에 이 커밋을 더한 것이고, 이 커밋은 `src/`·`tests/`를 바꾸므로 코드 쪽입니다).
+
+**그 두 숫자는 이제 세어서 얻은 값입니다. 앞서는 계산해서 얻었고, 틀렸습니다.** 이 자리에
+있던 `152/119`는 `(gap 문서를 건드리지 않은 커밋) + (gap 문서와 코드를 함께 바꾼 커밋)`으로
+유도한 값이었고, 그 식은 **gap 문서를 건드리지 않은 커밋은 모두 코드를 바꿨다**고 가정합니다.
+그렇지 않습니다 — `CHANGELOG.md`만 바꾼 커밋이 그 자리에 들어앉습니다. 같은 범위를 직접
+세면 158/133이고 식은 168/123를 주므로, 식은 코드 커밋을 **10건 많게** 셉니다. 이 단락은
+직전 판본의 **적게 센 값**(17건을 문서로 분류)을 고치려고 쓴 것인데 반대 방향으로 같은 종류의
+오차를 넣었습니다. 파생하지 말고 세십시오. 측정 명령:
+
+    git rev-list --count origin/docs/product-technical-gap-baseline..HEAD
+    git log --format=%H origin/docs/product-technical-gap-baseline..HEAD \
+      --name-only -- docs/product-technical-gap-baseline.md | grep -c '^[0-9a-f]\{40\}$'
+    # 그중 코드도 바꾼 커밋 (위 분할이 문서 작업으로 분류하던 것):
+    for c in $(git log --format=%H origin/docs/product-technical-gap-baseline..HEAD \
+                 -- docs/product-technical-gap-baseline.md); do \
+      git show --name-only --format= "$c" \
+        | grep -qE '^(src/|tests/|fuzz/|\.github/|\.clusterfuzzlite/|scripts/)' \
+        && echo "$c"; done | wc -l
+    # 코드가 바뀐 커밋을 파생하지 않고 직접 세는 쪽 (위 두 값에서 유도하지 마십시오):
+    for c in $(git log --format=%H origin/docs/product-technical-gap-baseline..HEAD); do \
+      git show --name-only --format= "$c" \
+        | grep -qE '^(src/|tests/|fuzz/|\.github/|\.clusterfuzzlite/|scripts/)' \
+        && echo code || echo docs; done | sort | uniq -c
+
+앞서 적혀 있던 164/112, 186/113, 199/122/77, 203/122/81, 211/122/89, 212/122/90, 213/122/91, 214/122/92, 215/122/93, 216/122/94, 218/122/96, 219/122/97, 220/122/98, 221/122/99, 222/122/100, 223/122/101, 224/122/102, 225/122/103, 226/122/104, 228/122/106, 230/123/107, 231/123/108, 233/124/109, 235/125/110, 252/128/124, 253/129/124, 254/130/124, 255/130/125, 256/131/125, 257/132/125, 258/133/125, 260/134/126, 261/135/126, 262/136/126, 263/137/126, 264/138/126, 265/139/126, 266/140/126, 267/141/126, 268/142/126, 269/143/126, 270/144/126, 271/145/126, 274/147/127, 275/148/127, 276/149/127, 277/150/127, 278/151/127, 279/151/128, 280/151/129, 281/152/129, 282/152/130, 283/152/131, 284/152/132, 285/152/133, 286/152/134, 287/152/135, 288/152/136, 289/152/137, 290/153/137, 319/168/151, 326/175/151는 각각 그 시점의 값이고 이후
+커밋을 반영하지 않은 숫자였습니다 — 자기 문서의 수치도 측정해서 맞춰 둡니다. 199는 이
+줄을 쓴 뒤 3개 커밋이 더 쌓여 낡아 203으로, 203은 다음 커밋에서 낡아 204로, 204는 또
+두 커밋 뒤에 206으로 다시 측정해 고쳤습니다. 206도 그 값을 담은 커밋 자신 때문에 도착
+즉시 낡았습니다 — 측정하고 쓴 뒤 커밋하는 순서상 피할 수 없는 off-by-one이라, 이제는
+**이 커밋을 포함한** 값을 적습니다. 그래도 다음 커밋이 쌓이면 또 낡고, 그때는 같은
+결함입니다.
+
+형식은 [Keep a Changelog](https://keepachangelog.com/)를 따릅니다.
+
+## [Unreleased]
+
+**릴리즈된 것이 아닙니다.** 이 브랜치는 병합되지 않았고, PR #102는 현재 독립
+승인 0건이며 필수 체크는 계정 Actions 과금 잠금으로 디스패치 전에 거부되고
+있습니다(저장소 자체 워크플로의 마지막 성공: 2026-10-02T09:03:05Z. 그 이후의
+성공은 GitHub 자체 할당량으로 도는 Dependabot 뿐이며, 이는 계정 잠금 해제의
+증거가 아닙니다). 태그와 릴리즈는 사람의 승인 없이 만들지 않습니다.
+
+아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
+
+    pytest (3.11)                2035 passed, 31 skipped
+    pytest (3.12, tests.yml의 핀) 2035 passed, 31 skipped — CI가 쓰는 인터프리터
+    pytest (파일 순서 정/역/난수)  각 2035 passed, 31 skipped — 순서 무관
+                                 (이 블록은 **여섯 라운드 동안 1976에 멈춰 있었습니다.**
+                                  1976은 퍼징 공표 라운드 head의 값이고, 그 뒤 여섯
+                                  수리가 각각 가드를 더하면서 이 숫자를 다시 재지
+                                  않았습니다 — 이 문서가 자기 수치를 측정해서 적는다고
+                                  선언한 바로 그 종류의 드리프트입니다. 세어서 고칩니다 —
+                                  1976 head 이후 여섯 커밋이 +6 +5 +6 +8 +8 +7을 더하고
+                                  그 뒤 +9와 이번 +10이므로 1976 + 59 = 2035입니다. 커밋별 수는
+                                  파생하지 말고 이렇게 셉니다:
+
+                                      for c in $(git log --format=%H --reverse <1976-head>..HEAD); do \
+                                        echo "$(git log -1 --format=%h $c) \
+                                        +$(git show "$c" -- tests/ | grep -c '^+def test_')"; done)
+                                 (이 head의 열 번은 전부 깨끗합니다. 앞선 head
+                                  `c4ac6b5`의 트리에서는 3.11 shuffled-31337 1회차가
+                                  1848 + 실패 1건이었습니다 —
+                                  `test_the_alert_wait_does_not_block_the_event_loop`가
+                                  event loop 차단 상한 100ms에 대해 177.88ms를
+                                  측정했고, 같은 순서를 유휴 상태에서 다시 돌리면
+                                  통과했습니다. 벽시계 민감 테스트의 부하 flake이고
+                                  이 브랜치의 변경은 alert 경로를 건드리지 않습니다 —
+                                  순서 성질이 아니라 부하로 기록해 둡니다)
+    atheris 하네스 4개            437,747 inputs, crash 0 (3.12, 20초/타깃)
+                                 (`tests/fuzz/run_atheris.sh`가 도는 전부입니다 —
+                                  넷입니다. 앞서 "하네스 5개 616,943 inputs"로
+                                  적혀 있었고, 그 다섯 번째는 `fuzz/fuzz_query_safety.py`
+                                  입니다. 그 하네스는 러너 밖에 있고 **어떤 파이프라인도
+                                  돌리지 않습니다** — 아래 ClusterFuzzLite 항목이 그
+                                  발견입니다. 그러니 다섯을 센 숫자는 돌지 않는 하네스를
+                                  하나 포함한 값이었습니다. input 수는 **처리량이
+                                  아니라 하한**이고, 단언하는 성질은 crash 0입니다.
+                                  앞서 적혀 있던 472,815는 감사 워크플로가 같은 머신에서
+                                  도는 동안의 측정값이고 이번 437,747은 유휴 중
+                                  측정값입니다(마지막 순서 게이트 산출물 22:52:22Z,
+                                  atheris 로그 22:55:45Z — 게이트가 끝난 뒤입니다) —
+                                  부하 쪽이 더 큰 수를 냈으므로 두 값의 차이는
+                                  부하로 설명되지 않습니다. 그래서 input 수는
+                                  성질이 아니고, 이 줄이 단언하는 것은 crash 0뿐입니다)
+    pytest tests/fuzz            13 passed, 0 skipped (3.11과 3.12 모두)
+                                 (앞서 11로, 그 뒤 skip 없이 13으로, 그 뒤 **13 passed,
+                                  3 skipped**로 적혀 있었습니다. 그 마지막 정정이
+                                  틀렸습니다 — `tests/fuzz/*.py`에는 `skip` 표식이
+                                  **하나도 없으므로** 이 선택은 skip을 낼 수 없습니다.
+                                  "skip 셋은 재지 않았습니다"라고 쓰면서 재지 않은
+                                  숫자를 집어넣은 것이고, 그 셋은 전체 스위트의 31건
+                                  중 일부입니다. 두 인터프리터에서 다시 세어 적습니다)
+    python -m sdp.demo_smoke     exit 0, "ready": true
+
+alert 전달 커밋이 테스트를 34건(새 파일 넷 33건 + `test_honest_metrics.py` 1건),
+pgvector 핀 커밋이 10건, event-loop 수리 커밋이 2건, 환경 변수 문서·gate 커밋이 8건
+(새 파일 둘), readiness 진단 커밋이 7건(새 파일 하나) 늘렸고, 그 뒤 2026-10-26 적대적 리뷰
+수리 여섯 커밋이 3+3+3+4+4+3건을 더했으므로 위 숫자는 앞서 적혀 있던
+1266 → 1300 → 1310 → 1312 → 1320 → 1327 → 1330 → 1333 → 1336 → 1340 → 1344 → 1347로
+올라갔고, 그 뒤 수리들을 거쳐 1397에, 새 파일 24건으로 1421에, KPI 포인터 가드 8건으로
+1429에, 404 detail 가드 7건으로 1436에, 거부 사유 가드 11건으로 1447에, 요청 본문
+문서 가드 34건으로 1481에, 콘솔 chip 색 가드 8건으로 1489에, relation 해석 가드 28건으로 1517에, 응답 계약 생성기 가드 3건으로 1520에,
+ClusterFuzzLite 하네스 import 가드 3건으로 1523에,
+테이블 allow-list 가드 25건 + near-miss 성질 1건으로 1549에,
+존재 oracle 가드 82건으로 1631에, 콘솔 sink 감사 2건으로 1633에, `union` 가드 6건으로 1639에, 선언 relation 정직성 가드 26건으로 1665에, 공표 한도 가드 10건으로 1675에, 공표 설명 가드 12건으로 1687에, map 노드·obligations 가드 2건으로 1689에, sentinel·nullability 가드 9건으로 1698에 왔고, 구성된 구매자 여정 라운드의 네 수리
+(행 레벨 필터 정직성 9건, 드래프트 거부 증빙 페어링 11건, 참된 거부 이유 14건, 배포
+endpoint 자격증명·patch 계약 10건)로 1837에, 같은 라운드의 뒤이은 두 수리(patch
+confidence 정직성 5건, facet 어휘 공표 7건)로 1849에, 가정 결정 라벨 42건과 완전성 숫자 합치 5건으로
+1896에, 발견 가능성 6건으로 1902에, 쓰기 에코 재전송 8건으로 1910에, 증빙 도달성 10건으로 1920에, preview 출처 공표 11건으로 1931에, 어휘 쓰기 정직성 10건으로 1941에, resolve 별칭 7건으로
+1948에, probe 거부 증빙 6건 + map 선언 4건으로 1958에, 거부 plane 5건으로 1963에, 콘솔
+플로우 링크 7건으로 1970에, 퍼징 공표 장소 6건으로 1976에, 그래프 경계 콜론 6건으로
+1982에, SHACL 식별자 5건으로 1987에, 검색 절단 공표 6건으로 1993에, 공표된 걸음 8건으로
+2001에, manifest 둘 8건으로 2009에, 승인 발행·버전 스탬프 7건으로 2016에, 그리고 이번
+경계 공표 9건으로 2025에, 공표된 proof 10건으로 **2035**에 와 있습니다(그 항들은 파생하지 않고
+`git show "$c" -- tests/ | grep -c '^+def test_'`로 셌습니다. 이 사슬의 종착이 여섯
+라운드 동안 1976에 멈춰 있었던 것이 아래 "자기 수치를 측정한다고 선언한 문서가 여섯
+라운드 동안 측정하지 않음" 절의 발견이고, 증빙 블록만 고치고 사슬을 그대로 두는 것은
+같은 정정을 절반만 적용하는 것이라 함께 이었습니다)(skip이
+23 → 31로 는 것은 새 가드 둘이 `measured`가 아닌 KPI 넷에
+대해 skip하기 때문입니다 — 그 skip 자체가 분기가 측정된 증거이고, 같은 파일의
+`test_at_least_one_kpi_exercises_each_branch`가 양쪽 분기에 사례가 있음을 단언합니다)
+(1397은 다섯 순서 측정 head보다 뒤의 값이라 위 사슬에 중간 항이 빠져 있습니다 — 사슬은
+그 시점까지의 기록이고, 현재 값은 측정해서 적습니다). 다섯 순서 측정은 트리를 동결한 상태에서
+돌렸고, 그 뒤에 바뀐 파일은 이 CHANGELOG 하나입니다 — CHANGELOG 내용을 읽는 테스트는
+파일 순서와 무관한 산술 가드
+(`test_every_published_node_breakdown_sums_to_its_own_total`) 하나뿐이므로, 순서 성질을
+다시 재지 않고 전체 정순 실행으로만 확인합니다. 측정하고 쓴 뒤 커밋하는 순서상 이
+숫자가 자기 커밋 때문에 낡는 것은 위 off-by-one과 같은 종류입니다.
+
+위 다섯 순서 숫자는 이 라운드의 마지막 커밋 `bf5f8cc`의 트리에서 측정한 값이고 전체
+정순 값과 **같습니다**(1489/31). 앞서 `8ed985d`에서 1421/23으로 재고 그 뒤 커밋들에서
+다시 재지 않은 구간이 있었고, 그때는 두 값이 달랐습니다(1421 대 1429) — 다른 숫자를
+같은 head의 것처럼 적지 않기 위해 분리해 두었고, 이번에는 같은 트리에서 둘을 다 재서
+합쳤습니다. 그 사이의 중간 커밋 다섯은 각각 **전체 정순 1회**만을
+증거로 가졌고, 다섯 순서는 묶음이 끝날 때 한 번 재서 이 블록을 갱신합니다 — 중간
+head에 대해 다섯 순서를 주장하지 않습니다. 이 커밋이
+바꾼 파일은 CHANGELOG와 gap 문서 둘뿐이고, CHANGELOG 내용을 읽는 테스트는 파일 순서와
+무관한 산술 가드 하나뿐이므로 순서 성질을 다시 재지 않고 전체 정순 실행으로만 확인합니다.
+
+skip 15건의 내역을 적어 둡니다 — 숫자만 적으면 읽는 사람이 해석할 수 없습니다:
+`SDP_DATABASE_DSN not set` 11건(Postgres 통합)과 `pyld is a dev-only dependency`
+4건입니다. `pyld`는 `requirements-dev.txt`에도 `pyproject.toml`에도 없으므로 CI도 같이
+skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔려 있던 환경의 값이었습니다.
+파일 순서 측정 대상에 `tests/fuzz/test_*.py`를 포함시켰으므로 전체 실행과 수치가
+같습니다(앞서는 `tests/test_*.py`만 세어 1221 - 1210 = 11건의 차이가 났고, 그 11건이
+순서 측정에서 빠져 있었습니다). 트리를 **동결**한 상태에서만 측정합니다 — 이 세션에서
+백그라운드 측정 중에 트리를 고친 탓에 seed 11이 4건 실패로 나온 일이 있고, 그것은 결함이
+아니라 동시 편집이었습니다. Atheris(`fuzz/fuzz_query_safety.py`)는 로컬에 wheel이 없어
+실행하지 않았습니다 — 같은 invariant의 Hypothesis 미러가 `tests/fuzz`에서 돕니다.
+**이 문장이 결함을 가려 줬습니다**: 미러가 돈다는 것은 참이지만, 그 하네스는 아래 항목이
+고치기 전까지 ClusterFuzzLite 이미지에서 **import에서 죽고 있었고** 입력을 하나도 퍼징하지
+않았습니다. "미러가 있으니 됐다"는 커버리지 주장이 아닙니다.
+
+### Fixed — 하나의 응답이 자기 어댑터를 **구현됨**이라 하고 같은 본문에서 **계획 중**이라 불렀습니다 (medium x3, 구매자 체감 + 실사 경로)
+
+**1. 한 payload의 자기 모순.** `ConnectorCapability.proof`는 `/enterprise/readiness`와
+**모든** `/enterprise/connectors/{connector_id}/probe` 응답에 실립니다. 네 커넥터를
+각자 백엔드가 되는 데이터셋에 대해 측정하면:
+
+```
+sql_connector        status=ready_for_demo  adapter_status=implemented
+                     proof='/browse/query and /llm/draft-query'
+rdf_connector        status=ready_for_demo  adapter_status=implemented
+                     proof='/ontology/search and /catalog/datasets/{dataset_id}/jsonld'
+rest_connector       status=contract_only   adapter_status=implemented
+                     proof='planned connector contract in sdp_core.SourceConnector'
+file_lake_connector  status=ready_for_demo  adapter_status=implemented
+                     proof='planned connector contract in sdp_core.SourceConnector'
+```
+
+`file_lake_connector`의 행은 **한 본문이 자기와 어긋납니다** — 어댑터가 구현됐고 데모
+준비가 됐다고 보고하면서, proof 필드가 그것을 계획 중인 계약이라고 부릅니다.
+`connectors._SOURCE_CONNECTORS`에는 실제 `DemoFileLakeConnector`와 `DemoRESTConnector`
+객체가 있고, **`sdp.demo_smoke`의 릴리즈 게이트가 바로 그 둘을 요구합니다**
+(`file_probe["status"] == "ready_for_demo"` **그리고** `rest_probe["adapter_status"] ==
+"implemented"`). demo_smoke는 `"ready": true`로 exit 0이므로, 제품 자신의 릴리즈 게이트가
+구매자용 manifest가 "계획 중"이라 부르는 두 커넥터로 충족됩니다.
+
+**수리:** 둘의 proof가 `/enterprise/connectors/{connector_id}/probe`를 지목합니다 —
+**어댑터를 호출하는 유일한 라우트**입니다. `/browse/{dataset_id}/preview`를 적는 쪽은
+하지 않았습니다: 그 라우트는 `browse.preview`를 돌리고 어댑터를 거치지 않으므로, 적으면
+고치려는 것과 같은 종류의 새 거짓 주장이 됩니다. `sdp_core`는 `sdp`를 import하지
+않으므로(의존이 반대 방향) manifest 쪽에서는 어댑터를 볼 수 없습니다 — 그래서 **주장을
+어댑터 레지스트리에서 파생하는 가드**를 양쪽 레이어를 볼 수 있는 `tests/`에 두었습니다.
+다음 어댑터가 들어올 때 proof가 "planned"로 남아 있을 수 없습니다.
+
+**2. 같은 본문의 세 번째 과잉 주장.** `contract_methods: ["inspect_schema", "preview"]`는
+어댑터에 대해서는 참이지만(네 어댑터 모두 두 메서드를 가집니다), 이 빌드의 **어떤 라우트도
+어댑터의 `preview`를 호출하지 않습니다** — 유일한 호출 지점은 `connector_probe` 안의
+`source_adapter.inspect_schema`이고 `/browse/{dataset_id}/preview`는 `browse.preview`를
+돌립니다. "probe가 이 둘을 실행했다"로 읽은 독자는 둘 중 하나를 신뢰로 받은 것이고, 같은
+payload의 `verdict_basis`·`control_verification_counts`는 바로 이 구분에 대해
+조심스럽습니다. 이제 `exercised_contract_methods`·`unexercised_contract_methods`가 함께
+실리고, 가드가 둘이 `contract_methods`를 **분할**하는지와 "어떤 라우트도 어댑터의
+preview를 호출하지 않는다"는 주장을 소스에 대해 단언합니다.
+
+**3. 끊긴 포인터 가드가 공표된 라우트 참조 83개 중 48개만 봤습니다.**
+`test_every_published_evidence_endpoint_is_a_real_route`는 manifest 네 개와 **필드 이름 네
+개**를 손으로 적고 하한 하나(`>= 34`)를 단언했습니다. 양쪽이 서로 반대 방향으로 틀렸고,
+적대적 리뷰가 각각을 실연했습니다.
+
+```
+손으로 적은 enumeration이 닿는 참조      48   (manifest 4개, 필드 4개)
+구조적 walk가 찾는 참조                  83   (manifest 5개, 필드 11개)
+proof_endpoints로 읽힌 control evidence   0   / 46
+```
+
+(a) **닿는 범위.** `EnterpriseControl`에는 `proof_endpoints` 필드가 없습니다(그 목록은
+`evidence`) — `getattr(item, "proof_endpoints", None) or []`는 control의 46개 항목 중
+**0개**를 넘겼습니다. 그리고 `buyer_demo_activation_plan()`이 **manifest 하나 전체로** 빠져
+있었는데, 그 모델의 필드 이름이 **문자 그대로 `proof_endpoints`**입니다 — 틀린 필드 이름의
+출처가 거의 확실히 그것입니다(demo plan의 이름을 `evidence`를 가진 모델에 복사). 보이지
+않던 필드 일곱 개: `demo_plan.proof_endpoints`(11), `demo_plan.proof`(4),
+`demo_plan.handoff_artifacts`(3), `readiness.proof`(6),
+`production.acceptance_criteria`(6), `kpis.measurement_surface`(4),
+`kpis.measurement_gap`(1).
+
+(b) **하한은 두 방향 다 틀립니다.** 리터럴 하한은 **위로 조용히 낡습니다** — manifest에
+포인터 하나를 더하면 모집단이 36인데 `>= 35`가 green이고, 그것이 `>= 34`를 진단한 바로 그
+조건이 한 칸 올라간 것입니다(리뷰어가 실연). 반대로 **자기가 지키는 manifest에서 런타임에
+파생한** 하한은 `x >= x`라서 아무것도 잡지 못합니다 — `proof_endpoints` 버그를 되살려 두고
+하한을 파생시키면 가드가 **통과**하고, 리터럴 `>= 13`은 `assert 5 >= 13`으로 떨어집니다
+(다른 리뷰어가 실연). **그래서 하한을 쓰지 않습니다.** 단언하는 것은 walk가 찾은 모든
+참조가 해소된다는 것, 그리고 다섯 manifest가 **모두** 검사 집합에 기여한다는 것입니다
+(후자는 manifest 레지스트리에서 파생되고, manifest 하나가 walk에서 빠지는 — control이 46개
+중 0개를 기여한 — 실패 모드에서 red입니다).
+
+enumeration은 `tests/manifest_pointers.py` 하나로 공유합니다. 같은 성질의 두 번째 약한
+구현이 바로 이 라운드가 고치는 드리프트이기 때문입니다.
+
+경로 토큰은 문자열의 처음이거나 공백 뒤에 있을 때만 라우트 참조로 셉니다 — 이 앵커가
+없으면 `production.acceptance_criteria`의 산문 "The policy/audit gap condition IS evaluated"가
+서비스되지 않는 `/audit`에 대한 참조로 읽힙니다. 측정: 앵커 없는 형태가 정확히 그 한 건을
+**만들어 냈고**, 문자열을 읽어서 걸러냈습니다. 발견이 아니라 제 휴리스틱의 오탐이므로
+그렇게 적습니다.
+
+**변이.** 첫 판본에 10종을 돌려 8종 red였고(green 둘은 하한 단언 자체를 지운 것 —
+이제 하한을 쓰지 않으므로 지울 것이 없습니다), 구조적 walk로 다시 쓴 뒤 12종을 돌려
+**전부 red**입니다: proof를 "planned"로 되돌리면 / 서비스되지 않는 라우트를 지목하면 /
+exercised를 상수로 두면 / exercised를 분기 밖에서 append하면 / walk가 demo plan을 건너뛰면 /
+walk가 필드를 손으로 적으면 / 경로 토큰 앵커를 떼면 / 끊긴 포인터를 두 철자로 심으면 /
+공유 predicate가 메서드를 무시하면 / 공유 predicate가 아무것도 플래그하지 않으면.
+
+그 마지막 둘이 이 라운드의 두 번째 교훈입니다. 메서드 비교를 떼는 변이가 **처음에는
+살아남았습니다** — 공표된 포인터 중 메서드가 틀린 것이 하나도 없어서 가드가 잡을 데이터가
+없었고, 제가 추가한 near-miss 테스트는 가드의 비교를 **다시 구현**해서 자기 사본을 검사하고
+있었습니다. **자기가 고정하려는 predicate를 재구현하는 테스트는 그 predicate에 대해 아무것도
+증명하지 않습니다.** predicate를 `tests/manifest_pointers.py`의 함수 하나로 빼고 가드와
+near-miss 테스트가 **같은 함수**를 부르게 하자 둘 다 red가 됩니다. near-miss 쌍(서비스되는
+경로 + 그 경로에 서비스되지 않는 메서드)은 라우트 테이블에서 파생하므로 낡지 않습니다.
+
+**적대적 리뷰가 제 작업에서 찾은 것**(원시 발견 13건, 검증 통과 1건, refute 12건). 통과한
+한 건이 핵심이었습니다: 제 테스트 docstring·CHANGELOG·gap 문서가 셋 다 하한을 "manifest에서
+파생한다 / 낡을 수 없다"고 적었는데 **하한 여섯 개 전부가 손으로 타이핑한 리터럴**이었고,
+리뷰어가 manifest에 포인터 하나를 더해 모집단 36 대 하한 35로 green을 실연했습니다 — 제가
+`>= 34`에 대해 진단한 바로 그 조건입니다. 그런데 **처방을 그대로 따르면 더 나빠집니다**:
+다른 리뷰어가 `proof_endpoints` 버그를 되살린 상태에서 하한을 파생시키자 가드가 통과하는
+것을 실연했습니다(`x >= x`). 두 실연을 합치면 답은 둘 중 어느 쪽도 아니고 **하한을 쓰지
+않는 것**이며, 그래서 구조적 walk + manifest 기여 동일성으로 바꿨습니다. 그 과정에서
+manifest 하나 전체(`demo_plan`)와 필드 일곱 개가 빠져 있던 것이 드러났습니다 — 48 → 83.
+refute된 12건 중에는 제 기록이 옳았던 것들이 있습니다: `exercised_contract_methods`의
+하드코딩은 세 리뷰어가 **도달 불가**로 측정했고(레지스트리가 모듈 리터럴이고 probe가 그
+밖의 id를 거부), "정직하게 planned인 커넥터를 추가할 수 없게 된다"는 지적은 다섯 번째
+capability를 실제로 추가해 변경 전후 **양쪽에서** 추가 가능함을 보여 refute됐습니다.
+
+**닫지 않은 것.** (a) 어댑터의 `preview`는 **어떤 라우트도 호출하지 않는 채로** 남겨
+뒀습니다 — 라우트를 붙이는 것은 이 라운드의 범위가 아니고, 그 사실을
+`unexercised_contract_methods`로 공표하는 쪽이 선언된 공백입니다. (b) `sdp_core`의 `proof`
+문자열은 여전히 손으로 쓴 문자열입니다. 레이어 경계 때문에 manifest 쪽에서 어댑터를 볼 수
+없고, 그 결합은 `tests/`의 파생 가드가 유지합니다 — 구조적 보장이 아니라 테스트
+보장입니다. (c) `exercised_contract_methods`를 제어 흐름에서 파생시킨 것은 **살아 있는
+결함을 고친 것이 아닙니다** — 세 리뷰어가 도달 불가로 측정했고, 그래도 바꾼 이유는 라운드
+18의 교훈(테스트가 닿지 못하는 분기가 그 분기를 쓰는 배포에서 깨지는 분기)이고 두 줄이기
+때문입니다. 레지스트리 seam으로 그 분기를 몰아 red로 만들어 두었습니다. (d) 직전 라운드의
+커밋 `1402489`의 **커밋 메시지**는 수리 단락에서 폐기된 정당화를 적고 **여섯 단락**
+뒤에서(측정: 5번째 단락과 11번째 단락) 그것이 거짓이었음을 기록하며, 테스트 수를 2023으로
+적는데 측정값은 2025였습니다. 저장소 파일에는 정정된 형태만 있고, push된 히스토리를
+force-push로 덮지 않았으므로 여기에 적어 둡니다.
+
+### Fixed — 경계가 있는 목록 **둘**이 그 경계를 말하지 않았고, 제품이 **200으로 받아준 제안**이 도달 불가가 되었습니다 (medium x2, 구매자 체감)
+
+`GET /catalog/search`가 바로 이 결함(한 페이지를 전체 답처럼 공표)으로 수리되었고
+`GET /ontology/change-log`는 밀어내는 저장소에 대해 같은 공표를 이미 하고 있었습니다.
+두 표면이 남아 있었습니다.
+
+**1. `GET /catalog/datasets/{dataset_id}/join-candidates`.** 점수가 붙는 후보
+124건을 가진 테넌트에서 측정:
+
+    GET .../join-candidates?limit=100   200  rows=100
+    본문 키                                  ['dataset_id', 'join_candidates']
+    count / total / withheld / truncated     하나도 없음
+    합법적인 limit 전체로 도달 가능한 행      124건 중 100건
+    어떤 요청으로도 도달 불가한 행            24건  (join-filler-0098 ...)
+
+`limit`은 100이 상한이고 `offset`이 없으므로 101번째 후보는 **이 API가 받는 어떤
+요청으로도** 받을 수 없었고, 본문에는 나머지 24건을 말하는 필드가 하나도 없어서
+100행이 추천 전체로 읽혔습니다. 더 나쁜 쪽은 페이지를 넘기려는 가장 자연스러운
+시도의 결과입니다 — `?offset=100`은 선언된 파라미터가 아니므로 FastAPI가 버리고
+**첫 페이지를 다시** 돌려줍니다. 거부가 아니라 조용한 오답입니다.
+
+**2. 온톨로지 제안 대기열.** `propose_patch`는 상한에서 가장 오래된 제안을
+밀어냅니다 — 새 제안을 거부하지 않는 쪽이 **의도적 선택**이고(대기열을 채워
+정당한 제안을 막을 수 없게 합니다) 그 선택은 유지했습니다. 결함은 그 사실이
+어디에도 공표되지 않았다는 것입니다. 제안 1건 뒤 502건을 더해 측정:
+
+    POST /ontology/patches                   200  id=645a69fd-...
+    GET  /ontology/patches                   200  count=500
+    본문 키       ['count', 'patches', 'policy_decision_id', 'scope_note']
+    첫 id가 patches에 있는가?                     False
+    POST /ontology/patches/<그 id>/review     404  'patch not found'
+
+제품이 200과 id로 받아준 제안이, 그 제안을 처리할 수 있는 **유일한 라우트에서**
+404가 됩니다. 그런데 대기열은 `count: 500`을 그게 전부인 것처럼 응답하고 손실을
+말하는 필드가 없습니다. 같은 시점에 이름이 짝인 저장소
+(`/ontology/change-log`)는 `change_log_entry_count`·`withheld_change_count`·
+`change_log_is_truncated`를 이미 공표하고 있었습니다 — 어휘는 있었고 이 대기열만
+빠져 있었습니다.
+
+**수리.** 두 표면에 `/catalog/search`·`/ontology/change-log`가 쓰는 어휘를 줍니다:
+`count`는 이 페이지의 길이, 전체는 정확한 총계, 남은 수, 절단 플래그. 조인
+라우트에는 `offset`을 더합니다 — 어떤 요청으로도 못 받는 행은 공표 문제가
+아니기 때문입니다. 제안 대기열의 세 필드는 `POST /ontology/patches`의 200 응답에도
+실립니다: 가득 찬 대기열에 도착한 수락이 **더 오래된 제안을 밀어냈다는 사실**은 그
+쓰기에 대한 사실이고, 이후의 어떤 읽기도 그 손실을 이 쓰기에 귀속시키지 않습니다.
+`patch_queue_entry_count`는 `?status=`
+필터와 무관한 대기열 자체이고, 가드가 그것을 단언합니다(필터가 대기열을 작아
+보이게 만들면 안 됩니다).
+
+`search_catalog_page`에 docstring을 더했습니다 — 이 제품의 절단 어휘를 **정의하는**
+함수가 docstring 없이 들어갔고(라운드 16의 제 누락), 주변 모듈은 그 어휘를 길게
+설명하고 있었습니다.
+
+새 가드 `tests/test_bounded_lists_declare_their_bound.py` 9건. 역변이 11종 전부 red:
+route가 `offset`을 버리면 / 총계를 페이지 길이로 쓰면 / 절단 플래그를 상수로 두면 /
+밀어낸 수를 세지 않으면 / accept 응답이 대기열 상태를 빼면 / 대기열 수를 필터된
+페이지로 바꾸면 / 복원 fixture가 카운터를 빼먹으면 / 남은 수를 `offset` 없이
+`limit`에서 계산하면 / 슬라이스에서 `offset`과 `limit`을 바꾸면 / 남은 수를 `min`으로
+clamp하면 / `offset`의 `ge=0` 경계를 떼면 각각 red입니다.
+
+새 모듈 상태(`_PATCH_QUEUE_STATE`)는 `tests/conftest.py`의 복원 fixture와
+`tests/test_module_state_coverage.py`의 분류에 올렸습니다. 거기서 멈추면 가드에
+구멍이 남습니다 — 이 변경 전까지 **그 카운터를 읽는 테스트가 하나도 없었으므로**,
+복원이 카운터를 빼먹어도 어떤 실행도 그것을 보지 못합니다(대기열 자체를 복원하는
+쪽은 이미 하중을 받고 있었습니다: 대기열을 포화시키는 테스트는 `test_resource_bounds.py`
+의 `MAX+5`, `test_ontology_version_identity.py`의 `MAX+1`, 그리고 이 파일의 둘로
+**넷**입니다). 그래서 `test_every_test_starts_from_the_seeded_baseline`에 쌍 복원
+단언을 더했습니다(변경 로그와 revision이 함께 복원되는 것을 단언하는 기존 테스트와
+같은 이유). 복원에서 카운터 두 줄을 빼면 red입니다 — 이 파일의 두 번째 포화
+테스트가 첫 번째의 3을 읽어 `assert 3 == 0`으로 떨어지고, 이는 파일 **안의** 정의
+순서이므로 파일 순서를 어떻게 바꿔도 가려지지 않습니다.
+
+**이 라운드의 첫 판본을 적대적으로 리뷰해 제 작업에서 네 건을 찾았습니다**(원시 발견
+12건, 검증 통과 4건): 여덟 번째 변이가 18개 파일 444건을 전부 green으로 통과했고
+(`withheld`를 `offset` 없이 `limit`에서 계산 — `offset=0`에서 두 식이 같고 이 파일의 공표
+숫자 단언이 전부 `offset=0`이었습니다), accept 응답의 공표 이유가 제품이 반박하는 주장이었고
+(제안할 수 있는 신원은 모두 대기열을 읽고 자기 id를 찾을 수 있습니다), "포화 테스트가
+하나뿐"이 거짓이었고(넷입니다 — 그리고 안 보인 이유는 그 수가 아니라 **그 카운터를 읽는
+테스트가 하나도 없었다**는 것입니다), 헤더 재측정을 절반만 적용했습니다(`그 168/151`,
+낡은 값 목록의 `319/168/175`, atheris 줄의 자기 반박, 사슬 종착 1976 — 모두 이 커밋에서
+고쳤습니다). 네 건 전부와 refute된 8건의 근거는
+`docs/product-technical-gap-baseline.md`의 해당 절에 있습니다.
+
+**닫지 않은 것.** (a) 밀려난 제안의 **id는 보관하지 않습니다** — 보관하면 상한이
+막으려는 무한 메모리가 그대로 돌아오므로, review의 404는 "밀려났다"와 "그런 id는
+없었다"를 여전히 구분하지 않습니다. 구분되는 것은 집계입니다: 호출자는 대기열
+옆의 `withheld_patch_count`를 읽고 손실이 있었는지 압니다. (b)
+`/enterprise/steward-review`의 `ontology_patch_count`는 `list_patches(status="proposed")`
+에서 나오므로 **대기열에 남아 있는** 제안 수이고, 그 자체로는 참이지만 밀려난 수를
+담지 않습니다 — 그 표면은 공개 증빙이고 `withheld_review_item_count`를 다른 이유로
+이미 쓰고 있어서, 같은 이름의 두 번째 의미를 넣지 않았습니다. (c) `offset`은 조인
+후보에 깊이를 주지만 **안정적인 커서가 아닙니다** — 범위 내 데이터셋이 하나
+게시되면 정렬이 바뀝니다. 증빙 읽기 셋과 `/catalog/search`가 같은 한계를 가지며
+같은 이유로 기록되어 있습니다. (d) `_PATCH_QUEUE_STATE["withheld"]`의 누적은 **잠금 없는
+read-modify-write**입니다. 제품의 파라미터(MAX=500)에서 8스레드·384,000 제안을 돌리면
+16 시행 중 15에서 미집계 0이고 한 시행이 77 적게 셌습니다(`setswitchinterval(1e-9)`을 준
+상태). 잠금 없는 누적기 일반의 성질이고 밀어내기 자체(`del [:-MAX]`)는 이 diff가 건드리지
+않았습니다 — `propose_patch`를 어휘 락 안으로 옮기는 것은 별개 변경입니다.
+
+### Fixed — 거버닝 발행 경로가 **그래프에 보이지 않았고**, 쓰기 응답은 자기가 **대체한** 버전을 공표했습니다 (medium x2)
+
+**1. steward 승인으로 발행된 개념이 어휘와 JSON-LD 내보내기에는 들어가고 그래프 노드는
+쓰지 않았습니다.** `POST /ontology/concepts`는 **두 번** 씁니다 — registrar와 그래프 미러.
+`review_patch`는 registrar만 호출합니다. 직접 경로를 같은 프로세스의 대조군으로 두고 측정:
+
+```
+경로 A  POST /ontology/concepts "직접 업서트 개념"
+  /ontology/concepts 목록에 있음      True
+  GET /graph/nodes/<이름>             200
+  /graph/stats                        nodes 26 -> 27, concepts 5 -> 6
+
+경로 B  POST /ontology/patches + review approve "승인 경로 개념"
+  /ontology/concepts 목록에 있음      True
+  /ontology/vocabulary/jsonld         True
+  GET /graph/nodes/<이름>             404
+  /graph/stats                        변동 없음
+```
+
+제안자·심사자·변경 로그가 붙는 **거버닝** 경로가 `/graph/nodes/{id}`·`/graph/query`·
+`POST /search/semantic`·`/graph/stats`가 볼 수 없는 개념을 만들고, 거버넌스 없는 직접
+업서트는 볼 수 있는 개념을 만듭니다.
+
+`_review_patch_locked`의 주석은 "제안 -> 승인 -> **노출**"을 닫았다고 기록하며 "through the
+same registrar POST /ontology/concepts uses"라고 적습니다 — 참이지만 **절반**입니다. 그 라우트는
+registrar **와 그래프 미러** 둘을 쓰고, 공유된 것은 첫 번째뿐이었습니다. 노출이 한 표면
+가족(graph) 건너에서 다시 멈춥니다.
+
+**수리:** 미러를 공유 헬퍼(`_mirror_concept_into_graph`) 하나로 만들고 승인 경로가 그것을
+호출합니다 — 락 안에서, 상태 쓰기 **전에**(미러가 실패한 뒤 patch가 approved로 남으면 승인은
+기록되고 노출은 빠지는, 이 경로가 닫으려고 있는 바로 그 파손입니다). 락 순서는 어휘 → 그래프
+한 방향뿐이고 스토어는 어휘 락을 잡지 않습니다. 미러 payload는 **제안문이 아니라 registrar의
+레코드**에서 만듭니다(registrar는 이미 게시된 정의를 유지하고 재제출을 버리므로, 제안문을
+미러하면 둘이 어긋납니다 — 직접 라우트가 같은 정정을 이미 담고 있습니다).
+
+**2. 두 쓰기 라우트가 자기가 대체한 버전을 공표했습니다.** 두 주석과 서비스되는 OpenAPI가
+"이 쓰기가 만든 버전"이라고 적는데, `_ontology_version_stamp`가 쓰기 **전에** 호출됩니다 —
+pin 검사에는 맞고 스탬프에는 틀립니다.
+
+```
+/ontology/version 쓰기 전   revision 3  digest 07cac5a3…
+쓰기 응답                   revision 3  digest 07cac5a3…   <- 낡은 것
+/ontology/version 쓰기 후   revision 4  digest 04193fcb…
+
+돌려받은 digest를 ontology_content_digest로 재생 -> 409
+```
+
+방금 받은 digest를 고정한 호출자가 **그것을 건네준 쓰기에게** 거부됩니다.
+
+**수리:** 헬퍼를 둘로 쪼갭니다 — `_ontology_version_pin_verdict`(쓰기 **전**, 400/409를
+그대로 올림)와 `_ontology_version_stamp_from`(쓰기 **후**, 현재 신원으로 스탬프). 읽기
+라우트는 합쳐진 쪽을 계속 씁니다(읽기는 자기가 검사한 버전에서 답하므로 전후가 같은
+순간입니다). **공표된 계약 문장은 바꾸지 않았습니다** — 이제 그 문장이 참입니다.
+
+**변이 넷 중 M2가 처음 green이었습니다.** 미러가 빈 정의를 써도 아무 테스트가 알아채지
+못했습니다 — 직접 라우트의 주석이 자기 쪽에서 같은 결함을 기록해 둔 그것입니다("a re-upsert
+that omitted `definition` left `GET /ontology/term/{term}/graph` serving 고객 with
+`definition: ''`"). 단언을 "비어 있지 않음"이 아니라 **registrar가 보관한 정의와 같음**으로
+쓰고, 두 번째 승인이 그것을 비우지 않는지도 몰았습니다(빈 정의·제안문 주입 양쪽 red).
+
+**닫지 않은 것.** 미러를 `register_concept` **안으로** 넣어 발행 경로가 구조적으로 미러를
+건너뛸 수 없게 만드는 쪽은 하지 않았습니다 — 직접 라우트의 응답이 그 미러의 반환값을 싣고
+있어 응답 모양을 건드리게 되고, 이 수리는 재현된 결함에 한정하는 쪽을 택했습니다. 대신
+가드가 **두 경로를 모두** 돌므로 세 번째 경로가 생기면 같은 성질을 만족해야 합니다.
+
+### Fixed — manifest 둘이 운영자에게 **제품이 하지 않는 일**을 말했습니다 (medium x2)
+
+**1. `configured_integrations`가 자기 payload와 모순됐습니다.** `production.py`는 그것을
+`missing_environment`만으로 만들면서, 두 줄 위에서 `unconfigured = missing | rejected`를
+계산하고 그 위에 이렇게 적어 둡니다 — "An integration configured with a value the code
+refuses is **not** configured. Counting it as ready because the name is present is the defect
+this split exists to close." vault의 규칙 있는 변수 둘을 **거부되는 값**으로 두고 측정:
+
+```
+SDP_CONNECTOR_VAULT_PROVIDER = hashicorp   (허용: env)
+SDP_CONNECTOR_TIMEOUT_MS     = 0           (요구: integer >= 1)
+
+rejected_environment      {'connector_credential_vault': {두 변수 모두 거부 사유}}
+missing_environment       {}
+configured_integrations   ['connector_credential_vault']       <- configured라고 공표
+unconfigured_integrations ['connector_credential_vault', …]    <- 그리고 unconfigured라고도
+paid_pilot_blockers       connector_credential_vault 포함
+```
+
+한 응답이 vault가 설정됐다고 말하고, 두 번에 걸쳐 설정되지 않았다고 말합니다.
+
+**2. `/enterprise/observability`가 증빙 스토어를 볼 수 없는 probe에 모니터링을 걸라고
+안내했습니다.** `probe_semantics["/healthz"]`는 "readiness; reports **the active store** and
+answers 503 when the backend is unreachable. Wire monitoring here."라고 적었습니다.
+`/healthz`의 자기 docstring은 더 좁고 정직합니다 — "Readiness probe verifying **graph-engine**
+backend availability" — 그리고 `get_store()`만 봅니다. `SDP_SQLITE_PATH`를 설정해 증빙 원장이
+SQLite에 있는 상태로 측정:
+
+```
+GET /healthz -> {"ready": true, "backend": "in_memory", "database": false, …}
+payload 어디에도 "evidence"라는 단어가 없음
+```
+
+"the active store"를 읽은 운영자는 `in_memory`를 보고, 이 제품의 **감사 가능성 주장을 싣고
+있는 원장**은 다른 곳에 있습니다. 503 약속도 둘 중 하나만 덮습니다.
+
+**수리:** ① `configured_integrations`는 `missing`이 아니라 **`unconfigured`의 여집합**입니다
+(두 줄 위 주석이 이미 그 규칙을 적고 있었습니다). ② probe 설명이 자기가 읽는 것을 이름 짓고
+(그래프 스토어만, 503도 그래프 backend만), manifest가 **운영자가 필요했던 것**을 공표합니다 —
+`evidence_store`(`selected_by`·`backend`·`readiness_probe_covers_it: false`). 선택 순서는
+`sdp.evidence`에서 읽으므로 둘이 어긋날 수 없습니다.
+
+**변이 다섯 중 M5가 처음 green이었습니다.** 첫 가드는 `selected_by`가 셋 중 하나인지만
+단언했고 테스트 환경은 셋 중 아무것도 설정하지 않으므로, Postgres 분기를 없애는 변이가
+통과했습니다 — **테스트가 닿지 못하는 분기가 바로 그 분기를 쓰는 배포에서 깨지는 분기**입니다.
+모듈 자신의 교체 seam(`configure_evidence_store`)으로 세 분기를 모두 몰아 red로 만들었습니다.
+
+**닫지 않은 것.** 증빙 스토어에 대한 **readiness probe는 만들지 않았습니다** — store protocol에
+readiness 메서드가 없고, 추가하면 구현 둘에 더해 이 저장소가 실행할 수 없는 Postgres 경로까지
+건드립니다. `readiness_probe_covers_it: false`가 그 사실을 말합니다. 선언된 공백이고 조용한
+공백이 아닙니다.
+
+### Fixed — 공표된 걸음의 주장 **셋**을 제품이 반박합니다 (medium x3, 실사 경로)
+
+문서를 구매자가 하라는 대로 걸어서 찾은 셋입니다. 셋 다 **고정된 문장이 아니라 제품에**
+묶어 두었으므로 가드가 제품과 함께 움직입니다.
+
+**1. `docs/enterprise-readiness.md`의 판매 가능성 표가 "blocker 0건"이라고 적었습니다.**
+
+```
+GET /enterprise/production-readiness
+  paid_pilot_ready        False
+  paid_pilot_blockers     ['connector_credential_vault', 'oidc_jwks_verification',
+                           'postgres_evidence_store', 'request_observability_export']
+  configured_integrations []
+  통합 넷의 status         전부 "implemented"
+```
+
+그 칸의 **구현됨 절반은 참이고 개수는 거짓**이며, 개수는 **배포 의존**입니다 — 코드는
+들어 있고 설정은 들어 있지 않습니다. 형제 문서가 **이미 같은 문장을 정정**해 두었습니다
+(`docs/implementation-compliance.md`에 "정정: 이 항목은 … blocker는 0개다라고 적고
+있었습니다 … 따라서 blocker 수는 배포에 따라 달라지며, 설정되지 않은 배포에서 0이
+아닙니다") — 표에만 반영되지 않았습니다. `GET /enterprise/demo-plan`이 이 파일을
+`handoff_artifacts`로 이름 짓습니다. 제품이 지목하는 구매자 산출물입니다.
+
+**2. README의 `GET /audit/events` 항목이 `/policy/decisions` 설명을 그대로 담고 있었고,
+세 문장 모두 그 라우트에 대해서는 거짓입니다.**
+
+```
+preview 1회 + 원장 읽기 10회 뒤
+GET /audit/events?user=admin&limit=500            1행   {'crm-customer-master': 1}
+GET /policy/decisions?user=admin&limit=500        13행  {'evidence': 12, 'crm-customer-master': 1}
+GET /audit/events?user=admin&resource=evidence    0행
+```
+
+감사 원장은 데이터셋으로 키가 잡히고(`catalog.ingest_event(resource=<dataset_id>)`)
+증빙 읽기는 데이터셋이 없는 plane 읽기이므로, **어떤 코드 경로도** 그 원장에 증빙 행을
+넣을 수 없습니다. "원장 접근 자체가 감사되는가"를 README가 지목한 라우트에서 확인하러 온
+독자는 빈 피드를 받습니다 — 답은 한 항목 위에 있습니다.
+
+**3. `GET /graph/stats`가 호출자를 `?actor=`로만 받습니다 — 어떤 문서도 쓰지 않는 표기입니다.**
+
+```
+/openapi.json에서 파생한 census:
+  actor만 받는 operation: [('GET', '/graph/stats')]
+  user만 받는 operation : 25
+  둘 다 받는 operation  : [('GET', '/graph/nodes/{node_id}')]
+
+GET /graph/stats?user=admin  -> 403 지식 그래프 접근은 인증된 사용자만 가능합니다.
+GET /graph/stats?actor=admin -> 200
+```
+
+`GET /graph/nodes/{node_id}`가 **바로 이것 때문에** 수리됐고, 그 주석은 자신을 "the **only**
+route … spelling the caller `actor` as a query parameter; 21 others spell it `user`"라고
+적었습니다. **아니었습니다** — 이 라우트가 두 번째이고, 인용된 census(21)는 어디에서도
+파생된 적이 없습니다. 문서가 쓰는 표기를 쓴 인증된 호출자가 익명으로 거부되고, 받은 메시지는
+그가 고칠 수 있는 것을 하나도 이름 짓지 않습니다.
+
+**수리:** 셋 다 사실을 적고, 셋째는 형제와 **같은 관용구**로 두 표기를 받습니다
+(`user`가 주어지면 우선). census는 **서비스되는 OpenAPI 문서에서 파생**하므로 "the only
+route"를 다시 주장하려면 참이어야 합니다. 형제의 과잉 주장도 측정과 함께 정정했습니다.
+
+**변이 다섯, 전부 red.**
+
+**제가 쓴 정정이 자기 가드를 두 번 걸었습니다** — 금지한 문자열을 정정문이 그대로 인용했기
+때문입니다(이 저장소가 같은 함정을 기록한 다섯 번째입니다). 역사를 지우지 않고 바꿔 적었습니다.
+
+**닫지 않은 것.** `paid_pilot_blockers`를 **0으로 만드는** 것은 배포 설정이고 코드가 아닙니다 —
+`configured_integrations`가 빈 이유는 환경이 설정되지 않았기 때문이며 별개 항목으로 남습니다
+(그 공표 자체의 결함은 다음 항목에서 다룹니다).
+
+### Fixed — `GET /catalog/search`가 **한 페이지를 전체 답처럼** 공표했고, 101번째 일치는 어떤 요청으로도 받을 수 없었습니다 (high, 구매자 체감)
+
+라우트가 `limit`을 100으로 묶고 `catalog.search_catalog`가 `by_token[:limit]`을 돌려주며,
+본문은 `{query, count, items}`였습니다 — 총계도, 잘림 표시도, **`offset`도** 없습니다.
+제품 자신의 형제가 이것을 반박합니다: `GET /catalog/facets`는 같은 모집단을 세고 페이지보다
+많이 보고합니다.
+
+```
+GET /catalog/search?q=…&user=admin&limit=100   -> count 100, items 100
+GET /catalog/facets?user=admin                 -> 같은 모집단이 더 많음
+GET /catalog/search?q=…&user=admin&offset=100  -> 그런 파라미터가 없으므로 무시(첫 페이지 반복)
+```
+
+"내 데이터셋 중 이 용어를 담은 것이 몇 개냐"를 묻는 실사 독자는 100을 받고, 그렇지 않다고
+말해 주는 것은 아무것도 없습니다. 이 저장소는 같은 종류를 증빙 라우트 셋에서 이미 세 번
+고쳤고(`/policy/decisions`·`/audit/events`·`/catalog/datasets/{id}/audit`가 `offset`을 얻음),
+`GET /ontology/change-log`가 이미 정직한 모양을 공표합니다.
+
+**수리:** 그 모양을 그대로 따릅니다 — `count`는 페이지 길이로 두고(원래 그랬고 형제도 그렇습니다)
+`total_match_count`·`withheld_match_count`·`search_is_truncated`를 옆에 공표하며 `offset`을
+추가합니다. 총계는 **하한이 아니라 정확**합니다: 일치 판정이 자르기 전에 카탈로그 전체를
+in-process로 돌므로 숨어 있을 페이지가 없습니다. 라이브러리 쪽은 `search_catalog_page`가
+`SearchPage(items, total_match_count)`를 돌려주고 기존 `search_catalog`는 그 페이지만 꺼내는
+얇은 래퍼로 남으므로, 그 seam의 호출자와 테스트는 바뀌지 않습니다.
+
+**변이 여섯 중 M6이 처음 green이었습니다.** `q`는 한 글자만 있으면 되므로 `q=%20`은 토큰이
+없는 조기 반환 분기에 도달하는데, 그 분기의 총계를 1로 바꾸는 변이가 통과했습니다 — 나머지
+단언이 전부 **일치하는** 질의를 몰기 때문입니다. 빈 결과에 대한 거짓 잘림 주장이므로 테스트를
+더했고, 이제 red입니다.
+
+**제가 쓴 가드 하나가 또 틀렸습니다**(측정이 고쳤습니다): facet 비교를 `counts["domain"]`으로
+읽었는데 라우트는 `{field, counts}`를 공표하고 `counts`는 domain 값으로 바로 키가 잡힙니다.
+중첩은 제 오해였고 제품 결함이 아니므로 측정대로 고쳐 적었습니다.
+
+**닫지 않은 것.** `offset`은 깊이를 주지만 **안정 커서가 아닙니다** — 두 요청 사이에 데이터셋이
+온보딩되면 경계가 밀립니다. 증빙 라우트에 같은 한계가 같은 이유로 기록돼 있고, 안정 커서는
+정렬 키의 공표가 선행 조건입니다(검색 점수는 동점이 흔하므로 그 자체로는 커서가 될 수 없습니다).
+
+### Security — 증빙 라우트가 **인증 없는 호출자에게** 다른 테넌트의 dataset id를 넘겼습니다 (high, 교차 테넌트 식별자 누출)
+
+`GET /enterprise/shacl-validation`의 라우트 주석은 "The aggregate stays open - it carries
+**no dataset identity**"라고 적고, `enterprise_shacl_validation_summary`는
+`hierarchy_class_separation` 블록을 같은 근거로 면제했습니다 — "the edge identifiers it
+reports are **concept names**, which the ontology surface already serves to any caller".
+
+그 전제는 **이 블록이 존재하는 이유인 분기에서 거짓**입니다. `ConceptHierarchyShape`의
+violation은 계층 끝점이 **concept이 아니라 dataset 노드일 때** 정확히 발생하므로, 그 메시지의
+식별자는 구성상 dataset id이고 메시지가 그것을 찍습니다.
+
+`09ee1ad`에서, 마지막 읽기에는 **아무 자격증명도 없이** 재현했습니다:
+
+```
+0) 익명 GET /enterprise/shacl-validation
+     withheld_report_count 5 · reports 0 · hierarchy violations 2 (둘 다 warning)
+1) data-admin(tenant demo)이 노드가 아닌 id로 계층 간선을 심습니다
+     POST /graph/edges {broader, 고객 -> zeta-leak-probe}        -> 200
+2) tenant zeta가 그 id를 온보딩합니다
+     POST /catalog/datasets {id: zeta-leak-probe, tenant_id: zeta} -> 200
+3) 익명 GET /enterprise/shacl-validation
+     withheld_report_count 6 · reports 0
+     + {"severity": "violation", "message": "hierarchy target is a 'dataset' node
+        rather than a 'concept', … : broader: 고객 -> zeta-leak-probe
+        (target=zeta-leak-probe)"}
+
+같은 익명 호출자의 다른 경로:
+  GET /catalog/datasets/zeta-leak-probe -> 403   GET /browse/zeta-leak-probe/schema -> 404
+  GET /graph/nodes/zeta-leak-probe      -> 403   GET /catalog/search?q=제타          -> 403
+```
+
+같은 응답 본문에서 `withheld_report_count`가 6으로 오른 것은, 라우트가 per-dataset 리포트
+여섯 건을 **withhold하고 있다고 말하면서** 한 키 옆에서 일곱 번째 테넌트의 dataset id를
+넘겨준다는 뜻입니다. 1단계의 쓰기에 필요한 것은 **다른 테넌트의 reader 하나**뿐입니다 —
+끝점이 없는 간선은 설계상 허용되고(시드의 로드 순서가 그것을 필요로 합니다), 그 끝점이
+나중에 dataset이 되는 경우가 바로 이 리포트가 잡으려고 있는 경우입니다.
+
+**수리:** 집계는 플랫폼 전체로 두고 **식별자를 호출자 범위로** 좁힙니다. 범위 밖 테넌트가
+소유한 노드의 id는 `<withheld>`가 되고 가린 수를 `withheld_identifier_count`로 공표합니다 —
+한 키 옆의 `withheld_report_count`와 같은 방식입니다. violation 자체와 `conforms`·
+`unknown_endpoint_count`는 **모든 호출자에게 동일**합니다(조달의 숫자가 누가 물었는지에
+따라 달라지면 안 되므로). 면제의 **참인 절반은 유지**했습니다: concept 끝점은 공유 어휘이고
+누구에게나 보입니다 — 시드의 `매출 성장`·`매출 채널별 집계` warning 둘이 남는지 단언합니다.
+
+**가드는 하나의 id가 아니라 카탈로그에서 파생합니다.** 익명 payload 전체를 직렬화해 카탈로그의
+**모든** dataset id와 맞춰 보므로, 다른 키를 통한 두 번째 누출도 같은 테스트에서 red가 됩니다.
+
+**변이 다섯, 전부 red**(범위 미전달 / 모든 식별자 재공표 / 가린 수 삭제 / concept 끝점까지
+과잉 가림 / 범위 판정 반전).
+
+**닫지 않은 것.** 범위 밖 violation이 **존재한다는 사실**은 여전히 공표됩니다(식별자 없이).
+그것이 ONT-002 검증 절반이 플랫폼 전체 진술이어야 하는 이유이고, 이 저장소가 withheld 수를
+공표하는 패턴과 같습니다 — 신원이 아니라 개수입니다.
+
+### Security — dataset id에 **콜론 하나**가 있으면 그 데이터셋의 그래프 노드가 테넌트 경계 밖으로 나갔습니다 (high, 교차 테넌트 읽기 + 쓰기)
+
+`policy.graph_node_dataset_id`가 노드의 소유 데이터셋을 **첫 번째** 콜론 앞부분으로 해석했습니다
+(그래프 노드 id가 `<dataset>:<column>`이므로). 그래서 **id 자신에 콜론이 있는 데이터셋**은
+아무것으로도 해석되지 않았고, 소비자 둘이 그 "아무것도 아님"을 *소유 테넌트가 없는 공유
+어휘*로 읽습니다 — `can_see_graph_node`는 `True`를, `graph_node_target_tenant`는 `None`을
+돌려주며, `None`은 `_authorize_graph_write`가 "검사할 테넌트가 없다"로 처리하는 바로 그 값입니다.
+
+`935e309`에서 tenant `zeta` 데이터셋 둘(하나는 id에 콜론, 하나는 없음)을 만들고
+`data-admin`(tenant `demo`, 역할 `admin`+`data-analyst`)으로 측정했습니다:
+
+```
+GET  /graph/nodes/zeta-plain-admin-probe:customer_email   -> 404 node not found
+POST /graph/nodes {... zeta-plain-admin-probe:customer_email}
+                                                          -> 403 tenant boundary denied
+GET  /graph/nodes/zeta-colon-admin:probe:customer_email   -> 200 {'pii': True, …}
+POST /graph/nodes {... zeta-colon-admin:probe:customer_email,
+                   properties: {'pii': False, 'probe_marker': True}}
+                                                          -> 200 upserted
+
+admin으로 되읽기:
+  zeta-plain-admin-probe:customer_email   pii=True   probe_marker=None
+  zeta-colon-admin:probe:customer_email   pii=False  probe_marker=True   <- 외부 쓰기가 들어갔습니다
+```
+
+외부 테넌트의 admin이 **다른 경로로는 읽을 수조차 없는** 컬럼을 읽고 그 `pii` 분류를
+뒤집었습니다 — `POST /search/semantic`과 `POST /graph/query`가 먹는 거버닝 메타데이터입니다.
+이것은 `graph_node_target_tenant`의 docstring이 **닫았다고 기록한 바로 그 결함**이고, 구분자를
+담은 dataset id면 무엇이든 다시 열었습니다.
+
+통과시킨 추론은 그 함수의 주석에 있습니다 — "An id shaped like a dataset node whose dataset
+does not exist is not tenant-owned … It cannot reach another tenant's content, because there
+is no content there to reach." 없는 데이터셋에는 참이고, **실제 id가 구분자를 담아서** prefix가
+아무것도 해석하지 못한 이 경우에는 거짓입니다. 거기엔 내용이 있습니다.
+
+**수리:** 첫 세그먼트가 아니라 **가장 긴** dataset-id prefix를 해석합니다. 전체 id를 먼저
+시도하고 아니면 오른쪽에서 한 세그먼트씩 떼므로, 이전에 해석되던 id는 전부 같은 데이터셋으로
+해석되고 **자기 값이 데이터셋인 id가 이제 자기 자신으로 해석됩니다.**
+
+**첫 수리 시도는 틀렸고, 이 저장소의 기존 테스트가 잡았습니다.** 처음에는 create 경계에서
+구분자를 **금지**했습니다. `tests/test_catalog_mirror_kind_conflict.py`가 `부모셋`과
+`부모셋:자식셋`을 형제 데이터셋으로 만들고 둘 사이에 `has_column` 간선을 걸며,
+`소유자셋:자식:컬럼`을 데이터셋 `소유자셋:자식`의 컬럼 노드로 다룹니다 — dataset id의 콜론은
+**지원되는 모양**이고 사고가 아닙니다. 그 두 테스트가 red가 되어 알려 줬고, 금지를 되돌렸습니다.
+같은 테스트들이 제품이 이 경우에 이미 쓰는 판별자도 이름 짓습니다("the stamp `seed_dataset`
+wrote on it, which names `소유자셋:자식` as the mirror that produced it") — 가장 긴 prefix
+해석은 id만으로 같은 답에 도달하는 것입니다: **가장 구체적인** 데이터셋이 노드를 소유합니다.
+
+그래서 **두 번째 결함도 같이 닫혔습니다**: `소유자셋:자식:컬럼`은 전에 `소유자셋`으로 —
+**틀린 소유자**, 따라서 틀린 테넌트로 — 해석됐습니다. 문을 열어 두는 것과 별개인 오귀속입니다.
+
+**변이 넷, 전부 red**(첫 세그먼트로 복귀 / fallback 없이 전체 id만 / 왼쪽부터 가장 짧은
+prefix / 구분자 상수 변경). M2·M4는 기존 가드
+`tests/test_governance_boundary.py::test_a_foreign_tenant_admin_cannot_overwrite_a_node_it_cannot_read`도
+red로 만듭니다 — 같은 경계이고, 그 가드가 덮던 것은 콜론 없는 모양뿐이었습니다.
+
+**닫지 않은 것.** 노드 id 이름공간은 여전히 단사가 아닙니다 — 개념 이름에도 콜론이 허용됩니다
+(`POST /ontology/concepts {"concept": "콜론:개념"}` -> 200으로 측정). 개념 `a:b`에서 데이터셋
+`a`가 존재하면 그 개념 노드는 `a`의 테넌트로 귀속되어 **다른 테넌트에 숨겨집니다** — 누출이
+아니라 과잉 제한 방향이고, 이 수리 **이전에도 똑같이** 그랬습니다(바뀐 것은 전체 id가 먼저
+시도된다는 점뿐). 노드 kind 안정성이 데이터셋 노드 id와 같은 이름의 개념을 409로 거부하므로
+완전히 같은 id의 충돌은 저장소에 존재할 수 없습니다. 이름공간을 단사로 만드는 것은 별개 범위이고,
+금지가 지원되는 모양을 깨뜨린다는 측정이 그 설계를 미리 제약합니다.
+
+### Fixed — 세 문서가 ClusterFuzzLite가 하네스를 **돌린다고** 적었습니다. 아무것도 돌리지 않습니다 (medium)
+
+`fuzz/fuzz_query_safety.py`는 `validate_sql_query`의 Atheris 타깃이고, 세 곳이 그 실행
+장소를 사실로 적었습니다 — `CLAUDE.md`("`.clusterfuzzlite/Dockerfile` 이미지에서 …
+실행된다"), 하네스 자신의 docstring("ClusterFuzzLite runs this file as …"), 그리고
+`tests/test_fuzz_harness_imports.py`("the image is the **only place** either one shows").
+
+```
+$ grep -rln 'clusterfuzzlite\|cflite' .github/
+(출력 없음)
+$ ls .github/workflows/
+fuzz.yml  scorecard-analysis.yml  tests.yml
+$ git log --all --diff-filter=A --name-only -- '.github/workflows/*cflite*'
+(커밋된 적 없음)
+중앙 저장소: fast-mlsirm-cflite_pr.yml  <- on: workflow_call, 여기엔 호출자 없음
+```
+
+이 이미지를 빌드하거나 실행하는 파이프라인은 **없습니다.** 그래서 이 하네스는 지금까지
+**한 번도 실행된 적이 없고**, `.clusterfuzzlite/`의 역할은 Scorecard discovery marker입니다.
+
+**비용을 치른 문장은 세 번째입니다.** `tests/test_fuzz_harness_imports.py`는 이 하네스의
+import 수리가 체크아웃에서 보이지 않았기 때문에 존재하는데, 그 docstring이 다음 독자를
+"이미지에서 보인다"며 그곳으로 보냅니다. 거기엔 볼 것이 영원히 없습니다. 같은 docstring이
+이미 참인 문장도 담고 있었습니다 — "This file is the only thing standing between the
+ClusterFuzzLite entrypoint and silence" — 그리고 적힌 것보다 **더** 참입니다: entrypoint에
+도달하는 일이 없으므로 다른 결과가 없습니다.
+
+**과장하지 않기 위해 같이 단언한 것:** 그 하네스가 검사하는 invariant는 **도는 곳에서**
+검사됩니다. `fuzz.yml`의 Hypothesis job이 `tests/fuzz/test_fuzz_properties.py`를 돌리고 그
+파일이 같은 공유 oracle을 호출하며, Atheris job은 `tests/fuzz/atheris/` 하네스 넷을 돕니다.
+빠진 것은 공표된 실행 장소이고 커버리지가 아닙니다.
+
+**수리:** 네 곳(위 셋 + 이미지 자신)이 사실을 적고, `tests/test_fuzzing_posture_is_what_runs.py`가
+그 문단들을 **파생된 파이프라인 상태에 양방향으로** 묶습니다 — 나중에 ClusterFuzzLite를
+붙이면 "돌지 않는다"고 적은 문단이 red가 됩니다.
+
+**변이 여덟, 전부 red** — 단 M3(Hypothesis mirror가 oracle 호출을 멈춤)이 처음 **green**이었습니다.
+가드가 `"check_validate_sql_query" in mirror`였고, 변이가 이름을 `..._DISABLED`로 바꾸자
+접두사가 부분 문자열 검사를 그대로 만족시켰습니다. 전제는 "oracle을 호출한다"였고 코드가 센
+것은 "이 글자들이 나타난다"였습니다 — 이 수리가 한 겹 위에서 고치는 바로 그 결함이므로,
+AST로 **호출**을 셉니다. 이름 변경과 호출 삭제 양쪽에서 red입니다.
+
+**닫지 않은 것.** `.clusterfuzzlite/`를 실제로 도는 파이프라인에 붙이는 것은 하지 않았습니다 —
+계정 Actions 과금 잠금이 호스티드 레인을 디스패치 전에 거절하는 동안 새 게이트를 추가하면
+증거 없는 공표가 하나 늘어날 뿐입니다. 선언이 파이프라인을 따라가도록 묶어 두었으므로,
+붙이는 쪽을 택할 때 문서가 red로 알려 줍니다.
+
+### Fixed — 콘솔 "Pilot Flow"의 다섯 단계 중 **둘을 따라갈 수 없었습니다** (low, 구매자 체감)
+
+`/enterprise/console`의 Pilot Flow는 `<a class="node">` 다섯 개이고 각자 자기 경로를
+`<code>`에 찍습니다 — 구매자에게 건네는 걸음입니다. 콘솔이 찍는 모든 경로를 **찍힌
+그대로** 가져오면:
+
+```
+200 /enterprise/readiness · /enterprise/evidence-pack · /enterprise/production-readiness
+200 /enterprise/demo-plan · /docs · /enterprise/steward-review
+405 /browse/query                                {'detail': 'Method Not Allowed'}
+422 /enterprise/connectors/sql_connector/probe   {'loc': ['query','dataset_id'], 'type': 'missing'}
+```
+
+여덟 중 둘입니다. `/browse/query`는 **POST**이므로 어떤 `href`도 도달할 수 없고, probe는
+`dataset_id`를 요구하는데 그 값은 **이 페이지가 바로 아래 Connectors 표에 찍고
+있습니다**(`crm-customer-master`).
+
+**측정 중에 같은 절의 세 번째 결함이 나왔습니다.** 플로우 링크들이 `scoped()`를 지나지
+않습니다. 콘솔은 뷰어의 actor를 자기 쿼리 스트링에서 읽어 모든 **fetch**에 붙이는데,
+`?user=admin`으로 열고 노드를 클릭한 독자는 그것을 잃습니다 — 그래서 플로우에서 유일하게
+actor로 게이트된 probe 단계가 200이 아니라 404를 답했습니다. 그리고 `loadConnectors`가
+만드는 표의 링크 넷도 `href="${esc(path)}"`로 같은 결함을 가지고 있었습니다. 이미
+`dataset_id`를 붙여 만들고 있었으므로, **콘솔은 그 파라미터를 처음부터 알고 있었습니다.**
+
+**수리:** 경로를 `data-path`에 두고 `scoped(node.dataset.path)`로 `href`를 다시 씁니다
+(fetch와 같은 규칙 하나). POST 단계는 링크가 아니라 메서드를 적은 단계가 됩니다 — 지우면
+걸음 하나를 잃으므로 남기고 말하게 했습니다. probe 노드는 콘솔이 이미 아는 `dataset_id`를
+싣고, 표의 링크 넷도 `scoped`를 지납니다.
+
+**제가 쓴 가드의 전제가 처음엔 틀렸습니다.** "찍힌 경로는 모두 가져올 수 있어야 한다"로
+썼는데, probe는 actor 게이트가 걸려 있어 익명으로는 **404가 맞습니다**(통제가 동작하는
+것이고, 콘솔 badge가 이미 그렇게 말합니다). 둘로 갈랐습니다 — ① 누가 묻든 쓸 수 없는 것
+(405·422는 거부가 아니라 "요청을 만들 수 없다"는 뜻이고 로그인으로 고쳐지지 않습니다),
+② 인가된 뷰어는 걸음을 끝까지 걸을 수 있어야 한다.
+
+**변이 다섯, 전부 red.**
+
+**닫지 않은 것.** 이것은 **소스 계약**입니다 — 이 저장소에 브라우저 테스트 하네스가 없고
+추가하려면 해시 고정 의존성이 새로 필요하므로(유지관리자 결정), `data-path` → `scoped` 재작성이
+실제 DOM에서 도는 것은 테스트가 아니라 템플릿 단언으로 고정됩니다. 기존 콘솔 계약 테스트가
+같은 이유를 자기 docstring에 적고 있습니다.
+
+### Fixed — 카탈로그에 대한 한 문장이 **네 plane의 거부를** 답했습니다 (low, 실사 경로)
+
+`policy.evaluate`의 discovery 분기는 **action**(`search`/`search_catalog`/`discover`)으로
+키가 잡히는데 사유는 **자원 plane**을 이름 지었습니다. 네 plane이 이 분기를 지나므로,
+인증되지 않은 호출자는 어디서나 같은 말을 들었습니다.
+
+```
+403 '카탈로그 접근은 인증된 사용자만 가능합니다.'  /catalog/search       (참)
+403 '카탈로그 접근은 인증된 사용자만 가능합니다.'  /policy/decisions     (카탈로그 읽기 아님)
+403 '카탈로그 접근은 인증된 사용자만 가능합니다.'  /audit/events         (아님)
+403 '카탈로그 접근은 인증된 사용자만 가능합니다.'  /ontology/change-log  (아님)
+403 '카탈로그 접근은 인증된 사용자만 가능합니다.'  /ontology/patches     (아님)
+403 '카탈로그 접근은 인증된 사용자만 가능합니다.'  /graph/nodes/{id}     (아님)
+```
+
+이것은 **같은 문자열의 앞선 수리가 스스로 세운 기준**입니다. 그 수리는
+`목록 조회는 …`을 `카탈로그 접근은 …`으로 좁혔고("목록 조회"가 mutation 호출자에게 틀린
+동작을 지목했으므로), 교체문이 "이 분기가 거부하는 **모든** 호출자에게 참"이라고 적었습니다.
+참이 아닙니다 — 그 수리가 **열거한** 호출자들에게만 참입니다.
+
+**수리:** 선언된 plane 어휘(`policy.REFUSAL_PLANES`)에서 문구를 고릅니다. `resource`를 그대로
+쓰지 않는 이유가 있습니다 — 이 분기는 plane이 아니라 **자산**인 값으로도 도달합니다
+(`_authorize_graph_read`가 node id를 넘기고, `evaluate(resource="crm-customer-master",
+action="search")`도 같은 결정을 돌려줍니다). 자원을 되읊으면 데이터셋 404가 닫아 둔 존재
+oracle이 다시 열리므로, 선언되지 않은 값은 plane도 자산도 말하지 않는 문장으로 떨어집니다.
+모든 변형이 `인증된 사용자만`을 유지합니다 — `_catalog_mutation_refusal`이 같은 결정으로
+답하고 `tests/test_api.py`가 그 구절을 읽으므로, 한 문자열의 성질이 아니라 변형 전체의
+계약입니다. plane 문구는 `읽기`가 아니라 `접근`을 씁니다: `POST /ontology/patches`는 이
+분기를 **쓰기**로 도달하면서 discovery 결정을 인증 검사로 재사용하므로, `읽기`는 앞선 수리가
+고친 것과 같은 결함을 한 겹 아래에서 반복합니다.
+
+**제가 쓴 가드 둘이 틀렸고, 둘 다 측정이 잡았습니다.** ① 첫 테스트는
+`GET /ontology/patches`가 온톨로지 문구를 받을 것으로 기대했습니다 — 제품은 그 라우트를
+**증빙 읽기**로 분류합니다(두 원장과 같은 `_authorize_evidence_read` 게이트, 행이 글자
+그대로 접근 기록이므로). 제품이 맞고 제 기대가 틀렸으므로 측정대로 고쳤습니다. ② 두 번째
+테스트는 "제품이 이 분기에 넘기는 **모든** 리터럴"을 덮는다고 docstring에 적었지만
+`evaluate(resource="…")`만 봤으므로 `"graph"`를 전혀 덮지 않았습니다(제품은 그 리터럴을
+`_authorize_graph_read`에 넘기고 그 함수가 파라미터를 전달합니다). `graph` 항목을 지우는
+변이가 그 테스트에서 green이었고, 한 홉을 따라가도록 넓힌 뒤 red가 됩니다 — 전제가 코드보다
+넓은 가드, 이 수리가 한 겹 위에서 고치고 있는 바로 그 결함입니다.
+
+**변이 넷, 전부 red**(어휘를 한 문장으로 붕괴 / 조회가 자원으로 fallthrough / 한 plane이
+구절을 잃음 / 이름 지어진 plane을 지워 조용히 fallback).
+
+**닫지 않은 것.** plane 어휘는 **인증 거부**만 덮습니다 — 역할·민감도·목적 거부 사유는
+그대로이고, 그 사유들은 데이터셋을 본 뒤에 나오므로 plane 문제와 다른 범위입니다.
+
+### Fixed — 증빙 팩이 **자기 거부가 증거라고** 적어 둔 곳에서, 그 거부가 증거를 하나도 남기지 않았습니다 (medium, 구매자 체감)
+
+`/enterprise/evidence-pack`은 `actor_scoped_proof_endpoints` 넷을 공표하고,
+`actor_scoped_proof_note`를 그 넷을 따라갈 실사 독자의 설명으로 함께 게시합니다 —
+"`?user=<actor>`를 붙이지 않으면 **403으로** 거부되며, 그 **거부 자체가** 접근 통제가
+동작한다는 증거입니다." 넷 중 첫 번째에서 그 문장의 **두 절이 다 거짓**이었습니다.
+
+```
+공표된 그대로, actor 파라미터만 떼고:
+  404 {'detail': 'dataset not found'}   /enterprise/connectors/sql_connector/probe?dataset_id=crm-customer-master
+  403 {'detail': '카탈로그 접근은 ...'}  /policy/decisions
+  403 {'detail': '카탈로그 접근은 ...'}  /audit/events
+  403 {'detail': '카탈로그 접근은 ...'}  /ontology/change-log
+
+probe 라우트의 exit 셋이 각각 남기는 것:
+  404 익명, 데이터셋 있음  -> audit+0 decision+0
+  404 익명, 데이터셋 없음  -> audit+0 decision+0
+  200 허용된 actor        -> audit+1 decision+1
+```
+
+404는 **의도된 설계이고 그대로 둡니다** — 라우트가 데이터셋을 호출자 스코프에서 먼저
+해석하므로 다른 tenant의 데이터셋과 없는 데이터셋이 한 답으로 합쳐지고, 403보다 강한
+통제입니다. 다만 그 설계가 **어디에도 공표되어 있지 않아서**, note를 따라온 독자는
+`dataset not found`를 보고 데모 데이터셋이 없다고 읽습니다. 그리고 두 번째 절이 이 파일의
+제목입니다: 권한 없는 호출자가 실제로 도달하는 거부가, exit 셋 중 **정책 결정도 감사 행도
+남기지 않는 유일한 exit**이었습니다.
+
+**수리:** 결정을 존재 확인 **앞으로** 옮겨 하나만 내리고, 404 분기도 다른 두 exit과 같이
+감사 행을 남깁니다(`response_status: 404`, `existence_distinction_withheld: true`).
+응답은 한 글자도 바뀌지 않습니다 — `evaluate`가 이미 두 사유를 자기 reason에서 가르므로
+(`tenant boundary denied` vs `존재하지 않는 데이터셋입니다.`), **응답이 합쳐도 되는 것을
+원장은 가릅니다.** note는 넷이 실제로 돌려주는 코드 둘과 그 차이의 이유, 그리고 거부가
+남기는 행을 어디서 읽는지를 말합니다.
+
+원장 읽기 셋이 감사 행을 남기지 않는 것은 결함이 아닙니다 — 감사 원장은 데이터셋으로
+키가 잡히고(`ingest_event(resource=dataset_id)`) 그 셋은 데이터셋이 없는 plane 읽기이므로,
+`resource: "evidence"` 정책 결정 1건이 맞는 모양이고 README가 이미 그렇게 적습니다.
+**처음 쓴 테스트는 넷 모두에 "두 원장이 다 늘어남"을 요구해서 셋을 틀리게 지목했습니다** —
+가드의 전제가 가드 대상보다 넓은 그 결함이고, 좁혔습니다(링크당 증거 행 ≥ 1, 그리고
+per-dataset 링크 하나는 **자기 allow 경로가 남기는 것과 같은 것**을 남겨야 함).
+
+**변이 여섯, 전부 red.** M1(기록을 지우고 404를 다시 먼저 raise)에서 `evaluate` 호출이
+앞에 남아 정책 결정은 여전히 쌓였으므로, 순서까지 되돌리는 M6을 따로 돌려 확인했습니다.
+
+### Fixed — 더 완전한 관측이 공표를 **좁혔습니다** — 그리고 그 기제에 대한 설명이 세 번 틀렸습니다 (medium)
+
+위 수리가 `/policy/decisions[].obligations`를 **map에서 닫힌 5-키 struct로** 바꿨습니다.
+probe의 404 거부가 결정을 기록하기 시작하자 첫 상태의 관측 키가 0개에서 5개로 늘었고,
+두 번째 상태에 "새로운" 키가 남지 않아 분류기가 조용해진 것입니다.
+
+```
+-  'obligations': {'type': 'object', 'additionalProperties': {}}
++  'obligations': {'type': 'object',
++                  'properties': {'masking': ..., 'tenant_id': ...,
++                                 'required_role': ..., 'masking_rules': ...,
++                                 'actor_tenant_id': ...}}
+```
+
+`sdp/policy.py`는 이 노드를 **11개 키**로 채웁니다. 노드가 덜 가변적이 된 것이 아니고,
+분류기가 의존하던 **표본의 우연**이 사라진 것입니다. 기존 가드 둘이 이것을 잡았습니다.
+
+생성기의 주석은 같은 충돌로 되돌린 시도 둘을 이미 기록하고 있었습니다("Each destroys the
+map rule"). 이번이 세 번째이고, 제품 코드에서 왔습니다. 그리고 이 기제에 대한 설명은
+**세 번 연속 틀렸습니다**: ① 제거된 헬퍼 `exercise_decision_branches`를 지목 →
+변이가 green, ② `REQUIRED_QUERY`의 페이지 크기를 지목 → 선언 도입 후 측정하니 **그 항목을
+빼도 생성 파일이 한 바이트도 바뀌지 않음**, ③ 실제로 받치고 있던 것은 "첫 상태가 아무 키도
+관측하지 못했다"는 우연.
+
+**수리:** 이 노드를 `DATA_KEYED_BY_DECLARATION`으로 선언하고, `policy.py` 소스가 이름
+짓는 obligation 키 집합(네 가지 표기를 읽어 11개 도출)과 비교합니다. 비교 방향은
+`declared - observed`이므로 어휘 도출이 불완전해도 규칙이 **덜** 발동할 뿐 제품이 부정하는
+map을 주장할 수 없고, 관측이 늘어 격차가 닫히면 규칙이 멈춥니다(단조). 틀린 설명 둘은
+지우지 않고 측정과 함께 정정했습니다 — 한 기제에 대한 추측 셋이 전부 단정형으로 적혀
+있었습니다.
+
+**닫지 않은 것.** 두 상태 diff 분류기 자체는 그대로입니다 — 나머지 네 data-keyed 노드는
+여전히 표본 차이로 판정됩니다. 선언은 그 중 한 노드만 덮습니다. "조건부로 없는 필드"와
+"키가 데이터인 노드"를 두 표본만으로 구조적으로 가를 수 없다는 것이 원인이고(생성기의
+비대칭 주석이 그 이유를 이미 기록합니다), 남은 넷에 대한 일반 해법은 별개 범위입니다.
+
+### Fixed — `resolve`의 `aliases`가 **데이터셋이 선언한 업무 용어를 개념의 동의어로** 게시했습니다 (medium, 구매자 체감)
+
+같은 이름의 필드를 게시하는 형제 라우트 둘은 개념의 **실제** 별칭 집합을 돌려주고, 서로
+일치합니다. `POST /ontology/resolve`만 세 가지를 한 리스트에 누적했습니다 — 개념 자신,
+본문에 나타난 선언 별칭, 그리고 **첫 매핑 데이터셋의 업무 용어**.
+
+```
+POST /ontology/resolve {"text": "이탈 고객"}
+  term=고객        aliases=['고객', '이탈']
+  term=활성 고객    aliases=['고객', '이탈']
+  term=이탈        aliases=['고객', '이탈']
+  term=비즈니스 용어 aliases=['고객', '이탈']
+  term=이탈 고객    aliases=['churn 고객', '이탈 고객', '탈퇴 고객', '휴면 고객']  <- 다른 분기, 정상
+
+GET  /ontology/search?q=고객   aliases=['고객','customer','클라이언트','이용자','회원']
+GET  /ontology/concept/고객    aliases=['고객','customer','클라이언트','이용자','회원']
+
+POST /ontology/resolve {"text": "매출"}
+  term=전환  aliases=['매출']  defined_in_vocabulary=False
+```
+
+데이터셋 용어는 데이터셋이 선언하는 것이고 **무엇의 동의어도 아닙니다.** 그래서 glossary가
+정의조차 하지 않는 `전환`이 `매출`을 자기 별칭으로 달고 나갔습니다. 정상적인 별칭 집합을
+담은 단 한 행(정확 구절 일치, 다른 분기에서 옵니다)이 필드 전체를 믿을 만하게 보이도록
+만들어 줬습니다. 이 라우트로 glossary나 동의어 확장 UI를 만든 소비자는 어휘가 부정하는
+동의성을 기록합니다.
+
+**수리:** `aliases`는 개념 자신의 집합(`[개념] + 선언 별칭`)으로, 형제 둘과 글자 그대로
+같습니다. 일치한 토큰은 사라지지 않고 `matched_terms`로 옮겼습니다 — 그것이 **점수가 붙은
+이유**이므로 버릴 정보가 아니고, 다만 동의어가 아닙니다. 점수 계산은 한 줄도 바꾸지
+않았습니다(같은 루프를 공유했으므로 랭킹이 조용히 바뀔 수 있었고, 테스트가 1.0·0.55·0.5를
+고정합니다). 정확 구절 분기의 `matched_terms`는 `search_concepts`의 술어를 다시 계산해
+**본문에 실제로 들어 있던 이름만** 담습니다.
+
+**변이 넷, 전부 red.** M3(데이터셋 용어의 `score += 0.5` 제거)에서 제 점수 테스트가 처음
+통과했습니다 — `rows["전환"]["score"] == 0.5 if "전환" in rows else True`로 쓰여 있어서, 기여를
+없애면 그 행이 결과에서 **사라지고** 절이 공허하게 참이 됩니다. 무조건으로 바꿨습니다.
+
+| 변이 | 결과 |
+| --- | --- |
+| 데이터셋 용어를 `aliases`로 되돌림 | red 4건 |
+| 라우트 projection에서 `matched_terms` 제거 | red 2건 |
+| 데이터셋 용어의 `score += 0.5` 제거 | red 3건 (강화 후) |
+| `_names_present_in`이 본문 유무를 안 보고 모든 이름을 보고 | red 1건 |
+
+**닫지 않은 것.** 랭킹 결함은 그대로입니다 — `이탈 고객`을 해석하면 `매출`이 `score 0.5`로
+올라오고, 그 이유는 `매출`의 첫 매핑 데이터셋이 `고객`을 용어로 담고 있기 때문입니다. 이것은
+`docs/requirements-coverage.md`의 LLM-001이 별개 격차로 이미 기록한 것(형제 데이터셋의 용어가
+부모 개념을 1.0까지 끌어올림)이고, 이 수리는 점수를 바꾸지 않습니다. 다만 `matched_terms`가
+그 인공물을 **읽을 수 있게** 만듭니다 — 전에는 별칭 주장 뒤에 가려져 있었습니다.
+
+### Fixed — 어휘 쓰기 둘이 **아무것도 게시하지 않고 게시했다고** 답했고, 공표된 pin 토큰을 조용히 무시했습니다 (medium x2)
+
+승인은 이미 게시된 정의를 덮어쓰지 않습니다 — 등록기가 저장된 레코드를 그대로 돌려주는 것은
+**의도된 설계**입니다. 감사 원장은 어느 쪽인지 이미 말합니다(`approved_without_publication`,
+`upserted_without_publication`). **응답은 말하지 않았습니다.**
+
+```
+POST /ontology/patches {concept: 고객, suggestion: 개정 정의}  -> 200
+POST /ontology/patches/{id}/review {decision: approve}        -> 200
+  status 'approved' · published_concept '고객' · concept_already_published True
+  revision 1 -> 1 · content_digest 그대로
+  감사 행 result: 'approved_without_publication'
+
+POST /ontology/concepts {concept: 고객, definition: 다시 쓴 정의} -> 200
+  status 'upserted' · published_concept '고객'
+  revision 2 -> 2 · content_digest 그대로
+```
+
+한 요청이 `published_concept: 고객`을 만들어 내는데 어휘는 그대로이고, 정직한 라벨은
+**큐레이터가 읽지 않는 원장에만** 있었습니다.
+
+같은 두 라우트가 **버전 신원을 아예 공표하지 않았고** 공표된 pin 토큰을 조용히 받아들였습니다:
+
+```
+POST /ontology/concepts {..., ontology_content_digest: 'deadbeef'*8} -> 200
+  응답 키: concept, concept_already_published, concept_validation,
+           published_concept, status            (version도 digest도 없음)
+```
+
+`GET /ontology/search`와 `POST /ontology/resolve`는 **같은 토큰**을 불일치 409·형식 오류
+400으로 집행하고 자기가 답한 버전을 스탬프합니다. 쓰기 전에 "어휘가 digest X라고 믿는다"고
+고정한 호출자는 집행도 스탬프도 받지 못했습니다. `POST /ontology/concepts`는 타입이 있는
+요청 모델을 쓰므로 pydantic이 **알 수 없는 필드를 버립니다** — 그래서 조용했습니다.
+
+수리: `register_concept`가 `publication_status`를 돌려주고(`published`/
+`existing_definition_kept`, 상수 한 쌍), 두 응답이 그것을 공표하며 `published_concept`는
+**실제로 게시했을 때만** 개념을 이름 짓습니다(`concept`가 여전히 주제를 이름 지으므로 잃는
+정보는 없습니다). 그리고 두 쓰기가 첫 쓰기 **전에** 읽기 라우트와 같은 헬퍼로 pin을 검사하고
+자기가 만든 버전을 `ontology_version`으로 스탬프합니다. 요청 계약 문서에 키를 더했습니다.
+
+**변이 일곱, 전부 red** — M3(두 라벨의 **값을 서로 교환**)은 처음 green이었습니다. 이 파일의
+다른 모든 단언이 응답을 **상수와** 비교하므로, 상수가 바뀌면 비교의 양쪽이 같이 움직여
+아무것도 깨지지 않습니다. 소비자가 분기하는 것은 리터럴이므로 리터럴을 고정하는 테스트를
+더했습니다(그리고 게시하지 않은 쪽 라벨이 `publish`로 시작하지 않는지도).
+
+**닫지 않은 것.** 이미 게시된 정의를 **개정하는 경로 자체는 없습니다** — 승인은 여전히
+덮어쓰지 않고, 이 수리는 그 사실을 **말하게** 만든 것입니다. 개정 경로는 ONT-005의 별개
+범위입니다.
+
+### Fixed — preview가 **합성 행을 아무 표시 없이** 내보냈고, 형제 라우트는 자기 mock을 전부 라벨합니다 (medium, 구매자 체감)
+
+`POST /browse/{id}/preview`는 구매자가 **자기 데이터셋을 처음 보는 자리**입니다. 행은 선언
+스키마에 투영한 고정 2행 합성 샘플이고, 유일한 공개는 한국어 문장 하나(`sampling_note`)
+였습니다. 형제 데이터 라우트는 자기 mock을 끝까지 라벨합니다 — `/browse/query`는
+`execution.measurement_status: "mock_execution_no_real_data"`와 `rows_source:
+"fixed_mock_sample"`, `row_count_source: "mock_row_cap_below_catalog_profile_estimate"`를
+공표합니다. 거기서 "시뮬레이션 수치는 라벨된다"를 배운 통합자는 **이 행을 실데이터로 읽을
+이유가 충분했습니다.** 측정:
+
+```
+crm-customer-master  has_more False  row_count 2   profile row_count  1,200,000
+crm-event            has_more False  row_count 2   profile row_count 54,000,000
+sales-order          has_more False  row_count 2   profile row_count  8,700,000
+응답의 provenance 키: ['sampling_note']
+```
+
+`has_more: false`에 2행은 **"preview가 전부를 보여 줬다"**는 말이고, 같은 제품의 profile
+라우트는 같은 데이터셋에 대해 다른 말을 합니다.
+
+그리고 fallback이 자기가 투영되는 스키마와 **모순**됩니다. `_SAMPLE_DATATYPE_VALUES`는
+boolean/date/decimal/integer/iri/timestamp 여섯 철자만 들고 있어서 `double`이나 `bigint`로
+선언된 컬럼은 `f"{column.name}-sample-{n}"`으로 떨어집니다 — `touch_revenue_krw: double`
+데이터셋은 문자열 `"touch_revenue_krw-sample-1"`을 받습니다. 합성인 것을 넘어 **자기 선언
+타입으로 파싱되지 않는 값**이고, 공표 스키마에 바인딩하는 소비자는 바로 여기서 깨집니다.
+
+수리 셋: (1) 형제 라우트와 **같은 어휘**로 `sample_provenance`(`rows_source`·
+`measurement_status`·`row_count_source`)를 공표하고, (2) `has_more` 옆에 카탈로그가 선언한
+`declared_source_row_count`를 같이 놓아 "이게 전부"로 읽히지 않게 하고, (3) 선언 철자를
+family로 정규화해(`DOUBLE PRECISION`·`numeric(18,2)`도) 값이 최소한 그 타입 모양이 되게
+합니다. family가 없는 타입(예: `geography`)은 **이름을 공표합니다**
+(`untyped_sample_columns`) — 모양을 맞출 수 없다는 사실을 소비자가 파싱 실패로 발견하게 두지
+않습니다.
+
+**변이 여섯, 전부 red** — M3(선언된 행 수가 없을 때 `0`을 공표)은 처음 green이었습니다. 제
+프로브가 전부 행 수를 선언하고 있었기 때문입니다. `0`은 **"원본이 비어 있다"**는 데이터에
+대한 주장이고 `null`은 메타데이터의 부재이므로, 그 구분을 세 가지 모양(profile 없음·해석
+불가 문자열·boolean)으로 재는 케이스를 더했습니다.
+
+**제 새 상수가 저장소의 모듈-상태 가드에 걸렸습니다.** `_SAMPLE_DATATYPE_FAMILIES`를
+`NOT_RUNTIME_MUTATED`에 분류해 넣어야 통과합니다 — CLAUDE.md가 경고하는 그 자리이고,
+가드가 제 일을 했습니다.
+
+**닫지 않은 것.** 값은 여전히 **전부 문자열**입니다(`decimal`도 `'129000.00'`) — 그것은 이
+라우트의 기존 공표 관례이고, JSON 숫자로 바꾸는 것은 이 발견과 별개의 계약 변경입니다. 수리가
+하는 일은 선언 타입과 **모순되지 않게** 만드는 것까지입니다. 그리고 2행 고정 샘플 자체도
+그대로입니다(BRW-002가 기록).
+
+### Fixed — 호출자가 **자기 200이 알려 준 증빙 행에 도달할 수 없었습니다** (high, 구매자 체감)
+
+세 읽기 라우트가 공표하던 선택자는 `limit`(≤500·≤500·≤200)과 `resource`/`user`뿐이고, 모든
+store가 최신순으로 정렬한 뒤 **자릅니다** — `evidence.py`의 in-memory fallback은
+`decisions[:limit]`, SQLite·Postgres는 `ORDER BY ... DESC LIMIT ?`. 그래서 호출자 자신의
+행이 **가장 먼저** 밀려납니다:
+
+```
+자기 preview가 돌려준 policy_decision_id
+  직후        : 조회됨 (범위 내 2행)
+  600요청 뒤  : 조회 안 됨 (범위 내 500행, 전부 더 최신)
+
+공표 파라미터  /policy/decisions -> limit(500), resource, user
+               /audit/events     -> limit(500), resource, user
+offset=500 / cursor=x / decision_id=abc -> 받아들이고 무시
+```
+
+응답은 `request_id`·`query_id`·`policy_decision_id`를 건네주고 감사 행은 셋을 다 담는데,
+어떤 읽기 라우트도 그중 하나도 **필터로 받지 않았습니다.** 유일한 선택자 `resource`는 바로
+가장 빨리 채워지는 차원입니다. 데이터셋 경로도 같습니다 — 자격증명 없는 거부 600건이 최신
+200행을 채워 그 데이터셋의 정당한 접근 이력 전체를 밀어냅니다.
+
+수리는 `offset`과 `decision_id`를 **읽기 경로 끝까지** 더하는 것입니다: 세 라우트, 두 reader
+(`evidence.list_policy_decisions`, `catalog.list_audit_events`), 그리고 SQLite·Postgres 양쪽의
+`LIMIT ? OFFSET ?`. 두 증빙 테이블이 이미 `decision_id`를 **일급 컬럼**으로 들고 있어
+JSON 추출이 아니라 인덱스 비교입니다. 병합 reader는 merge **전에** `offset + limit`까지
+over-fetch합니다 — store에만 있는 행이 깊은 페이지에서 조용히 빠지기 때문입니다.
+
+**`offset`이 보장하는 것을 재서 적었습니다.** 한 스냅샷 안에서는 정확히 분할합니다(0-19와
+20-39가 겹치지 않음). 두 요청 사이에서는 **겹칩니다** — 증빙 읽기를 인가하는 것 자체가
+원장에 결정 행을 하나 남기고(이 제품의 불변식) 그 행이 머리에 붙어 이후 페이지를 한 칸씩
+밀기 때문입니다. 제 첫 테스트는 두 HTTP 호출에 걸쳐 깨끗한 분할을 단언했고 바로 그 drift로
+실패했습니다. 가드는 이제 참인 쪽을 단언합니다: 한 스냅샷은 분할하고, 두 요청의 겹침은
+**그 사이에 추가된 행 수로 상한**이 잡힙니다.
+
+**SQL 경로를 처음으로 실제로 몰았습니다.** 테스트 환경에는 store가 설정되지 않으므로
+(`SDP_DATABASE_DSN`·`SDP_SQLITE_PATH` 미설정) 이 변경의 SQL은 측정되지 않은 채 남을 수
+있었습니다. 문서화된 로컬 store인 SQLite를 임시 파일로 직접 몰아 `LIMIT/OFFSET`과 id
+필터를 확인하고, store에만 있는 60행에 대해 깊은 페이지가 짧게 답하지 않는지도 확인합니다.
+Postgres는 같은 코드 모양이지만 서비스가 필요하므로 **서명 가드만** 걸려 있다고 적어 둡니다.
+
+**변이 일곱, 전부 red** — M4(merge 전 over-fetch 제거)는 처음 green이었습니다. store가 없으면
+관측할 수 없는 경로였고, 그래서 store를 설정하는 테스트를 더했습니다.
+
+**닫지 않은 것.** `offset`은 안정 커서가 아닙니다(위 drift). 안정 커서는 decision의
+`recorded_at` 공표가 선행 조건이고 POL-005가 그 부재를 기록합니다. 그리고 in-memory
+fallback의 2000행 보존 창 자체는 그대로입니다 — `offset`은 **보존된 창 안에서** 페이지를
+옮길 뿐 보존 경계를 넘지 못합니다. 증빙 읽기가 자기 자신의 행을 자기 답에 담는 것도
+그대로입니다(별개 항목).
+
+### Security — 쓰기 응답이 **재전송 가능**했고, 재전송하면 저장된 locator가 지워졌습니다 (medium, 데이터 손실 + 거짓 원장)
+
+`source_system`은 모든 공표 경로에서 가려지고, 연결 문자열 구조가 없는 문자열에 대해
+리댁터는 **fail closed**로 마커를 돌려줍니다 — 그 자체가 비밀번호일 수 있기 때문이고
+(`PW123`이 측정표에 있습니다), 그 판단은 옳습니다. 예견되지 않은 것은 **마커가 평범한
+read-modify-write로 되돌아온다**는 것입니다. 측정:
+
+```
+declared 'warehouse-postgres'                         -> echo 'redacted'
+declared 'snowflake'                                  -> echo 'redacted'
+declared 'postgresql://warehouse.dw:5432/mkt'         -> 그대로 echo
+declared 'postgresql://u:PW123@warehouse.dw:5432/mkt' -> 비밀번호만 제거해 echo
+
+create 후 저장값                                       -> 'warehouse-postgres'
+PATCH {title: ..., source_system: 'redacted'}          -> 200
+그 뒤 저장값                                           -> 'redacted'
+audit details -> before.source_system == after.source_system == 'redacted'
+```
+
+즉 **자격증명이 아예 없는 가장 덜 민감한 값**(평범한 시스템 라벨)이 제품이 가장 완전하게
+파괴하는 값이고, 거버넌스 원장은 그 파괴를 **변경 없음**으로 기록합니다 — 비교의 양쪽을
+같은 lossy 투영에 통과시킨 뒤 적기 때문입니다. 하류도 영향을 받습니다: 드래프트 라우트는
+`source_system`에서 `source_kind`를 분류하므로(`warehouse-postgres` → file_lake,
+`postgresql://...` → sql) 망가진 locator는 데이터셋 취급 자체를 조용히 바꿉니다.
+
+**수리 둘.** (1) 쓰기는 마커를 저장하지 않습니다 — create와 patch 양쪽에서 거절하고, 이유가
+필드와 해법을 말합니다. 조용히 무시하는 쪽은 선택하지 않았습니다: 조용한 drop은 이 저장소가
+이미 두 번(`license`, `distributions`) 수리한 결함입니다. 거절은 **typed**입니다 —
+blanket `ValueError` arm은 정밀한 거절을 "request body is not valid"로 보고하고
+`pydantic.ValidationError`도 `ValueError`이므로 사후에 구분할 수 없습니다(라우트 주석이 그
+측정을 이미 담고 있습니다). (2) 원장은 투영이 보여 줄 수 없을 때도 **필드가 바뀌었는지**를
+말합니다(`source_system_changed`, 원시 값으로 계산).
+
+**변이 여섯, 전부 red** — 하나는 처음 green이었습니다. "flag를 항상 True로" 변이가 잡히지
+않은 것은 제 반대 케이스가 `source_system`을 **보내지 않는** 패치였기 때문입니다(그때는 flag
+자체가 없습니다). 같은 값을 재전송하는 케이스를 더했고, 그것이 바로 평범한
+read-modify-write입니다.
+
+**제 structural 가드가 네 번째로 자기 설명문에 걸렸습니다.** `"redacted"` 리터럴이 하나뿐인지
+보는 가드가 docstring의 인용을 세었습니다 — `"""`를 담은 **줄**만 버리면 인용 본문은 남습니다.
+AST로 문자열 표현식을 보고 각 스코프의 첫 문장(docstring)만 제외하도록 고쳤습니다.
+
+**닫지 않은 것.** `redacted`라는 이름을 실제 locator로 쓰는 데이터셋은 등록할 수 없고, 거부가
+그것을 말합니다. 그리고 리댁터가 평범한 라벨을 마커로 바꾸는 것 자체는 그대로입니다 — 쓰기
+경로만 막았고, 라벨과 비밀번호를 구조로 구분하는 일은 하지 않았습니다.
+
+### Fixed — 게시한 데이터셋이 **발견 라우트 둘에 보이지 않으면서**, 그 둘은 아무것도 withheld하지 않았다고 공표했습니다 (high, 구매자 체감)
+
+`ontology._INDEX`가 **import 시점에 한 번** 만들어지므로, 기동 후 등록·게시된 데이터셋은
+개념↔dataset 맵에 영원히 들어가지 못했습니다. `고객`을 term으로 선언한 데이터셋을 온보딩한
+뒤 `user=data-admin`으로 재면:
+
+```
+GET  /catalog/search?q=고객      -> 6건, 새 데이터셋 포함
+GET  /ontology/term/고객/graph   -> 5건, 새 데이터셋 포함
+GET  /ontology/concept/고객      -> 4건, 없음.  withheld_dataset_count: 0
+POST /llm/search {고객}          -> 4건, 없음.  withheld_dataset_count: 0
+```
+
+`withheld_dataset_count`는 README가 **"짧은 목록이 전체 매핑으로 읽히지 않도록"** 도입한
+필드이고, 여기서 짧은 목록이 전체 매핑으로 읽혔습니다 — 소유자에게 재시도·에스컬레이션·
+불신의 신호가 하나도 없습니다. 그리고 README가 "같은 사실을 서비스하는 형제 라우트"라고
+부르는 둘이 같은 개념·같은 호출자에 4건과 5건을 돌려줍니다.
+
+**근본 원인은 기록돼 있었고, 범위 메모로 기록돼 있었습니다.** ONT-004가 "built once at
+import and no registration updates it", `implementation-compliance.md`가 "import 시점에
+고정됩니다"라고 적고, 어휘 export가 `sdp:datasetMappingIsVersioned false`를 공표합니다.
+맵이 **버전 범위 밖**이라는 것은 수리 후에도 참입니다. 기록되지 않은 것은 **그래서 응답이
+전체 커버리지를 주장했다**는 사실입니다.
+
+수리는 읽는 곳에서 **파생**시키는 것입니다(`concept_dataset_index()`). 비용을 재서
+결정했습니다 — 재구축은 `resolve_terms` 자신의 2000회 148.9ms에 대해 2000회 3.7ms,
+**2.5%**입니다(5개 데이터셋·10개 키). 그래서 일관성을 유지할 캐시도, 무효화 신호도,
+`tests/conftest.py`가 복원할 새 모듈 상태도 없습니다 — **오히려 상태 하나가 줄었습니다.**
+`_INDEX` 스냅샷이 conftest의 복원 목록과 `test_module_state_coverage.py`의 분류 목록에서
+빠지고, 그 동결을 우회하려고 `ontology._INDEX = ontology._build_index()`를 손으로 호출하던
+테스트 둘도 그 줄을 버렸습니다. 삽입 순서는 여전히 `list_datasets()`를 따르므로 문서가
+공표한 tie-break 동작은 그대로입니다.
+
+**변이 둘, 전부 red.** 그리고 첫 변이는 제 가드가 **놓쳤습니다**: 스냅샷을 `_INDEX`가 아닌
+다른 이름으로 되살렸더니 `hasattr(ontology, "_INDEX")` 검사를 통과하고, 저장소의 일반
+모듈-상태 가드만 잡았습니다. 이름 하나가 아니라 **두 reader가 파생 함수를 호출하는지**를
+보도록 고쳤습니다.
+
+**거짓이 된 산문 다섯 곳을 같이 고쳤습니다**: `requirements.py`의 ONT-004·LLM-003 비고(재생성),
+`implementation-compliance.md`, `README.md`, `ontology_version.py` docstring 둘, `api.py`
+주석. 각각 "import 시점 고정"을 "revision이 추적하지 않음"으로 좁히고, 고정이 별개 결함이었고
+수리됐다고 적습니다.
+
+**닫지 않은 것.** 개념↔dataset 맵은 여전히 **버전 범위 밖**입니다 — 매핑이 바뀌어도
+`ontology_revision`은 움직이지 않고, `sdp:datasetMappingIsVersioned false`는 그대로 참입니다.
+그리고 맵에는 여전히 tenant 술어가 없습니다(`concept_assets`가 scope를 적용합니다).
+
+### Security — 가정 질문의 답이 **다른 tenant의 원장에 라벨 없이** 기록됐습니다. 세 분기 (high)
+
+`POST /policy/decision`는 "이 subject에 대해 정책이 뭐라고 할까"에 답하고 `subject`는
+설계상 호출자가 줍니다. 그 행은 **subject의 tenant 원장**에 들어가므로, `provenance`
+라벨(`evaluation_mode: hypothetical`·`asked_by`·`subject_is_caller`)은 감사자가 질문을
+사건으로 읽지 않도록 하기 위해 존재합니다. CHANGELOG가 그 추가를 기록하고 있습니다.
+
+`policy.evaluate`의 **세 분기**가 그 인자를 받지 못했습니다. `analyst`가
+`external-analyst`에 대해 물었을 때 가정 답 행에 붙은 라벨:
+
+```
+discover_catalog  allow  labels: []                                        <- 라벨 없음
+register_dataset  deny   labels: []                                        <- 라벨 없음
+search            allow  labels: []                                        <- 라벨 없음
+preview           deny   labels: ['asked_by', 'evaluation_mode', 'subject_is_caller']
+```
+
+즉 외부 tenant의 스튜어드는 자기 사용자가 subject인 카탈로그 발견 `allow`와 데이터셋
+등록 `deny`를 읽고, **다른 tenant의 분석가가 물었다는 기록은 어디에도 없습니다.** 분기는
+`create`의 거부 둘(`policy.py:321`, `:333`)과 `search`/`search_catalog`/`discover`의
+**allow**(`:352`)였습니다.
+
+가드는 엔진의 `KNOWN_ACTIONS`와 `CATALOG_ACTION_ALIASES`에서 **파생**됩니다 — 찾은 세
+분기를 손으로 적으면 다음 분기가 같은 자리에 들어앉습니다. 그리고 AST로 이 함수의 모든
+`_decision` 호출이 인자를 넘기는지 단언합니다(열다섯 중 셋이 빠져 있었습니다).
+
+**변이 넷, 전부 red.** 그중 둘(`_decision`이 모든 행에 기본 라벨을 찍음, `subject_is_caller`
+상수 True)은 **이전 라운드의 기존 가드**가 같이 잡았습니다 — 그 가드들은 `preview` 경로만
+보고 있어서 세 분기를 놓쳤을 뿐, 과잉 라벨은 이미 막고 있었습니다.
+
+**닫지 않은 것.** 이 라우트가 `subject`를 호출자가 주도록 하는 것 자체는 그대로입니다 —
+라벨은 그것을 **읽을 수 있게** 만들 뿐, 다른 tenant의 사용자 이름으로 질문하는 것을 막지
+않습니다. 그 경계는 Keyverse 소관입니다.
+
+### Fixed — 한 payload가 `missing: []`·`is_valid: true`·`0.909`를 **동시에** 공표했습니다 (medium, 실사 체감)
+
+`metadata_completeness`와 `catalog.validate_metadata`는 이미 한 목록
+(`REQUIRED_METADATA_FIELDS`, 열 개)으로 통합돼 있고 그 위의 주석이 이유를 적고 있습니다 —
+"두 목록의 길이가 달라서, validator가 critically invalid라고 부르는 데이터셋이 1.0을 공표할
+수 있었다". `recompute_scores`에 **세 번째** 집계가 남아 있었습니다: `required_total = 11`과
+손으로 쓴 열한 개 분기이고, 거기에 validator가 요구하지 않는 `tags`가 들어 있습니다.
+`tags`만 다른 두 데이터셋:
+
+```
+probe-with-tags  /validate -> required_fields(10) missing: [] is_valid: True
+                              completeness_score 1.0    metadata_completeness 1.0
+probe-no-tags    /validate -> required_fields(10) missing: [] is_valid: True
+                              completeness_score 0.909  metadata_completeness 1.0
+```
+
+0.909는 10/11입니다. 실사 독자는 **빠진 것이 없는데 90.9% 완전한** 데이터셋을 보고, 같은
+payload의 형제 필드는 100%라고 말합니다. `completeness_score`는 `/catalog/search` 행과
+데이터셋 상세와 JSON-LD(`sdp:completenessScore`)에 공표되고, KPI 게이트가 읽는 쪽은
+`metadata_completeness`이므로 **공표된 두 숫자가 공개적으로 어긋나는 동안 게이트는 한쪽만
+보고 있었습니다.**
+
+수리는 같은 목록에서 파생시키는 것입니다. 태그는 태그가 속한 곳(`recommended_score`)에서만
+셉니다 — 변이 "recommendation에서도 tags를 뺀다"가 red인 것이 그 경계입니다.
+
+**변이 셋, 전부 red.** 그리고 제 structural 가드가 **세 번째로** 자기 설명문에 걸렸습니다:
+`required_total`이 없어야 한다고 단언했는데 그 측정을 기록한 docstring이 그 문자열을 담고
+있습니다. 주석만 벗기던 것을 docstring까지 벗기도록 고쳤습니다 — 이 라운드에서 같은 함정이
+세 번(행 레벨 `enforcement_note`, patch `len(suggestion)`, 여기) 반복됐습니다.
+
+**닫지 않은 것.** 두 필드가 이제 항상 같은 값이므로 `completeness_score`는 중복입니다.
+공표된 필드를 지우는 것은 JSON-LD 매핑까지 건드리는 별개 변경이라 하지 않았습니다.
+
+### Security — 리뷰 큐의 `confidence`가 **제안문의 글자 수**였습니다 (high, 무자격 공개 표면)
+
+`min(max(len(suggestion) / 220.0, 0.3), 0.95)`를 계산해 `POST /ontology/patches`,
+`GET /ontology/patches`, 그리고 **자격증명 없이 읽히는** `GET /enterprise/steward-review`에
+공표했습니다. 같은 말을 하는 제안 둘과 아무 말도 아닌 제안 하나로 재면:
+
+```
+len=  8  confidence=0.3                 "해지 고객 비율"            (정확한 정의)
+len=208  confidence=0.9409090909090909  같은 뜻을 " 입니다. "로 패딩
+len=300  confidence=0.95                "ㅁ" * 300                  (무의미)
+
+GET /enterprise/steward-review (actor 없음) -> 최고 confidence 행은 ㅁ 300자
+```
+
+confidence로 triage하는 스튜어드는 정확한 제안에서 **멀어지는 쪽으로** 정렬되고, 열린
+readiness 표면을 읽는 구매자는 품질 신호가 타이핑 분량인 큐를 봅니다. 호출자가 값을 줄 수도
+없습니다 — `POST /ontology/patches`는 `concept`과 `suggestion`만 읽습니다. 즉 제품에
+**근거가 아예 없습니다.**
+
+수리는 이 저장소가 측정할 수 없는 값에 이미 쓰는 모양입니다: 측정하지 않았다고 공표합니다.
+`confidence: null` + `confidence_basis: "not_measured"`이고, 필드는 그대로 둡니다 —
+`tests/test_steward_queue_identity_scope.py`가 그것을 스튜어드가 읽어도 되는 제안 내용으로
+고정하고 있습니다. 선례는 spend 표면의 `usage_source`/`measurement_status`,
+`SDP_EVIDENCE_RETENTION_DAYS`의 `unimplemented_environment`, 그리고 같은 라운드의
+`row_filter_summary.filter_enforced`입니다.
+
+**변이 넷, 전부 red** — 그중 하나는 처음 green이었습니다. 모델의 `confidence_basis` 기본값을
+`"measured"`로 바꿔도 아무도 잡지 못했는데, `propose_patch`가 basis를 명시로 넘기므로 측정
+표면에는 기본값이 나타나지 않으면서 **직접 생성되는 모든 patch**를 지배합니다. 모델 기본값과
+basis 상수가 같아야 한다는 단언을 더했습니다.
+
+**닫지 않은 것.** `GET /ontology/patches`의 `patches`와 `/enterprise/steward-review`의
+`review_items`는 공표 응답 계약에서 `{"type": "array", "items": {}}`입니다 — 생성기 프로브
+시점에 큐가 비어 있어 **행 모양이 공표된 적이 없습니다.** 그래서 이 변경이 계약을 깨지
+않았고, 동시에 구매자는 두 배열의 원소에 대해 `Any`를 받습니다. 그것은 별개 항목입니다.
+
+### Fixed — facet 라우트가 **공표된 적 없는 어휘**를 집행했고, PRD가 facet이라고 적은 두 차원을 거부했습니다 (medium, 구매자 체감)
+
+여정 워크플로의 적대적 검증 둘이 모두 CONFIRMED로 돌려준 발견입니다.
+
+```
+GET /catalog/facets?field=domain -> 200 {"field": "domain", "counts": {...}}
+GET /catalog/facets?field=tags   -> 400 {"detail": "unsupported facet field"}
+GET /catalog/facets?field=terms  -> 400 {"detail": "unsupported facet field"}
+
+README.md         grep -in "facet" -> 0건 (라우트 자체가 없습니다)
+GET /openapi.json {"name": "field", "schema": {"type": "string", "default": "domain"}}
+                  — enum도 description도 없음
+```
+
+유효한 값을 알 방법이 **소스를 읽는 것뿐**이었습니다. 이 저장소는 형제 거부에서 반대
+패턴을 이미 씁니다 — `GET /ontology/patches?status=`는 400에 `requested`와
+`known_statuses`를 담습니다 — 그리고 같은 결함 계열을 네 시간 전에 `POST /policy/decision`의
+`action`에서 엔진의 열거를 공표하는 것으로 닫았습니다.
+
+구매자가 가장 먼저 시도할 두 값이 바로 제품의 PRD가 facet 차원으로 적은 둘입니다
+(`docs/prd-trd.md`가 `businessTerms`를 "keyword + facet"으로, CAT-001이 `tags`를
+search/facet 차원으로). 둘 다 거부됐고, `list_facet_counts`에는 **어느 허용 필드도 닿을 수
+없는** list 분기가 처음부터 있었습니다 — 허용된 여섯은 전부 스칼라이고, 그 분기를 밟는 것은
+`domain: ["retail", "wholesale"]`을 꾸며 내는 테스트 하나뿐이었습니다(`Dataset.domain: str`
+계약 위반). **능력은 라우트가 거부하는 바로 그 차원들을 위해 있었습니다.**
+
+수리 셋: 어휘를 상수 `FACET_FIELDS` 하나로 올리고 `tags`·`terms`를 더합니다(값별로 세는
+list 분기가 이제 실데이터로 도달됩니다). 거부는 `requested`/`known_fields`를 담습니다. 그리고
+OpenAPI 파라미터 description과 README의 라우트 목록이 그 집합에서 **파생**됩니다.
+
+**변이 다섯, 전부 red.** 그리고 제 structural 가드가 M4(어휘 재복제)를 **처음에 놓쳤습니다**:
+"모듈에 리터럴은 최대 하나"로 적었는데 상수를 여러 줄 `frozenset`으로 쓰면 brace 패턴에
+걸리지 않아 재복제본이 유일한 매치가 되어 통과했습니다. 집행 지점의 소스를 보고 그 안에
+리터럴이 없음을 요구하도록 고쳤습니다.
+
+**닫지 않은 것.** 공표된 facet 차원이 **집행된 집합과 같은지**는 가드가 derived로 집행하지만,
+PRD가 facet으로 적은 차원이 `FACET_FIELDS`에 **빠지지 않았는지**는 두 값(`tags`·`terms`)에
+대해서만 단언합니다. PRD 표 전체를 파싱해 대조하지는 않습니다.
+
+### Security — 선언만 되고 **집행되지 않는 행 레벨 필터**를 "적용됐다"고 공표했고, 증빙 원장에도 그렇게 적었습니다 (high, 구매자 체감)
+
+구성된 구매자 여정(온보딩→발견→preview)을 끝까지 몰아 본 라운드의 첫 발견입니다. 표면별
+감사에서는 매번 "obligation이 있다"만 확인되고 **그 obligation이 무엇을 했는지**는 아무도
+묻지 않았습니다.
+
+`crm-event`는 이 엔진에서 obligation이 닿는 유일한 `sensitivity: high` 데이터셋입니다.
+그 하나를 재면:
+
+```
+published columns              ['event_id', 'customer_id', 'event_timestamp', 'device_id']
+'business_unit' among them     False
+purpose='analysis'   applied_row_filter=['business_unit = current_user_unit']  row_count=2
+purpose='marketing'  applied_row_filter=None                                   row_count=2
+rows byte-identical            True
+audit details                  {'row_filter': [...], 'returned_rows': 2, ...}
+draft assumptions              ['행 레벨 필터 적용: business_unit = current_user_unit']
+drafted SQL                    SELECT count(*) ... WHERE event_timestamp >= current_date - 90 LIMIT 1000
+'business_unit' in that SQL    False
+```
+
+술어는 데이터셋이 **선언하지 않은 컬럼**을 가리키고, "필터가 적용된" 행은 필터 없는 행과
+**같은 바이트**이며, 분석가가 실제 창고에 대고 실행하라고 받은 SQL은 자기 assumption이
+주장하는 술어를 **담고 있지 않고**, 컴플라이언스 원장은 그 주장을 `returned_rows: 2` 옆에
+저장합니다. 코드에도 적용 단계가 없습니다 — `browse.py`는 `rows[offset : offset + limit]`로
+자르고 `"applied_row_filter": decision.obligations.get("row_filter")`를 공표합니다.
+
+행 레벨 집행이 없는 것은 **의도된 범위**입니다(`docs/prd-trd.md` §6.2가 Phase 2로 둡니다).
+의도되지 않은 것은 **`applied_`라는 필드 이름**과, 감사자가 `decision_id`로 join하면
+"부서 범위로 좁혀진 조회가 있었다"로 읽히는 원장 행입니다. 같은 응답의 masking은 실제로
+집행되고(측정: `customer_email`이 `***`로 돌아옵니다) 설명 형제(`masking_rules`의
+`bases`/`action`)까지 가지는데, 집행되지 않는 쪽은 둘 다 없이 같은 모양으로 공표됩니다.
+이 브랜치의 이전 수리가 이 obligation의 **공백 민감성**을 보안 결함으로 기록하고 고쳤다는
+점이 그 자체로 증거입니다 — 집행되지 않는 주장을 **살려 두는 데** 노력이 들어갔습니다.
+
+수리는 **술어가 공표되는 모든 곳에 집행 상태를 같이 공표하는 것**입니다. 성질로 적었으므로
+다섯 번째 표면이 술어만 echo할 수 없습니다:
+
+* `policy.evaluate`: obligation에 `row_filter_enforcement: "declared_not_enforced"`.
+  decision 자체가 들고 다니므로 decision을 읽는 모든 소비자가 같이 받습니다.
+* `browse.preview`: `applied_row_filter`를 지우고 `masking_summary`와 같은 모양의
+  `row_filter_summary`(`declared_predicates`/`filter_enforced`/`enforcement_note`)를
+  **모든 읽기에** 공표합니다 — 필드가 없는 것이 "선언된 조건이 없다"로 읽히지 않게.
+* 감사 details: `row_filter` → `declared_row_filter` + `row_filter_enforced: false`.
+* `orchestrator.draft_sql`: "행 레벨 필터 적용: X" → "행 레벨 조건(X)은 이 SQL에
+  포함되지 않았습니다" + 같은 안내문.
+
+같은 저장소의 선례를 그대로 따릅니다 —
+`test_honest_metrics.py::test_each_published_alert_rule_says_whether_it_is_evaluated`가
+alert 규칙에 같은 계약을 걸고 있고, `SDP_EVIDENCE_RETENTION_DAYS`는
+`unimplemented_environment`로 공표됩니다.
+
+**변이 다섯, 전부 red:**
+
+| 변이 | red |
+|---|---|
+| obligation에서 enforcement 상태 제거 | 공표-동반 가드 + decision 전수 가드 |
+| `applied_row_filter`를 다시 공표 | 이름 가드 + 공표-동반 가드 |
+| `filter_enforced: True` | 공표-동반 가드 |
+| 원장에 `row_filter`를 그대로 | 원장 가드 |
+| draft assumption을 "적용"으로 되돌림 | assumption-SQL 합치 가드(세 철자 전부) |
+
+**제 가드가 작성 중에 두 번 반응했습니다.** (1) 공표-동반 가드가 `enforcement_note`를
+**상태 마커로 오인**해 한국어 산문 안에서 `not_enforced` 토큰을 찾다가 정직한 구현에
+실패했습니다 — 가드의 전제가 가드 대상보다 넓었던 것이고, 상태와 산문을 이름으로
+분리했습니다. (2) 원장 가드가 `event_type`을 읽었는데 기록되는 필드 이름은 `action`이라
+"감사 행이 없다"로 실패했습니다. 측정한 것이 없는데 실패로 보인 경우입니다.
+
+**닫지 않은 것.** 행 레벨 집행은 여전히 없습니다 — 이 수리는 **공표의 정직성**이고 Phase 2
+기능이 아닙니다. 그리고 `obligations`가 왜 그 술어를 냈는지(`purpose`)는 decision 행에
+여전히 없습니다(POL-005). 그 비고의 "unexplained"는 이제 사실이 아니므로
+`src/sdp_core/requirements.py`에서 고쳐 재생성했지만, purpose 부재 자체는 열려 있습니다.
+
+### Security — 거부된 SQL 드래프트가 **decision은 남기고 감사 이벤트는 남기지 않았습니다**. NFR-SEC-005의 "100% 기록"이 네 경로에서 거짓이었습니다 (high)
+
+`_audit_draft`의 docstring이 **바로 이 모양을 닫기 위해 존재한다**고 적고 있습니다("Measured
+before this change: `decisions +1  audits +0`"). `docs/requirements-coverage.md:559`는
+NFR-SEC-005를 `implemented`로 공표하며 "두 구멍을 가정하지 않고 찾아 닫았다"고 적습니다.
+한 라우트에 네 개가 더 열려 있었습니다. 공표된 프로브 데이터셋에 대고 호출당
+`/policy/decisions`·`/audit/events` 델타로 재면:
+
+```
+success                      decisions +1  audits +1
+policy_denied (purpose)      decisions +1  audits +1
+policy_denied (keyword)      decisions +1  audits +0   <- 구멍
+invalid_columns              decisions +1  audits +0   <- 구멍
+invalid_group_by             decisions +1  audits +0   <- 구멍
+draft_rejected_by_validator  decisions +1  audits +0   <- 구멍
+dataset_not_found            decisions +0  audits +0
+invalid_date_window          decisions +0  audits +0
+```
+
+마지막 둘은 decision이 생기기 **전에** 거부되므로 대칭이고 구멍이 아닙니다 — 이 라우트의
+가드가 반드시 지켜야 하는 구분입니다. "감사를 더 하라"만 요구하는 가드는 이 둘까지 기록하는
+수리를 통과시킵니다.
+
+AST로 세면 decision 이후의 종료점은 **여덟 개**였고 그중 넷은 HTTP로 닿지 않습니다
+(`ambiguous_identifier`, `unquotable_source_table`, `invalid_row_limit`/`invalid_timeout` —
+요청 계약이 입력을 먼저 거부합니다). **에러 코드 목록을 손으로 적는 수리라면 그 넷을
+놓쳤을 것입니다.** 그래서 형제 라우트 `execute_query`의 모양을 그대로 씁니다: 모든 종료를
+감사하는 지역 헬퍼(`refuse`) 하나로 모으고, **decision 이후의 모든 `return`이 그 헬퍼를
+지나는지**를 AST 가드가 단언합니다.
+
+**변이 셋, 전부 red:** 거부 하나를 dict로 되돌림 → 행동 가드 + AST 가드 / 헬퍼가 감사를
+멈춤 → 네 케이스 전부 + AST 가드 / **decision 이전 경로가 감사를 시작** → 대칭 가드.
+
+**닫지 않은 것.** `/browse/query`는 pre-policy 거부도 감사하고 `policy_stage`로 구분합니다
+(decisions +0, audits +1). 드래프트 라우트는 그 경로를 **아무것도 기록하지 않습니다**. 어느
+쪽이 옳은지는 결정하지 않았고, 이 수리는 "decision이 있으면 감사도 있다"만 집행합니다.
+
+### Fixed — 깨끗한 데이터셋의 드래프트가 **"허가되지 않은 테이블"로 거부**됐습니다. source_system 끝 segment가 숫자로 시작하면 (high, 구매자 체감)
+
+`source_system`의 마지막 path segment만 다른 두 데이터셋:
+
+```
+s3://analytics/events/2024    GET /validate -> is_valid=true missing=[]
+                              POST /policy/decision -> effect=allow
+                              POST /llm/draft-query -> 400 draft_rejected_by_validator
+                                "... SQL 안전성 게이트를 통과하지 못했습니다: unauthorized_table_reference"
+s3://analytics/events/orders  POST /llm/draft-query -> 200  SELECT count(*) ... FROM orders ...
+```
+
+허가되지 않은 것은 없습니다. 같은 tenant이고 published이며 `/validate`가 `is_valid: true`,
+`POST /policy/decision`이 같은 subject/resource/action에 `allow`를 답합니다. 질의가 지목하는
+유일한 테이블은 **제품이 그 데이터셋의 source_system에서 직접 파생한 이름**입니다. 기구는
+이렇습니다 — `_source_table_name('s3://analytics/events/2024')` → `'2024'`,
+`_reads_back_as_one_table('2024')` → `False`. 선행 숫자는 식별자가 아니므로 allow-list의
+파서가 테이블 참조를 **찾지 못하고**(`2024`) 또는 **다른 것을 찾고**(`2024_q1`은 `_q1`로
+읽힙니다), validator는 "허가된 테이블이 지목되지 않았다"에 해당하는 유일한 경고를 냅니다.
+그래서 이유는 거짓이고, 동시에 **실행 불가능**합니다: 메시지는 파생된 이름도, locator도,
+선행 숫자라는 원인도, 수리 방법도 말하지 않습니다. 날짜로 파티션된 레이크 prefix가 바로 이
+모양입니다.
+
+이 계열의 **두 번째 사례**입니다. 첫 번째(테이블 이름이 SQL 절 키워드와 충돌하는 `FROM
+order`)는 참된 이유 `unquotable_source_table`로 거부하도록 이미 고쳐져 있고 24개 키워드를
+열거해 고정돼 있습니다. `source_relation_name`의 docstring은 **선언된** 이름에 대해 이
+계열을 이미 알아보고 "security-shaped reason for a naming problem"이라고 적어 두었지만, 그
+`None` 반환은 **locator 파생 이름으로 되돌아가고** 그 이름이 바로 그 모양일 수 있습니다 —
+기록된 추론이 남은 구멍을 예고하고 있었습니다.
+
+수리는 열거가 아니라 **파서에게 묻는 것**입니다: `_reads_back_as_one_table(table_name)`이
+거짓이면 참된 이유로 거부하고, 파생된 이름·(자격증명을 지운) locator·`postgresql.table`
+distribution이라는 수리 방법을 **메시지에 담습니다**. 두 번째 의견을 새로 만들면 그것이
+바로 어긋난 것이기 때문입니다 — 드래프터는 테이블을 emit했다고 믿었고 게이트는 아니라고
+답했습니다.
+
+**변이 넷, 전부 red:** 식별자 검사 제거 / 수리 방법 문구 제거 / 코드를
+`unauthorized_table_reference`로 되돌림 / 메시지에 **원본 locator**를 넣음(DSN 자격증명 echo).
+
+**닫지 않은 것.** 컬럼 이름이 절 키워드인 경우는 열려 있습니다 — `select`라는 컬럼을
+`group_by`로 주면 `SELECT select, count(*) ... FROM orders`를 200으로 받습니다. 대상 엔진이
+거부할 SQL이고, 이 게이트의 키워드 목록에 `select`가 없어 자기 검사도 통과합니다. 테이블
+이름 쪽만 닫았습니다.
+
+### Security — `source_system`의 자격증명은 모든 경로에서 지워지는데, **배포(distribution) endpoint의 자격증명은 아무 데서도 지워지지 않았습니다**. 그리고 PATCH는 그 필드를 조용히 버렸습니다 (high + medium)
+
+위 거부가 가리키는 **수리 방법이 실제로 동작하는지** 확인하다 나왔습니다. 거부는
+"`postgresql.table` distribution을 선언하라"고 말하고, 그 선언을 PATCH로 보내 봤습니다.
+
+```
+POST  /catalog/datasets      distributions: [csv]      -> 200, 저장됨
+PATCH /catalog/datasets/{id} distributions: [pg.table] -> 200
+저장된 distributions                                   -> [csv]  (변화 없음)
+source_relation_name(dataset)                          -> None
+POST  /llm/draft-query                                 -> 400 (그대로)
+```
+
+`DatasetPatchRequest`에 `distributions`가 **없습니다**. 다른 모든 컬렉션 필드(`schema`,
+`mappings`, `terms`, `tags`, `lineage_*`, `profile`)는 있습니다. `license`가 **같은 결함의
+첫 사례**였고 `DatasetCreateRequest`의 주석이 그것을 기록합니다("a supplied value was
+silently dropped") — 한 필드 뒤의 같은 누락이고, 하필 거부가 추가하라고 말하는 그 필드입니다.
+
+같은 경로를 몰면서 더 무거운 것이 나왔습니다. `endpoint`에 자격증명을 담아 등록하면:
+
+```
+POST /catalog/datasets           -> 200, 응답에 secret: True
+GET  /catalog/datasets/{id}      -> 응답에 secret: True, query token: True
+redacted_source_system(endpoint) -> 'https://files.internal/x.csv'
+```
+
+`redacted_source_system`의 docstring이 이 제품의 규칙을 적고 있습니다 — 자격증명은
+"**on every path - including the authorized one, since no caller needs the credential**"
+지워집니다. `mutation_view`는 네 mutation 응답이 DSN을 되돌려 주던 것을 고치려고 존재합니다.
+`DatasetDistribution.endpoint`는 **같은 모양의 URL**이고 그 전부를 비켜 갔습니다. 리댁터는
+그 URL을 이미 올바르게 처리하므로, 이 필드에는 **라우팅이 없었을 뿐**입니다.
+
+수리 셋:
+
+* `catalog.published_distribution`/`published_distributions` 하나를 만들어 `discovery_view`,
+  `mutation_view`, `audited_patch_values`, JSON-LD 노드에 모두 적용. locator 자체는 계속
+  공표합니다 — 소비자가 데이터를 가져오는 경로입니다.
+* `DatasetPatchRequest`에 `distributions`를 더하고, create/patch 두 계약의 차집합이
+  **선언된 면제 셋**(`id`·`tenant_id`·`owner`, 각각 이유와 함께)과 정확히 같은지를 구조
+  가드로 단언합니다. `license`도 `distributions`도 이 가드가 있었으면 조용할 수 없었습니다.
+* patch 루프의 **죽은 분기** 제거. 컬렉션 일곱 개를 열거해 `None`을 skip하던 분기는 바로
+  다음 `if value is not None`과 **결과가 같아** 아무 일도 하지 않으면서, 그 일곱 필드에만
+  적용되는 규칙처럼 읽혔습니다.
+
+**변이 여섯, 전부 red** — 그리고 **둘은 처음에 green으로 돌아왔습니다.**
+(1) "`None`이 컬렉션을 지운다" 변이가 green이었던 것은 제가 죽은 분기를 측정하고 있었기
+때문입니다(그래서 분기를 지웠습니다). (2) 그 다음 판본에서 "`None`을 그대로 쓴다" 변이가
+green이었던 것은 제 가드가 `status_code in {200, 400}`을 받아들여 **"요청이 에러났으니 아무것도
+바뀌지 않았다"를 "필드를 건드리지 않았다"와 같은 것으로 취급**했기 때문입니다. 실제 변경
+하나를 null들과 같이 보내 200을 요구하도록 고쳤습니다. (3) "빈 컬렉션이 지우지 않는다" 변이가
+green이었던 것은 프로브 데이터셋이 **tags 없이** 등록돼 "지워졌다"와 "애초에 없었다"가 같은
+관측이었기 때문입니다.
+
+**닫지 않은 것.** `owner`는 여전히 패치할 수 없고, 이 수리는 그 결정을 **선언**했을 뿐
+바꾸지 않았습니다(소유권 이전에 검토된 경로가 없습니다). endpoint 자격증명이 **저장**되는
+것 자체도 그대로입니다 — 공표에서만 지웁니다. `source_system`도 같습니다.
+
+### Fixed — 공표된 `maxLength` 다섯 중 **하나를 아무도 밀어 보지 않았습니다** (medium)
+
+3라운드 감사의 guard-vacuity 렌즈가 올렸고, 재서 맞았습니다. 제품은 지금 정확하고 —
+**가드에 난 구멍**입니다.
+
+`tests/test_published_length_limits_are_enforced.py`는 전제를 문서에서 **파생**합니다:
+공표된 `maxLength` 속성이 **다섯 개**라고 단언합니다. 그런데 집행 쪽 parametrize는 호출자
+**넷**을 손으로 적어 두었습니다 — publish·deprecate·patch·review comment. 다섯 번째인
+`POST /catalog/datasets`의 `reason`에는 아무도 한계 초과 값을 보내지 않았습니다.
+
+직접 재현했습니다. create 라우트의 집행만 지웠습니다
+(`change_reason=_change_reason(payload)` → `change_reason=(payload.get("reason") or None)`):
+
+```
+pytest tests/test_published_length_limits_are_enforced.py   -> 10 passed
+POST /catalog/datasets {"reason": "x" * 513}                -> 200 (그대로 저장)
+```
+
+**파일 전체의 주장이 "공표된 maxLength는 규칙이다"인데, 그 다섯 중 하나는 규칙을 지워도
+suite가 green입니다.** 전제는 개수가 낡지 않도록 파생해 두고 집행은 손으로 열거한 것이고,
+이것은 같은 라운드에서 형제 파일(`test_refusal_evidence_is_not_an_existence_oracle.py`)이
+고친 **"큐레이션된 목록은 자기가 방문하지 않은 것에 green을 보고한다"** 와 같은 모양입니다.
+
+수리는 parametrize를 `published_limits()`에서 **파생**하는 것입니다. 본문 builder는
+여전히 표면당 하나씩 손으로 적지만, **파생이 무엇을 반드시 밀어야 하는지 결정하므로**
+그 표는 **시끄럽게만** 불완전할 수 있습니다 — builder 없는 공표 한계는 "이 한계를 미는
+것이 없다"는 메시지로 실패합니다. 그 전제도 별도 테스트로 단언합니다(parametrize 안에서
+실패하면 라우트가 깨진 것처럼 읽히므로, 어느 쪽인지 분명히 말하게 했습니다).
+
+**변이 둘:**
+
+| 변이 | red |
+|---|---|
+| create 라우트의 집행 제거 | `POST /catalog/datasets reason` 케이스 (수리 전에는 green) |
+| builder 표에서 create 제거 | 그 케이스 + 전제 테스트 |
+
+수치: 1791 → **1793 passed / 31 skipped**, 파일 순서 다섯 가지 전부 동일, `demo_smoke`
+exit 0.
+
+**이것으로 3라운드 감사의 확정 발견 8건이 전부 닫혔습니다.** 후보 15건 중 8건이 적대적
+검증을 통과했고, 나머지 7건의 반박 대부분은 "결함은 실재하지만 감사 범위 안의 커밋이
+이미 고쳤다"였습니다 — 검증 단계가 도는 동안 제가 고친 것들입니다.
+
+**닫지 않은 것.** builder 표는 여전히 손으로 씁니다. 파생이 그것을 시끄럽게 만들 뿐,
+**builder가 보내는 본문이 그 라우트의 최소 유효 본문인지**는 아무것도 검사하지 않습니다 —
+필요 이상을 담은 본문은 400의 이유가 길이가 아닐 수 있고, 그때 이 가드는 다른 이유로
+통과합니다. 각 케이스가 `fields`에서 **그 필드 이름**과 **그 한계 숫자**를 요구하는 것이
+현재의 방어선입니다.
+
+### Fixed — `actor` 설명이 **운영 설정에서 거짓**이었습니다. 제 정정이 덜 나쁜 거짓을 남겼습니다 (high)
+
+3라운드 감사의 claim-honesty 렌즈가 올렸고, **검증자 둘 다 재현했으며** 둘째가 한 칸 더
+좁혔습니다("설정에 따라 조건부로 거짓"). 제가 다시 재서 **한 칸 더** 좁혔습니다.
+
+`POST /enterprise/auth/oidc-preview`의 공표된 `actor` 설명은 "actor로 거부하지 않는다 —
+달라지는 것은 `audit_recorded`뿐"이라고 적었습니다. 앞부분은 참이고, 그 문장은 형제
+라우트 다섯에서 복사된 **더 나쁜** 문장("없으면 거부됩니다")을 제가 고친 것입니다. 뒷부분이
+**두 설정 모두에서 거짓**입니다. 같은 claim set으로 A/B:
+
+| 설정 | 달라지는 키 |
+|---|---|
+| `SDP_OIDC_GROUP_ROLE_MAP` 없음 (출하 기본) | **2개** — `audit_recorded`, `audit_event_id` |
+| `SDP_OIDC_GROUP_ROLE_MAP` 설정 (운영) | **5개** — `actor_context`, `audit_event_id`, `audit_recorded`, `group_role_bindings`, `role_map_source` |
+
+운영 설정에서 actor는 응답이 **배포의 실제 group→role 매핑을 담을지 빈 매핑을 담을지**를
+결정합니다(`role_map_source`가 `withheld_operator_configured_map_requires_an_actor` →
+`operator_configured`). 그 withholding이 이 라우트가 갖고 있는 **열거 오라클 통제**입니다.
+그것을 "`audit_recorded`뿐"이라고 적으면, "미리보기에 역할이 왜 안 보이지"를 디버깅하는
+운영자를 **원인인 그 입력에서 멀어지게** 보내고, 감사자에게는 그 통제가 관측 가능한 효과가
+없다고 말하게 됩니다.
+
+**제 정정이 더 나쁜 문장을 좁히는 데 그쳤다는 것이 이 항목의 요점입니다.** "없으면
+거부됩니다"는 분명한 거짓이었고 고쳤습니다. 그 자리에 들어간 문장은 **덜 분명한 거짓**
+이었고, 덜 분명하기 때문에 이 라운드에서 **두 곳에 더 복사됐습니다**(gap 문서와 CHANGELOG).
+거짓을 좁히는 것은 참으로 만드는 것이 아닙니다. 세 곳 모두 고쳤습니다.
+
+**가드는 산문을 동작에 묶습니다.** 공표된 설명에서 백틱 식별자를 긁어내고, 두 설정에서
+A/B로 측정한 "달라지는 키" 집합과 비교합니다 — 변하는 키를 **빠뜨리는 것**은 실패,
+더 언급하는 것은 허용입니다(산문은 더 말할 수 있습니다). 전제도 단언합니다: 기본 설정의
+집합이 정확히 둘인지, 그리고 운영 설정 테스트에서 **운영자 매핑이 실제로 효력을 갖는지**
+— 그러지 않으면 기본 설정을 두 번 재고 자기 자신과 동의합니다.
+
+**변이 둘이 설정별로 갈립니다:**
+
+| 변이 | red |
+|---|---|
+| 설명을 "`audit_recorded`뿐"으로 되돌림 | 기본 + 운영 가드 **둘 다** |
+| 운영 설정 키 셋만 지움 | 운영 가드만 |
+
+수치: 1788 → **1791 passed / 31 skipped**, 파일 순서 다섯 가지 전부 동일, `demo_smoke`
+exit 0.
+
+**닫지 않은 것.** 가드는 **빠뜨림**만 잡습니다 — 설명이 변하지 않는 키를 추가로 언급해도
+통과합니다. 산문이 더 말하는 것을 금지하면 맥락 설명이 불가능해지므로 의도한 비대칭이고,
+그래서 "언급된 키가 모두 실제로 변한다"는 반대 방향은 **검사되지 않습니다.** 그리고 두
+설정만 측정합니다 — `SDP_OIDC_*`의 다른 조합(JWKS, audience, issuer)이 또 다른 키를
+움직이는지 전수로 보지 않았습니다.
+
+### Fixed — 공표된 `action` enum을 **라우트에 대고 확인하는 것이 없었습니다** (medium)
+
+3라운드 감사가 "공표된 enum이 아무것에도 대조되지 않는다"로 올렸습니다. enum은
+`_policy.KNOWN_ACTIONS | CATALOG_ACTION_ALIASES`에서 **파생**되므로 엔진 어휘와 어긋날
+수는 없습니다. 하지만 "엔진의 집합에서 파생한다"가 답하는 것은 **그 집합이 라우트가
+받는 것과 같다면**이고, 그것은 가정입니다. 클라이언트가 묻는 질문 — *이 문서가 광고하는
+값을 실제로 POST하면 동작하는가* — 은 기존 가드 어느 것도 묻지 않았습니다(기존 가드는
+**matrix**를 엔진의 집합에 대조합니다).
+
+공표된 19개 값을 전부 `POST /policy/decision`에 던져 측정했습니다 — **19/19 평가되고,
+`평가할 수 없는 action입니다.`로 거부된 것은 없습니다.** 즉 현재 공표는 정확하고, 없던
+것은 **그것이 유지되는지 보는 눈**입니다.
+
+**이 가드는 파생이 유지되는 동안 실패할 수 없습니다.** 엔진에서 alias를 빼면 enum에서도
+빠지므로 문서와 라우트가 **함께** 좁아지고 잡을 것이 남지 않습니다(변이로 확인:
+alias 제거는 기존 matrix 가드 둘을 red로 만들고 이 가드는 건드리지 않습니다). 그래서
+파생 자체를 단언하는 가드를 **옆에 둡니다** — enum이 손으로 쓴 리터럴로 바뀌는 순간
+그 가드가 red가 되고, 그때부터 앞의 가드가 의미를 갖습니다. 변이로 확인: enum을
+리터럴 `["search", "read", "create", "publish"]`로 바꾸면 **둘 다** red입니다
+(`read`는 이 엔진이 평가하지 않는 값이고, 그것이 이 파생이 처음 도입된 이유입니다).
+
+**오늘 실패할 수 없는 가드라는 것을 docstring에 적었습니다.** 적지 않으면 "작동하는
+가드"처럼 읽히고, 그 오독이 이 라운드에서 고친 결함 여러 건의 원인입니다.
+
+수치: 1786 → **1788 passed / 31 skipped**, 파일 순서 다섯 가지 전부 동일.
+
+### Fixed — `path:line` 인용 셋이 엉뚱한 곳을 가리켰습니다. 그리고 **가드를 넣지 않기로** 했습니다 (medium + low)
+
+3라운드 감사가 둘로 올렸습니다 — 이번 라운드의 변경이 인용 둘을 무효화했다(medium),
+그리고 그 인용들을 **해소하는 것이 아무것도 없다**(low). 전수로 쟀습니다.
+
+`docs/`·`CHANGELOG.md`·`README.md`·`src/sdp_core/requirements.py`에 `path:line` 인용이
+**74건** 있고, 수리 전 **55건**만 비어 있지 않은 줄을 가리켰습니다. 셋을 고쳤습니다:
+
+| 인용 | 가리키던 것 | 실제 위치 |
+|---|---|---|
+| `catalog.py:468` ("5.10s 지연 측정") | 존재 비공개를 논하는 docstring의 닫는 `"""` | **560** (`1005 datasets ... 2000 tokens 5.10s`) — **92줄 빗나감** |
+| `catalog.py:49` (`discovery_view`가 `source_system`을 뺀다) | 빈 줄 | **50** (그 규칙을 적은 주석 블록) |
+| `test_orchestrator.py:386-387` ("catalog 검증된 컬럼만" 단언) | 빈 줄 + 다른 테스트의 decorator | **519-539** (그 단언의 docstring과 단언 자체) |
+
+첫 번째가 종류가 다릅니다 — off-by-one 표류가 아니라 **내용이 틀렸습니다**. 지연 측정이
+없는 곳을 "그 측정이 여기 있다"고 가리키고 있었습니다. 이제 **72/74**가 비어 있지 않은
+줄로 해소됩니다. `docs/requirements-coverage.md`는 생성 문서이므로
+`src/sdp_core/requirements.py`를 고치고 재생성했습니다.
+
+**남은 둘은 표류가 아니고, 그것이 가드를 넣지 않은 이유입니다.**
+
+* `src/sdp/api.py:427` — 지난 감사 라운드의 **이력 표**("1/3 refuted") 항목입니다. 그때
+  그 발견이 **어디에 보고되었는지**를 적은 기록이고, 번호를 지금 코드에 맞춰 고치면
+  **기록이 거짓이 됩니다.**
+* `scripts/ci/pr_review_merge_scheduler.py:2205` — `ContextualWisdomLab/.github`의 파일을
+  가리키는 **다른 저장소 인용**입니다. 이 저장소에 없는 것이 정상입니다.
+
+즉 이 저장소의 `path:line` 인용은 **살아 있는 포인터와 이력 기록과 교차 저장소 참조가
+섞인 집합**이고, 산문에 그 셋을 구별하는 표시가 없습니다. 모든 인용이 해소되기를 요구하는
+기계적 가드는 다음 사람에게 **이력 기록을 고쳐 green을 만들라고 압력을 넣습니다** — 문서를
+덜 참되게 만드는 방향입니다. 그래서 넣지 않았습니다.
+
+**가드가 가능해지는 조건을 적어 둡니다**: 인용이 살아 있는지 이력인지 표시되어야 합니다
+(예: 이력 표의 인용을 다른 표기로 쓰거나, 라운드 번호를 함께 적어 "그 시점의 줄"임을
+명시). 그 표기 변경은 74건에 걸친 산문 수정이고, 이번 라운드의 범위가 아닙니다. 그리고
+비어 있지 않은 줄을 가리킨다는 것이 **적절한 줄**을 가리킨다는 뜻은 아닙니다 — 13건은
+주석을 가리키는데, 그중 다수는 **측정을 적어 둔 주석을 인용하는 것이 의도**입니다
+(`evidence.py:37`의 `catalog._AUDIT_LOG = 2000 (capped)`처럼). 기계는 그 차이를 모릅니다.
+
+수치: 1786 passed / 31 skipped (문서와 생성 문서만 바뀌었습니다).
+
+### Fixed — ClusterFuzzLite sandbox가 **파일 집합만** 재현하고 설치 패키지는 재현하지 않았습니다 (medium)
+
+3라운드 감사의 guard-vacuity 렌즈가 올렸고, 제가 이 세션에서 만든 가드의 **전제** 쪽입니다.
+
+`tests/test_fuzz_harness_imports.py`는 이미지의 `COPY` 집합을 Dockerfile에서 **파생해**
+sandbox에 복제합니다. 그런데 probe를 **이 인터프리터**로 돌리고, 그 site-packages는 개발
+환경의 것입니다. 이미지가 설치하는 것은 `requirements.txt`와 `fuzz-requirements.txt`
+**정확히 둘**입니다. 그래서 하네스나 oracle에 새 third-party import가 들어오면 sandbox는
+통과하고 **이미지는 import에서 죽습니다** — 이 파일이 잡으려고 존재하는 바로 그 고장이,
+또 한 층 위에서.
+
+오늘의 답은 `atheris` 하나이고 그것은 pin돼 있습니다(oracle은 third-party를 전혀 쓰지
+않습니다). 요점은 **다음 import가 가정되지 않고 검사된다**는 것입니다. 범위는 하네스와
+oracle 둘로 한정했습니다 — `sdp`의 import는 `requirements.txt`가 애플리케이션 lock이라는
+사실이 덮습니다(거기에 선언 없는 import가 들어오면 앱 설치 자체가 깨집니다). 이 둘만
+이미지가 **추가로** 필요한 파일입니다.
+
+**이 가드의 첫 판본이 또 환경에 의존했습니다.** `packages_distributions()`를 먼저
+물었는데, 그것은 패키지가 **로컬에 설치돼 있어야** 답합니다. `atheris`는 이 저장소의
+3.11 venv에 wheel이 없으므로 매핑이 비어 돌아오고, 가드는 거기서 fail-closed 분기로
+실패하면서 3.12에서는 통과했습니다 — 파일 순서 게이트 다섯 개가 전부 1 failure로
+나온 것이 그 증거입니다. **인터프리터마다 다르게 답하는 가드는 이미지를 재고 있지
+않습니다.** 이제 pin된 배포 이름과의 **직접 일치를 먼저** 보므로 패키지가 설치돼 있지
+않아도 됩니다. 두 인터프리터에서 통과하고, 두 인터프리터에서 변이가 red입니다.
+
+**변이 셋, 전부 red (3.11·3.12 양쪽):**
+
+| 변이 | red |
+|---|---|
+| oracle에 선언 없는 import 추가 | 새 패키지 집합 가드 |
+| 하네스에 선언 없는 import 추가 | 같음 |
+| 이미지 requirements에서 `atheris` pin 제거 | 같음 |
+
+수치: 1785 → **1786 passed / 31 skipped**, 파일 순서 다섯 가지 전부 동일(수리 전에는
+다섯 개 전부 1 failure였습니다 — 그것이 환경 의존의 증거입니다).
+
+**닫지 않은 것.** 가드는 **정적**입니다 — 이미지를 빌드하지 않습니다. 그래서 pin이 존재
+한다는 것은 확인하지만 그 pin이 이미지의 인터프리터/플랫폼에서 **실제로 설치되는지**는
+확인하지 못합니다(`atheris`는 Linux x86_64 전용이고, 그 사실은 이 가드가 아니라
+`fuzz-requirements.txt`의 주석이 담고 있습니다). 모듈 이름과 배포 이름이 다른 경우는
+직접 일치가 실패하고 `packages_distributions()`로 넘어가므로 그때는 다시 로컬 설치에
+의존합니다 — 그 경로를 타는 import는 현재 없습니다.
+
+### Security — 콘솔 XSS 가드 둘이 **깨진 이스케이퍼에 green을 보고**했습니다 (high + medium)
+
+3라운드 감사의 guard-vacuity 렌즈가 올렸고, 둘 다 **실제로 뚫어서** 확인했습니다. 제품
+코드는 멀쩡하고, **가드가 비어 있었습니다** — 이 세션이 반복해서 찾던 바로 그 부류입니다.
+
+**(high) 이스케이퍼 가드가 결정하는 쪽을 보고 있지 않았습니다.** `esc`는 두 조각입니다 —
+어떤 문자를 바꿀지 **결정하는** 정규식 문자 클래스 `/[&<>"']/g`, 그리고 무엇으로 바꿀지
+담은 **lookup 객체**. 가드는 다섯 entity 문자열이 소스에 있는지만 봤습니다. 그래서:
+
+```
+/[&<>"']/g  ->  /[&]/g      (entity 표는 손대지 않음)
+   결과: <, >, ", ' 가 더는 escape되지 않음.  가드: green.
+```
+
+표를 읽는 가드는 **정규식이 내리는 결정**을 지키지 않습니다. 이제 양쪽을 읽습니다 —
+문자가 클래스에 있어야 하고, 표가 그것을 entity로 매핑해야 합니다. 그리고 이스케이퍼가
+문자 클래스를 **아예 쓰지 않게** 되면 가드가 조용히 통과하는 대신 "이 가드를 같이
+갱신하라"며 실패합니다.
+
+**(medium) interpolation 감사가 `esc(`로 시작하기만 하면 통과시켰습니다.** 그래서:
+
+```
+`<b>${esc(row.a) + row.raw_value}</b>`      가드: green
+```
+
+`innerHTML` 템플릿 리터럴에 **원시 데이터**가 그대로 들어갑니다 — 그 가드가 막으려고
+존재하는 바로 그것입니다. 이제 **닫는 괄호가 마지막 문자**여야 합니다. 중첩 호출
+(`esc(fmt(x))`)은 여전히 통과하므로 문자열이 `)`로 끝나는지가 아니라 **깊이를 셉니다.**
+
+**변이 넷, 각각 맞는 가드:**
+
+| 변이 | 수리 전 | 수리 후 |
+|---|---|---|
+| 정규식을 `/[&]/g`로 좁힘 | **green** | 이스케이퍼 가드 red |
+| `esc()` 뒤에 원시 연결 주입 | **green** | interpolation 가드 red |
+| 표에서 `&lt;` 제거 | red (이미 잡았음) | red |
+| 문자 클래스를 쓰지 않게 바꿈 | green | 이스케이퍼 가드 red (명시적 메시지) |
+
+세 번째가 수리 전에도 red였다는 것이 요점입니다 — 가드는 **절반만** 지키고 있었고,
+그 절반이 있다는 사실이 나머지 절반의 부재를 가렸습니다.
+
+수치: 1785 passed / 31 skipped (가드만 바뀌었으므로 제품 동작은 그대로), 파일 순서
+다섯 가지 전부 동일.
+
+**닫지 않은 것.** 두 가드는 **소스를 읽습니다** — JS를 실행하지 않습니다(이 저장소에 JS
+런타임이 없습니다). 그래서 "정규식 클래스에 문자가 있고 표가 매핑한다"는 것은 확인하지만
+`esc`가 실제로 그 둘을 **연결해 쓴다**는 것은 확인하지 못합니다. 예컨대 `replace`의 두
+번째 인자를 표가 아닌 다른 함수로 바꾸면 두 조각이 다 제자리에 있어도 escape되지
+않습니다. 그 경계를 닫으려면 JS 런타임이 필요하고, 별건입니다.
+
+### Security — 거부된 mutation 시도가 **소유 tenant의 감사자에게 보이지 않았습니다** (high, 제가 만든 회귀)
+
+3라운드 감사의 governance-invariant 렌즈가 올렸고, A/B로 base와 대조해 재서 맞았습니다.
+
+`_refuse_mutation_on_unreachable_dataset`은 404 분기만 감사했습니다. 403 분기(접근 가능한
+tenant 범위가 없는 호출자)는 `catalog` 리소스에 decision 행만 남기고 audit 이벤트를 남기지
+않았습니다. 그것은 세 verb가 평가 **뒤에** 감사하던 동안에는 무해했는데, **제가 그 순서를
+바꿨습니다** — 이제 이 helper를 먼저 부르므로 평가 후 감사는 아예 돌지 않습니다.
+
+`anonymous`로 실제 데이터셋을 상대로 측정:
+
+```
+publish / patch / deprecate  -> 403   total audit +0   decision +2
+GET /catalog/datasets/{id}/audit (admin), actor='anonymous' 행:  0 -> 0
+```
+
+**소유 tenant의 감사자가 자기 데이터셋에 대한 mutation 시도를 볼 수 없습니다.** 증빙
+추적이 제품의 주장인 곳에서, 인증되지 않은 호출자의 쓰기 시도가 흔적 없이 지나갑니다.
+`POST /catalog/datasets`(순서를 바꾸지 않은 유일한 mutation verb)는 같은 호출자에 대해
+두 반쪽을 그대로 기록합니다 — 그래서 이것은 **순서 변경이 만든 비대칭**이고 원래 설계가
+아닙니다.
+
+**helper의 docstring에 그 결정이 근거와 함께 적혀 있었고, 근거가 한쪽만 봤습니다**:
+"403 분기는 이미 `catalog` 리소스에 행을 남겼고 그것은 id에 대한 정보를 담지 않는다".
+그 문장은 **호출자 쪽**에 대해 참이고 **소유자 쪽**에 대해 아무 말도 하지 않습니다.
+`catalog` 리소스의 decision 행은 소유 tenant의 감사자에게 *자기* 데이터셋에 대한 시도를
+알려 주지 않습니다.
+
+수리는 두 분기 모두 같은 쌍을 `evaluate_dataset_scope_refusal`로 기록하는 것입니다 —
+그것이 기록을 누출로 만들지 않는 장치입니다(소유 tenant 범위 또는 예약된 `unresolved`
+범위로 들어갑니다). 403은 존재를 알기 **전에** 발사되고 어느 쪽이든 한 행을 남기므로,
+**행 수가 status code가 거부하는 것을 답하지 않습니다.** 그 성질도 가드로 고정했습니다.
+
+**변이 둘이 서로 다른 가드를 red로 만들고, 둘 다 기존/신규가 갈립니다:**
+
+| 변이 | red가 된 가드 |
+|---|---|
+| 404만 감사 (원래 결함) | **새** 가드 6건 (직접 계수 + 소유자 가시성 × 3 verb) |
+| 403만 감사 | **기존** 가드 3건 (`test_the_refusal_is_still_recorded_where_the_owner_can_read_it`) |
+
+즉 404 분기는 이미 기존 가드가 지키고 있었고, 403 분기만 비어 있었습니다. 이제 두 반쪽이
+각각 독립적으로 고정됩니다.
+
+수치: 1776 → **1785 passed / 31 skipped**.
+
+**닫지 않은 것.** 403 분기는 존재를 알기 전에 발사되므로 **없는 데이터셋에 대한 시도도**
+`unresolved` 범위에 한 행을 남깁니다. 그 범위를 누가 읽는지는 이 커밋이 바꾸지 않았고,
+`unresolved` 행이 쌓이는 보존/정리 정책도 없습니다 — `SDP_EVIDENCE_RETENTION_DAYS`가
+선언만 되고 구현되지 않은 상태와 같은 경계입니다.
+
+### Fixed — 알 수 없는 용어를 가리키는 **유일한 필드**가 공표되지 않았습니다 (high)
+
+3라운드 감사의 contract-derivation 렌즈가 올렸고, 재서 맞았습니다.
+
+`GET /ontology/term/{term}/graph`는 어느 쪽이든 200을 돌려주고 **모양이 다릅니다**:
+
+```
+GET /ontology/term/고객/graph        -> 200, 10개 키
+GET /ontology/term/<알 수 없는>/graph -> 200, ['aliases', 'canonical', 'not_found']
+공표된 properties                     -> 'not_found' 없음
+```
+
+`not_found`가 둘을 가르는 **유일한 필드**이고, 공표에 **아예 없었습니다.** 문서에서 생성한
+클라이언트는 "알 수 없는 용어" 응답을 감지할 방법이 없습니다.
+
+원인은 `path_values()`가 `{concept}`와 `{term}`만 **하드코딩된 한 값**으로 두었다는 것입니다.
+그 함수는 나머지 placeholder를 전부 제품에서 파생하고, **자기 docstring에 이유를 이미 적어
+두고 있습니다** — "One value per placeholder is how the probe route came to publish one of
+five shapes." 그 규칙이 적용되지 않은 둘이 바로 이 둘이었습니다.
+
+알려진 값과 **알 수 없는 값**을 함께 probe합니다. 재생성 결과 `not_found: boolean`이 term
+라우트와 **concept 라우트의 중첩 `graph`** 양쪽에 들어갑니다 — 즉 "concept 라우트는
+대칭이다"는 제 측정은 **최상위 키에 대해서만** 참이었고, 중첩 객체는 달랐습니다. 두 분기를
+모두 probe한 덕에 드러났습니다.
+
+probe 값이 어휘에 **없어야** 의미가 있으므로 그 전제를 가드로 단언합니다. 전제를 가정으로
+두면, 어휘가 그 이름의 개념을 갖게 되는 날 unknown 분기가 조용히 probe되지 않고
+discriminator가 처음과 똑같이 공표에서 빠집니다.
+
+**변이 셋, 각각 맞는 가드:**
+
+| 변이 | red |
+|---|---|
+| term을 알려진 값만으로 probe (원래 결함) | 재생성 재현 테스트 |
+| probe 값을 알려진 용어로 바꿈 | **전제 가드** + 재현 테스트 |
+| 공표에서 `not_found` 제거 | discriminator 가드 + 재현 테스트 |
+
+수치: 1774 → **1776 passed / 31 skipped**.
+
+**닫지 않은 것.** unknown 분기가 공표하는 키는 세 개인데 contract는 **아무것도 required로
+표시하지 않습니다**(`test_no_published_schema_marks_anything_required`). 그래서 알려진
+분기의 키 일곱 개가 unknown 응답에 없는 것은 위반이 아니고, 클라이언트는 `not_found`를
+보고 분기해야 한다는 것을 **문서만으로는** 알 수 없습니다 — 공표된 것은 그 필드의 존재와
+타입뿐이고, 두 분기의 **배타성**은 공표되지 않습니다. 그것은 이 생성기가 표현할 수 있는
+것의 경계이고, 별건입니다.
+
+### Fixed — profile 라우트가 **실제로 돌려주는 null**을 non-nullable `string`으로 공표했습니다 (high)
+
+3라운드 감사의 contract-derivation 렌즈가 올렸고, 재서 맞았습니다.
+
+`GET /catalog/datasets/{id}/profile`의 `profile_updated_at`과
+`metric_provenance.metric_timestamp`이 둘 다 `{'type': 'string'}`으로 공표돼 있었습니다.
+**코드 자신이 두 곳에서 그것이 틀렸다고 말하고 있었습니다:**
+
+* `catalog.py`가 `dataset.profile.get("updated_at")`로 읽습니다 — profile에 timestamp가
+  없으면 `None`입니다.
+* `profile_provenance.py`가 `metric_timestamp_available`을 **함께** 공표합니다. 동반
+  플래그는 그 필드가 선택적이라는 **자기 증거**입니다 — 반드시 있는 값에 "있는지" 플래그를
+  달지 않습니다.
+
+도달 상태는 특별하지 않습니다. 공개 API로 profile 없이 온보딩한 데이터셋입니다(profile은
+나중의 프로파일링 실행이 채우는 것):
+
+```
+POST /catalog/datasets   (profile 없음)
+GET  /catalog/datasets/{id}/profile
+  -> profile_updated_at                 = None
+     metric_provenance.metric_timestamp = None
+     metric_timestamp_available         = False
+```
+
+공표된 스키마와 대조하면 위반 두 건입니다:
+`$.profile_updated_at: published string, got None`,
+`$.metric_provenance.metric_timestamp: published string, got None`. 즉 **문서에서 생성한
+클라이언트는 profile 없이 온보딩된 첫 데이터셋에서 깨집니다.**
+
+**원인은 생성기의 세 번째 probe 상태가 seed에서 만들어졌다는 것입니다.** 그 상태는 바로 이
+부류를 위해 — `demo_context`의 nullability를 관찰하려고 — 추가된 것인데, seed를 복사하므로
+**seed의 profile을 같이 가져왔습니다.** 드러나게 하는 상태가 이미 존재하는 probe에서
+**한 필드 거리**에 있었습니다. 수리는 그 한 줄입니다(`body.pop("profile", None)`).
+
+재생성 결과 두 필드가 `{}`로 바뀝니다. 이 생성기에서 null 관찰은 타입을 "any"로 collapse
+시키는 것이 **설계된 의미**이고(`test_a_field_observed_as_null_still_collapses_to_any`가
+고정하고 있습니다), 같은 문서의 `row_count`도 이미 `{}`입니다. 정직하지만 덜 구체적인
+쪽이 **정확하지만 거짓인** 쪽보다 낫습니다 — `{}`로 생성한 클라이언트는 null을 처리하고,
+`string`으로 생성한 클라이언트는 깨집니다.
+
+**변이 둘, 서로 다른 가드:**
+
+| 변이 | red |
+|---|---|
+| probe가 seed profile을 다시 가져감 (원래 결함) | 재생성 재현 테스트 |
+| 공표 타입을 `string`으로 되돌림 | 새 nullability 가드 + 재생성 재현 테스트 |
+
+첫 변이가 새 가드를 red로 만들지 **않는** 것이 맞습니다 — 그 가드는 **커밋된**
+`RESPONSE_SCHEMAS`를 읽고, 생성기만 바꾸면 커밋된 파일은 그대로이기 때문입니다. 생성기와
+파일을 묶는 것은 재현 테스트의 일입니다. 두 가드가 다른 축을 잡습니다.
+
+수치: 1773 → **1774 passed / 31 skipped**.
+
+**닫지 않은 것.** (1) `{}`는 타입 정보를 잃습니다. `["string", "null"]`이 더 구체적이지만
+그것은 이 생성기의 union 의미 자체를 바꾸는 일이고(그리고 `null` 조합을 금지하는 기존
+테스트와 충돌합니다) 문서 전체를 churn시킵니다 — 별건입니다. (2) 같은 부류를 전수로 쓸지
+않았습니다. profile 없는 상태가 **다른** 라우트의 필드도 null로 만들 수 있고, 이번
+재생성에서 바뀐 것은 두 필드뿐이지만 그것은 "다른 라우트에 없다"가 아니라 "세 번째 상태가
+닿는 범위에 없었다"는 뜻입니다.
+
+### Security — **자격증명 없이** 읽히는 전역 카운터가 dataset id의 존재를 답하고 있었습니다 (high)
+
+3라운드 감사의 security-oracle 렌즈가 올렸고, 재서 맞았습니다. **제 앞선 가드가 다른
+채널을 재고 있었습니다.**
+
+`test_refusal_evidence_is_not_an_existence_oracle.py`는 prober **자신의** decision
+ledger가 404가 거부하는 것을 답하지 않는지 봅니다. 그 가드의 전제는 tenant 범위
+ledger이고, 그것은 자격증명을 요구합니다 — `GET /policy/decisions`는 anonymous에게
+**403**입니다. 그래서 그 가드는 통과했고, 통과한 것이 맞습니다.
+
+자격증명이 **아예 필요 없는** 두 번째 채널이 있었습니다. `GET /metrics`는 인증이 없고
+전역 게이지 둘을 공표합니다 — `sdp_audit_events_observed_total`,
+`sdp_policy_decisions_observed_total`(`/enterprise/observability`와
+`/enterprise/evidence-pack`도 같은 총계를 싣습니다). 읽고, 후보 id로 라우트를 부르고,
+다시 읽으면 증분이 답입니다. 둘 다 404를 돌려주는 상태에서 측정:
+
+| 라우트 | foreign(존재, 권한 없음) | absent(없는 id) | |
+|---|---|---|---|
+| `GET /browse/{id}/schema` | **+1/+1** | **+0/+0** | **비대칭** |
+| `POST /browse/{id}/preview` | +1/+1 | +1/+1 | 대칭 |
+
+즉 **자격증명 없는 호출자가 어느 tenant의 dataset id든 존재 여부를 결정할 수
+있었습니다.** `app.routes`에서 파생한 19개 dataset/node 범위 표면 중 비대칭인 것은
+`schema` **하나**였습니다. 원인은 그 라우트가 없는 id에 아무것도 기록하지 않고 바로
+`KeyError`를 던진 것이고, 형제 라우트들은 전부
+`policy.evaluate_dataset_scope_refusal`로 기록합니다 — **소유 tenant 또는 예약된
+`unresolved` 범위로** 들어가므로 prober의 ledger는 아무것도 배우지 않습니다.
+
+**변이 둘이 서로 다른 가드를 red로 만듭니다. 그 분리가 이 항목의 요점입니다:**
+
+| 변이 | red가 된 가드 | 무엇을 뜻하는지 |
+|---|---|---|
+| 아무것도 기록하지 않음 (원래 결함) | 새 counter sweep **1건** | 기록은 **필수**다 |
+| 일반 `evaluate`로 기록(prober 자기 범위) | 기존 ledger 가드 **2건** | **어디에** 기록하는지가 필수다 |
+
+한 채널을 닫으면서 다른 채널을 여는 수리는 **두 가드 중 하나만으로는 통과합니다.**
+둘 다 필요하고, 둘 중 어느 것도 다른 쪽을 대신하지 않습니다.
+
+**기존 가드의 산문 한 줄이 과했던 것도 같이 고칩니다.** 그 파일은 `browse`의 세 줄이
+`0/0`인 것을 "작동하는 순서" 덕이라고 적었습니다. `schema`는 다른 이유로 깨끗했습니다 —
+**아무것도 기록하지 않아서** 그 ledger가 조용했고, 더 큰 채널이 열려 있었습니다. 이제는
+형제들과 같은 경로로 기록하므로 그 주장이 **우연이 아니라 실제로** 성립합니다.
+
+새 가드는 표면 목록을 `app.routes`에서 **파생**합니다. 큐레이션된 표는 자기가 담지 않은
+라우트를 보고할 수 없고, 이 저장소에서 그 방식으로 열한 개를 빠뜨린 채 green을 보고한
+일이 이미 있습니다. 그리고 "아무것도 훑지 않은 sweep은 green을 보고한다"는 전제도
+단언합니다(표면 15개 이상 + 두 라우트의 실재).
+
+수치: 1754 → **1773 passed / 31 skipped**, 파일 순서 다섯 가지 전부 동일, `demo_smoke`
+exit 0.
+
+**닫지 않은 것.** (1) 게이지 자체는 그대로 **인증 없이** 공표됩니다. 이 커밋은 비대칭을
+없앴을 뿐 전역 총계를 자격증명 뒤로 옮기지 않았습니다 — 그 결정은 운영 가시성과
+맞바꾸는 것이라 제 판단 범위 밖입니다. 새 가드가 미래의 비대칭을 잡습니다. (2) HTTP 상태가
+서로 다른 표면(예: `schema-diff`는 422/422)은 sweep이 **skip**합니다. 상태 자체로 이미
+구분되는 경우는 다른 질문이고, 이 가드가 답하지 않습니다. (3) 측정한 게이지는 둘입니다.
+`/metrics`의 다른 계열이 같은 종류의 증분을 싣는지 전수로 보지 않았습니다.
+
+### Security — preview의 pagination 거부가 **정책 평가와 증빙을 건너뛰고** 있었습니다 (high, 제가 만든 회귀)
+
+3라운드 적대적 감사의 governance-invariant 렌즈가 올린 것이고, 재서 **보고된 것보다
+나빴습니다.** 제 커밋 `4d9e3d3`이 `POST /browse/{id}/preview`의 clamp를 없앴습니다 —
+`min(limit, 100)`이 caller의 요청을 조용히 고쳐 쓰고 있었으므로 그 판단은 지금도
+맞습니다. 측정하지 않은 것은 **결과**입니다: clamp가 `browse.preview` 자신의 bound
+검사를 HTTP에서 도달 불가능하게 만들고 있었고, 그 검사들은 dataset 조회와 policy 호출
+**위에** 있었습니다. 값을 통과시키자 **정책 평가 전에 돌아가고 증빙을 하나도 남기지 않는
+거부 경로**가 생겼습니다.
+
+| caller | limit | status | audit | decisions |
+|---|---|---|---|---|
+| `admin` (인가됨) | 9999 | 400 | **+0** | **+0** |
+| `anonymous` (거부됨) | 9999 | 400 | **+0** | **+0** |
+| `anonymous`, 없는 dataset | 9999 | 400 | **+0** | **+0** |
+
+**인증되지 않은 호출자가 포털을 답하게 만들고 아무 흔적도 남기지 않았습니다.** 정책으로
+게이트된 데이터 접근 표면에서, 증빙 추적을 제품 주장으로 내세우는 제품에서, CLAUDE.md가
+직접 명시한 불변식("browse/query 경로에 정책 평가와 evidence 기록을 생략하는 변경은
+회귀다")을 거슬러서입니다.
+
+**수리는 clamp 복원이 아닙니다 — 순서입니다.** dataset을 찾고, 정책을 평가하고, 그 다음에
+bound를 검사합니다. 거부는 다른 모든 거부처럼 기록됩니다. 읽을 수 없는 dataset의 호출자는
+**인가 답변**을 받고, 이 라우트가 자기 pagination을 어떻게 보는지는 끝까지 알지 못합니다 —
+유효한 pagination으로는 404를 받는 호출자에게 무효한 pagination으로 400을 주면, 404
+collapse가 거부하려는 구분자를 손에 쥐여 주는 셈입니다.
+
+**변이 둘이 각각 다른 범위로 red이고, 그 분리가 요점입니다:**
+
+| 변이 | red | 무엇을 지탱하는지 |
+|---|---|---|
+| bound를 policy 호출 위로 되돌림 | **9건** | 순서가 deny-first를 산다 |
+| 순서는 두고 거부 기록만 제거 | **3건** | 기록이 증빙 완전성을 산다 |
+
+두 번째가 3건뿐인 이유가 중요합니다 — 인가되지 않은 호출자와 없는 dataset은 순서만으로
+이미 기록됩니다. 각 조각이 **독립적으로** 하중을 받습니다.
+
+**이 파일의 가드 자신이 두 번 틀렸고, 두 번 다 "통과했지만 측정하지 않은" 쪽입니다.**
+(1) 첫 판본은 row 개수 증분으로 단언했고, 모듈의 **첫 요청**이 startup hook을 돌려
+그 활동이 증분을 채웠습니다 — 인가된 `limit: 101` 케이스가 형제 둘이 실패하는 동안
+**혼자 통과**한 이유가 그것뿐이었습니다. (2) 그걸 module-scope warm-up fixture로
+막았더니 더 나쁜 것이 생겼습니다: 그 fixture는 conftest의 테스트별
+`restore_in_memory_app_state` **창 밖에서** 돌아 다음 테스트로 row를 흘렸고,
+`tests/test_state_isolation.py`가 잡았습니다. 결론은 개수를 세지 않는 것입니다 —
+**이 요청이 만든 row를 찾으면** warm-up도 개수도 필요하지 않습니다. 그리고 그 row 조회
+헬퍼의 첫 판본은 `AuditEvent.dataset_id`를 읽어 `AttributeError`로 전부 죽었습니다
+(필드 이름은 `resource`입니다). **에러를 내는 가드는 측정하는 가드가 아닙니다.**
+
+수치: 1744 → **1754 passed / 31 skipped**, 파일 순서 다섯 가지 전부 동일, `demo_smoke`
+exit 0.
+
+**닫지 않은 것.** (1) `_pagination_int`의 비정수 거부(400 `limit must be an integer`)는
+여전히 `api.py`에서 policy 전에 일어납니다 — JSON 타입 오류는 dataset을 특정하기 전의
+요청 파싱 문제이고 라우트 밖에서 답해야 하지만, **그 경로도 흔적을 남기지 않습니다.**
+같은 부류의 남은 절반이고, 이 커밋에서 다루지 않았습니다. (2) 다른 라우트에 같은 모양이
+있는지 전수로 재지 않았습니다 — 3라운드 감사의 다른 high 발견 중
+`GET /browse/{id}/schema`가 없는 id에 거부 row를 남기지 않는다는 것이 있고, 아직
+수리하지 않았습니다. (3) 새 거부 이유(`invalid_pagination_limit`/`_offset`)는 공표된
+응답 계약의 enum이 아니라 audit `reason`의 자유 문자열입니다 — 계약 테스트는 통과하지만
+그 값 집합을 고정해 두지는 않았습니다.
+
+### Measured — `#80`·`#51`은 **구멍이 아니었습니다.** 음성 결과를 기록합니다
+
+두 커밋 전에 "`#35`·`#51`·`#80`은 아직 자기 코드를 겨누는 방향으로 재지 않았습니다"라고
+적었습니다. 셋 다 쟀고, `#35`에서는 갭이 나왔습니다(앞 항목). 나머지 둘은 **나오지
+않았습니다.** 미측정으로 남겨 두지 않기 위해 음성 결과도 같이 적습니다 — 재지 않은 것과
+재서 아무것도 안 나온 것은 다릅니다.
+
+**`#80`은 결함 수리가 아니라 정책 변경입니다.** PII redaction을 카탈로그 plane(browse
+preview)에서 GRC evidence export로 옮기고, CLAUDE.md의 governance invariant 문단까지
+"카탈로그 plane은 마스킹하지 않는다"로 고쳐 씁니다. 즉 인가된 steward는 원문 PII를 보고,
+redaction은 export 직전에 일어납니다. 이것은 **소유자의 제품 결정**이고, 이 브랜치는 더
+엄격한 쪽입니다. 채택하지 않았습니다 — 개인정보 취급 태세를 제 판단으로 완화할 일이
+아닙니다.
+
+다만 `#80`이 던지는 질문 하나는 이 브랜치를 겨눕니다: `#80`은 export에 redaction 게이트를
+새로 넣는데, **이 브랜치의 export는 PII를 내보내고 있는가?** 측정했습니다.
+
+| 측정 | 결과 |
+|---|---|
+| `POST /browse/crm-customer-master/preview` (customer_email을 PII로 표시) | `['***', '***']` — 마스킹됨 |
+| `GET /enterprise/evidence-pack` 직렬화 본문에서 seed PII 검색 | 없음 (2,973바이트, 카운터만 실음) |
+| `GET /audit/events`, `GET /catalog/datasets/{id}/audit` | **403** — 인가 없이 못 읽음 |
+
+이 브랜치의 export는 이벤트 payload가 아니라 집계만 싣습니다. `#80`의 redaction 게이트가
+필요한 이유는 `#80`이 preview에서 마스킹을 멈추기 때문이고, 그 전제가 여기에는 없습니다.
+태세가 자기 자신과 일관됩니다.
+
+**`#51`에서 제가 쓴 초안은 이 저장소의 주석이 반박했습니다.** `#51`은
+`validate_outbound_https_url`와 redirect 거부를 더합니다. 이 브랜치의 JWKS fetch
+(`authz._load_jwks_from_url`)는 scheme을 http(s)로 allow-list하지만 **맨 `urlopen`**을
+씁니다. 반면 같은 브랜치의 log sink는 `_NO_REDIRECT_OPENER`를 씁니다. 재현했습니다 —
+loopback 서버 둘, 첫 번째가 302로 두 번째를 가리키게 하고:
+
+```
+configured (operator-authorised) : http://127.0.0.1:34249/jwks.json
+redirect target (NOT config)     : http://127.0.0.1:43407/jwks.json
+_load_jwks_from_url -> keys ['attacker-key']   ** FOLLOWED THE REDIRECT **
+log-sink opener, same URL        -> SinkRedirectRefused
+```
+
+"키를 가져오는 쪽은 안 막고 로그 싱크는 막는다"는 불일치로 적을 뻔했는데,
+`observability.py`에 **그 결정이 이미 네 줄짜리 근거와 함께 적혀 있습니다**: JWKS 요청은
+자격증명을 지지 않고, 탈출할 host allow-list가 애초에 없고, urllib가 non-http(s) scheme
+redirect를 거부하며, redirect로 서비스되는 JWKS 엔드포인트는 평범한 배포라는 것. 그리고
+**그 근거가 대체로 맞습니다** — redirect를 일으킬 수 있는 자는 이미 그 URL에서 본문을
+직접 줄 수 있으므로, redirect 거부가 막는 공격자는 본문 교체로도 같은 일을 합니다.
+평문 `http` 허용 쪽도 이미 기록돼 있습니다(`NFR-SEC-004`를 `partial`로 내린 항목이
+"JWKS fetch가 http 허용"을 세 평문 링크 중 하나로 호명합니다).
+
+**그 결정이 호명하지 않은 경계 하나만 더해 둡니다.** 네 근거 중 두 번째("탈출할 host
+allow-list가 없다")는 공격자가 **설정된 host에서 본문을 줄 수 있다**는 전제에 서 있습니다.
+설정된 host가 정상 IdP이고 그 **경로에 open redirect만** 있는 경우는 그 전제를 벗어납니다 —
+JWKS 본문을 바꿀 수 없는 공격자가 redirect만으로 자기 키를 공급할 수 있습니다. 평범한
+IdP의 `/.well-known/jwks.json`에 open redirect가 있는 것은 흔하지 않지만, 잘못 구성된
+reverse proxy는 만들 수 있습니다. 결정을 **뒤집지 않았습니다**: 거부의 가용성 비용
+(redirect로 서비스되는 JWKS)은 실재하고, 저울의 양쪽을 바꾸는 것은 제 판단 범위가
+아닙니다. 다음 사람이 완전한 정보로 재도록 경계만 적어 둡니다.
+
+이번 세션에서 저장소 자신의 기록이 제 초안을 반박한 것은 **두 번째**입니다(앞서 "최초
+실행" 주장). 두 번 다 반박한 쪽이 옳았습니다.
+
+### Fixed — 파생 테이블(derived table)을 쓰면 **"허가되지 않은 테이블"이라는 거짓 이유로** 거부됐습니다 (high, 구매자 체감)
+
+같은 방법을 `#35`(관계 allow-list의 콤마 조인 우회 수리)에 적용했습니다. 결과가 앞의 둘과
+**다릅니다**: 보안 쪽은 0건 누락, 가용성 쪽에서 6건이 나왔습니다.
+
+| 방향 | `#35`의 corpus | 이 브랜치 (수리 전) |
+|---|---|---|
+| 적대적 관계 밀반입 19건 | 거부 | **19/19 거부** — allow-list는 건전합니다 |
+| 정상 단일 소스 8건 | 경고 0건 | **6/8 거부** |
+
+거부되던 여섯 모양은 평범한 SQL입니다:
+
+```
+SELECT count(*) AS c FROM (SELECT customer_id, signup_at FROM customer) t
+SELECT * FROM (SELECT customer_id FROM customer WHERE customer_id > 0) t
+SELECT * FROM customer, (SELECT customer_id FROM customer WHERE customer_id > 0) t
+SELECT * FROM customer LEFT JOIN (SELECT customer_id FROM customer) t ON customer.id = t.customer_id
+SELECT * FROM customer, LATERAL (SELECT customer_id FROM customer) s
+SELECT * FROM ONLY customer
+```
+
+**그리고 거부 이유가 거짓이었습니다.** 이 문장들이 지목하는 테이블은 `customer` 하나이고
+그것이 **인가된 relation**인데, 분석가가 받는 답은 `unauthorized_table_reference` —
+"허가되지 않은 테이블을 건드린다"입니다. 같은 질문을 통과시키는 다른 철자도 없습니다.
+이 저장소는 이미 "네이밍 문제에 보안 모양의 거부를 돌려준다"는 같은 부류를 한 번
+기록했고, 이것은 그 부류의 두 번째 사례입니다.
+
+원인은 `_TABLE_LIST_TOKEN`이 괄호를 **토큰으로 보지 않았다**는 것입니다. 그래서 파생
+테이블의 내부 `SELECT`가 테이블 이름이 와야 할 자리에 도착하고, 그것이 스캐너의 "목록을
+읽을 수 없다" 분기입니다 — 기본값으로서는 옳지만, 그 **결과를 아무도 측정하지
+않았습니다.** 이 수리를 검증했다고 기록된 대조군 5건(`FROM customer`, `AS` alias, alias
+생략, 수식된 이름, self-join)에 파생 테이블이 하나도 없습니다.
+
+**덤으로 지금 열려 있던 구멍 하나도 닫힙니다.** `SELECT * FROM crm)` — 닫는 괄호 하나가
+남는 문장 — 은 `['crm']`으로 읽혀 **통과**했습니다. 읽을 수 없는 모양에 인가 판정을 내리고
+있었던 것입니다. 괄호 균형 검사를 넣습니다. 열린 괄호가 안 닫히는 쪽은 "괄호가 안 보여서"
+우연히 거부되고 있었으므로, 괄호를 보게 만드는 변경은 **그 사고를 없애면서** 균형 검사를
+같은 커밋에 넣어야 합니다 — 넣지 않으면 갭을 닫으면서 구멍을 엽니다.
+
+수리는 재귀적인 영역 인식 스캔입니다. 괄호로 싸인 table item은 파생 테이블
+`(SELECT ...) t`이거나 괄호 조인 `(a JOIN b ON ...) j`이고, 전자는 자기 FROM/JOIN에서,
+후자는 괄호 **안에서** relation을 지목합니다. 영역을 건너뛰면 그 relation이 allow-list에
+보이지 않습니다 — **스캐너가 기록하지 않는 relation은 allow-list가 검사하지 않는
+relation입니다.** 읽기는 닫는 괄호 **다음에서** 재개하므로 뒤따르는 `, customer`도 보입니다.
+
+**변이 여섯, 전부 red:**
+
+| 변이 | red가 된 가드 |
+|---|---|
+| 괄호 균형 검사 제거 | `SELECT * FROM crm)` |
+| 영역으로 재귀하지 않음 | 정상 파생 테이블 3건 |
+| 영역을 항상 clause로만 스캔(선행 item 상실) | 괄호 조인의 relation 목록 |
+| item 접두 키워드(`ONLY`·`LATERAL`) 제거 | 정상 2건 + 파생 relation 목록 |
+| 괄호 깊이를 세지 않고 **첫** `)`에 일치 | 적대적 `(SELECT count(*) FROM crm) t, customer` |
+| 영역 다음이 아니라 여는 괄호에서 재개 | 적대적 1건 + relation 목록 2건 |
+
+**다섯 번째 변이는 처음에 아무 가드도 red로 만들지 못했습니다.** corpus에 영역 **안쪽**
+괄호가 있는 모양이 없었기 때문입니다. 코드를 지우는 대신 corpus를 넓혔습니다
+(`(SELECT count(*) AS c FROM customer) t` 류 3건 + 적대적 2건) — 그러자 깊이 계산이
+**가용성이 아니라 보안** 성질임이 드러났습니다: 영역을 첫 `)`에서 끊으면 그 뒤의
+`, customer`가 사라져 우회가 열립니다. 변이가 green으로 돌아올 때 의심할 것은 변이가
+적용됐는지와 **가드가 얇은지**이고, 이번에는 가드가 얇았습니다.
+
+수치: 1707 → **1744 passed / 31 skipped**, 파일 순서 다섯 가지 전부 동일, `demo_smoke`
+exit 0. Atheris 세 하네스 866,711건 crash 0 — ClusterFuzzLite 엔트리포인트의 feature가
+91 → 101로 올라, 새 코드에 **실제로 도달**했습니다.
+
+**닫지 않은 것.** (1) FROM item을 수식하는 키워드 중 아는 것은 `ONLY`·`LATERAL`
+둘뿐입니다. `TABLESAMPLE`·`ROWS FROM (...)` 같은 것은 여전히 테이블 이름으로 읽혀
+거부됩니다 — fail-closed 방향이고, 실제 웨어하우스를 상대로 재지 않았습니다.
+(2) 괄호 균형 검사는 단순 개수 비교입니다. 문자열 리터럴 안의 괄호는 오산하지만,
+리터럴 자체가 `literal_values_not_allowed`로 따로 거부되므로 통과 경로가 되지 않습니다 —
+그 두 검사의 **결합**을 성질로 고정해 두지는 않았습니다. (3) CTE(`WITH ...`)는 여전히
+`only_select_allowed`로 거부됩니다. `#35`도 같은 선택입니다. (4) 실행은 여전히 mock이므로
+(`mock_execution_no_real_data`) 이 변경은 게이트의 판정만 바꿉니다. (5) `orchestrator.py`의
+기존 함수 **여덟 개**(`validate_sql_query`·`draft_sql`·`execute_query` 포함)에 docstring이
+없습니다 — 이 커밋에서 건드리지 않았고, 이 저장소에 docstring 게이트가 없어 측정되지도
+않습니다. 제품의 가장 중요한 게이트 함수가 그중 하나입니다.
+
+### Security — 함수 allow-list를 **꼬리만 읽어** 한정(qualified) 호출을 통과시켰습니다 (high)
+
+앞 항목의 교훈("남의 PR을 자기 코드를 겨누지 않는 방향으로만 검증하면 통과는 아무것도
+뜻하지 않는다")을 `#32`에 그대로 적용한 결과입니다. `#32`는 `validate_sql_query`의 함수
+호출을 **양성 allow-list**(`avg`·`count`·`max`·`min`·`sum`)로 바꾸는 PR이고, 저는 앞서
+이것을 "동작으로 덮여 있다"고 적었습니다. 그 PR의 적대적 corpus 27건을 이 브랜치에
+그대로 돌려 보면 **27건 전부 거부**됩니다. 그런데 `#32`의 doctoring 문서가 명시한 규칙
+하나는 지키지 않고 있었습니다:
+
+> Schema-qualified function calls are rejected even when their final identifier
+> resembles an allowlisted function, because qualification can select a different
+> implementation.
+
+측정:
+
+| SQL | 수리 전 | 수리 후 |
+|---|---|---|
+| `SELECT pg_catalog.count(*) FROM crm` | **`[]`** (경고 0건) | `unauthorized_function_call` |
+| `SELECT evil.count(*) FROM crm` | **`[]`** | `unauthorized_function_call` |
+| `SELECT public.sum(amount) FROM crm` | **`[]`** | `unauthorized_function_call` |
+| `SELECT attacker_schema.max(amount) FROM crm` | **`[]`** | `unauthorized_function_call` |
+
+원인은 `_FUNCTION_CALL`이 `([A-Za-z_][A-Za-z_0-9]*)\s*\(` 였다는 것입니다 — `(` 바로 앞의
+식별자 **하나만** 집습니다. 그래서 `evil.count(*)`가 `count`로 제시되고, `count`는
+allow-list 멤버이므로 통과합니다. **꼬리만 읽는 allow-list는 어떤 접두사로도 우회됩니다** —
+공격자가 스키마를 하나 만들 수 있으면 충분합니다. 이름은 함수가 아닙니다: PostgreSQL에서
+한정자는 **어느 구현이 실행되는지**를 고릅니다.
+
+수리는 이름을 **한정자까지 통째로** 집는 것입니다. `_ALLOWED_FUNCTIONS`에는 점이 들어간
+이름이 없으므로, 한정된 호출은 두 번째 규칙 없이 **구성상** 거부됩니다 — 규칙이 둘이면
+서로 어긋날 수 있습니다.
+
+**`#32`보다 한 칸 더 갑니다.** PostgreSQL은 한정자 점 주위의 공백을 허용하므로
+`pg_catalog . count(*)`는 같은 호출입니다. 점을 바짝 묶으면(`\.`) 스캔이 그 앞을 포기하고
+맨 `count(` 꼬리에 일치해 **다시 통과시킵니다**. `#32`의 패턴이 점을 바짝 묶고 있어서 그
+철자는 `#32`에서도 통과합니다. 여기서는 `\s*\.\s*`로 둡니다.
+
+**변이 셋, 각각 다른 이유로 red:**
+
+| 변이 | red가 된 가드 | 이유 |
+|---|---|---|
+| 꼬리만 집도록 되돌림 | 한정 호출 6건 중 4건 | `evil.count` → `count`로 읽혀 통과 |
+| 점을 바짝 묶음 | `pg_catalog . count(*)` | 꼬리 `count(`에 일치해 통과 |
+| allow-list에 `evil.count` 추가 | 한정 호출 + allow-list 형태 가드 | allow-list가 점 있는 이름을 담는 순간 red |
+
+**첫 판본의 두 조각은 하중을 받지 않아 지웠습니다.** 꼬리 단독 일치를 막는 lookbehind
+`(?<![\w.])`와, 한정 이름 안의 공백을 지우는 정규화 `re.sub(r"\s+", "", name)` — 둘 다
+제거해도 **어떤 가드도 red가 되지 않았습니다.** 파이썬 스캔이 leftmost이므로 `evil.count(`는
+`evil`에서 일치해 꼬리에 도달하지 않고, 공백이 남은 멤버도 allow-list에 없으므로 판정이
+같습니다. 보험으로 남기지 않았습니다 — 판정을 바꾸지 않는 줄이 "이것이 막는다"는 주석을
+달고 출하되면, 그 주석이 다음 사람을 속입니다. 이 결정도 코드 옆에 적어 두었습니다.
+
+수치: 1701 → **1707 passed / 31 skipped**, 파일 순서 다섯 가지 전부 동일, `demo_smoke`
+exit 0, ClusterFuzzLite 엔트리포인트 88,059건 crash 0.
+
+**닫지 않은 것.** (1) 이것은 **어휘(lexical) 게이트**입니다. 실행은 여전히 mock이므로
+(`mock_execution_no_real_data`) 실제 DB 권한 격리를 증명한 것이 아닙니다 — `#32`의 문서도
+같은 경계를 적어 두었고, 실제 엔진을 붙일 때 최소 권한 롤·read-only 트랜잭션·statement
+timeout이 따로 필요합니다. (2) `search_path`·오버로드 해석·확장 설치 상태를 모델링하지
+않습니다. 사용자 텍스트에서 PostgreSQL 카탈로그를 재구성하지 않는다는 것이 `#32`가 고른
+설계이고 여기서도 같습니다. (3) allow-list는 **한정되지 않은** 다섯 이름만 받습니다.
+제품이 앞으로 한정된 집계 호출을 내보내게 되면 그것도 거부됩니다 — 실제 웨어하우스를
+상대로 재지 않았습니다. 거부는 fail-closed 방향입니다. (4) `#32`의 corpus 27건은 모두
+거부되지만 `SELECT * INTO exfil` 의 **경고 코드가 다릅니다**(`forbidden_keyword_detected`
+대 `#32`의 `write_operation_not_allowed`). 거부 여부는 같고 코드만 다릅니다.
+
+**방법에 대한 기록.** 소유자의 보안 PR 둘을 "자기 코드를 겨누는 방향"으로 다시 재서
+둘 다 구멍이 나왔습니다(`#107` → `1union`, `#32` → 한정 호출). `#35`·`#51`·`#80`도 같은
+방식으로 다시 재야 합니다. "동작으로 덮여 있다"고 적어 둔 앞선 판정들은 그 방향으로
+측정된 것이 아니므로, 판정이 아니라 **미측정**으로 읽어야 합니다.
+
+### Fixed — 게이트 셋을 하나로 합칠 때 **살아남은 술어가 더 약했습니다**: `1union`을 놓칩니다 (high)
+
+제 커밋 `314df19`이 금지 키워드를 읽는 세 게이트를 하나로 합쳤습니다. 합치기 전
+`validate_sql_query`는 `\b...\b`로, `draft_sql`과 `audit`는 **맨 substring**으로
+일치시키고 있었습니다. 합친 뒤의 술어는 `\b...\b`였습니다 — 그래서 `updated_at`을
+거부하던 거짓 양성은 사라졌지만, substring이 잡던 한 부류가 **같은 동작에서 사라졌습니다.**
+술어 셋을 하나로 줄이는 것은 살아남는 쪽이 각각보다 **같거나 더 엄격할 때만** 안전하고,
+이 경우는 아니었습니다.
+
+`\b`는 단어 문자와 비단어 문자 사이에 섭니다. 그리고 파이썬의 `\w`는 Unicode를 압니다.
+그래서 키워드 **앞**의 숫자나 non-ASCII 글자는 `\b`에게 경계가 아닙니다. 실제 엔진은
+그 자리를 쪼갭니다 — MySQL은 `SELECT 1union`을 `1 union`으로 읽습니다. 측정:
+
+    PYTHONPATH=src python -c "from sdp.orchestrator import _matched_forbidden_keyword as m; \
+      print([(p, m(p)) for p in ('1union','9union','한union','éunion','²union','0x1delete')])"
+    # 수리 전: 전부 None.    수리 후: 전부 해당 키워드.
+
+게이트가 아니라 **응답**으로 재면 이렇습니다. 두 호출의 차이는 공백 한 칸입니다:
+
+| `/browse/query`의 SQL | 수리 전 | 수리 후 |
+|---|---|---|
+| `... limit 1 union all` | 400 `forbidden_keyword_detected` | 400 (같음) |
+| `... limit 1union all` | **200 `SUCCEEDED`**, 경고는 `mock_execution_no_real_data` 하나 | 400 `forbidden_keyword_detected` |
+
+**다른 거부로 바뀐 것이 아니라 거부가 없었습니다** — `validate_sql_query`가 그 문장에
+돌려준 경고 목록은 비어 있었습니다.
+
+**출처를 분명히 적어 둡니다. 이 경계를 찾은 것은 제가 아닙니다.** 소유자의 열린 PR
+[`#107`](https://github.com/ContextualWisdomLab/semantic-data-portal/pull/107)이 같은 경계를
+독립적으로 찾아 비대칭 술어 `(?<![a-z_])kw(?![a-z0-9_])`를 골랐고, 이 커밋은 그 술어를
+그대로 채택합니다. 더 적어 둘 것이 있습니다 — **저는 이미 `#107`을 검토했고 통과시켰습니다**
+(gap 문서 "#107 자체는 검토했고 문제를 찾지 못했습니다"). 그때 제가 20만 건으로 측정한 것은
+한 방향뿐이었습니다: *새* 술어가 *옛* 술어가 잡던 것을 놓치는가(0건). 반대 방향 — *옛*
+술어가 *새* 술어가 잡는 것을 놓치는가 — 는 재지 않았습니다. 그 방향이 바로 **제 브랜치가
+출하하고 있던 술어**를 가리키는 방향입니다. 남의 변경을 자기 코드를 겨누지 않는 방향으로만
+검증하면 통과는 아무것도 뜻하지 않습니다.
+
+**property lane도 같이 눈을 감고 있었습니다.** `tests/fuzz/invariants.py`의 crash oracle도
+`\b`였습니다. production과 일치했으므로 거짓 실패는 없었고, production이 떨어뜨린 부류를
+**누르지도 않았습니다.** oracle을 독립적으로 다시 유도하고(`forbidden_keyword_present`,
+production 함수를 호출하지 않습니다 — 정규식을 자기 자신과 비교하는 oracle은 실패할 수
+없습니다), 둘이 경계 corpus에서 일치하는지 보는 가드를 더했습니다.
+
+**변이 셋, 각각 다른 이유로 red:**
+
+| 변이 | red가 된 가드 | 이유 |
+|---|---|---|
+| production을 `\b`로 되돌림 | 단위 + end-to-end | `1union` → `None` |
+| oracle만 `\b`로 되돌림 | 일치 가드 | `production=True oracle=False` |
+| 접미 가드 제거(대칭으로) | 식별자 단언 | `created_at` → `'create'` |
+
+세 번째가 비대칭이 양방향으로 하중을 받는다는 증거입니다. 접미 쪽은 ASCII 식별자 문자를
+**받아들여야** 합니다 — 그것이 쪼개진 토큰(`1union`)과 보통 컬럼(`updated_at`)을 가르는
+유일한 차이입니다.
+
+수치: 1698 → **1701 passed / 31 skipped**, 파일 순서 다섯 가지(forward·reverse·shuffled
+11/707/31337) 전부 동일, 3.11과 3.12(CI 핀) 양쪽. Atheris는 `execute_query` 175,902건,
+ClusterFuzzLite 엔트리포인트 `fuzz_query_safety` 122,754건, crash 0. `demo_smoke` exit 0.
+
+**닫지 않은 것.** (1) 비대칭 술어는 식별자 **안의** `숫자+키워드`도 거부합니다 —
+`v1update`는 거부됩니다. 이 저장소의 두 단어 이상 snake_case 규약이면 실제 이름은
+`v1_update`(앞이 `_`이므로 통과)이지만, 그렇게 쓰지 않는 **고객 카탈로그의 컬럼**은
+거부됩니다. 실제 카탈로그를 상대로 재지 않았습니다. 거부는 fail-closed 방향입니다.
+(2) 접미 문자 집합이 ASCII이므로 `union한`도 거부됩니다 — 같은 종류의 미측정 거짓 양성입니다.
+(3) **이것은 데이터 유출을 증명한 것이 아닙니다.** 이 게이트는 드래프트된 SQL에 대한
+**텍스트** 게이트이고 실행은 mock입니다(`mock_execution_no_real_data`). 결함은 게이트가
+자기가 공표한 계약을 지키지 못한 것이고, 유출 경로가 열려 있었다는 뜻이 아닙니다.
+(4) `tests/fuzz/invariants.py`의 그 줄은 `#107`도 건드립니다. 둘을 병합하면 **의미가 같은**
+충돌 한 건이 나고, 해소는 어느 쪽 술어를 두어도 동일합니다.
+
+### Measured — 중앙 **Security Scan** 게이트가 체크 목록에 **아예 없습니다.** 실패가 아니라 미생성입니다
+
+`coderabbitai[bot]`가 지적하고(comment 6434387988) 제가 1차 출처로 확인했습니다. `AGENTS.md`
+13–14행은 모든 PR에 중앙 Security Scan(`osv-scan` + diff-scoped `dependency-review` +
+repo-wide `trivy-fs`)을 **필수**로 요구합니다. 현재 head `06b26be`의 체크는 **4건**입니다 —
+`API integration suite`·`Hypothesis`·`Atheris`(셋 다 과금 거절)와 `CodeRabbit`(skipped).
+Security Scan 세 체크는 **실패한 것이 아니라 생성되지 않았습니다.**
+
+**원인은 stacked base가 아닙니다.** 다른 열린 PR의 체크 목록을 재서 분리했습니다:
+
+| PR | base | Security Scan | 시점 |
+|---|---|---|---|
+| `#107` | main | `osv-scan`·`trivy-fs`·`dependency-review` **success** | 2026-10-02 05:48Z |
+| `#104` | main | 세 건 모두 **skipped** | 2026-09-19 19:48Z |
+| `#111` | main | **없음** | updated 2026-10-08 |
+| `#112` | main | **없음** | updated 2026-10-14 |
+| `#102` | `docs/product-technical-gap-baseline` | **없음** | — |
+
+즉 `main`을 target하는 PR에서도 **2026-10-02 이후로는 생성되지 않습니다.** 이 문서가 기록한
+마지막 저장소 워크플로 성공(2026-10-02T09:03:05Z)과 하드 잠금(2026-10-02 18:44Z)과 같은
+경계입니다. 그러므로 이것은 `88c39a3`이 고친 `tests.yml` base 필터와 **다른** 결함이고 —
+그건 stacked PR 한정이었습니다. 이것은 **다른 결함**입니다: 로컬 워크플로는 `failure`
+행을 남기고, 조직 중앙 워크플로는 **행을 남기지 않습니다.**
+
+**정정 — "같은 과금 잠금의 다른 증상"이라고 적었고 그 인과는 측정하지 않았습니다.**
+`coderabbitai[bot]`이 지적했고 맞습니다(comment `6434535662`·`6434551848`). 측정한 것은
+(1) 미생성 경계가 하드 잠금 시점과 겹친다와 (2) `main` 대상 PR에서도 사라져 stacked base
+한정이라는 설명이 배제된다, 둘입니다. 그 둘로 인과는 서지 않습니다 — 중앙 워크플로의
+적용·트리거·실행 기록이 필요하고 그것은 `ContextualWisdomLab/.github`에 있어 이 세션이
+읽을 수 없습니다. **원인 미확인**이며, "잠금 해제가 유일한 복구 경로"도 확정된 주장이
+아닙니다. 미생성이 통과가 아니라는 결론은 그대로입니다.
+
+**읽는 규칙 하나를 더합니다: 실패한 Security Scan이 없다는 것을 통과로 읽지 마십시오.**
+이 head에서 그 게이트는 판정이 없습니다. 이 저장소에서 고칠 수 있는 것이 아닙니다(중앙
+워크플로는 `ContextualWisdomLab/.github`의 ruleset이 주입합니다).
+
+### 정정 — `mergeable_state: unstable`을 제가 과하게 읽었습니다
+
+앞 라운드에서 "세 체크는 필수가 아니고 과금 잠금은 병합 블로커가 아니다"로 적었습니다.
+`coderabbitai[bot]`의 반론이 맞습니다: **`mergeable: true`는 "충돌 없이 병합 가능"이라는
+판단이며 "병합 허가"와 같지 않습니다.** 그리고 `unstable` 하나로 세 체크가 모두 비필수라고,
+또는 조직의 병합 요건이 충족됐다고 **확정할 수 없습니다** — 특히 이 세션은 base의 branch
+protection을 읽을 수 없습니다(`/branches/*/protection` → 403).
+
+측정으로 말할 수 있는 것은 거기까지입니다: GitHub이 이 PR을 `blocked`이 아니라 `unstable`로
+보고하고 충돌은 없다. 그것이 병합해도 된다는 뜻은 아니며, 위의 Security Scan 미생성은 오히려
+**판정이 없는 필수 게이트가 하나 더 있다**는 사실을 더합니다.
+
+### Verified — ClusterFuzzLite 엔트리포인트가 **처음으로 실제 퍼징**됐습니다. 그리고 현재 head가 CI의 인터프리터에서 돌았습니다
+
+`5607d8c`가 고친 하네스(`fuzz/fuzz_query_safety.py`)는 그때까지 import에서 죽어 **한 입력도
+퍼징하지 못했고**, 그 수리를 import 통과까지만 확인해 뒀습니다(gap 문서에 "coverage-guided
+실행은 로컬 증거가 아니다"로 기록). 이제 실행으로 확인됐습니다:
+
+    PYTHONPATH=src python fuzz/fuzz_query_safety.py -max_total_time=30 -close_fd_mask=3
+      ->  79,381 inputs / 31s, cov: 91 ft: 229 corp: 54, crash 0, reproducer 0건
+
+`declared_relation` near-miss 모드까지 그 안에서 돌았습니다. 이 하네스는
+`tests/fuzz/run_atheris.sh`의 목록에 **없으므로**(이 라운드에서 기록한 사실) 그 스크립트를
+돌려 온 과거 실행에는 포함된 적이 없습니다.
+
+**이것이 "저장소 최초의 Atheris 실행"은 아닙니다.** 아래 2026-10-03 절이 이미 head `2bdd3c6`
+에서 CI와 같은 방식(Python 3.12, `requirements-test.txt` + `fuzz-requirements.txt`,
+`FUZZ_SECONDS=60`)으로 `run_atheris.sh`의 **네 하네스**를 돌려 두었고, 실행량은 이번보다
+훨씬 큽니다(`fuzz_draft_sql` 2,276,110회 대 이번 306,785회). 처음인 것은 **다섯 번째
+하네스**뿐입니다. 이번에 네 하네스도 같이 돌렸고(합계 537,562 inputs, 각 21초, exit 0,
+reproducer 0건) 그것은 재확인입니다.
+
+### 현재 head의 3.12 실행 — 최초가 아니라 **갱신**입니다
+
+2026-10-03 절의 3.12 재현은 head `2bdd3c6`, 스위트 **258 passed, 8 skipped** 시점입니다.
+스위트는 그 뒤 **1698**로 자랐으므로 그 측정은 현재 head에 대해 아무것도 말하지 않습니다.
+지금 head에서 CI의 인터프리터와 핀으로 다시 돌렸습니다:
+
+    python3.12 -m venv …; pip install --require-hashes -r requirements-test.txt
+    PYTHONPATH=src python -m pytest   ->  1698 passed, 31 skipped   (3.11과 동일)
+
+`requirements-dev.txt`가 아니라 `requirements-test.txt`입니다 — `tests.yml`이 읽는 파일이고,
+두 lock이 다른 버전을 핀할 수 있습니다(README가 `constraints-dev.txt`로 그 함정을 적어 둠).
+
+**제 쪽 오류 하나를 적습니다.** 이 세션은 "로컬에 Atheris wheel이 없다"를 여러 번 적었고 그
+근거는 3.11 venv 하나였습니다. 저장소 문서에는 **3.12에서 설치해 돌린 기록이 이미 있었고**,
+읽기 전에 그 가정을 반복했습니다. 환경 가정은 문서를 먼저 확인하는 것보다 오래 살아남습니다.
+
+여전히 닫히지 않은 것: **CI 자체는 돌지 않았습니다.** 같은 인터프리터·같은 핀이지만 같은
+러너가 아니며, 러너 이미지·네트워크·동시성에서 오는 실패는 보이지 않습니다. 그리고 이번
+퍼징 예산은 20~31초로 CI의 PR 예산(60초)보다 짧고 nightly(300초)보다 훨씬 짧습니다 —
+crash 0은 그 예산 안에서의 결과입니다.
+
+### Fixed — 계약 테스트가 **어떻게 호출됐는지**에 의존해 수집됐습니다 (low)
+
+`tests/test_api_response_contract.py`가 `from scripts.generate_response_contract import ...`
+하면서, 저장소 루트가 **작업 디렉터리라는 이유로** 경로에 있는 것에 의존했습니다. 루트에서
+`python -m pytest`로 돌리면 그렇고, 그때만 그렇습니다. 다른 곳에서 수집하면
+`ModuleNotFoundError: No module named 'scripts'`로 **수집 자체가 error**입니다 — 측정했습니다.
+같은 파일이 `src`에는 이미 명시 경로를 넣고 있었으므로 루트도 같은 방식으로 넣었습니다.
+
+가드는 두지 않았습니다. 다른 cwd에서 수집해 보는 테스트는 이 모듈이 앱 전체를 import하므로
+매 실행 6초 가까이 들고, 한 줄 수리가 막는 것보다 비쌉니다 — 대신 그 줄 위에 실패 양상을
+적어 두어, 지우려는 사람이 이유를 보게 했습니다. **가드를 두지 않은 선택도 기록합니다.**
+
+### Fixed — 같은 sentinel 혼동이 `union`에 **세 군데** 있었고, `demo_context`는 non-nullable로 공표됐습니다 (high)
+
+`union`의 docstring이 세우는 구분 — `None`은 "아직 관찰 없음", `{}`는 "관찰했고 아무 타입이나
+맞음" — 을 기본값 **셋**이 전부 틀리게 적고 있었습니다:
+
+    properties[key] = union(properties.get(key, {}), item)          <- 앞 커밋에서 고침
+    merged["items"] = union(left.get("items") or {}, ...)           <- 이번
+    union(left.get("additionalProperties") or {}, ...)              <- 이번
+
+각각 **아무것도 보지 못한 관찰이 다른 관찰이 측정한 타입을 지우게** 합니다.
+
+* `derive([])`가 `{"type": "array", "items": {}}`였습니다 — 빈 배열은 원소에 대해
+  **아무것도** 관찰하지 않는데 "아무 타입이나 맞음"이라고 적습니다. 그래서 probe 페이로드
+  하나에 `lineage_inputs: []`가 있으면 다른 페이로드가 보여 준 `string`이 지워집니다. 이제
+  `items` 키 자체가 없고, 노드 여덟 개가 원소 타입을 되찾았습니다(`masked_columns`가
+  `array of any` → `array of string`).
+* map과 struct를 union할 때 struct 쪽을 "any"로 읽었습니다. **struct 관찰은 map의 값에
+  대해 말합니다** — 값들의 union이 map의 값 타입입니다. "any"로 읽은 탓에 struct 관찰 하나가
+  `counts`와 `dataset_status_counts`의 `number`를 지웠습니다.
+
+### `demo_context`가 **null인 적이 관찰되지 않았습니다**
+
+`buyer_demo_context_for_dataset`는 buyer-demo 도메인에 없는 데이터셋에 `None`을 돌려주고,
+**모든 시드 데이터셋은 그 도메인에 있습니다.** 그래서 connector probe의 `demo_context`는
+객체로만 관찰돼 non-nullable 객체로 공표됐고, 문서로 만든 클라이언트는 그 도메인 밖의 첫
+데이터셋에서 깨집니다.
+
+세 번째 probe 상태를 더했습니다 — buyer-demo 도메인에 없는 데이터셋 하나. **map 규칙이
+발화한 뒤에** 타입만 union합니다.
+
+**앞선 시도 둘을 적어 둡니다. 둘 다 틀렸습니다.** (a) 두 번째(새 도메인) 상태를 공표
+타입에 union하기, (b) 그 데이터셋을 첫 관찰 **앞에서** 온보딩하기. 둘 다 **map 규칙을
+파괴합니다** — `as_map_where_keys_are_data`는 스키마의 키 집합을 두 번째 상태와 비교하고,
+그 키들이 이미 스키마에 있으면 다를 것이 남지 않습니다. 측정했습니다: `details`가 map에서
+닫힌 struct로 되돌아갔고, probe 페이로드의 빈 배열이 `lineage_*`의 원소 타입을
+삼켰습니다. 순서가 성질이므로 가드가 생성기 소스에서 **map 규칙이 세 번째 상태보다 먼저
+오는지**를 단언하고, map 규칙의 결과가 여전히 거기 있는지도 같이 봅니다.
+
+변이 4건: 빈 배열이 "any"를 주장 → 3건 red, map-value 기본값을 `{}`로 → 2건 red, 세 번째
+상태 제거 → 2건 red, 세 번째 상태를 map 규칙 **앞으로** 이동 → **5건** red.
+
+### Fixed — 산문 넷이 자기 코드와 어긋났고, 가드 하나는 네 철자 중 하나만 보고 있었습니다 (medium, obligations는 high)
+
+**1. `/policy/decisions[].obligations`가 아홉 키 중 넷만 공표했습니다.** 제품이 결정
+분기별로 `refusal_cause`·`known_actions`·`unmapped_published_action`·`actor_tenant_id`·
+`redact`를 더 설정하는데, 공표된 것은 닫힌 4키 struct였습니다
+(`masking`·`masking_rules`·`required_role`·`tenant_id`). `required`를 공표하지 않으므로
+*틀린* 것은 아니고, **절반 넘게 침묵**한 것입니다 — 문서로 클라이언트를 만들면 그 다섯 키에
+타입이 없습니다.
+
+원인은 **ledger 페이지 크기**였습니다. ledger는 newest-first이고 기본 100행인데, probe
+순서가 이 라우트를 읽기 전에 결정을 100건 넘게 기록합니다. 그래서 거부 분기의 행들이
+**페이지 끝 밖**에 있었습니다. 생성기 probe의 `limit`을 라우트 상한인 500으로 올리니
+그 노드가 map(`additionalProperties`)으로 분류됩니다 — 키가 결정 분기마다 달라지므로
+그게 맞는 모양입니다.
+
+**그 분기들을 일부러 구동하는 헬퍼를 먼저 썼고, 지웠습니다.** 헬퍼를 넣고/빼고 재생성한
+출력이 **byte 단위로 동일**합니다 — 평범한 probe가 이미 그 분기를 전부 건드리고 있었고,
+단지 1페이지에 없었던 것입니다. 그걸 알려 준 것은 **헬퍼를 지우는 변이가 green으로
+돌아온 것**입니다. 효과를 보일 수 없는 기계장치를 "이게 성질을 지탱한다"는 docstring과 함께
+남기는 것은 이 세션이 계속 고치고 있는 바로 그 결함이므로, 헬퍼를 지우고 실제로 일한 한 줄
+쪽에 측정을 적었습니다.
+
+**2. data-keyed 노드 목록이 양방향으로 틀렸습니다.** 모듈 docstring이 "four nodes"라 적고
+`/catalog/datasets/{dataset_id}/audit[].details`를 **빠뜨렸고**,
+`/policy/decisions[].obligations`를 **넣었는데** 그 노드는 당시 4키 struct로 공표돼
+있었습니다. 지금은 다섯이고, 다섯 모두 스키마가 주소 지정하는 방식 그대로 적고, 가드가
+스키마에서 집합을 **파생**해 그 열거와 양방향으로 비교합니다.
+
+**3. `detail` 가드가 네 철자 중 하나만 봤습니다.** `str(exc)`만 매칭하고 `f"{exc}"`·
+`"{}".format(exc)`·`"%s" % exc`는 보지 못했습니다 — 넷 다 같은 `__str__`을 부릅니다. 오늘
+다른 셋을 쓰는 핸들러는 없으므로(측정) 제품 결함이 아니라 **가드의 구멍**입니다. 검출기를
+한 함수로 빼서 가드와 "가드가 자기가 찾는다고 적은 패턴을 찾는지" 테스트가 **같은 코드**를
+쓰게 했습니다(사본 둘은 이 파일이 잡으려는 바로 그 drift입니다).
+
+**4. 산문 셋이 자기 코드와 어긋났습니다.**
+`orchestrator.py`의 "Relational SQL is drafted only for a relational source"는 바로 아래
+코드에 대해 거짓입니다 — 다섯 시드 전부에 PostgreSQL을 emit하고 셋은 `file_lake`·`rdf`·
+`api`입니다. 바뀐 것은 `source_kind`와 `executable_against_source: false`를 공표하는
+것이고, 수리는 **거절이 아니라 공개**였습니다.
+`/enterprise/auth/oidc-preview`의 `actor` 설명 "없으면 anonymous로 취급되어 거부됩니다"는
+형제 라우트 다섯에서 복사된 문장이고 여기서는 거짓입니다 — 완전한 claim set이면 actor가
+없어도, `anonymous`여도 **200**입니다. (**2026-10-27 정정**: 이 자리에 이어 적었던
+"달라지는 것은 `audit_recorded`뿐입니다"도 거짓이었습니다. 측정하면 기본 설정에서 2개,
+운영자 매핑을 설정한 경우 5개가 달라집니다 — 아래 "`actor` 설명이 운영 설정에서 거짓"
+항목에 전수가 있습니다.)
+`test_mutation_refusal_names_its_cause.py`의 docstring은 "scope 없는 주체는 dataset을
+보지 않는 role 체크에서 거부된다"고 적었는데 이 파일을 쓰는 동안 **거짓으로 측정된**
+전제입니다(그래서 구현이 `resource="catalog"`를 씁니다). 엔진에 없는 성질을 엔진에 돌리면
+다음 사람이 dataset 범위 호출을 되살려도 된다고 결론 냅니다.
+
+### 제 가드 둘이 변이에 green으로 돌아왔습니다
+
+목록 가드가 docstring **전체**에서 노드 이름을 찾고 있었으므로, 열거에서 노드를 지워도
+그 아래 설명 단락에 남은 언급으로 통과했습니다. 열거 문장만 보도록 좁히고, 빠진 것과
+**남는 것**(map이 아닌 노드가 목록에 있는 경우) 양쪽을 단언합니다. 그리고 헬퍼 삭제 변이가
+green이었던 건은 위에 적었습니다 — 가드의 결함이 아니라 **기계장치의 결함**이었고, 가드가
+맞았습니다.
+
+변이: 페이지 크기 probe 제거 → 2건 red, 열거에서 노드 제거 → red, 열거에 map 아닌 노드
+추가 → red, `detail`에 네 철자 각각 주입 → 각각 red.
+
+### Fixed — 공표된 설명 둘이 **제품에 없는 규칙**을 적고 있었고, 그중 하나는 조용한 clamp를 숨기고 있었습니다 (high)
+
+**1. `POST /policy/decision`의 `action`** 설명이 "평가할 동작(`search`·`read`·`create`·
+`publish` 등)"이었습니다. `read`는 이 엔진이 평가하는 action이 **아닙니다.** 라이브
+라우트로 측정:
+
+    search     allow  카탈로그 발견 정책 통과
+    read       deny   평가할 수 없는 action입니다.      <- 문서가 든 예시
+    create     deny   create 작업은 admin 권한만 가능
+    preview    allow  거버넌스 정책 조건 충족
+    query      allow  거버넌스 정책 조건 충족
+    nonsense   deny   평가할 수 없는 action입니다.      <- `read`와 동일
+
+문서가 든 예시 중 **독자가 가장 먼저 시도할 것**이 nonsense 문자열과 똑같이 동작했고,
+거부 사유는 문서가 틀렸다는 말을 하지 않습니다. 이제 설명과 `enum`을 엔진의
+`KNOWN_ACTIONS`·`CATALOG_ACTION_ALIASES`에서 **파생**합니다.
+
+**2. `POST /browse/{id}/preview`의 `limit`** 설명은 "정책이 더 낮은 상한을 요구하면 그쪽이
+적용됩니다" — 정책 상한만 말하고 **고정 상한을 말하지 않았습니다.** 그리고 코드를 읽으니
+`browse.preview`가 `limit > 100`에 raise하는데, **라우트가 그 앞에서 조용히 clamp하고**
+있었습니다:
+
+    limit=min(limit, 100)   offset=max(offset, 0)
+
+그래서 `limit: 500`은 **200**과 100행을 돌려주고(호출자는 500을 요청했음을 말해 주는
+것이 없고), `offset: -5`는 **200**과 맨 앞 페이지를 돌려줍니다. 내부 검증은 HTTP에서
+**도달 불가능**했습니다. 바로 앞 항목의 change-reason truncation과 같은 형태 — 호출자가
+보낸 것을 조용히 바꿔 쓰는 것 — 이고 같은 방식으로 거부합니다. 상한·하한을 코드 상수
+(`MAX_PREVIEW_ROWS`/`MIN_PREVIEW_ROWS`)로 올리고 계약이 그 값을 참조합니다. `offset`의
+하한도 같은 커밋에서 공표했습니다 — 제 수리가 만든 새 400을 문서에 없는 상태로 두면 그게
+바로 이 항목의 결함입니다.
+
+### 제 가드 셋이 작성 중에 반응했습니다
+
+* **backtick 추출기가 `deny`를 "제안된 action"으로 집었습니다** — 설명이 "그 밖의 값은
+  `deny`와…"라고 적으므로. 값이 아닌 토큰 둘(`deny`, `known_actions`)을 **명시 목록**으로
+  뺐습니다. 패턴으로 걸러내면 세 번째가 조용히 들어옵니다.
+* **module-state 가드가 `sdp.api_request_contract.CATALOG_ACTION_ALIASES`를 분류되지 않은
+  module-level mutable로 보고했습니다.** `from .policy import CATALOG_ACTION_ALIASES`가 그
+  dict에 **두 번째 이름**을 붙였기 때문이고, 가드가 옳습니다 — 한 dict에 두 이름은 drift
+  소스이고, 그게 이 파생이 없애려는 바로 그것입니다. 모듈로 import해 자격 참조합니다.
+* **설명을 `KNOWN_ACTIONS`에서 파생하면 둘은 구성상 일치합니다** — `KNOWN_ACTIONS` 자신이
+  엔진과 어긋나면 아무 의미가 없습니다. 그래서 제안된 action **전부를 라이브 라우트로
+  보내** 어느 것도 "평가할 수 없는"으로 돌아오지 않음을 단언합니다. `KNOWN_ACTIONS`에
+  `read`를 더하는 변이가 그 단언을 red로 만듭니다.
+
+변이 4건: clamp 복원 → 2건 red, 설명에 `read` 복원 → red, 공표 maximum을 1000으로 drift →
+red, `KNOWN_ACTIONS`에 `read` 추가 → red.
+
+### Fixed — 공표된 `maxLength: 512`가 **어디에서도 규칙이 아니었습니다** (high)
+
+`api_request_contract`는 본문 속성 다섯 개에 `maxLength: 512`를 공표합니다 — 카탈로그
+mutation 네 개의 `reason`과 ontology patch review의 `comment`. 문서를 읽은 클라이언트는 더
+긴 값이 거부된다고 결론 냅니다. 측정해 보니 **둘 다 거짓이고, 서로 다르게** 거짓이었습니다:
+
+    POST /catalog/datasets/{id}/publish  {"reason": "x" * 1000}
+      -> 200, audit 행의 details.change_reason 길이 512
+
+    POST /ontology/patches/{id}/review   {"comment": "y" * 1000}
+      -> 200, 응답의 review_comment 길이 1000
+
+reason은 받아들이고 **조용히 잘랐고**, comment는 받아들이고 그대로 보관했습니다. 앞쪽이
+더 나쁩니다: 사람 auditor가 읽는 audit 행이 **호출자가 거기서 끝내기로 하지 않은** 512자를
+담고, 응답은 그 사실을 말하지 않습니다. `_change_reason`의 docstring 자신이 그 값을
+"prose for a human auditor"라고 적습니다.
+
+거부로 고쳤습니다. 공표된 한도를 참으로 만드는 유일한 선택이고, 호출자의 말을 버리지도
+않고 계약이 약속한 것보다 더 보관하지도 않습니다. 한도 자체는 바꾸지 않았습니다 — 이미
+공표돼 클라이언트가 맞춰 코딩했을 수 있는 값을 조용히 넓히는 것은 같은 종류의 결함입니다.
+
+### 제 기존 가드 넷이 즉시 반응했습니다
+
+1. **`test_change_reason_evidence.py`가 그 truncation을 단언하고 있었습니다** —
+   `assert len(_change_reason({"reason": long})) == MAX_CHANGE_REASON_CHARS`. 행동을
+   **기록**하고 판단하지 않은 테스트입니다. 이 라운드에서 같은 형태가 두 번째입니다
+   (`("table$x", "table_x")`에 이어). 거부와 경계값 양쪽을 단언하도록 바꿨습니다.
+2. **본문 키 스캔이 `['payload.get(field)']`를 "해석할 수 없는 read"로 보고했습니다.** 제
+   첫 헬퍼가 `(payload, field)`를 받아 안에서 `payload.get(field)`를 읽었고, 그러면 키가
+   핸들러 밖 변수로 나갑니다 — 동적 키는 문서와 대조할 수 없으므로 스캔이 **옳았습니다.**
+   헬퍼가 **값**을 받도록 바꿔 리터럴을 호출 지점에 남겼습니다.
+3. **error 계약 가드**가 `deprecate`가 이제 400을 낼 수 있는데 OpenAPI 문서에 없다고
+   보고했습니다. 테이블에 400을 넣었습니다(나머지 셋은 이미 공표돼 있었습니다).
+
+### 제 structural 가드가 자기 설명문에 걸렸습니다
+
+truncation이 돌아오지 않는지를 `"[:MAX_CHANGE_REASON_CHARS]"` 문자열로 검사했고, **지운
+코드를 인용한 docstring에 걸려** red가 됐습니다. 지운 코드를 인용한 산문은 지운 코드가
+아니고, 둘을 구별하지 못하는 가드는 다음 사람에게 "설명을 쓰지 말라"고 압박합니다. 구문
+트리에서 `MAX_CHANGE_REASON_CHARS`를 상한으로 쓰는 슬라이스를 찾도록 바꿨습니다.
+
+변이 4건으로 확인했습니다: 거부 대신 truncate → 5건 red, review가 comment를 안 묶음 →
+red, 경계를 `>=`로(합법 요청 거부) → 4건 red, 거부 메시지가 한도를 안 말함 → 4건 red.
+
+### Fixed — 드래프트가 **고쳐 쓴** 테이블 이름을 "카탈로그가 선언한 relation"이라고 공표했습니다 (high)
+
+`source_relation_name`이 선언된 이름을 `_safe_identifier`로 통과시킨 뒤, 드래프트가 그
+**고쳐 쓴** 이름을 공표하면서 `assumptions`와 `execution_caveat` 양쪽에 "카탈로그의
+`postgresql.table` distribution에 선언된 relation입니다"라고 적었습니다. 합성 선언으로 측정:
+
+    선언 analytics.sales_order  ->  FROM analytics_sales_order
+    선언 "sales order"          ->  FROM sales_20order
+
+둘째는 URL escape `%20`이 이름 안에 남은 뒤 `%`가 `_`가 된 것입니다. 둘 다
+`executable_against_source: true`와 **빈** `emitted_identifiers`로 공표됐습니다 — 공개가
+전혀 없습니다. 같은 응답의 **컬럼 경로는 같은 종류의 rewrite를 `emitted_identifiers`에
+caveat과 함께 공개합니다.** 같은 rewrite, 반대의 정직성, 한 응답 안에서.
+
+그리고 고쳐 쓴 relation 이름은 **이 함수가 고치려고 쓰인 결함 그 자체**입니다 — 카탈로그가
+선언하지 않은 이름.
+
+고친 것: 경로 조각을 URL 디코드하고, **적힌 대로** 쓸 수 있을 때만 그대로 돌려줍니다 —
+점으로 구분된 식별자 1~3개(table, schema.table, database.schema.table). 아니면 `None`이고,
+드래프트는 locator 유래 이름과 "파생, 선언 아님" caveat으로 갑니다. **고쳐 쓰는 경로는
+사라졌습니다.** 수식된 이름을 emit할 수 있는 것은 allow-list가 참조를 raw로 비교하기
+때문입니다(바로 앞 항목) — `FROM analytics.sales_order`가 선언 `analytics.sales_order`와
+일치합니다.
+
+### 이 저장소의 테스트가 그 rewrite를 "측정한 대로" 적어 두고 있었습니다
+
+선행 커밋이 `("table$x", "table_x")`를 파라미터로 넣고 "Asserted as measured — a declared
+name is not emitted verbatim, and a reader of this file should see that"라고 적었습니다.
+**측정해서 적어 둔 것과 받아들인 것은 다릅니다.** 이제 `None`입니다.
+
+### fallback caveat이 거짓이 되는 것을 같이 막았습니다
+
+`None`에는 원인이 둘인데 caveat은 하나만 말했습니다 — "이 데이터셋은 postgresql.table
+distribution을 **선언하지 않았으므로**". `parquet`·`sparql.graph`·`rest.json` 세 시드에는
+참이지만, `sales order`를 선언한 데이터셋에는 **거짓**입니다. 카탈로그에는 이름이 있고,
+안 쓰는 이유가 그 이름입니다. "아무것도 선언하지 않았다"고 말하면 운영자를 없는
+distribution을 찾으러 보냅니다. 두 원인을 분리했습니다 — 수리 하나가 거짓 주장 하나를
+다른 거짓 주장으로 바꾸지 않도록.
+
+### 변이 둘이 green으로 돌아왔습니다
+
+* **URL 디코드 제거 → green.** `sales%20order`는 디코드하든 안 하든 거절됩니다(`%`가 식별자
+  패턴에 없음), 그래서 그 케이스는 디코드에 대해 **아무것도 증명하지 않습니다**. 둘을
+  가르는 케이스는 `%5F`입니다 — 디코드하면 선언된 relation이 실제로 `sales_order`이고,
+  디코드하는 resolver만 그렇게 말할 수 있습니다. 그 케이스를 넣었습니다.
+* **caveat 분기 조건을 `False`로 → green.** 제 테스트는 이름이 caveat 테스트인데
+  `declares_relational_distribution`과 `source_relation_name`만 보고 있었습니다 — 헬퍼가
+  **고르는 문장**을 보지 않았습니다. 드래프트 응답에서 그 문장을 직접 읽도록 고쳤습니다.
+
+변이 5건 전부 red입니다: 선언 이름 재-sanitise, URL 디코드 제거, 점 개수 제한 제거,
+caveat 분기 붕괴, `declares_relational_distribution`이 format을 무시하기.
+
+`requirements.py`의 "FROM 이름은 source locator에서 파생된다"는 서술이 낡아 있었으므로
+(선언된 relation이 들어온 뒤로는 비관계형 세 데이터셋에만 참) 같은 커밋에서 고치고
+`docs/requirements-coverage.md`를 재생성했습니다.
+
+### Fixed — 생성기가 **두 번째 관찰만 가진 필드의 타입을 버려** 34개 노드를 "any"로 공표했습니다 (high)
+
+`union`의 docstring이 조심스럽게 구분을 세웁니다 — `None`은 "아직 관찰 없음", `{}`는
+"관찰했고 아무 타입이나 맞음". 그리고 **한 단락 뒤에서 그 구분을 위반합니다**:
+
+    properties[key] = union(properties.get(key, {}), item)
+
+`.get(key, {})`는 왼쪽 관찰이 **갖고 있지도 않은** 키에 대해 "관찰했고 아무 타입이나
+맞음"이라고 말합니다. 그리고 `union({}, typed)`는 `{}`로 붕괴합니다. 그래서 **두 번째
+probe가 처음 들여온 모든 필드가 측정된 타입을 잃고** 타입 없이 공표됐습니다. 같은 기본값이
+재귀에도 쓰이므로 중첩 객체도 같이 잃었습니다. 측정:
+
+    union({"a": string}, {"a": string, "b": integer})
+      ->  {"a": string, "b": {}}        # b의 integer가 사라짐
+
+기본값을 `NOTHING_OBSERVED`로 바꾸고 계약을 재생성했습니다. 빈 스키마 `{}`가
+**103개 → 69개**로 줄었습니다 — 34개 노드가 실제 측정된 타입을 되찾았습니다
+(`min_approved_count: number`, `recommended_properties: array of string`,
+`accepts_the_live_digest: boolean`, `required_property_basis: string`, …).
+
+**과잉 교정을 막는 쪽도 같이 고정했습니다.** 이 생성기가 존재하는 이유가 바로 `{}`의
+의미입니다 — `steward`가 한 데이터셋에서 `None`, 다른 데이터셋에서 문자열이고, 그걸
+`string`으로 공표해 라이브 응답이 계약 테스트를 깨뜨린 것이 첫 판의 결함이었습니다. 그래서
+가드 넷이 반대 방향을 지킵니다: null로 관찰된 필드는 **여전히** `{}`로 붕괴하고, 충돌하는
+두 타입도 `{}`이며, 왼쪽에만 있는 필드는 타입을 지키고, sentinel은 `{}`가 아닙니다.
+
+변이 양방향으로 확인했습니다: 기본값을 `{}`로 되돌리기 → 두 번째 관찰 가드 둘 + 멱등성
+red. `{}`가 타입에 양보하게 만들기(= `steward` 결함 재공표) → null 붕괴 가드 + sentinel
+가드 + 멱등성 red.
+
+### Fixed — `or True`로 끝나는 단언이, 자기가 감싸고 있던 **거짓 주석**을 살려 뒀습니다 (medium)
+
+`tests/test_console_badge_tone.py`에 이런 줄이 있었습니다:
+
+    assert "innerHTML = " not in script.replace("panelHtml", "") or True
+
+`or True`는 구성상 **실패할 수 없습니다.** 그리고 그 단언이 우회하던 사실은 참이었습니다 —
+콘솔의 controls·KPI·connector 패널이 각각 `innerHTML`을 씁니다. 그 세 줄 바로 위의 주석은
+"the console stays free of innerHTML"이라고 적고 있었습니다. **헤지가 그 거짓 주석을
+살려 뒀습니다.**
+
+실제로 성립하는 성질을 단언하도록 바꿨습니다: HTML을 담은 템플릿 리터럴에 보간되는 모든
+값은 `esc(...)` 호출이거나 **양쪽 분기가 모두 문자열 리터럴인** 삼항이어야 합니다(`'ok'`와
+`'warn'` 사이에서 고르는 CSS 클래스는 호출자 데이터를 실을 수 없습니다). 스크립트 텍스트에서
+템플릿 리터럴을 파싱해 `${...}`를 꺼내 분류합니다. `esc` 자신이 위 방어의 전부이므로 그것이
+치환하는 다섯 글자(`& < > " '`)도 따로 단언합니다.
+
+삼항 술어의 첫 판은 "`?`가 있고 `'`가 있고 `?` 뒤에 `.`이 없으면 통과"였습니다 — 그러면
+`flag ? someIdentifier : 'warn'`을 통과시킵니다. 맨 식별자도 property access만큼 데이터를
+실으므로 양쪽 분기가 **인용된 문자열 리터럴**이어야 하도록 조였습니다.
+
+변이 4건으로 확인했습니다: 보간 하나에서 `esc()` 제거 → red, 삼항 분기를 property
+access로 → red, 삼항 분기를 맨 식별자로 → red, escaper에서 `&quot;` 제거 → red. (`$`를
+포함한 앵커를 셸로 넘긴 변이 하나가 적용되지 않은 채 green으로 보고됐습니다 — **적용되지
+않은 변이의 green은 증거가 아닙니다.** Python heredoc으로 다시 돌렸습니다.)
+
+주석도 참인 내용으로 고쳤습니다: `badge` 헬퍼는 sink를 쓰지 않고, 아래 세 패널은 쓰며,
+보간은 전부 escape를 지난다 — 그리고 그걸 감시하는 가드가 어디 있는지.
+
+### Security — prober가 **자기 ledger로** 404가 거부한 질문에 답할 수 있었습니다 (high)
+
+다섯 라우트가 "당신 것이 아님"과 "존재하지 않음"을 바이트 단위로 같은
+`404 dataset not found`로 합칩니다 — 의도된 설계이고 browse·catalog·graph 거부 계열이
+이미 그걸 고정합니다. 그런데 정책 결정 ledger는 **prober 자신이** 자기 테넌트 범위로
+읽을 수 있고 resource로 필터됩니다:
+
+    GET /policy/decisions?user=<prober>&resource=<id>
+
+`external-analyst`(테넌트 `external`)로, HTTP 본문이 이미 동일한 상태에서, 그 호출자가
+**볼 수 있는** 행만 센 측정:
+
+    GET  /graph/nodes/{id}              404/404   rows: foreign 0   absent 1
+    POST /graph/query  (start_id)       404/404   rows: foreign 0   absent 1
+    POST /catalog/datasets/{id}/publish 404/404   rows: foreign 0   absent 1
+    POST .../{id}/deprecate             404/404   rows: foreign 0   absent 1
+    PATCH /catalog/datasets/{id}        404/404   rows: foreign 0   absent 1
+
+    GET  /browse/{id}/schema            404/404   rows: foreign 0   absent 0
+    POST /browse/{id}/preview           404/404   rows: foreign 0   absent 0
+    GET  /catalog/datasets/{id}         404/404   rows: foreign 0   absent 0
+    (그 외 dataset-scoped 읽기 라우트 11개 전부 0/0)
+
+행이 **id가 비어 있을 때 정확히** 나타나는 것만이 아닙니다 — 그 행이 답을 **적어
+놓습니다**:
+
+    {"action": "publish", "effect": "deny",
+     "reason": "존재하지 않는 데이터셋입니다.",
+     "obligations": {"tenant_id": "external"}}   <- prober 자신의 테넌트
+
+    {"action": "search", "effect": "allow",
+     "reason": "카탈로그 발견 정책 통과",
+     "obligations": {"tenant_id": "external"}}   <- 404 뒤의 allow 행
+
+원인은 나중에 고친 **거부 기록**이 아닙니다(그건 소유 테넌트나 예약된 `unresolved`
+범위로 들어갑니다). reachability 확인 **앞에서** 돌는 평가입니다:
+
+* graph 라우트는 `evaluate(..., resource=node_id, action="search")`로 인증했습니다 —
+  그 함수 자신의 docstring이 "establishes authentication only"라고 적은 호출입니다.
+  그 id에 관한 질문이 아닌 것을 id별 행으로 남기고, absent id에서는 카탈로그 발견 분기가
+  `allow`를 돌려줍니다. 나머지 두 호출자는 이미 리터럴 `"graph"`를 넘기고 있었습니다.
+* catalog mutation 셋은 `evaluate(..., resource=dataset_id)`를 **먼저** 부르고
+  `_catalog_mutation_refusal`에 도착하므로, 선택이 이뤄질 때 행은 이미 기록돼 있습니다.
+
+`browse.py`가 preview 수리 이후 보여 준 순서가 맞는 순서입니다: reachability를 먼저
+풀고, `policy.evaluate_dataset_scope_refusal`로 prober 범위 **밖에** 거부를 기록하고,
+그 다음에 평가합니다. 다섯 라우트를 그 순서로 바꿨습니다.
+
+graph 쪽에는 결함이 하나 더 있었습니다. `can_see_graph_node`는 소유 테넌트가 없는
+id에 **True**를 돌려줍니다 — 거부할 것이 없으니까요. 그래서 absent 노드는 거부 분기를
+건너뛰고 id별 `allow` 행을 받은 뒤 라우트 자신의 `get_node` 404를 만났습니다. 존재 확인을
+같은 분기로 끌어와 absent와 foreign을 한 경로에 둡니다. 성공한 읽기는 여전히 **행 하나**를
+남깁니다(resource=node_id) — 그 호출이 인증과 귀속을 같이 하므로, family 레벨 확인은 id를
+말해선 안 되는 경로에만 필요합니다. 익명 호출자는 두 id 모두에 동일한 403을 받습니다
+(전에는 이유가 resource=node_id에서 나왔으므로 갈릴 수 있었습니다).
+
+### 큐레이션된 표가 자기가 세지 않은 것에 green을 보고합니다
+
+가드의 첫 판은 손으로 적은 표면 **여덟 개**였고, 같은 파일의 커버리지 체크가 **한 번도
+측정하지 않은 dataset-scoped 라우트 열한 개**를 보고했습니다 — audit, join-candidates,
+jsonld, lineage, profile, related, schema-diff, schema-history, schema-versions,
+semantic-validation, validate. 열한 개 전부 깨끗했지만, **그게 바로 큐레이션 목록이
+스스로 만들어 낼 수 없는 결과입니다**: 방문하지 않고도 같은 green을 보고했을 테니까요.
+그래서 표면 목록을 `app.routes`에서 **파생**합니다(본문으로 id를 받는 `POST /graph/query`는
+경로 스캔이 찾을 수 없어 명시 등록 + 그 등록이 유지되는지 단언).
+
+가드는 세 가지를 따로 묻습니다: 보이는 행 **개수**가 같은지, 보이는 행이 존재를
+**말하지** 않는지(개수가 같아도 한쪽이 "존재하지 않는"이면 같은 비트가 평문으로 새므로),
+그리고 404 뒤에 `allow` 행이 없는지.
+
+그리고 **prober의 채널을 닫는 것이 증거를 지우는 것이어서는 안 됩니다.** 거부 기록을
+통째로 지우는 변이는 위 단언 전부를 green으로 통과했습니다 — 어느 것도 소유자 쪽을 보지
+않으니까요. 전체 스위트는 잡지만(`tests/test_refused_mutation_evidence.py`), 자기가 다루는
+것을 제거하면 만족되는 계열은 자족적이지 않으므로 소유 테넌트 auditor 쪽 절반도 같은
+파일에서 단언합니다. 그 단언을 쓸 때 audit 이벤트의 필드를 `decision`으로 물어 가드가
+**실패가 아니라 AttributeError로 터졌습니다** — 실제 이름은 `result`이고, 터지는 가드는
+재는 가드가 아닙니다. limit 상한도 이 라우트는 200입니다(500은 422).
+
+변이 5건으로 확인했습니다: family 확인을 node_id로 되돌리기 → red, 존재 확인 제거 → red,
+publish/deprecate/patch 각각 pre-check 제거 → red, 거부 기록 삭제 → 소유자 쪽 단언 red.
+
+### Security — 테이블 allow-list가 **정규화로 일치를 만들어** 다른 relation을 통과시켰습니다 (high)
+
+`validate_sql_query`의 source-table allow-list는 손으로 쓴 statement가 창고를 건드려도
+되는지를 정하는 **유일한** 관문입니다. 그 비교가 각 테이블 참조를 `_safe_identifier`로
+**정규화한 뒤** 선언된 relation과 맞춰 봤습니다. `_safe_identifier`는 영숫자가 아닌 모든
+바이트를 `_`로 바꾸고, 이 카탈로그의 relation은 전부 `_`를 담고 있습니다. 그래서 정규화가
+일치를 **제거한 게 아니라 만들어 냈습니다**.
+
+선언 relation `crm_customer_master`에 대해 측정한 것 — 서로 **다른 relation 아홉 개**가 전부
+경고 0건으로 통과했습니다:
+
+    select id from crm_customer_master   []  <- 진짜
+    select id from crm.customer_master   []  <- 다른 schema
+    select id from crm$customer_master   []  <- identifier도 아님
+    select id from crm_customer.master   []  <- schema crm_customer의 table master
+    select id from crm_customer$master   []
+    select id from crm.customer.master   []  <- 3단
+    select id from crm.customer$master   []
+    select id from crm·customer_master   []  <- U+00B7, Postgres identifier 문자
+    select id from crm․customer_master   []  <- U+2024, "." confusable
+    select id from crm．customer_master   []  <- U+FF0E, 또 하나
+
+내부 헬퍼의 문제가 아닙니다. `POST /browse/query`가 시드 데이터셋 `crm-customer-master`에
+대해 두 번째 statement에 **200**을 답했습니다 — 거버넌스 게이트가 다른 schema를 읽는
+쿼리를 인증한 것입니다.
+
+**비교 위의 주석이 같은 메커니즘에서 반대 결론을 주장하고 있었습니다**: "`_safe_identifier`가
+dot을 `_`로 바꾸므로 qualified name이 bare name과 충돌할 수 없다." 그 추론은 정규화가
+expected에 **없는** 문자를 *더하는* 경우(`pg_catalog.customer` → `pg_catalog_customer` ≠
+`customer`)에만 맞습니다. 선언된 이름이 정규화 결과 문자를 **이미 담고 있으면** 같은 매핑이
+충돌 생성기가 되고, `_`는 이 카탈로그의 모든 relation이 담고 있는 바로 그 문자입니다.
+
+고친 것: 참조를 **raw로** 비교합니다. 참조는 호출자의 신뢰할 수 없는 텍스트이고, 선언
+relation은 `source_relation_name`이 이미 sanitise하고 "한 테이블로 읽히는지"까지 확인해
+넘긴 값입니다. **신뢰할 수 없는 쪽을 신뢰하는 쪽에 맞춰 rewrite하는 것이 거꾸로입니다.**
+raw 비교는 엄격하게 더 좁고, 드래프터는 선언 이름을 그대로 emit하므로 자기 출력은 그대로
+통과합니다(전체 스위트에 느슨한 동작에 의존한 테스트는 없었습니다 — 1523 → 1549, 실패 0).
+
+### 두 엔진이 그 영역에 **구성으로** 도달해야 합니다
+
+공유 oracle에 일반 성질을 더했습니다: 참조가 인증된 이름과 **문자 단위로** 같지 않으면
+반드시 `unauthorized_table_reference`가 나온다. 예시 목록이 아니라 성질이므로 두 엔진이
+같은 것을 봅니다.
+
+그런데 **그것만으로는 vacuous였습니다.** Hypothesis는 `query`와 `declared_relation`을
+독립적으로 뽑으므로, "정규화하면 선언 이름이 되지만 raw로는 다른" 쌍에 결코 도달하지
+않습니다 — 수리를 되돌려도 green이었습니다. 그래서 그 우연을 **만드는** 전략을 더했습니다:
+underscore로 이어진 이름을 뽑고, 그 `_` 하나를 충돌 문자로 바꿔 참조를 만듭니다. 변이하면
+Hypothesis가 최소 반례 `a.a` vs `a_a`로 falsify합니다.
+
+충돌 문자 집합도 **측정했습니다.** 첫 목록에는 `crm customer_master`,
+`crm-customer_master`, `crm/customer_master`가 있었고 제 충돌 가드가 거절했습니다 —
+`_TABLE_LIST_TOKEN`이 `[A-Za-z_\u0080-\uffff][\w.$\u0080-\uffff]*`이므로 공백·하이픈·슬래시는
+토큰을 끝내고 그 셋은 테이블 `crm`으로 파싱되어 이미 다른 이유로 거부됩니다. 토큰 안에
+남으면서 `_safe_identifier`가 바꾸는 문자만 충돌합니다: ASCII `.`와 `$`, 그리고 U+007F
+위의 영숫자 아닌 문자.
+
+near-miss 구성은 oracle 모듈이 소유합니다(`COLLIDING_SEPARATORS`,
+`near_miss_reference`) — 두 엔진이 각자 사본을 들면 어긋날 수 있는 것이 하나 더
+늘어납니다. Atheris 하네스에도 같은 모드를 넣었고, 로컬에 Atheris wheel이 없으므로
+하네스 **본문을** 가짜 provider로 직접 구동하는 테스트를 더해 그 분기가 실제로 실행되고
+아무것도 raise하지 않음을 확인합니다. 첫 판 가짜 provider는 `a-z`만 내서 인증 이름에
+`_`가 한 번도 없었고, 분기에 들어가도 `near_miss_reference`가 64번 전부 `None`을 돌려
+**아무 일도 하지 않았습니다** — 진짜 provider는 임의 유니코드를 내고 `_safe_identifier`가
+거기서 `_`를 만들어 내므로 이미지에서는 이 모드가 계속 발화합니다. 알파벳을 섞어 고쳤습니다.
+
+변이 4건으로 확인했습니다: 정규화 비교 복원 → 예시 가드 9건 + 라우트 가드 + Hypothesis
+성질 red, 하네스의 near-miss 모드 제거 → 본문 가드 red, `near_miss_reference`가 이름을
+그대로 반환 → "underscore 없으면 거절" 가드 red, 하네스 import 형태 변경 → import 가드가
+먼저 red(그 가드가 line regex였고, 괄호 import로 줄바꿈되자 "oracle을 import하지 않는다"고
+보고했습니다 — `ast`로 바꿨습니다).
+
+`requirements.py`의 "qualified name도 막는다"는 주장이 바로 이 구멍만큼 틀려 있었으므로
+같은 커밋에서 고쳤고(줄 참조 `293-302`도 낡아 `353-397`로), `docs/requirements-coverage.md`를
+재생성했습니다.
+
+### Fixed — ClusterFuzzLite 하네스가 **한 입력도 퍼징하지 못하고** import에서 죽었습니다 (high)
+
+`a2f50c2`가 `validate_sql_query`에 `declared_relation`을 더하면서, 두 엔진이 같은
+invariant를 보도록 하네스를 공유 oracle에 붙였습니다 —
+`from tests.fuzz.invariants import check_validate_sql_query`. 그 import가 하네스를
+깨뜨렸고, **두 가지가 동시에** 틀렸습니다:
+
+1. `.clusterfuzzlite/Dockerfile`은 `WORKDIR /src`, `PYTHONPATH=/src/src`,
+   `CMD ["python", "fuzz/fuzz_query_safety.py"]`입니다. Python은 **스크립트 자신의
+   디렉터리**를 `sys.path[0]`에 올리므로 경로는 `/src/fuzz`와 `/src/src`뿐이고 `/src`는
+   어디에도 없습니다.
+2. 그 이미지는 `tests`를 **아예 담지 않았습니다.** `COPY src`, `COPY fuzz`와 requirements
+   두 개가 전부였습니다. oracle은 주소를 못 찾는 수준이 아니라 **없었고**, `sys.path`를
+   어떻게 고쳐도 복사되지 않은 파일에는 닿지 않습니다.
+
+그래서 `ModuleNotFoundError: No module named 'tests'`가 첫 입력 전에 떴습니다.
+
+**아무 CI도 잡지 못했습니다.** 이 저장소의 `fuzz.yml` Atheris 잡은
+`tests/fuzz/run_atheris.sh`를 돌리고, 그 스크립트는 `tests/fuzz/atheris/fuzz_*.py` 네 개만
+돌립니다 — `fuzz_query_safety`는 거기에 **없습니다**. Hypothesis 잡은 oracle을 직접
+import합니다. 즉 이 파일은 ClusterFuzzLite 이미지에서만 실행되는 유일한 하네스이고,
+`validate_sql_query`의 coverage-guided 커버리지는 그 이미지에만 있었습니다.
+
+고친 것: 하네스에 repo root bootstrap, 그리고 Dockerfile에 `COPY tests/fuzz ./tests/fuzz`
+(`tests/` 전체가 아니라 oracle이 있는 디렉터리만 — 나머지 스위트는 이미지 의존이 아닙니다).
+
+**oracle을 `fuzz/`로 옮기는 쪽은 안 됩니다.** 먼저 그렇게 해 봤고 수집 단계가 거절했습니다:
+`tests/`에 `__init__.py`가 없어서 `tests/fuzz`가 pytest에서 **top-level `fuzz`로**
+import되므로, 새 `fuzz/invariants.py`를 가립니다(`ImportError: cannot import name
+'invariants' from 'fuzz' (.../tests/fuzz/__init__.py)`). 이름 충돌이 이 트리에서는 이동이
+더 나쁜 선택이라는 증거입니다. 이미지가 import하는 것을 이미지에 넣는 쪽이 맞습니다.
+
+### 가드가 재현해야 하는 것은 경로 순서가 아니라 **파일 집합**입니다
+
+첫 판 가드는 이미지의 `sys.path` **순서**만 재현했고, 체크아웃에는 `tests/`가 있으니
+**green이었습니다** — 자기가 시뮬레이션한다고 적은 이미지에는 `tests/`가 없는 동안.
+가드의 전제가 가드 대상보다 넓으면 그게 결함입니다. 그래서 지금은 Dockerfile에서 COPY
+집합·`WORKDIR`·`PYTHONPATH`·`CMD`를 **읽어** 샌드박스에 그 트리를 만들고, 그 안에서
+하네스 본문을 실행합니다(atheris는 stub, `main()`은 실행하지 않음). oracle의 모듈 경로도
+하네스 소스의 import 문에서 파싱하므로, 하네스가 oracle을 옮기면 가드가 따라갑니다.
+
+**샌드박스는 symlink가 아니라 복사입니다.** 첫 구현은 symlink였고 변이 둘이 green으로
+돌아왔습니다 — 하네스가 bootstrap을 `Path(__file__).resolve()`로 계산하고 `resolve()`는
+**symlink를 따라가므로**, 샌드박스의 `fuzz` 링크가 실제 체크아웃으로 풀려 진짜 repo
+root(그리고 `tests/`)가 `sys.path`에 올랐습니다. 밖으로 나갈 수 있는 샌드박스는 이미지가
+아닙니다.
+
+변이 4건으로 확인했습니다: bootstrap 제거 → red, `COPY tests/fuzz` 제거 → red,
+`COPY tests/fuzz/corpus`로 좁히기(oracle 없는 하위 디렉터리) → red,
+`PYTHONPATH=/src/src` → `/src` → red. 복사 샌드박스에서는 네 건 모두 **행동 프로브**까지
+빨개집니다(symlink 판에서는 둘이 전제 테스트만 빨갰습니다).
+
+공급망 속성은 그대로입니다 — base image digest 고정, non-root uid 10001, `chown`은 추가된
+`COPY` **뒤에** 있습니다.
+
+### Fixed — 공표 응답 계약을 재생성하는 스크립트가 **존재하지 않았습니다** (high)
+
+`api_response_contract`의 docstring은 "derived by executing the routes, **not written by
+hand**"이고, 손으로 쓴 응답 스키마는 이 제품이 거부하기 위해 존재하는 바로 그 drift라고
+적습니다. 그리고 "Regenerate with the script recorded in that test's docstring"이라고
+안내합니다. 그 테스트의 docstring은 scratchpad의 heredoc을 가리키고 **그 파일은 저장소에도
+scratchpad에도 없습니다.** 테스트 자신이 "the generator, which lives outside the
+repository"라고 적고 probe 설정을 복사해 갖고 있었습니다.
+
+**실행할 수 없는 규칙은 규칙이 아닙니다.** 그래서 그 파일은 손으로 편집되어 있었습니다 —
+`a2f50c2`에서 재생성해 보니 바뀐 곳이 **정확히 두 군데**이고 둘 다 들여쓰기가 주변과 맞지
+않는 삽입(`8cda569`의 `probe_semantics`, `41dffb1`의 alert 카운터)이었습니다. 들여쓰기가
+증거입니다.
+
+재구성이 제품 쪽 사실 셋을 드러냈고, 셋 다 **테스트가 red로 알려 줬습니다**:
+
+1. **placeholder 하나에 값 하나**로는 부족합니다. probe 라우트의 행은 connector와 dataset에
+   따라 달라지므로 한 쌍에서 파생한 스키마는 다른 쌍의 키 **열한 개**를 빠뜨립니다. 이제
+   여러 값을 union하고 connector·dataset id를 **제품에서 읽습니다** — 손으로 적은 목록이 이
+   파일의 짧은 수명 안에 이미 낡았습니다(`api_connector`로 추측, 제품은 `rest_connector`).
+2. **"아직 관찰 없음"과 "관찰했고 아무 타입이나"를 같은 `{}`로 적으면 안 됩니다.** 어떤
+   데이터셋에서 `null`이고 다른 데이터셋에서 문자열인 필드가 `string`으로 공표되어 라이브
+   응답 `steward: None`이 계약 테스트를 깨뜨렸습니다.
+3. **키가 데이터인 객체**는 `additionalProperties`로 공표해야 합니다 — `/catalog/facets`의
+   `counts`가 시드의 도메인 값 다섯 개를 **필드 이름**으로 공표하고 있었습니다. 문서로
+   클라이언트를 만들면 map 자리에 struct가 나오고, 데모 시드가 아닌 카탈로그에서 깨집니다.
+   생성기는 **두 번째 카탈로그 상태**(새 도메인 데이터셋 하나를 공개 API로 온보딩)를 찍어
+   map과 field list를 구분합니다. 다른 상태에만 있는 키는 데이터이고, 단지 **없는** 키는
+   아닙니다 — `required`를 공표하지 않으므로 조건부 필드는 정상입니다.
+
+데이터 키 노드는 넷(`counts`, `audit/events[].details`, `dataset_status_counts`,
+`/policy/decisions[].obligations`)입니다. **첫 판 규칙은 과도하게 발화했습니다** — 배열에서
+union된 properties를 두 번째 상태의 **첫 원소**와만 비교해, 원소 모양이 서로 다른
+배열(observability alerts, SHACL shape 목록, JSON-LD `@graph`)이 타입 없는 map으로
+붕괴했습니다. 원소들의 키 집합을 union해 비교하도록 고쳐 발화가 9곳 → 4곳이 됐습니다.
+
+지금 지켜지는 성질: 생성기가 **저장소에** 있고 docstring의 명령이 그 파일을 가리킵니다.
+재생성이 커밋된 모듈을 **byte 단위로** 재현해야 합니다(손 편집이 테스트를 깨뜨립니다).
+테스트가 probe 설정을 생성기에서 **import**합니다(사본이 결함의 일부였습니다). 그리고
+생성기의 각 규칙이 그 규칙을 위한 가드로 방어됩니다 — 생성기를 변이시키고 **재생성한 뒤**
+확인했습니다: map 규칙 제거 → facets 행동 테스트 red, connector 하나만 찍기 → 전수 테스트
+red, null/미관찰 혼동 → 라이브 일치 테스트 red. 생성기 삭제는 수집 error, 계약 손 편집은
+멱등성 red.
+
+16개 라우트의 스키마가 바뀌었고(42개 항목·순서 동일) 전부 **더 넓은 관찰**의 결과입니다 —
+공표가 좁아진 라우트는 없습니다.
+
+### Fixed — 드래프트가 카탈로그가 선언한 relation을 지목합니다. 게이트도 같은 파생을 씁니다 (high)
+
+`8ed985d`가 라벨만 붙이고 미뤄 둔 수리입니다. 카탈로그는 답을 처음부터 갖고 있었습니다 —
+시드 다섯 중 둘이 `postgresql.table` distribution으로 relation을 선언합니다:
+
+    crm-customer-master  postgresql://analytics.dw/customer -> FROM crm_customer_master
+    sales-order          postgresql://analytics.dw/sales    -> FROM sales_order
+
+나머지 셋은 `parquet`·`sparql.graph`·`rest.json`을 선언합니다 — 지목할 relation이 **없고**,
+locator 파생 이름과 그 사실을 계속 말합니다. 다섯을 모두 executable로 뒤집는 것은 같은
+over-claim을 새 자리에 놓는 것입니다.
+
+자기 모순도 닫혔습니다. allow-list가 **같은 파생**을 쓰므로:
+
+    validate("... FROM crm_customer_master ...") -> []                              (이전: 거부)
+    validate("... FROM customer ...")            -> ['unauthorized_table_reference'] (이전: 통과)
+
+`source_relation_name` 하나를 드래프터와 게이트가 **공유**합니다 — 사본 둘이면 갈라지고,
+그 갈라짐이 애초의 결함이었습니다. `DRAFT_SQL_DIALECT` 상수 하나가 응답의 `dialect`와 어떤
+distribution을 relation으로 읽을지를 동시에 정하므로 둘이 어긋날 수 없습니다. 응답에
+`source_table`을 공표해서 `executable_against_source`가 **보이는 것**에 대한 주장이 되게
+했고, `assumptions`의 테이블 문장도 선언/파생에 따라 갈라집니다.
+
+**fuzz seam이 결함 하나를 찾았습니다.** 양쪽 엔진이 공유하는 invariant를 넣자 Hypothesis가
+`declared_relation="0"`을 반례로 돌려줬습니다. `_safe_identifier("0")`은 `"0"`을 그대로
+돌려주는데 **선두 숫자는 식별자가 아닙니다**: `FROM 0`은 테이블 참조가 아니고 `FROM 0abc`는
+파서가 테이블 **`abc`**로 읽습니다 — 쓴 이름과 인가된 이름이 다른 문자열입니다. 어느 쪽이든
+draft 자신의 검사가 `unauthorized_table_reference`로 거부하는데, 네이밍 문제에 **보안 모양의
+사유**를 붙이는 것입니다. 그래서 발행된 이름이 **자기 자신으로 다시 읽히지 않으면** 선언을
+거절하고, 그 판정은 PostgreSQL 식별자 규칙을 다시 쓰지 않고 **production 파서에게**
+묻습니다(`_referenced_source_tables(f"select 1 from {name}") == [name]`).
+
+**역검증에서 변이 하나가 green으로 돌아왔습니다** — dialect 제한을 "table이 포함된 아무
+format"으로 넓히는 변이입니다. 시드에 비-PostgreSQL `.table` distribution이 없어 그 변이가
+시드 위에서 행동상 무해하기 때문입니다. 제 테스트는 "시드의 모든 `.table` 선언이
+`postgresql.table`이다"를 단언했는데 그것은 **시드에 대한 진술**이고 규칙에 대한 진술이
+아닙니다. 합성 데이터셋으로 `mysql.table`·`snowflake.table`·`delta.table`·
+`postgresql.table.backup`·`not_postgresql.table`을 몰아 규칙을 단언하도록 고쳤고 이제
+red입니다. 나머지 다섯: resolver가 항상 None(다섯 red), 게이트가 자기 추측 유지(열넷 red),
+draft가 locator 이름 유지(열하나 red), 전부 executable 주장(셋 red), 읽히지 않는 이름을
+그대로 발행(red).
+
+**호출자 쪽 변화를 적습니다.** `/browse/query`가 같은 해석을 쓰므로 구매자가 카탈로그가
+공표한 relation 이름으로 질의하면 통과하고 추측된 이름은 거부됩니다 — 이전의 정반대입니다.
+저장소 안에서 route를 통과하던 테스트 열둘이 red로 바뀌어 전부 선언된 relation으로
+고쳤습니다. 그중 둘은 `validate_sql_query`를 `declared_relation` 없이 불러
+**제품과 다르게 검증**하고 있었으므로 제품과 같게 맞췄습니다. production 호출자는 둘뿐이고
+둘 다 해석을 넘깁니다(전수 확인). fuzz target의 signature가 바뀌었으므로 Atheris 하네스와
+Hypothesis 미러를 **같은 invariant** 위에 올려 둘이 갈라질 수 없게 했습니다.
+
+테스트 15건(새 파일) + `test_draft_source_kind.py`를 "선언 없는 셋"으로 좁혔습니다 —
+그 파일의 docstring이 이 변경을 예고하고 있었고, 삭제하지 않고 기대를 같이 옮겼습니다.
+
+### Fixed — 콘솔 readiness chip의 **색**이 네 상태 전부에서 초록이었습니다 (medium)
+
+`#readyBadge`는 콘솔에서 가장 먼저 읽히는 요소입니다. **문구**는 네 상태를 따라 바뀌는데
+**class**는 한 번도 바뀌지 않았습니다. `bf93653` 측정: 서버가 `class="badge ok"`로
+렌더하고, 네 분기 모두 `textContent`만 쓰는 헬퍼를 호출하며, `className`/`classList`가
+모듈 전체에서 **0건**입니다. 즉 초록 chip이 `evidence load failed: connectors`와
+`refused for this actor: …`를 announce했습니다. 구매자 핸드오프 대시보드에서는 **색이 문구보다
+먼저 읽힙니다.** amber `.badge.warn`은 이미 스타일시트에 있고 같은 헤더의 정적 chip 둘이
+그것을 씁니다 — 어휘는 있었고 상태가 거기까지 가지 않았을 뿐입니다.
+
+문구와 class를 **한 헬퍼**가 함께 씁니다(상태마다 호출 둘은 갈라지는 방식입니다). 실패·거부는
+`warn`, ready는 `ok`, signed-out은 **중립** — amber는 플랫폼 문제를 보고하는 것이고 초록은
+아무도 가져오지 않은 증빙을 주장하는 것이므로 중립이 정직한 세 번째 답이고 그 class는 이미
+있습니다. 서버가 렌더하는 초기 chip도 중립으로 바꿨습니다: 스크립트가 돌지 않으면 페이지는
+서버가 칠한 것을 유지하고, placeholder 문구에 초록은 로드되지 않은 증빙에 대한 주장입니다.
+
+테스트 8건. **역검증에서 이 수리를 전부 되돌리는 변이가 green으로 돌아왔습니다** — 헬퍼
+본문을 고정된 `node.className = 'badge ok'`로 바꾸면 호출부가 여전히 `'warn'`을 넘기는데
+헬퍼가 무시하고, 그래도 다른 테스트가 전부 통과했습니다. 테스트가 **선언**을 보고 **효과**를
+보지 않았기 때문입니다(이 라운드 세 번째 — 앞의 둘은 생성기 건너뛰기 변이와 표만 보던 단언).
+JS 런타임이 없어 효과를 실행할 수는 없으므로(브라우저 하네스 미도입은 기록된 결정) 형식이
+허용하는 가장 좁은 성질을 단언합니다: class 대입식이 매개변수 `tone`에서 **파생**되어야 하고,
+성공 class가 스크립트 어디에도 **리터럴로** 없어야 합니다. 나머지 역검증 넷: 실패 상태를
+초록으로, 서버 초기 chip을 초록으로, signed-out을 amber로, `.badge.warn`을 제거(tone 집합을
+나열하지 않고 **서버가 보낸 CSS에서 파생**하므로 한쪽만 바뀌면 걸립니다).
+
+### Fixed — 공표된 문서로는 POST 라우트 **열 개**를 호출할 수 없었습니다 (high)
+
+`api_request_contract`가 모델이 있는 라우트 열다섯을 수리했습니다. 공표 본문 스키마가
+`{"type": "object", "additionalProperties": true}`인 라우트 **열**이 남아 있었고, 그 열이
+**전부** 본문에서 이름 있는 키를 읽습니다. `5af3adf`에서 AST로 전수 측정:
+
+    POST /catalog/datasets/{id}/publish     actor, reason
+    POST /catalog/datasets/{id}/deprecate   actor, reason
+    POST /enterprise/auth/oidc-preview      actor, claims, role_map
+    POST /ontology/patches                  actor, concept, suggestion
+    POST /ontology/patches/{id}/review      actor, comment, decision, reviewer
+    POST /browse/{id}/preview               limit, offset, purpose, user
+    POST /enterprise/auth/oidc-verify       token
+    POST /llm/search                        purpose, question, user
+    POST /ontology/resolve                  text + 버전 핀
+    POST /policy/decision                   action, purpose, resource, subject, user
+
+`additionalProperties: true`는 문서로 만든 본문을 **유효하게** 만들고 호출은 성립시키지
+못합니다 — 그 모듈의 docstring이 경고하는 "a schema that cannot be used to make the call
+it describes"가 typed 문이 아니라 **untyped 문**으로 들어온 것입니다. 열 중 다섯은 인가
+주체를 이렇게 읽으므로 그 호출은 핸들러에 닿기도 전에 거부됩니다. **주체의 키 이름도
+통일되어 있지 않습니다** — 모든 GET은 쿼리 `?user=`, 이 중 다섯은 본문 `actor`, 셋은 본문
+`user`입니다. 경로만 보고 유도할 수 없고, 그게 문서가 있어야 하는 이유입니다.
+
+그 모듈 주석은 파생 가드가 "so the next one cannot be forgotten"이라고 적지만, 가드는
+`REQUEST_BODY_MODELS`만 파라미터로 돕니다 — **모델 없는 열 개는 애초에 범위 밖**이었습니다.
+공표 주장이 가드보다 넓었고, 주석도 함께 고쳤습니다.
+
+바뀐 것:
+
+* 열 라우트의 본문 키 전부를 설명과 함께 공표합니다(주체 키가 라우트마다 다르다는 것을
+  각 설명이 말합니다).
+* 생성기가 모델 없는 라우트를 **건너뛰고** 있었으므로 표만 채워도 문서에는 아무것도
+  나타나지 않습니다. 인라인 스키마에 properties를 병합하되 스키마는 **열린 채로** 둡니다 —
+  모델이 없는 라우트는 본문을 검증하지 않으므로 문서에서 닫으면 핸들러가 강제하지 않는
+  엄격함을 공표하는, 반대 방향의 거짓이 됩니다. `dict | None` 본문의 `anyOf`는 평탄화하지
+  않고 object 멤버에만 병합합니다(평탄화하면 선택적 본문을 필수로 공표합니다).
+* 스캐너가 모듈 상수 키(`payload.get(ontology_version.PIN_PARAMETER)`)를 **읽어서**
+  해석합니다. 문자열을 가드에 하드코딩하면 사본이 하나 더 생기므로 import해서 읽고, 표의
+  값이 그 상수와 같은지 단언합니다. 스캐너 자체는 형제 테스트에서 import합니다 — 같은
+  모듈에 대한 같은 질문이고, 사본 둘은 맞춰 둘 것이 하나 더 생기는 것입니다.
+
+테스트 34건. **역검증에서 제 테스트 둘이 green으로 돌아왔고 둘 다 테스트 결함이었습니다.**
+(1) 생성기가 untyped 라우트를 건너뛰게 하는 변이 — 이 수리의 **전부를 되돌리는** 변이 —
+가 통과했습니다. 단언이 공표된 문서가 아니라 **표**를 보고 있었기 때문입니다. 표는 원천이고
+문서가 산출물이며 클라이언트가 읽는 것은 산출물입니다. 모든 단언을 `/openapi.json`에서
+읽도록 바꿨고 이제 그 변이는 가드 다섯을 red로 만듭니다. (2) description 공백 변이는 제가
+엉뚱한 자리를 집어 통과했습니다(뒤에 오는 같은 키가 덮었습니다) — 올바른 앵커로 red를
+확인했습니다. **변이가 green이면 가드보다 변이를 먼저 의심한다**는 규칙이 두 번 다
+맞았습니다. 나머지 둘: review 라우트의 `actor` 키 제거(가드 셋 red), 핀 키 이름
+변경(상수 대조 가드 red).
+
+### Fixed — 거부 사유가 **대상**을 말했습니다. 읽기 라우트는 같은 호출자에게 **인증**을 말합니다 (high)
+
+인증되지 않은 호출자 하나, 시드 카탈로그가 소유한 데이터셋 하나로 `0b19c91`에서 측정:
+
+    GET   /catalog/datasets/{id}            -> 403 "목록 조회는 인증된 사용자만 가능합니다."
+    PATCH /catalog/datasets/{id}            -> 404 "dataset not found"
+    POST  /catalog/datasets/{id}/publish    -> 404 "dataset not found"
+    POST  /catalog/datasets/{id}/deprecate  -> 404 "dataset not found"
+
+**한 주체, 한 자원, 같은 질문에 두 답.** 읽기는 "인증하라"고 하고 mutation 셋은 데이터셋이
+없다고 합니다. 있습니다 — 같은 프로세스에서 인가된 독자에게 카탈로그가 바로 내줍니다.
+거부가 **거짓 사유**를 말하면 호출자는 자격증명이 아니라 dataset id를 보러 갑니다. 이
+세션이 바로 거기서 재현을 네 번 헛돌렸습니다.
+
+404 자체는 의도된 것입니다 — **외부 테넌트** 데이터셋은 없는 것과 구분되지 않아야 하고,
+이전 판은 둘 다 403을 주면서 사유 문자열로 차이를 흘렸습니다. 그 성질은 유지합니다.
+
+**첫 설계를 측정이 거부했습니다.** scope 없는 주체는 역할 검사에서 거부되므로 사유가
+데이터셋에 의존하지 않으리라 가정하고 `decision.reason`을 공표했습니다. 틀렸습니다:
+
+    anonymous POST .../crm-customer-master/publish  -> "tenant boundary denied"
+    anonymous POST .../no-such-dataset/publish      -> "존재하지 않는 데이터셋입니다."
+
+정책 엔진은 존재·테넌트를 역할보다 **먼저** 평가합니다. 즉 404가 존재하는 이유가 그것이고
+제 첫 설계는 oracle을 되열었습니다 — **제가 그 커밋에서 쓴 가드가 그것을 잡았습니다**(있는
+id와 없는 id를 둘 다 몰아 상태와 본문을 비교).
+
+그래서 scope 없는 주체에게는 데이터셋에 의존할 **수 없는** 사유를 답합니다:
+`resource="catalog"`에 대한 discovery 거부. 세 자원(카탈로그·있는 dataset·없는 dataset)에
+대해 사유가 동일함을 측정했고, `_authorize_catalog_discovery`가 공표하는 것과 **같은
+결정**이므로 읽기와 mutation이 문자열을 맞춰 두는 방식이 아니라 **구성상** 한 답을 줍니다.
+
+바뀐 것:
+
+* 사유 문구 하나: `목록 조회는 인증된 사용자만 가능합니다.` →
+  `카탈로그 접근은 인증된 사용자만 가능합니다.` 이 분기가 거부하는 **모든** 호출자에게
+  참인 문장입니다(production 참조 한 곳, 테스트 두 곳의 언급은 docstring/주석).
+* 세 라우트에 인라인 복사되어 있던 거부 분기를 `_catalog_mutation_refusal` 하나로
+  합쳤습니다 — 사본 셋을 각각 고치는 것은 이 저장소가 대가를 기록한 형태입니다.
+* `tests/test_api.py::test_catalog_mutation_guard_denies_non_admin_actors`가 scope 없는
+  호출자에 대해 404를 **근거와 함께** 단언하고 있었습니다. 선행 결정을 조용히 뒤집지 않고
+  측정과 이유를 그 주석에 적고 단언을 바꿨습니다. "a scope refusal must not explain
+  itself"는 유지합니다 — 사유는 호출자를 말할 수 있고 자산은 말할 수 없습니다
+  (`tenant`·dataset id·`존재하지 않` 모두 금지로 단언).
+
+테스트 11건(새 파일) + 기존 파일 갱신. 역검증 넷: 인증 분기 제거(두 파일 red), 데이터셋
+의존 사유 공표(**oracle 가드까지 red** — 제 첫 실수를 막는 가드가 살아 있다는 증거), 외부
+테넌트 숨김 제거(cross-tenant 가드 red), 사유가 자산을 말하게(읽기·mutation 양쪽 red).
+
+**닫지 않은 것.** `additionalProperties: true`를 공표하는 라우트 열 중 **다섯**이 인가
+주체를 본문에서 읽습니다. 공표된 스키마만 보고 만든 본문은 유효하지만 호출을 성립시키지
+못합니다 — `api_request_contract`의 자기 docstring이 경고하는 바로 그 결함이 untyped 문을
+통해 들어옵니다. 그 모듈 주석은 파생 가드가 "so the next one cannot be forgotten"이라고
+적지만 가드는 모델이 있는 라우트만 돕니다. **공표 주장이 가드보다 넓습니다.** gap 문서에
+측정과 함께 적었습니다.
+
+### Fixed — 404 본문이 Python 예외 repr을 공표했습니다. 같은 구성이 여덟 곳 (medium)
+
+`POST /ontology/patches/{patch_id}/review`가 없는 patch에 대해 이렇게 답했습니다:
+
+    404 {"detail": "'patch not found'"}
+
+따옴표는 메시지의 일부가 아닙니다. `KeyError.__str__`은 `repr(args[0])`을 돌려주므로
+`detail=str(exc)`는 메시지가 아니라 **repr**을 공표합니다. 이 API의 다른 404는 모두
+`dataset not found`·`node not found`처럼 따옴표 없이 답하므로, 문자열로 매칭하는 클라이언트
+입장에서 이 한 라우트만 규약이 다릅니다.
+
+`bcbaae9`에서 404를 낼 수 있는 라우트 17개를 전수 찔러 측정했습니다: **실제로 새는 것은
+하나**입니다. 그런데 같은 구성이 `src/sdp/api.py`에 **여덟 번** 있습니다. 나머지 일곱은
+`try` 앞의 존재 확인(`_require_scoped_dataset`)이 깨끗한 404를 먼저 던져 가려져 있을
+뿐입니다 — 핸들러가 옳아서가 아니라 **오늘의 호출 순서가 그래서** 가려진 것이고, 그중
+하나는 `PATCH`, 둘은 mutation이므로 `KeyError`가 다른 곳에서 올라오면 바로 드러납니다.
+그래서 인스턴스와 **구성**을 둘 다 고쳤습니다.
+
+* `_missing_resource_detail(exc)` — `KeyError`가 담은 메시지를 repr 따옴표 없이 돌려줍니다.
+  arity가 중요해서 한 줄이 아닙니다: 인자가 없으면 `str()`이 빈 문자열이라 빈 detail을
+  공표하게 되므로 클래스 이름을 쓰고, 둘 이상이면 `str()`이 이미 튜플을 렌더하므로 풀어낼
+  단일 메시지가 없습니다.
+* `except KeyError` 여덟 곳을 모두 이 렌더러로 돌렸습니다.
+* 가드 둘(`tests/test_not_found_detail_is_not_a_repr.py`): 살아 있는 라우트를 실제로 호출해
+  detail이 repr이 아님을 확인하고, **모듈의 syntax tree**에서 `except KeyError` 팔이
+  `str(exc)`로 detail을 만들지 않음을 확인합니다(텍스트 매칭이 아니라 `ast`). 아홉 번째가
+  조용히 들어올 수 없습니다.
+* **파서 자신을 합성 텍스트로 몰아 테스트합니다.** offender 0건을 보고하는 가드와 아무것도
+  찾지 못하는 가드는 구분되지 않습니다 — 답이 알려진 텍스트(해당 1건 + 보고하면 안 되는
+  근접 사례 2건)로 파서를 돌려 `[4]`를 단언합니다. 이 주기에 그 형태로 다섯 번 실패했습니다.
+
+역검증 셋: 한 핸들러를 `str(exc)`로 되돌리면 살아 있는 프로브와 정적 가드가 **둘 다** red,
+렌더러가 unwrap을 멈추면 arity 1 사례 둘 + 프로브가 red, 빈 인자 처리를 `str(exc)`로
+바꾸면 arity 0 사례만 red.
+
+**덤으로 확인한 것 하나.** `_actor(payload)`는 `payload["actor"]`를 읽습니다 — `payload["user"]`가
+아닙니다. 모든 GET 라우트가 `?user=`를 받는데 본문을 읽는 mutation 라우트는 `actor`이고,
+그래서 `?user=admin`을 붙인 호출이 `create 작업은 admin 권한만 가능`으로 거부됩니다. 이
+라운드에 그 메시지 때문에 재현을 네 번 헛돌렸습니다. `api_request_contract`가 이 "모델 밖
+본문 키"를 라우트 둘에 대해 공표하고 있고, review 라우트는 그 표에 없습니다 — 다음 항목으로
+측정합니다.
+
+### Fixed — `measured: True` KPI 넷 중 셋이 측정값 대신 **게이트 판정**을 가리켰습니다 (high)
+
+`bc2ebb2`가 KPI 계약에 `measurement_surface`를 넣고 그 필드의 계약을 "where this KPI's own
+figure is published"로 적었습니다. 가드는 **포인터가 resolve되는지**만 봅니다. 셋은
+resolve됩니다 — 문자열 `'pass'`로. `c27958f`에서 넷 전수 측정:
+
+    metadata_completeness      >=90 percent  …#saleability_gates.metadata_completeness      -> 'pass'
+    policy_audit_coverage      100 percent   …#metrics.governed_requests_without_evidence_total -> 0
+    ontology_mapping_coverage  >=70 percent  …#saleability_gates.ontology_mapping_coverage  -> 'pass'
+    validation_pass_rate       >=95 percent  …#saleability_gates.metadata_validation_pass_rate -> 'pass'
+
+**숫자는 처음부터 공표되고 있었습니다.** `/enterprise/evidence-pack` 최상위에
+`mean_metadata_completeness = 1.0`, `ontology_mapping_coverage = 0.8`,
+`metadata_validation_pass_rate = 1.0`이 있고, 포인터는 그 **옆에 있는 판정**을 가리켰습니다.
+`metadata_completeness`는 숫자 키 이름(`mean_…`)이 게이트 이름과 달라서 게이트를 집기
+쉬웠습니다. 판정은 제품이 **측정에 대해 내린 자기 의견**이고, 측정 자리에 의견을 놓으면
+읽는 사람이 값도, 비교된 임계도, 여유도 볼 수 없습니다 — 이 라운드가 드래프터와
+`/graph/stats`에서 고친 것과 같은 치환입니다.
+
+**`bc2ebb2`는 이것을 알면서 틀린 전제로 넘겼습니다.** 당시 제가 쓴 주석이 "the raw rate
+behind it is not [published]"라고 적고 있었는데 사실이 아닙니다. 결함은 포인터였고 raw
+rate는 공표되고 있었습니다. 한 시간 전 `c27958f`가 gap 문서에 적은 진단
+(`shacl_validation.validation_pass_rate`가 `None`)도 같은 오진이었습니다 — **틀린 전제로
+미루면 그 다음 커밋에서도 안 보입니다.** 둘 다 이 커밋에서 바로잡았습니다.
+
+바뀐 것:
+
+* 포인터 셋을 숫자를 담은 키로 옮겼습니다(`mean_metadata_completeness`,
+  `ontology_mapping_coverage`, `metadata_validation_pass_rate` — 모두 최상위).
+* 필드 계약 주석에 **resolve 가능성은 그 성질이 아니라는 것**을 적었습니다.
+* 가드 둘을 추가했습니다: 포인터는 **숫자**로 resolve돼야 하고(`bool`은 `int`의
+  서브클래스이므로 명시적으로 제외 — 불리언도 판정입니다), `saleability_gates` 블록을
+  가리킬 수 없습니다(나중에 그 블록에 숫자가 들어오면 첫 가드만으로는 통과하는데, 두
+  블록은 역할이 다릅니다).
+
+테스트 8건. 역검증 둘: 포인터를 게이트로 되돌리면 두 가드가 red, 불리언 키
+(`ontology_revision_is_durable`)를 가리키면 **첫 가드만** red — `bool` 제외가 살아 있다는
+증거입니다.
+
+**닫지 않은 것을 적습니다.** `policy_audit_coverage`는 숫자로 resolve되지만 그 숫자가 KPI의
+양이 아닙니다 — target `100 percent`에 대해 증빙 없는 요청의 **개수**(`0`)입니다. 0이면
+100 percent가 따라오지만 `0`을 `100 percent`와 직접 비교할 수는 없습니다. 지금 비율을
+공표할 수는 없습니다: 분모 `request_observations_total`이 기본 데모에서 `0`이므로 비율이
+정의되지 않습니다(0/0). 0을 100 percent로 공표하는 것은 측정하지 않은 것을 측정값으로 적는
+것이므로 하지 않았고, 여집합 포인터를 유지한 채 gap 문서에 한계를 적었습니다.
+
+### Fixed — 드래프트가 테이블 이름을 연결 locator에서 **추측**하면서 "카탈로그에서 검증된 테이블"이라고 적었습니다 (high)
+
+`POST /llm/draft-query`의 `assumptions`에 `카탈로그에서 검증된 테이블/컬럼만 사용`이
+있었습니다. **컬럼**은 카탈로그 선언에서 옵니다. **테이블**은 아닙니다 — `table_name`은
+`source_system`의 마지막 경로 조각이고, `source_system`은 relation이 아니라 *연결*
+locator입니다. 시드 카탈로그 다섯 건 전수를 `9cf278e`에서 측정했습니다:
+
+    crm-customer-master  postgresql://analytics.dw/customer   -> FROM customer
+      카탈로그 자신이 선언한 relation(postgresql.table distribution):
+      https://example.internal/api/table/crm_customer_master
+    crm-event            s3://analytics/events/crm            -> FROM crm
+    sales-order          postgresql://analytics.dw/sales      -> FROM sales
+    semantic-glossary    sparql://semantic.graph/customer-intelligence
+                                              -> FROM customer_intelligence
+    marketing-campaign   https://api.example.internal/marketing/campaigns
+                                              -> FROM campaigns
+
+두 가지가 동시에 틀립니다. libpq URI의 그 조각은 **데이터베이스** 이름이지 relation
+이름이 아니고, 나머지 셋은 **애초에 관계형이 아닙니다** — 객체 prefix, named graph,
+REST 경로입니다. 그런데도 다섯 건 모두 `"dialect": "postgresql"` SQL을 받습니다. 즉
+**어느 draft도 실제로 존재하는 relation을 지목하지 않았고**, 그것을 자기 웨어하우스에
+붙여 넣은 구매자는 `relation "customer" does not exist`를 받습니다. 그래프 스토어에
+관계형 SQL을 주면서 "카탈로그가 테이블을 검증했다"고 적은 것이 결함입니다.
+
+같은 측정에서 자기 모순이 하나 더 나옵니다. `validate_sql_query`의 allow-list는 드래프터와
+**같은 추측**을 공유하므로, 카탈로그가 선언한 진짜 relation을 넣으면 거부하고 추측한
+이름은 통과시킵니다:
+
+    validate_sql_query("... FROM crm_customer_master ...")  -> ['unauthorized_table_reference']
+    validate_sql_query("... FROM customer ...")             -> []
+
+**두 설계를 시도했고 첫 번째를 되돌렸습니다.** 관계형이 아닌 source에 대해 draft를
+거부하는 쪽을 먼저 썼습니다. 네 파일 11건이 red로 바뀝니다 — 세 파일은 데이터셋을 전수
+열거하며 draft를 기대하고, `test_latency_budget_measurement.py`는 이 라우트를 **지연
+표본 수집용 트래픽 인프라**로 씁니다(fixture 오류 7건). 다른 측정이 올라서 있는 표면을
+없애는 것은 결함보다 큰 변경이고, 결함은 draft의 존재가 아니라 **거짓 주장**입니다.
+그래서 `/graph/stats`의 instance-wide 카운트와 mock executor의 provenance 필드에서와
+같은 선택을 했습니다 — 전달 지점에서 스스로를 라벨합니다.
+
+`executable_against_source`는 SQL source까지 포함해 **다섯 건 모두 `False`**입니다. 그게
+현재 사실이기 때문입니다. 카탈로그의 `postgresql.table` distribution에서 relation을
+해석하고 `validate_sql_query`의 allow-list를 같은 파생으로 세우는 수리는 gap 베이스라인의
+"드래프트 SQL의 `FROM`이 relation이 아니라 연결 locator였습니다" 절에 별건으로 적혀
+있고, 그것이 들어오면 SQL source가 `True`로 바뀌며
+`tests/test_draft_source_kind.py`의 기대도 같이 바뀝니다. **그 참조는 이 커밋 시점에는
+아직 거짓이었습니다** — 기록은 바로 다음 커밋에 들어갔고, 참조를 적을 때 대상이
+없으면 그 참조 자체가 이 문서가 반복해 고쳐 온 거짓 진술이므로 같은 인터벌에
+닫았습니다.
+
+바뀐 것:
+
+* `sdp_core.demo_seed.classify_source_type()` — `buyer_demo_dataset_summaries`가
+  인라인으로 갖고 있던 분류를 추출했습니다. 드래프터도 같은 답이 필요하고, 사본은
+  갈라집니다(이 저장소가 그 대가를 여러 번 기록했습니다). 파생 하나, 독자 둘.
+* 응답에 `source_kind`, `executable_against_source`, `execution_caveat` 셋을 공표합니다.
+  caveat는 두 가지를 말합니다 — 이름이 **locator에서 왔다**는 것과, 진짜 이름이
+  **카탈로그 distribution에 있다**는 것.
+* `assumptions`에서 거짓 문장을 빼고 참인 것으로 바꿨습니다: 컬럼은 카탈로그 선언에서
+  왔고, 테이블 이름은 `source_system` 경로에서 파생했으며 카탈로그가 검증한 relation
+  이름이 아니라고 적습니다.
+* 이 주장을 역사로 인용하던 세 곳(`orchestrator.py` 둘, `test_draft_execute_round_trip.py`
+  하나)에 **지금은 공표하지 않는다**는 한 줄을 붙였습니다. 측정 당시의 기록으로는
+  정확하지만, HEAD에서 grep한 독자는 아직 출하 중인지 구분할 수 없었습니다.
+
+테스트 24건(`tests/test_draft_source_kind.py`). 역검증은 7개 변이로 했습니다:
+`source_kind` 키 제거(6 red), `executable_against_source = True`(5), 옛 assumption 복구(5),
+caveat가 출처를 안 말하게(5), caveat가 진짜 이름의 위치를 안 말하게(5), 공유 분류기의
+`sparql` 분기 제거(3), **드래프터가 자기 사본을 갖게(1)**. 마지막 하나가 1건만 red인 것은
+의도대로입니다 — import를 남겨 둔 사본은 구조적 identity 검사를 통과하므로, 드래프터의
+바인딩을 교체하고 응답이 따라오는지 보는 **행동** 검사가 그것을 잡습니다. 변이 둘은 처음에
+green으로 돌아왔고 둘 다 테스트의 결함이었습니다: caveat의 `"relation" in caveat`은 두
+문장 중 **어느 쪽으로도** 만족되어 주장과 그 부정을 구분하지 못했고(두 성질로 쪼갰습니다),
+또 하나는 제가 엉뚱한 자리를 변이시킨 것이었습니다.
+
+### Security — 거부된 cross-tenant graph read가 prober의 테넌트에 `allow`로 기록되고 audit event가 없었습니다 (high)
+
+governance-invariant 렌즈가 라우트 66개를 쓸어서 찾았습니다. graph read 라우트는
+`search`(카탈로그 발견) 정책 분기를 평가하는데 그 분기는 정책 엔진의 **테넌트 검사 앞에서
+return**하고, 테넌트 경계는 `evaluate()` **밖에서** `can_see_graph_node` → 맨
+`HTTPException(404)`로 강제됩니다. `zeta-bank` 소유 dataset의 `pii: true` 컬럼을
+`data-admin`(테넌트 `demo`, roles `[admin, data-analyst]`, platform-admin 아님)으로 찔러
+측정했습니다:
+
+    READ  GET /graph/nodes/zeta-ledger:holder_rrn?actor=data-admin
+       HTTP 404 "node not found"
+       DECISION effect=allow  reason='카탈로그 발견 정책 통과'  tenant='demo'
+       AUDIT  (없음)
+
+    WRITE 같은 노드, 같은 actor — 구조적으로 동일한 거부
+       HTTP 403 "tenant boundary denied"
+       DECISION effect=deny   reason='tenant boundary denied'  tenant='zeta-bank'
+       AUDIT  graph.node_upsert result=denied tenant='zeta-bank'
+
+결과가 셋입니다. (1) **원장이 결과와 모순합니다** — 요청은 거부됐고 유일한 행은 `allow`라고
+적습니다. `policy_audit_coverage`의 guardrail은 "every governed data action can be explained
+and audited"입니다. (2) **audit event가 아예 없습니다** — 같은 노드에 대한 write 거부는
+쓰는데, 그래서 소유 테넌트는 자기 PII 컬럼에 대한 **write 시도는 보고 read 시도는 보지
+못합니다.** (3) 행이 **prober의 테넌트**에 접수됩니다. `_effective_tenant_id`가
+`get_dataset(resource)`로 스탬프를 정하는데 `<dataset>:<column>`은 dataset id가 아니므로
+actor의 테넌트로 떨어집니다 — `policy.graph_node_dataset_id()`가 **같은 모듈에** 있고
+`can_see_graph_node`와 `graph_node_target_tenant`가 이미 그것을 씁니다.
+
+(3)은 잘못 접수된 행 하나로 끝나지 않습니다. 스탬프가 **id가 해석되는지에 의존**하므로,
+존재하는 외부 노드는 소유자에게(prober에게 안 보임), 없는 노드는 prober에게(보임) 접수되고,
+따라서 prober 자신의 `GET /policy/decisions`가 "이 dataset이 존재하는가"에 답합니다 — 세
+계열(browse·catalog·llm)이 닫은 그 oracle입니다.
+
+**이미 이 일을 위해 만들어진 헬퍼가 있었고 graph 계열만 쓰지 않았습니다.**
+`policy.evaluate_dataset_scope_refusal`의 docstring이 왜 `evaluate`가 이 작업에 틀렸는지,
+그리고 그것을 쓰면 oracle이 다시 열린다는 것을 이미 적어 두고 있습니다 — catalog·browse
+계열이 그것을 씁니다. graph node read 경로가 그냥 호출하지 않았습니다. 그 헬퍼가 컬럼 노드를
+자기 dataset으로 읽도록(`graph_node_dataset_id`) 하고, read 거부 경로가 그것과
+`_audit_governed_write`를 호출합니다.
+
+**HTTP 채널은 일부러 그대로입니다.** 외부 노드와 없는 노드 모두에 맨 404를 답하는 것이
+존재 oracle을 닫아 두는 방법이므로, 바뀌는 것은 **증빙이고 응답이 아닙니다.** 403으로
+바꾸면 새 테스트 2건이 빨개집니다(M4).
+
+**재현을 제대로 하는 데 시간이 걸렸고, 그 과정이 기록할 가치가 있습니다.** 첫 시도는
+`zeta-ledger`가 시드 카탈로그에 **없는** 상태로 찔러서 404가 테넌트 거부가 아니라 그냥
+"없는 노드"였습니다 — 그 상태의 `allow`/`demo` 행은 같은 모양이지만 다른 사실입니다.
+보고자는 그 dataset을 먼저 온보딩했습니다. 그리고 온보딩이 네 번 거부됐는데
+(`create 작업은 admin 권한만 가능`), 원인은 권한이 아니라 **이 라우트가 actor를 `?user=`가
+아니라 body에서 읽는다**는 것이었습니다 — 거부 메시지가 진짜 이유를 가리지 않는 또 하나의
+사례이고, gap 문서에 적어 둡니다.
+
+**내 테스트가 또 공허했습니다.** 스탬프 테스트의 첫 판이
+`crm-customer-master:email`과 `crm-customer-master`의 스탬프를 비교했는데, 그 dataset의
+소유 테넌트가 `demo`이고 prober의 테넌트도 `demo`이므로 **어느 경로로 계산해도 양쪽이
+`demo`**였습니다 — 결함에 대해 통과했습니다. 테넌트 스탬프를 검사하려면 서로 다른 테넌트가
+둘 필요합니다. 외부 dataset으로 몰아서 red를 확인했습니다.
+
+증거: 네 변형을 각각 되돌렸습니다. M1(스탬프를 `get_dataset(resource)`로 복원): 1건 red.
+M2(거부 기록 전체 제거): 2건 red. M3(decision은 기록하고 audit만 제거): 1건 red.
+M4(외부 노드에 403 응답): 2건 red. 전체 정순 `pytest` 1397 passed, 23 skipped (1392에서 +5).
+
+### Fixed — 아무도 계산하지 않는 숫자를 target으로 걸고 `implemented`로 게시했습니다 (medium)
+
+`nl_catalog_search_success`가 `status="implemented"`, `target=">=80 percent"`,
+`cadence="golden set review"`로 게시되고 있었습니다. 측정: 그 식별자는 `src/` 전체에서
+**정확히 한 번** 나옵니다 — 자기 선언입니다. curated question set도, eval harness도, 어떤
+엔드포인트의 값도, 80과 비교하는 코드도 없습니다. 제품이 diligence 독자를 바로 그 표면으로
+안내합니다 — `/enterprise/evidence-pack`이 `/enterprise/kpis`를 `open_proof_endpoints`에
+싣고 이 KPI를 `guardrail_kpis`로 이름까지 부르며, 그 엔드포인트는 미인증 200입니다.
+
+이 저장소는 이 결함군을 **이미 글로 판정해 두었습니다** — README의 `metadata_completeness`
+항목("비교하지 않는 target은 게이트가 아닙니다")과
+`tests/test_catalog_field_forwarding.py::test_the_metadata_completeness_target_is_compared`.
+**그 가드는 `item.id == "metadata_completeness"` 한 건에 묶여 있고 일반화되지 않았습니다.**
+다음 사례가 빠져나간 경로가 정확히 그것입니다. 그래서 이번 수리의 핵심은 KPI 하나가 아니라
+**가드의 일반화**입니다.
+
+적대적 검증이 두 가지를 정정했습니다. (1) 처음 보고는 이것을 "hallucinated dataset 결과를
+묶는 유일한 KPI"라고 불렀는데 **틀렸습니다** — `/llm/search`는 결정적 alias 조회이고
+`dataset_ids`가 카탈로그 인덱스에서 오므로 존재하지 않는 dataset은 **구성상** 나올 수
+없습니다(측정: 해결 불가 질문 → `{"error": "No resolvable ontology term."}`). 측정되지 않는
+양은 **recall**입니다. (2) `status`를 `planned`로 내리는 것도 **틀렸습니다** — 이 KPI가
+가리키는 표면은 출시돼 200을 답하고, 이 저장소는 이미
+"a stale 'this is not implemented' misleads the same buyer as a premature 'this is'"를
+적어 두었습니다. 반대 방향의 같은 결함입니다.
+
+그래서 **feature 상태와 측정 상태를 분리**했습니다. `status`는 표면이 출시됐는지,
+`measured`는 그 숫자를 계산하는지입니다. `measured: true`는 `measurement_surface`
+(`endpoint#key`)로 숫자가 게시되는 위치를 가리키고, 그 포인터는 **라이브 응답에 대해
+해석됩니다** — 해석되지 않는 포인터는 없는 것보다 나쁩니다. `measured: false`이면서
+`status: implemented`이고 target이 숫자를 약속하면 `measurement_gap`이 필수입니다.
+
+"gate가 있으면 measured"라는 단순 규칙은 쓰지 않았습니다. 그 규칙은
+`policy_audit_coverage`와 `validation_pass_rate`를 미측정으로 표시하는데, 둘은 **다른
+이름으로** 게시됩니다(각각 `governed_requests_without_evidence_total` gauge,
+`saleability_gates.metadata_validation_pass_rate`) — 검증이 경고한 "stale denial"을 제가
+그대로 만들 뻔한 지점입니다. 그래서 KPI마다 선언하고 **테스트가 제품에 대해 확인**합니다.
+
+부수로 적어 둡니다: `validation_pass_rate`의 게이트는 비교를 수행하지만 **판정만** 게시하고
+그 뒤의 비율은 게시하지 않습니다(`shacl_validation.validation_pass_rate`는 `None`).
+더 작은 정직성 갭이고 gap 문서에 기록합니다.
+
+**내 테스트가 또 한 번 주장과 부정을 구별하지 못했습니다.** 공개 문구가 "측정되지 않는 것은
+recall이며 hallucination rate가 **아닙니다**"라고 적는데, 제 단언은
+`"hallucination" not in gap`이었으므로 그 **부정문 자체**에 걸려 빨개졌습니다. substring은
+주장과 부정을 구별할 수 없습니다 — 산문에서 숫자를 찾는 것과 같은 실수입니다. 어휘 대신
+**행동**으로 전제를 확인하도록 고쳤습니다(해결 불가 질문이 자산을 지어내지 않는지 실제로
+호출해 봅니다).
+
+증거: 세 변형을 각각 되돌렸습니다. M1(공개를 지우고 `implemented` 유지): 3건 red.
+M2(measured KPI를 해석되지 않는 surface로 지정): 1건 red. M3(measured와 gap을 동시에
+주장): 4건 red. 전체 정순 `pytest` 1392 passed, 23 skipped (1372 passed, 16 skipped에서
++20 통과, skip +7 — 새 가드가 해당 없는 KPI를 skip합니다).
+
+### Security — `GET /graph/stats`가 인증 없이 다른 테넌트의 스키마 폭을 알려 줬습니다 (high)
+
+구매자 체감 갭 탐색의 governance-invariant 렌즈가 라우트 66개를 전수로 쓸어서 찾았습니다.
+`/graph/stats`는 mutation·browse·query 집합에서 **actor 파라미터도, `evaluate()` 호출도,
+증빙 행도 없는 유일한 라우트**였습니다. 측정:
+
+    anonymous GET /graph/stats -> 200 {'backend': 'in_memory',
+        'stats': {'nodes': 26, 'edges': 78, 'concepts': 5, 'embeddings': 26}}
+        policy decisions +0
+    anonymous GET /graph/nodes/crm-customer-master -> 403
+        '목록 조회는 인증된 사용자만 가능합니다.'
+
+같은 store를 읽는 형제 라우트 셋은 그 호출자를 거부합니다. 그리고 그 숫자는 무해하지
+않습니다 — 카탈로그 mutation이 **설계상** dataset 하나당 노드 하나와 선언된 컬럼마다 노드
+하나를 그래프에 미러링하므로, 다른 테넌트가 소유한 3컬럼 dataset을 온보딩하면 익명 응답이
+`nodes 26` → `nodes 30`으로 움직입니다. `nodes +4`는 "dataset 1개 + 컬럼 3개"로 읽힙니다.
+인증 없는 호출자가 URL 하나를 폴링하면서 경쟁 테넌트가 governed asset을 온보딩하는 것을
+지켜보고, dataset을 몇 개 추가했는지와 각각이 몇 컬럼인지를 알 수 있습니다.
+
+그 동안 게시된 주장 **둘**이 거짓이었습니다. `CLAUDE.md`의 governance invariant(browse/query
+경로에서 정책 평가와 증빙 기록을 빼는 변경은 회귀)와, `policy_audit_coverage` KPI —
+`status="implemented"`, `target="100 percent"`, guardrail **"No preview or query path may
+bypass policy."** 입니다.
+
+형제들이 이미 쓰는 게이트(`_authorize_graph_read(actor, "graph")`)를 붙였습니다. 그러면
+거부가 생기므로 **거부 계약에도 게시합니다**(`("GET", "/graph/stats"): (403,)`) — 코드가
+일으킬 수 있는 모든 거부는 공표돼야 하고, 그 가드가 이 커밋을 잡아서 알려 줬습니다
+(`test_every_refusal_the_code_can_raise_is_published`).
+
+**숫자는 여전히 instance 전체이고, 이제 그렇다고 적습니다**(`count_scope:
+instance_wide_all_tenants`). 테넌트 단위로 좁히는 것은 분리된 더 큰 작업입니다 — in-memory
+backend는 기존 `policy.can_see_graph_node`로 걸러낼 수 있지만 SQL backend는 테넌트 인식
+집계가 필요하고, **instance 전체 숫자를 scoped라고 게시하는 것이 인증된 instance 전체
+숫자보다 나쁩니다.** 그래서 한계를 라벨로 적고 닫지 않았습니다.
+
+증거: 세 변형을 각각 되돌렸습니다. M1(게이트 제거): 2건 red. M2(`count_scope` 라벨 제거):
+1건 red. M3(`count_scope`를 `tenant_scoped`라고 주장): 1건 red. 전체 정순 `pytest`
+1372 passed, 16 skipped (1366에서 +6), `demo_smoke` exit 0 · `ready: true`.
+
+### Fixed — 운영자 계약이 "절대 빨개지지 않는" liveness 엔드포인트를 health로 게시했습니다 (high)
+
+`GET /enterprise/observability`는 이 서비스의 **기계가 읽는 운영자 계약**이고, 거기 있던
+health 포인터는 `health_endpoint: "/health"` 하나였습니다. 측정:
+
+    published health pointer(s): {'health_endpoint': '/health'}
+    '/healthz' anywhere in the manifest: False
+
+    GET /health   -> 200 {'status': 'ok', 'at': ...}         # 아무것도 조회하지 않음
+    GET /healthz  -> 200 {'status': 'ready', 'store': {...}} # 미준비 시 503
+
+`/health`는 상수를 돌려주고 아무것도 조회하지 않으므로 **실패할 수 없습니다.**
+`/healthz`는 활성 store를 확인하고 백엔드가 닿지 않으면 503을 내며, `Dockerfile`
+HEALTHCHECK와 `docker-compose` healthcheck 두 곳이 **이미** 그것을 조회합니다. 그래서
+모니터링·로드밸런서·Kubernetes probe를 **플랫폼 자신이 게시한** 엔드포인트에 연결한 SRE는
+포털 백엔드가 죽고 모든 요청이 실패하는 동안 초록인 체크를 갖게 됩니다.
+
+**가장 날카로운 부분은 이것입니다: README는 맞게 적고 있었습니다.** README 461-462행이
+`/health`를 liveness, `/healthz`를 "미준비 시 503"으로 정확히 구분합니다. 사람이 읽는 문서가
+옳은 동안 **기계가 읽는 계약이 틀렸고**, SRE가 연결하는 것은 계약입니다. 한 층 아래의 같은
+결함은 이미 닫혀 있었습니다 — `docs/product-technical-gap-baseline.md`의
+"healthcheck | Dockerfile + compose 2곳이 상수 /health를 조회 — 백엔드 죽은 컨테이너가
+healthy" 행입니다. 그때 컨테이너를 고치고 **계약은 고치지 않았으므로**, 서비스는 자기
+이미지가 쓰지 않게 된 엔드포인트를 계속 권하고 있었습니다.
+
+두 포인터를 각자의 의미와 함께 게시합니다 — `health_endpoint`(liveness, 상수),
+`readiness_endpoint`(readiness, 503), 그리고 `probe_semantics`가 둘의 차이를 적습니다.
+`health_endpoint`는 **지우지 않습니다**: 이미 연결한 독자가 있고, 결함은 "틀린 하나"가
+아니라 "모호한 하나"였습니다. 응답 계약(`api_response_contract.py`)에도 두 키를 게시합니다.
+
+**내 테스트에 substring 구멍이 있었습니다.** 컨테이너와 계약이 같은 엔드포인트를 권하는지
+보는 검사가 `recommended in line`이었는데, `/healthz`를 조회하는 줄은 `/health`를 **포함**
+하므로 계약을 상수 엔드포인트로 돌려도 그 검사는 통과했습니다(측정). 경로를 정규식으로
+뽑아 **정확히** 비교합니다 — 그러자 같은 변형이 2건이 아니라 3건을 빨갛게 만듭니다.
+M3를 처음 돌릴 때 엉뚱한 단어를 바꿔 변형이 단언을 건드리지 못했고, 제대로 돌려서 red를
+확인했습니다. 변형이 통과하면 가드가 아니라 변형을 먼저 의심해야 한다는 쪽이 이번 교훈입니다.
+
+증거: 세 변형을 각각 되돌렸습니다. M1(`readiness_endpoint` 제거): 4건 red.
+M2(readiness를 상수 엔드포인트로 지정): 3건 red(substring 수리 전에는 2건). M3(readiness
+설명에서 503 제거): 1건 red. 전체 정순 `pytest` 1366 passed, 16 skipped (1359에서 +7).
+
+### Fixed — "정직한 숫자"라고 적은 문단의 숫자가 12일 동안 거짓이었습니다 (high)
+
+`README.md`와 `docs/implementation-compliance.md`가 둘 다 기본 데모 배포에서 runtime 검증되는
+control이 **0개**이고 runtime 확인을 가진 control은 `credential_vault` **하나**라고 적고
+있었습니다. 둘 다 쓰인 시점에는 참이었고 둘 다 12일 동안 거짓이었습니다:
+
+    c74ba8e  2026-10-14 12:27  README 문단 작성 (그때는 credential_vault 하나가 맞았습니다)
+    1a62855  2026-10-14 17:25  ontology_version_pin 추가 — 5시간 뒤
+    측정 2026-10-26            runtime 확인을 가진 control 2개
+                               기본 데모 배포에서 runtime 검증되는 것 1개
+                               REST secret을 설정하면 2개
+
+**처음에 이 drift를 제 커밋(`e6d08ac`) 탓으로 적었고, 그것은 틀렸습니다.** `e6d08ac`는
+`_RUNTIME_CONTROL_CHECKS`를 `control -> (검사, 소유자)` 형태로 재구성했을 뿐이고, 두 번째
+runtime 확인을 넣은 것은 12일 전 `1a62855`입니다. 더 깔끔한 이야기가 되는 쪽으로 책임을
+가져오지 않고 측정한 대로 적습니다. 제 것인 부분은 따로 있습니다 — `e6d08ac`에서 **바로 그
+코드를 읽으면서** 문서를 확인하지 않았습니다.
+
+누구도 잘못 추론하지 않았습니다. 같은 숫자를 **두 문서가 손으로** 들고 있었고 그 숫자를
+만드는 코드가 움직였습니다. 그래서 수리는 문장을 고치는 것으로 끝내지 않았습니다:
+
+* 숫자를 README의 **기계가 읽는 블록 한 곳**으로 옮겼습니다
+  (`controls_with_a_runtime_check` / `runtime_verified_in_the_default_demo`).
+  `fast-mlsirm`이 runtime contract에 쓰는 형태와 같습니다.
+* `docs/implementation-compliance.md`는 **개수를 아예 적지 않습니다** — control 이름만
+  적고 숫자는 README를 가리킵니다. 두 사본이 12일을 만든 원인이므로 사본을 없앴습니다.
+* README **산문에서도** 숫자를 뺐습니다. 블록을 만들고도 산문에 "2개/1개/2개"를 남겨 두면
+  같은 습관이 그대로 남습니다.
+* 가드는 제품에서 세 값을 계산해 블록과 **정확히** 대조하고, 두 번째 문서가 숫자를 다시
+  들면 거부합니다.
+
+**가드의 첫 판은 거의 공허했습니다.** 산문에서 숫자를 찾는 방식이었고, 낡은 README 문장을
+되돌려도 개수 검사는 **초록**이었습니다 — 같은 문단이 자기 몫의 "1"과 "2"를 공급하기
+때문입니다. 그때 걸린 것은 control **이름** 검사뿐이었습니다. 산문에서 숫자를 찾는 검사는
+그 숫자를 이웃과 구별할 수 없습니다. 측정하고 나서 블록 비교로 바꿨습니다.
+
+증거: 세 변형을 각각 되돌렸습니다. M1(블록이 제품과 다른 값을 적음): 개수 검사 1건 red
+(첫 판에서는 green이었습니다 — 그것이 이 수리의 요점입니다). M2(소스에 세 번째 runtime
+확인 추가, 문서 그대로): 개수·이름 2건 red. M3(두 번째 문서가 손으로 센 숫자를 다시 듦):
+1건 red. 전체 정순 `pytest` 1359 passed, 16 skipped (1353에서 +6).
+
+### Fixed — dry run이 데이터 행을 하나 지어내면서 "0건"이라고 보고했습니다 (high)
+
+구매자 체감 갭 탐색(6개 표면)의 query-path 렌즈가 찾았습니다. `execute_query`의 `row_count`는
+`_row_count_estimate(dataset, dry_run=req.dry_run)`로 계산되어 dry run에서 올바르게 `0`을
+돌려주는데, 그 아래 `rows`/`columns` 구성이 **`req.dry_run`을 전혀 보지 않았습니다**:
+
+    dry_run=True [plain  ]  row_count=0  len(rows)=1  rows=[{'result': 0}]
+    dry_run=True [group by]  row_count=0  len(rows)=1
+                             rows=[{'week': '2026-10-26', 'active_count': 1}]
+    audit:  {"dry_run": true, "row_count": 0, "measurement_status": "mock_execution_no_real_data", ...}
+
+한 응답이 **자기와 모순**합니다(0건이라면서 1건을 전달). group-by 경로에서는 그 1건이
+**오늘 날짜의 0이 아닌 지어낸 측정치**(`active_count: 1`)입니다. 그리고 compliance 원장은
+"전달된 행 없음"을 기록하는 동안 호출자는 행을 들고 있습니다 — 이 저장소의 표준 규칙이
+"원장에 올라간 라벨 없는 추정치는 지어낸 측정치"이므로, 라벨이 붙은 mock 표시와 별개로
+이것은 원장의 거짓 진술입니다.
+
+`rows`를 dry run 분기에서 비웁니다. `columns`는 **계속 게시합니다** — 선언된 결과 모양은
+dry run이 존재하는 이유이고, 비는 것은 데이터뿐입니다.
+
+`tests/test_orchestrator.py::test_execute_query_dry_run_succeeds_with_zero_rows`는 이름이
+"zero rows"인데 `row_count == 0`만 단언하고 `rows == []`는 **한 번도 단언하지 않았으므로**,
+행을 실어 보내는 응답에 대해 통과했습니다. 이 주기에 자기 이름이 약속한 것을 검사하지 않는
+테스트 **일곱 번째**입니다. 그 단언을 추가하고 group-by 경로 케이스를 더했습니다.
+
+**내 테스트가 두 번 틀렸고, 둘 다 적어 둡니다.**
+
+1. 첫 판은 `dry_run` 양쪽에서 `recorded == row_count == len(rows)`를 요구했습니다. live
+   실행에서 이것은 거짓이고 **거짓이어야 합니다** — 거기서 `row_count`는 라벨 붙은
+   추정치(2000, 카탈로그 프로필)이고 `rows`는 고정된 예시 한 줄입니다. 같기를 요구하면
+   mock이 2000행을 지어내야 하고, 그것은 라벨 붙은 한 줄보다 **더 나쁩니다.** 코드가
+   주장하지 않은 값 도메인을 단언한 것과 같은 종류의 과잉이고, 이 주기에 `minimum=1`로
+   한 번 했던 실수입니다. 다만 그 과잉이 진짜 갭 하나를 드러냈습니다: 이 응답의 모든
+   수치가 출처 라벨을 달고 있는데(`elapsed_ms_source`·`bytes_scanned_source`·
+   `row_count_source`) **`rows`만 없었고**, 바로 위 주석이 "아래 모든 수치는 출처가
+   라벨된다"고 적고 있었습니다. `rows_source`를 추가했습니다 —
+   `withheld_dry_run` 또는 `fixed_mock_sample`.
+2. 두 번째 판은 최신 audit event를 `events[-1]`로 읽었습니다.
+   `catalog.list_audit_events`는 **최신이 먼저**이므로 그것은 가장 오래된 행이고, 루프
+   두 번째 패스에서는 **이전 호출의 event**였습니다 — 제품이 2000행 응답에 대해
+   `row_count: 0`을 기록하는 것처럼 보였습니다. 순서를 가정하지 않고 확인한 것이 결함과
+   오독을 가른 지점이고, 그 문장을 테스트 docstring에 적어 두었습니다.
+
+증거: 두 수리를 각각 되돌렸습니다. M1(dry run이 다시 행을 전달): 3건 red. M2(`rows_source`
+라벨 제거): 1건 red. 전체 정순 `pytest` 1353 passed, 16 skipped (1351에서 +2).
+
+### Fixed — 기본 테스트 게이트가 stacked PR에서 아예 돌지 않고 있었습니다 (high)
+
+PR #102의 check run을 세어 보고 찾았습니다. **두 건뿐입니다**:
+
+    GET /repos/.../pulls/102/check-runs  ->  total_count: 2
+      Hypothesis property tests          (fuzz.yml)
+      Atheris coverage-guided (bounded)  (fuzz.yml)
+
+`Tests / API integration suite`가 **아예 없습니다.** 원인은 한 줄입니다 — `fuzz.yml`은
+`pull_request:`를 필터 없이 선언하고, `tests.yml`은 `pull_request: branches: [main]`로
+선언했습니다. 그 필터는 PR의 **base** 브랜치에 걸립니다. #102의 base는 `main`이 아니라
+`#79` 브랜치이고(이 저장소의 merge order가 **의도적으로** PR을 쌓습니다), 따라서 기본
+테스트 게이트는 stacked PR에서 단 한 번도 돌지 않았습니다.
+
+24일 동안 아무도 눈치채지 못한 이유는 계정 Actions 과금 잠금이 모든 job을 디스패치 전에
+거부해서 어느 쪽도 돌지 않았기 때문입니다. 결과가 드러나는 시점은 그 잠금이 풀리는
+순간입니다: PR은 fuzz 레인의 결과를 보여 주고 `Tests` 결과는 **보여 주지 않으며**,
+"체크 통과"를 읽는 리뷰어는 두 레인 중 하나만 읽게 됩니다.
+
+이것은 형제 저장소가 이미 기록한 결함입니다 — `contextual-orchestrator`의
+"Stacked quality checks: zero check runs can result from the former
+`pull_request.branches: [main]` filter excluding the PR base. Keep the quality trigger
+unfiltered." 같은 필터가 두 번째 저장소에 있었고, 워크플로 파일을 읽어서가 아니라 **check
+목록을 세어서** 찾았습니다.
+
+가드는 `tests.yml`을 이름으로 부르지 않고 **파생**합니다: 이 저장소가 소유한 워크플로를 전부
+읽어 `pull_request` 트리거에 base 브랜치 필터(`branches`/`branches-ignore`)가 있으면
+거부합니다. 나중에 같은 필터를 달고 추가되는 워크플로도 이 파일을 고치지 않고 걸립니다.
+`scorecard-analysis.yml`은 `pull_request` 트리거가 아예 없으므로 예외가 아니라 **무관**이고,
+그래서 skip 1건이 늘었습니다. `types`는 base가 아니라 이벤트 종류를 좁히므로 범위에
+넣지 않습니다.
+
+PyYAML이 이 저장소의 lock에 없고 가드 하나를 위해 의존성을 추가하는 것은 잘못된 교환이므로
+트리거 블록을 텍스트로 읽습니다 — `tests/test_container_entrypoint.py`와
+`tests/test_api.py`가 이미 `docker-compose.yml`과 `fuzz.yml`을 읽는 방식 그대로입니다.
+**파서 자체를 합성 텍스트로 몰아 테스트합니다**(필터 있음/없음, `types`, push 전용,
+`branches-ignore`) — 아무도 측정하지 않은 파서를 가진 가드는 자기 가정에 대해 검사된
+가드이고, 이 주기에 그 형태로 다섯 번 실패했습니다.
+
+증거: 두 수리를 각각 되돌렸습니다. M1(`branches: [main]` 필터 복원): `[tests.yml]`
+parametrization 1건 red. M2(파서가 `types`를 base 필터로 보고하게 함): 파서 테스트 1건 red.
+전체 정순 `pytest` 1351 passed, 16 skipped (1347 passed, 15 skipped에서 +4 통과, skip +1).
+
+### Fixed — 대문자 하나로 빠져나간 낡은 주장, 그리고 전달 표면의 절반만 보던 disclosure 스캔 (high / 뒤 두 건은 low)
+
+**이 주기 다섯 번째 "자기 목록에 걸린 가드"의 다음 형태: 대소문자.**
+`observability.py:907`의 주석이 `"Nothing posts to it, so the capability is stated next to
+the configuration fact."`라고 적고 있었고, 두 줄 아래가
+`"alert_webhook_routing": ALERT_ROUTING_STATUS`(= `implemented`)입니다. 바로 그 문구를
+금지하려고 추가한 가드의 fragment는 `("nothing posts ", "to it")`이고, 공백 정규화한
+파일 전체에 **대소문자 구분** substring으로 물었으므로 대문자 `N` 하나로 통과했습니다.
+아홉 개 금지 fragment를 README·CLAUDE·docs·src·tests 전체에 돌려 보면 대소문자만
+어긋나는 누락은 정확히 이 한 건입니다. 비교를 casefold하고, 주석은 더 이상 사실이 아니므로
+사실로 바꿨습니다(설정 여부와 전달 능력을 양방향으로 혼동할 수 없게 적습니다).
+
+`docs/implementation-compliance.md`가 `alert_webhook_routing: declared_unimplemented`를
+한 라운드 동안 그대로 들고 있었습니다 — 전달이 구현됐다고 적은 바로 위 항목에서 세 줄
+뒤입니다. "2건 중"도 규칙이 둘이던 시절의 숫자입니다. 둘 다 고쳤습니다.
+
+그 문구를 금지 목록에 **열 번째 fragment로 추가하지 않았습니다.** 대신 제품에서 값을 읽어
+같은 키에 다른 값을 적은 문서를 거부하는 가드를 넣었습니다
+(`alert_webhook_routing`·`alert_routing`·`alert_evaluation`을 `ALERT_ROUTING_STATUS`/
+`ALERT_EVALUATION_SCOPE`와 비교). 상태 값의 이름이 바뀌면 이 가드는 고칠 필요가 없고,
+뒤처진 문서는 걸립니다. 손으로 쓴 목록이 자기 자신에게 걸린 횟수가 이 주기에 다섯 번이므로,
+같은 장치를 하나 더 만드는 대신 파생되는 쪽을 택했습니다.
+
+**disclosure 스캔이 전달 표면의 절반만 봤습니다.** alert 본문을 디코드하는 테스트는 하나뿐이고
+routable 규칙 **둘 중 하나**(`policy_audit_gap`)만 몰았습니다. 측정: `_alert_payload`가
+`connector_probe_failure` 본문에만 `list_request_observations()` 행을 붙여도 전체 스위트가
+1312 passed로 초록이었습니다 — 금지된 값 넷과 키 넷이 모두 익명 `GET`으로 도달 가능한
+규칙의 본문에 실려 off-box로 나갑니다. 즉 alert를 유발한 caller가 **무엇이 새는지도**
+고릅니다. 규칙별 driver를 `ROUTABLE_ALERT_RULE_IDS`로 parametrize하고, driver 없는
+routable 규칙은 조용히 스캔되지 않는 대신 실패합니다.
+
+**자격증명 반사 스캔은 실패 경로에서만 돌았습니다.** `_retained_stores()`는 모듈의 모든
+module-level 컨테이너를 reflection으로 훑고, 이 파일 docstring이 "routing 변경이 추가한
+ring은 여기 이름을 적지 않아도 스캔된다"를 보증으로 내세웁니다. 그런데 그것을 호출하는
+유일한 테스트가 seam을 `failure_from_url`로 설치했으므로 **성공 분기에서 쓰인 상태는 한
+번도 보지 않았습니다.** 측정: 성공 분기가 설정된 URL을 `_ALERT_ROUTING`에 남기면 전체
+스위트가 1312 passed로 초록이고, 다섯 자격증명 형태 중 셋이 익명으로 답하는 모듈의
+module-level dict에 앉아 있습니다. `test_honest_metrics`의 one-way-read 가드도 못 잡습니다 —
+그 대입의 우변은 지역 변수이고, 가드는 변수 **이름**을 grep합니다. 두 결과 모두에 대해
+parametrize하고, 각 분기가 실제로 그 분기였는지 `deliveries_failed`/`deliveries_succeeded`로
+단언합니다(그 단언이 없으면 한쪽이 조용히 다른 쪽을 돌 수 있습니다).
+
+**정정 — 뒤 두 건의 심각도.** 위 두 disclosure 항목을 처음 적을 때 리뷰의 high 등급을
+그대로 옮겨 적었는데, 그 두 건은 반박 판정을 받았고 반박이 맞습니다. 사실 하위 주장은
+양쪽 모두 확인됩니다(변형이 통과하고, 스캔이 절반만 봅니다). 다만 **지금 새고 있는 것은
+없습니다**: `_alert_payload`에는 규칙별 코드가 없으므로 배포된 probe 규칙 본문에
+caller 통제 내용이 없고, 성공 분기에 URL을 남기는 변형의 `_ALERT_ROUTING`은 게시 표면이
+아닙니다(`alert_routing_state()`가 고정 키만 열거합니다). 두 건은 **커버리지 비대칭**이고
+심각도는 low입니다. 고치는 비용이 parametrize 두 줄이라서 고쳤을 뿐, "누출을 막았다"가
+아닙니다.
+
+증거: 네 수리를 각각 되돌렸습니다. M1(문서의 낡은 문장 복원): 파생 가드 1건 red.
+M2(낡은 주석 복원): casefold 가드 1건 red — 같은 텍스트에 대해 대소문자 구분 가드는
+green(이것이 결함 그 자체입니다). M3(probe 규칙 본문에만 트래픽 첨부):
+`[connector_probe_failure]` parametrization 1건 red. M4(성공 분기에 URL 보존):
+`[succeeded]` parametrization 1건 red. 전체 정순 `pytest` 1347 passed, 15 skipped
+(1344에서 +3).
+
+### Fixed — probe 규칙이 읽지 않은 conjunct. 효과가 측정되는 유일한 control이 빠져 있었습니다 (high)
+
+`verdict_basis`의 conjunct는 셋입니다: adapter 구현 + required control의 선언된 proof
+endpoint가 서비스됨 + runtime 검증 control이 통과. `connector_probe_failure_reason`은
+**둘만** 읽었습니다. 빠진 세 번째는 route가 존재한다는 사실에서 추론하는 것이 아니라
+control의 **효과를 실제로 측정하는** 유일한 conjunct이고, 그 절반은 빌드 소유입니다 —
+runtime 검증 control 둘 중 `credential_vault`의 결과는 운영자의 `SDP_CONNECTOR_SECRET_*`
+설정이지만, `ontology_version_pin`의 결과는 이 소스 트리의 술어입니다.
+
+핀 비교를 깨고 측정했습니다(`_verify_ontology_version_pin`의 docstring이 "비교를 깨면 이
+control은 구현됐다고 주장하지 않는다"고 적어 둔 바로 그 상태):
+
+    probe status       contract_only
+    row verification   proof_route_served      ← route는 여전히 서비스됨
+    row gap_reason     the version pin predicate did not hold in both directions
+    failure_reason     ''
+    rule report        observed_total 0, firing False
+    gauge              sdp_connector_probe_failures_total 0
+
+`declared_only`에 키를 물렸기 때문에 놓쳤습니다 — route는 서비스되므로 행은
+`proof_route_served`에 머무릅니다. 진짜 빌드 결함에 critical 규칙이 0을 보고하는 동안,
+세 개의 게시 표면이 이 규칙이 "`verdict_basis` 중 빌드가 소유하는 절반"을 덮는다고
+주장했습니다(함수 docstring, `GET /enterprise/production-readiness`의 acceptance
+criterion, 그리고 이 CHANGELOG). `python -m sdp.demo_smoke`는 그 쌍에 대해
+`status == "ready_for_demo"`를 단언하므로 **실패했습니다** — 피해 범위가 줄어든 것이고
+없어진 것이 아닙니다. runtime alert와 gauge와 게시된 주장은 그대로 틀렸습니다.
+
+세 번째 사유를 더했습니다. 소유권은 한 곳에만 씁니다 — `_RUNTIME_CONTROL_CHECKS`가
+`control -> (검사, 소유자)`를 담고, `BUILD_OWNED_RUNTIME_CONTROLS`와 제외가 모두 거기서
+파생됩니다. 그 매핑의 주석이 이미 적어 둔 교훈입니다: 같은 집합을 손으로 두 번 쓰면
+어긋나고, 게시 판정을 결정하는 쪽이 조용히 이깁니다. 행마다
+`runtime_check_owner`를 게시하므로 읽는 사람이 어느 쪽인지 알 수 있습니다.
+`credential_vault`는 제외를 유지합니다 — 거기서 발화하면 배포되는 demo image에서
+발화합니다. 규칙의 `condition`과 `not_covered`, production readiness 기준,
+`docs/enterprise-readiness.md`를 모두 사실로 고쳤습니다.
+
+**부수로 찾은 것: probe 라우트의 게시된 응답 스키마가 5개 모양 중 1개에서 파생돼
+있었습니다.** `_fetch`가 `connector_id`를 하나만 치환하므로, 스키마는 그 connector의
+control 행에서 파생되고 위의 parametrize 검사는 같은 하나에 대해서만 검증합니다. 200을
+답하는 모든 connector/dataset 쌍에 대해 측정하면 라이브 행이 스키마에 없는 키 **11개**를
+담고 있었습니다 — `gap_reason`, ontology 핀의 관찰 4개, credential vault의 4개,
+그리고 `runtime_check_owner`. 하나의 모양에서 파생된 게시 스키마는 이 모듈이 존재해서
+거부하는 바로 그 drift입니다(모듈 docstring 자신의 표현). 11개를 게시하고, 모든 쌍을
+도는 테스트를 더했습니다.
+
+증거: 세 수리를 각각 되돌렸습니다. M1(세 번째 사유 제거): 1건 red. M2(`credential_vault`를
+빌드 소유로 표시 — demo image를 페이지하게 됨): 5건 red. M3(스키마에서
+`runtime_check_owner` 제거): 새 전수 테스트 1건 red. 전체 정순 `pytest`
+1344 passed, 15 skipped (1340에서 +4).
+
+### Fixed — alert 경로의 예외 가드가 요청 스레드에 없었고, 래치 결정이 관찰 순서를 지키지 않았습니다 (high)
+
+**가드가 엉뚱한 스레드에 있었습니다.** `_deliver_alert`의 넓은 `except Exception`은 스폰된
+스레드의 본문만 감쌉니다 — 그 스레드는 애초에 요청에 닿을 수 없습니다. 래치 뒤에 **요청
+스레드가 직접** 하는 일(rule의 report 호출, payload 생성, `worker.start()`)은 가드가
+없었으므로, 거기서 raise가 나면 governed 요청으로 빠져나가 그 `except`의 주석이 스스로
+"막는다"고 적어 둔 전례를 그대로 재현합니다: governed probe가 실제 워커를 통해 500을
+답하고 **policy decision +1, audit event +0** — 감사하지 않은 결정. `api.py`가
+`connector_probe`가 돌아온 **뒤에** audit event를 기록하기 때문입니다.
+
+`_begin_alert_delivery`가 `_begin_alert_delivery_locked`를 감싸고 아무것도 요청으로 새지
+않습니다. 평가 단계에서 raise한 것은 stage `evaluation`으로 보존되고
+`evaluation_failures`에 셉니다 — `deliveries_failed`가 아닙니다. POST를 시도하지 않았으므로
+`failed`에 세면 `attempted` 없는 `failed`를 게시하게 되고, 그것이 바로 위 항목에서 닫은
+자기모순입니다.
+
+**래치 결정이 관찰 순서를 지키지 않았습니다.** `firing`을 lock **밖에서** 읽고 그 결정을
+lock 안에서 적용했으므로, "firing 아님"을 먼저 관찰하고 lock을 나중에 잡은 평가가 그
+사이에 세워진 래치를 지웠습니다. 다음 increment가 다시 래치하고 **같은 episode에 두 번째
+POST**를 보냅니다. 게시된 경계 — rule당 firing episode 하나에 POST 하나, 그래서 reset
+사이에 워커당 최대 둘 — 은 불변식이 아니었습니다. report를 lock **안에서** 읽습니다. 두
+report 모두 I/O도 자체 lock도 없는 메모리 dict 읽기이므로 직렬화 비용은 마이크로초
+단위이고, 사는 것은 순서입니다.
+
+**핸드셰이크 예산과 join이 미들웨어 지점에서 전혀 고정돼 있지 않았습니다.**
+`ALERT_HANDSHAKE_BUDGET_SECONDS`는 firing 요청이 wedged webhook 값을 치르는 **유일한**
+이유인데, 미들웨어 평가 지점의 비용에 대한 단언이 없었습니다. 예산을 지우고(`worker.join()`)
+측정하면 그 호출이 5000 ms alert 타임아웃에 대해 **5012.93 ms**가 걸리고 전체 스위트는
+초록이었습니다 — loop-block 테스트는 tick 간격을 재고, probe-route 테스트는 이 평가 지점이
+있지도 않은 라우트를 잽니다. 바닥도 없었습니다: join이 없으면 호출이 1 ms 안에 돌아오고,
+join이 존재하는 이유인 "평가 지점에서 episode당 POST 하나가 관측 가능하다"는 뒷받침이 없는
+주장이 됩니다. 천장(1000 ms)과 바닥(예산의 60%)을 양쪽 지점에 모두 걸었습니다. sync 지점의
+기존 테스트는 다섯 요청의 최댓값만 재는데 그중 전이는 첫 번째 하나뿐이므로, 바닥은 전이
+요청 단독으로 읽어야 합니다.
+
+`test_the_alert_webhook_value_is_read_one_way_and_stashed_nowhere`의 stash 검사는 **범위**가
+아니라 대상 종류를 물었습니다. 모든 `ast.Name` 대상을 제외했으므로 자기 메시지가 두 번
+이름을 부르는 바로 그 경우 — 모듈 수준 `_WEBHOOK = os.environ.get("SDP_ALERT_WEBHOOK_URL", "")`
+— 를 제외했습니다. 측정: `os.environ.get`을 쓰는 모듈 수준 stash는 위쪽 `os.getenv` 읽기
+집계에도 걸리지 않아 테스트 전체가 초록이었습니다(`os.getenv` 쪽 stash는 읽기/함수 개수
+단언에 걸립니다 — 검사 하나가 멀었던 것이고 테스트 전체가 멀었던 것은 아닙니다. 그렇게
+적습니다). 이제 모듈 수준 `Name`도 stash입니다.
+
+증거: 네 수리를 각각 되돌렸습니다. M1(요청 스레드 가드 제거): 1건 red. M2(양쪽 join에서
+예산 제거): 3건 red(25.99 s). M3(join 자체 제거): 2건 red. M4(`firing`을 lock 밖에서 읽기):
+1건 red. stash 검사는 `os.environ.get` 모듈 stash로 red, 예전 검사로 되돌리면 같은 변형에
+green. 전체 정순 `pytest` 1340 passed, 15 skipped (1336에서 +4).
+
+### Fixed — 실패한 alert를 "전달됨"으로 게시했습니다. 이름이 읽는 카운터와 달랐습니다 (high)
+
+`_alert_delivery_fields`가 게시 키 `alerts_delivered`를 `_ALERT_ROUTING["attempted"]`에
+물렸고, `metrics.alerts_delivered_total`과 `sdp_alerts_delivered_total` gauge도 같은 시도
+횟수를 읽었습니다. 정직한 숫자를 담고 있던 `deliveries_succeeded`는 **아무도 읽지
+않았습니다.** 그래서 webhook이 거부한 POST 한 번이 `alerts_delivered: 1`과
+`alerts_failed: 1`로 **같은 POST를 두 번** 게시하고, gauge는 1을 내보냈습니다. gauge의 HELP
+문구는 "attempted"라고 적혀 있었고 이름은 "delivered"였으며, per-rule JSON 키에는 그런
+단서조차 없었습니다.
+
+이름을 읽는 카운터로 고쳤습니다: per-rule은 `alerts_attempted`·`alerts_succeeded`·
+`alerts_failed`, metrics는 `alerts_attempted_total`·`alerts_succeeded_total`·
+`alerts_failed_total`, gauge는 셋 모두 내보냅니다(이전에는 실패 gauge가 아예 없어서
+운영자가 gauge만 보고는 거부된 전달을 알 수 없었습니다). `succeeded` gauge의 HELP에
+"attempted에서 이 값을 빼서 페이지하라"고 적었습니다.
+
+매니페스트는 `alert_routing_state()`를 **한 번만** 읽고 세 gauge와 `alert_delivery` 블록이
+그 한 snapshot을 공유합니다. 두 번 읽으면 전달이 진행되는 동안 한 문서가 자기와 다른 숫자를
+담을 수 있습니다.
+
+같은 bookkeeping의 두 번째 결함: 보존 실패 ring에 generation 가드가 없었습니다. 카운터
+쓰기는 reset된 episode의 것을 버리는데 ring은 그대로 append했으므로, 게시된
+`alert_delivery`가 `deliveries_failed: 0` 옆에 그 rule의 보존 실패를 함께 들고 있을 수
+있었습니다 — 문서가 자기와 어긋나는 것, 이 필드가 존재하는 이유 그 자체입니다.
+`_bump_alert_counter`가 적용 여부를 돌려주고 ring append가 그것을 따릅니다. 시작 시점에
+이미 stale한 스레드는 **POST 자체를 하지 않습니다**: POST는 아직 프로세스를 떠나지 않았고,
+아무도 세지 않는 episode의 전달이며, 이 스위트에서는 다음 테스트의 double에 도착합니다.
+
+**내 테스트에 또 구멍이 있었습니다(이 주기 네 번째).** ring 가드 테스트의 첫 판은 stale
+generation을 처음부터 건네줬고, 가드를 지워도 초록이었습니다 — 시작 시점 stale 스레드는
+ring까지 가지도 않으므로 그 테스트는 가드를 전혀 지나지 않았습니다. reset이 **POST가
+비행 중일 때** 들어와야 실패 경로가 stale generation으로 실행됩니다. webhook double이
+`reset_alert_routing()`을 호출한 뒤 거부하도록 고쳤고, 그 뒤에 가드를 지우면 빨개집니다.
+
+증거: 세 수리를 각각 되돌렸습니다. M1(이름을 `alerts_delivered`로 복원): firing-discipline
+2건 + 응답 계약 1건 red. M2(ring 가드 제거): 고친 테스트 1건 red(고치기 전에는 green —
+위 문단). M3(stale 스레드도 POST): 1건 red. 전체 정순 `pytest` 1336 passed, 15 skipped
+(1333에서 +3).
+
+### Security — 리다이렉트를 따라가며 운영자 자격증명을 다른 authority로 다시 보냈습니다 (high)
+
+`sdp.observability`의 http(s) 내보내기 경로 **둘 다** — 로그 싱크와 alert webhook — 설정된
+URL의 userinfo에서 자격증명을 꺼내 `Authorization` 헤더로 옮깁니다(urllib이 userinfo가 든
+authority로 연결할 수 없기 때문입니다). 그 다음 `urllib.request.urlopen`은 POST에 대한
+301/302/303 응답을 **따라가고**, 메서드를 GET으로 바꾸고, 받은 헤더를 전부 — 방금 옮긴
+`Authorization`을 포함해 — 응답의 `Location`이 가리키는 호스트로 다시 보냅니다.
+
+기본 opener로 측정했습니다. loopback 서버 둘, 첫 번째가 302와
+`Location: http://127.0.0.2:<port>/exfiltrated`를 답합니다:
+
+    POST /webhook      Host 127.0.0.1:35661  Authorization: Basic c2VjcmV0...
+    GET  /exfiltrated  Host 127.0.0.2:39469  Authorization: Basic c2VjcmV0...
+
+결과가 셋입니다. (1) 운영자의 webhook 자격증명이 **두 번째 authority에 도착**했습니다.
+(2) 메서드가 GET으로 바뀌면서 alert 본문이 사라졌으므로 **전달된 것이 없습니다.**
+(3) 교환이 204로 끝났으므로 `_deliver_alert`가 `succeeded`로 셌고, 매니페스트는 일어나지
+않은 전달을 게시했습니다.
+
+두 경로가 리다이렉트를 **거부하는** opener(`_RefuseRedirect` / `SinkRedirectRefused`)로
+엽니다. 리다이렉트하는 싱크는 설정 오류이고, 이제 집계되는 실패입니다. userinfo lift가
+싱크 쪽 헬퍼(`_http_sink_request_parts`)에 있으므로 alert 경로만 고치면 **더 오래된 누출이
+그대로 남습니다** — 그래서 싱크 쪽도 같은 커밋에서 닫고, 싱크 쪽 테스트는
+`_EXPORT_ERRORS`에 남는 메시지가 자격증명을 담지 않는 것까지 봅니다(그 ring에 자격증명이
+들어간 전례가 이 모듈 docstring에 기록돼 있습니다).
+
+`authz`의 JWKS fetch는 **일부러** 바꾸지 않았습니다: 그 요청은 자격증명을 싣지 않고,
+리다이렉트가 빠져나갈 호스트 allow-list가 없고(스킴만 http(s)로 제한), urllib은 http(s)가
+아닌 스킴으로의 리다이렉트를 이미 거부하며, 리다이렉트로 서비스되는 JWKS 엔드포인트는
+평범한 배치입니다.
+
+테스트는 loopback 서버에 대해 **실제** opener를 돌립니다. disclosure 계열은 일부러
+그러지 않습니다(seam을 바꿔서 seam에 무엇이 건네지는지 봅니다) — 이 결함은 urllib이
+*응답*을 어떻게 다루는지에 있으므로 double로는 보이지 않습니다. 그래서 두 계열은 합칠 수
+없고, 새 파일 `tests/test_http_export_redirects.py`로 들어갑니다.
+
+증거: opener를 `build_opener()`(기본 리다이렉트)로 되돌려 새 테스트 2건이 빨개지는 것을
+확인했습니다. 전체 정순 `pytest` 1333 passed, 15 skipped (1330에서 +3).
+
+### Fixed — 전체 수집을 중단시키던 테스트, 비어 있던 stage 예외, 미고정 입력을 하나로 세었던 주장 (high)
+
+2026-10-26 적대적 리뷰 6개 렌즈가 **독립적으로 같은 결함을 보고했습니다.** 6개 렌즈 모두
+`<repo>/.claude/worktrees/<id>` 아래의 worktree에서 돌았고, 거기서는 이 저장소의 테스트가
+한 건도 실행되지 않았기 때문입니다.
+
+`tests/test_build_input_pinning.py::_dockerfiles()`가 `.claude`/`.git` 제외를 후보의
+**절대 경로** 조각에 물었습니다. 제외가 존재하는 이유는 에이전트 하네스가 남기는
+`<repo>/.claude/worktrees/<id>` 사본을 건너뛰는 것인데, 체크아웃 자체가 그 경로에 있으면
+`.claude`가 체크아웃 자신의 조각이 되어 **저장소의 모든 파일이 제외됩니다.** `found`가 `[]`가
+되고, 모듈 수준 `assert`가 `@pytest.mark.parametrize` 인자를 평가하는 중에 터지므로 pytest는
+이 파일 하나가 아니라 세션 전체를 끝냅니다. 이 파일과 Dockerfile 두 개만 담은 합성 트리에서
+재현했습니다:
+
+    $ cd .../.claude/checkout && pytest tests/test_build_input_pinning.py
+    tests/test_build_input_pinning.py:74: in <module>
+        @pytest.mark.parametrize("dockerfile", _dockerfiles(), ...)
+    E   AssertionError: no Dockerfile was found; re-point this test
+    !!!! Interrupted: 1 error during collection !!!!
+    no tests collected, 1 error in 0.33s
+
+제외를 `path.relative_to(root).parts`에 묻습니다. 중첩된 낡은 사본은 그대로 제외됩니다 —
+그것이 제외의 목적입니다. 합성 트리를 실제로 걷는 테스트로 고정했고, 술어만 보는 테스트도
+따로 두었습니다(결함은 술어가 아니라 **술어에 건네진 경로**에 있었습니다).
+
+같은 파일의 digest 게이트에는 다른 구멍이 있었습니다. `" AS " not in line.upper()`가
+`AS`를 포함한 모든 줄을 면제했으므로 `FROM python:3.12-slim AS builder` — 맨 `FROM`과 똑같이
+레지스트리에서 가져오는 줄 — 이 미고정으로 통과하고, 그 뒤에 교집합을 취하던 `named_stages`
+집합은 죽은 코드였습니다. 면제는 **앞선 `AS`가 선언한 이름**에만 줍니다. 지금 이 저장소에
+multi-stage 빌드가 없어서 산 피해자가 없었고, 첫 multi-stage 빌드가 조용히 물려받을
+것이었습니다.
+
+`docker/postgres-age-pgvector.Dockerfile`의 주석은 pgvector tarball이 "이 저장소에서
+content-addressed되지 않은 유일한 빌드 입력"이라고 적었습니다. 사실이 아닙니다. 같은 `RUN`
+레이어가 apt 패키지 네 개를 이름만으로 받습니다(세 개는 뒤에서 purge, `ca-certificates`는
+남습니다). 주석을 사실로 고치고, 그 네 개를 **일부러** 고정하지 않는 이유를 적었습니다 —
+apt 버전 핀은 미러가 그 버전을 아카이브에서 내리는 순간 빌드를 깨고, 미러 회전마다 다시
+추측해야 하는 핀은 다시 "핀의 외관"입니다. 한계를 주장으로 덮지 않고 기록했습니다.
+
+이 세 수리에는 산문 가드를 붙이지 않았습니다. 이번 주기에 산문을 매칭하는 가드가 자기
+목록에 걸려 실패한 것이 다섯 번이고, 바로 아래 항목이 여섯 번째이므로, 여기서 같은 장치를
+하나 더 만드는 것은 측정이 아니라 반복입니다.
+
+증거: 세 수리를 각각 결함 형태로 되돌려 해당 테스트가 빨개지는 것을 확인했습니다(M1
+`relative_to(root)` → `path.parts`: 새 테스트 2건 red. M2 `AS` 면제 복원: 1건 red. M3는
+주석이므로 되돌림 대상이 아닙니다). 전체 정순 `pytest` 1330 passed, 15 skipped
+(1327에서 +3).
+
+### Fixed — 문서가 안내하는 readiness 명령이 진단 대신 traceback을 돌려줬습니다 (medium)
+
+바로 전 커밋(`b278e20`)이 `SDP_CONNECTOR_TIMEOUT_MS`를 읽는 지점에서 검증하게 만든 뒤, 그 변경이
+`demo_smoke`에 어떻게 도착하는지 확인하다 나왔습니다. **대부분은 제 변경이 만든 것이 아니라 그 전부터
+있던 결함이고**, 측정으로 구분했습니다 — 부모 head(`88ae5d5`)에서:
+
+```
+SDP_CONNECTOR_TIMEOUT_MS=2s         exit 1, JSON 없음, ValueError traceback   (기존 결함)
+SDP_CONNECTOR_VAULT_PROVIDER=vault  exit 1, JSON 없음, ValueError traceback   (기존 결함)
+SDP_CONNECTOR_TIMEOUT_MS=0          exit 0, JSON 있음, "ready": true          (제 변경이 바꾼 것)
+```
+
+`PYTHONPATH=src python -m sdp.demo_smoke`는 README와 `sdp_core.enterprise`가 "배포가 준비됐는지
+물어보는 방법"으로 안내하는 명령이고, 계약은 **exit code + JSON 보고서**입니다. 앞의 두 경우는
+exit code는 맞았고 **무엇을 고쳐야 하는지 알려 주는 쪽을 잃었습니다** — timeout을 잘못 적은 운영자가
+진단이 있어야 할 자리에서 Python traceback을 받았습니다. 세 번째는 더 나빴습니다(timeout을 `0`으로
+공표하면서 ready라고 답했습니다). 그 세 번째를 읽는 지점에서 거절하게 만든 것이 세 경우를 모두
+같은 자리로 데려왔습니다.
+
+`smoke_summary`가 네 probe의 configuration 거절을 **보고서의 한 항목으로** 바꿉니다 —
+`connector_configuration_errors`에 변수 이름과 문제를 담고, `ready`는 False, exit code는 1입니다.
+exit code는 기존 동작이 맞게 하고 있던 절반이므로, 보고서를 고치면서 그것을 잃으면 수리가 아니라
+교환입니다. `KeyError`는 **의도적으로 잡지 않습니다** — seed catalogue에 이 함수가 지목한 dataset이
+없다는 뜻이고 그것은 배포 설정이 아니라 빌드의 결함이므로, "ready 아님, 환경을 확인하세요"로
+보고하면 이미지의 버그를 두고 운영자를 환경 파일로 보내게 됩니다.
+
+**테스트가 메시지 하나의 비대칭을 잡았습니다.** 각 항목이 자기 변수를 지목하는지 단언했더니
+provider 쪽이 실패했습니다 — `"unsupported connector vault provider: vault"`는 **어떤 설정이 그 값을
+들고 있는지 말하지 않습니다**(제가 쓴 timeout 메시지는 말합니다). 이 보고서가 운영자가 받는 전부이므로
+메시지를 고쳤고(`unsupported SDP_CONNECTOR_VAULT_PROVIDER: 'vault' (only 'env' is implemented)`),
+그 메시지를 측정값으로 인용하던 세 곳(`production.py` docstring,
+`tests/test_environment_value_domains.py` docstring, README의 환경 변수 절)도 함께 갱신했습니다 —
+공개된 인용이 코드가 내는 것과 달라지는 것이 이 저장소가 기계적으로 금지하는 바로 그 결함입니다.
+
+**역검증이 제 테스트에서 이번 라운드 세 번째로 같은 모양의 구멍을 찾았습니다.** `ready` 식에서
+`and not configuration_errors`를 지워도 이 파일 7건이 전부 통과했습니다(6 passed). helper가 오류를
+기록할 때 정확히 `None`을 돌려주고 네 probe 모두 gate에 자기 필드가 있으므로, 실패한 probe는 이미
+자기 clause에서 걸립니다. 측정 결과 네 개 중 **하나만** configuration 오류를 낼 수 있습니다 —
+`credential_vault`가 `rest_connector`의 `required_controls`에만 있어서 나머지 셋은
+`connector_secret_status`에 닿지 않습니다. 즉 그 clause는 **지금은 중복입니다**. 중복이라고 적어 두는
+것이 요점입니다: probe 필드 검사는 "데모 준비됐는가"를 묻고 이 clause는 "설정이 애초에 쓸 수 있었는가"를
+물으며, 둘은 지금 우연히 겹칩니다. 나중에 `rest_probe` 필드가 gate에서 빠지거나 vault가 다른
+connector로 확장되면 그 우연이 끝나고 아무도 보고하지 않습니다. **동작 테스트는 중복인 clause와 없는
+clause를 구별할 수 없으므로** 소스에서 확인합니다 — 같은 라운드에서 미들웨어 호출 지점에 쓴 것과 같은
+장치입니다.
+
+역검증 4건(S1~S3 + 재검증), 모두 실패를 확인했습니다: configuration 거절을 다시 raise하게 함(5건 실패),
+진단은 공표하지만 gate는 통과(소스 가드 1건 — 처음에는 통과했고 그래서 가드를 넣었습니다),
+깨진 seed를 설정 오류로 보고(1건).
+
+### Fixed — paid-pilot gate가 제품을 **깨뜨리는** 값으로 통과했고, 필수 변수 둘은 어느 문서에도 없었습니다 (high)
+
+alert 전달 라운드를 마치고 "이번 변경이 새로 만든 환경 변수는 문서에 들어갔는가"를 확인하다
+나왔습니다. 처음 찾은 것은 `SDP_ALERT_TIMEOUT_MS`가 README에 없다는 것 하나였는데, 그 부류 전체를
+세어 보니 훨씬 컸습니다.
+
+```
+src/가 읽는 SDP_ 이름 23개 중 9개가 README나 CLAUDE.md 중 한쪽 이상에서 누락
+  SDP_CONNECTOR_TIMEOUT_MS         required_environment, 양쪽 다 없음
+  SDP_CONNECTOR_VAULT_PROVIDER     required_environment, 양쪽 다 없음
+  SDP_ALERT_TIMEOUT_MS             CLAUDE.md에만
+  SDP_DATABASE_DSN                 README.md에만
+  SDP_CONFIG_NAMESPACE             양쪽 다 없음
+  SDP_ENV                          양쪽 다 없음
+  SDP_OIDC_JWKS_TIMEOUT_SECONDS    양쪽 다 없음
+  SDP_OIDC_JWKS_TTL_SECONDS        양쪽 다 없음
+  SDP_EVIDENCE_RETENTION_DAYS      declared-unimplemented, 양쪽 다 없음
+```
+
+**앞의 두 건은 문서 문제가 아닙니다.** `production_integration_registry`가 둘을
+`connector_credential_vault`의 `required_environment`에 넣어 두었으므로
+`GET /enterprise/production-readiness`가 `missing_environment`로 **이름을 공표하면서**
+`paid_pilot_ready`를 막고 있었는데, 그 변수가 무엇이고 어떤 값을 넣어야 하는지는 어느 문서에도
+없었습니다. 조치할 수 없는 blocker를 공표하는 것은 blocker가 없는 것보다 나쁩니다.
+
+#### 그리고 그 둘은 gate를 통과하는 값으로 제품을 깨뜨릴 수 있었습니다
+
+`_is_set`은 비어 있지 않은 문자열이 있는지만 봅니다. 대부분의 변수에는 그것이 정직한 한계입니다 —
+이 모듈은 DSN이나 issuer가 실재하는지 알아보려고 데이터베이스나 IdP에 닿을 수 없습니다. 그러나 이
+둘은 한계가 아니었고, 운영자가 **자연스럽게 고를 값**으로 그 구멍에 닿습니다. 측정:
+
+```
+SDP_CONNECTOR_VAULT_PROVIDER='vault'       gate 통과, probe 라우트 400
+  GET /enterprise/connectors/rest_connector/probe?dataset_id=marketing-campaign&user=admin
+  -> {"detail": "unsupported connector vault provider: vault"}
+SDP_CONNECTOR_VAULT_PROVIDER='hashicorp'   gate 통과, 같은 라우트 400
+SDP_CONNECTOR_TIMEOUT_MS='2s'              gate 통과, 같은 라우트 400
+  -> {"detail": "invalid literal for int() with base 10: '2s'"}
+```
+
+`vault`·`hashicorp`는 운영자가 실제로 쓰는 제품 이름이고 `2s`는 사람이 timeout을 적는 방식입니다.
+즉 readiness 문서가 `paid_pilot_ready`로 가는 진척을 보고하는 동안 connector probe — buyer demo의
+핵심 surface — 가 네 connector 전부에 400을 돌려주고 있었습니다. 나머지 required 변수 전수를 같은
+방식으로 찔러 봤고(그럴듯하지만 틀린 값 + 가장 손상이 드러날 라우트), 이 둘만 해당했습니다.
+
+**이것은 이 registry가 애초에 막으려던 결함보다 나쁩니다.** `SDP_EVIDENCE_RETENTION_DAYS`는
+*아무것도 하지 않는* 값으로 gate를 통과시켰고, 이쪽은 gate가 측정한다고 주장하는 능력을
+*깨뜨리는* 값으로 통과시켰습니다. 모듈 자신의 문장이 "A gate may only measure capabilities that
+exist"인데, **능력을 비활성화하는 값으로 만족되는 gate는 아무것도 측정하지 않습니다.**
+
+#### 수리
+
+registry가 값 도메인을 `environment_value_rules`로 선언합니다 — 의도적으로 **닫힌** 형태입니다
+(열거된 값 집합, 또는 하한이 있는 정수. regex도 callable도 타입 변환도 없습니다). manifest는
+설정됐지만 거절된 값을 `rejected_environment`에 **이유와 함께** 따로 공표합니다. `missing`과
+합치지 않은 이유: 변수를 방금 설정한 운영자에게 "missing"이라고 말하면 이름의 오타를 찾으러
+가는데, 필요한 것은 값의 허용 도메인입니다. 설정되지 않은 변수는 `missing`에만, 거절된 값은
+`rejected`에만 나옵니다 — 한 문제에 한 항목입니다.
+
+**과잉 선언 하나를 역방향 검사가 잡았습니다.** `minimum=1`을 선언했는데 `int()`는 `0`과 `-5`를
+받아들였습니다. gate가 코드에 없는 요구를 발명하는 것은 gate가 느슨한 것과 같은 종류의 결함이므로,
+수리를 gate가 아니라 `credentials.connector_secret_status`로 옮겼습니다 — `timeout_ms`는 rest
+connector probe의 control evidence로 **공표되는 값**이고 `0`이나 `-5`는 timeout으로서 거짓 공표된
+숫자이므로, 읽는 지점에서 검증하는 것이 맞습니다. 그 다음에 registry가 그 도메인을 **거울처럼**
+선언합니다.
+
+**가드 8건, 두 파일.** `tests/test_environment_documentation.py`는 변수 집합을 `src/`에서
+**파생**해(문자열 리터럴 기준 — 이 저장소는 `os.getenv`·`os.environ.get`·`os.environ[...]`·
+설정 로더 전달 네 가지 형태로 읽으므로, `os.getenv`만 보는 검사는 23개 중 18개만 찾습니다) README와
+CLAUDE.md 양쪽에 있는지, 그리고 역방향으로 코드가 읽지 않는 변수를 문서가 약속하지는 않는지
+확인합니다(후자의 유일한 예외가 `declared_unimplemented_environment`입니다).
+`tests/test_environment_value_domains.py`는 선언과 코드가 어긋나지 않도록 **강제하는 함수를 직접
+실행해** 양방향으로 비교합니다 — 두 리스트를 서로 대조하는 것은 이 저장소가 반복해서 찾아낸
+결함의 모양이기 때문입니다.
+
+**기존 테스트 하나가 같은 결함을 품고 있었습니다.**
+`test_production_readiness_measurement.py`의 `_fully_configured_environment`는 모든 required
+변수를 리터럴 `"configured"`로 채우면서 docstring에 "as an operator would"라고 적고 있었습니다.
+운영자는 그렇게 설정하지 않고, 측정 결과 그 값들은 probe를 400으로 만듭니다 — **gate가 의미 있음을
+증명하려고 존재하는 테스트 안에서 바로 그 결함이 재현되고 있었습니다.** 값은 이제 선언된 도메인에서
+파생합니다(나중에 추가되는 규칙도 자동으로 만족시킵니다).
+
+README에는 **`## 환경 변수 전수 목록` 표**를 새로 넣었습니다. 전에는 환경 변수가 README 본문
+여기저기 산문으로만 있어서 **어디도 전수 목록이 아니었고**, 그것이 9건이 잊힌 구조적 이유입니다.
+표에는 변수 23개 전부와 측정한 기본값, paid-pilot gate 여부, 그리고 값 도메인이 있는 두 건의
+허용 집합이 있습니다.
+
+역검증 4건, 모두 실패를 확인했습니다: README에서 변수 하나 제거(1건 실패), 아무것도 읽지 않는
+변수를 문서에 추가(1건), gate를 presence-only로 되돌림(1건), gate를 코드보다 엄격하게 선언(3건 —
+양방향 합의 검사가 과잉 선언 쪽도 잡습니다).
+
+### Fixed — 제가 바로 전에 넣은 alert 전달이 event loop를 막았습니다 (high)
+
+alert 전달을 구현한 커밋(`8895868`)을 직접 다시 읽으면서 찾았습니다. 평가 지점 두 곳의
+실행 컨텍스트가 **다릅니다**:
+
+- `connectors.connector_probe`는 route handler가 `def`이므로 FastAPI가 `anyio` worker
+  스레드에서 돌립니다 — bounded join이 그 스레드를 막는 것은 맞습니다.
+- `note_governed_request_without_evidence`는 `sdp.api`의 **`async` 미들웨어**
+  `finally` 블록에서 호출됩니다 — 같은 join이 **loop 스레드**를 막습니다.
+
+그 요청 자신의 지연은 budget 이상으로 늘지 않습니다. 문제는 **그 사이 다른 모든 요청이
+직렬화된다**는 것입니다. 10 ms asyncio ticker로 측정했습니다(handshake를 받고 응답하지
+않는 소켓, `SDP_ALERT_TIMEOUT_MS=5000`):
+
+```
+loop 위의 sync 호출 (결함)     call= 251.15 ms   최악 tick gap= 261.61 ms
+async 진입점 (수리)            call= 252~263 ms  최악 tick gap=  11.50~20.69 ms (8회)
+webhook 미설정 (대조군)        call=   0.10 ms   최악 tick gap=  11.82 ms
+```
+
+**새로운 위험이 아닙니다.** 이 저장소는 같은 결함을 log sink에 대해 이미 한 번 고쳤고
+(gap-baseline 감사 7번: "동기 sink export가 event loop를 막아 요청을 직렬화했습니다"),
+미들웨어에는 alert 호출에서 **두 줄 아래**에 "The sink write is blocking, so it is awaited
+off the event loop"라는 주석이 그대로 적혀 있습니다. 그 주석 두 줄 위에 같은 결함을
+넣었습니다.
+
+**수리는 새 장치가 아니라 같은 장치입니다.** `_begin_alert_delivery`가 latch 처리(lock 안의
+dict 쓰기 몇 번)를 하고 기다릴 스레드를 돌려주고, 동기 형태는 그 스레드를 직접 join하고,
+`_route_alert_async`는 `anyio.to_thread.run_sync`로 **loop 밖에서 await**합니다 —
+`record_request_observation_async`가 sink의 blocking write에 하는 것과 같은 분할입니다.
+미들웨어는 `note_governed_request_without_evidence_async`를 await합니다. 동기 형태는
+worker 스레드에서 도는 probe 경로와 직접 호출자(테스트)용으로 남습니다. 카운팅 절반은
+`_count_governed_request_without_evidence` 하나로 공유해 두 진입점이 세는 것이 갈라질 수
+없게 했습니다.
+
+**가드 둘, 각각 다른 절반을 잡습니다.** 하나는 async 진입점을 직접 호출해 ticker gap이
+100 ms 미만임을 단언하고(측정값과 결함 사이에서 양쪽으로 최소 2.6배 여유), 다른 하나는
+**미들웨어가 그것을 await하는지**를 소스에서 확인합니다. 둘이 필요한 이유를 역검증이
+보여줍니다 — 함수 안의 join만 loop 위로 되돌리면 전자만 실패하고, 호출 지점만 동기
+형태로 되돌리면(함수는 그대로 둔 채) **후자만** 실패합니다. 타이밍 테스트 하나로는 호출
+지점 회귀를 못 잡습니다. 이 사이클이 반복해서 배운 구분입니다.
+
+`TestClient`로는 이 결함을 관측할 수 없습니다 — 요청을 한 번에 하나씩 보내므로 직렬화 자체가
+드러나지 않습니다. 그래서 ticker이고, 그래서 호출 지점은 소스로 확인합니다.
+
+`test_the_alert_webhook_value_is_read_one_way_and_stashed_nowhere`가 이 변경을 **스스로
+보고했습니다** — webhook을 읽는 함수 집합에 `_route_alert`가 아니라
+`_begin_alert_delivery`가 들어왔다고 실패했습니다. 전달 결정이 옮겨 간 것을 통과시키지 않고
+알려 준 것이므로, 기대 집합을 고치고 그 사실을 테스트 메시지에 적었습니다.
+
+### Fixed — 하나 남아 있던 미고정 빌드 입력을 닫았습니다. 막고 있던 것은 환경이 아니었습니다 (medium)
+
+`docs/product-technical-gap-baseline.md`가 2026-10-14에 **수리하지 않고 기록만 한** 항목으로
+남겨 둔 것입니다. `docker/postgres-age-pgvector.Dockerfile`이 pgvector를 가변 GitHub 태그
+tarball URL에서 받아 체크섬 검증 없이 root로 컴파일해 `make install`했습니다 — 이 저장소에서
+content-addressed되지 않은 **유일한 빌드 입력**이고, 들어가는 곳이 governed 그래프와 증빙
+데이터를 담는 Postgres 서버입니다. 태그는 가변 ref이므로 force-push 한 번으로 같은 URL이
+다른 바이트를 서비스합니다.
+
+**이 문장은 그때 과장이었습니다** — "유일한"이 아니었습니다. 같은 `RUN` 레이어가
+`build-essential`·`ca-certificates`·`git`·`postgresql-server-dev-16` 네 개를 가변 Debian
+아카이브에서 이름만으로, root로 받습니다. 아래 "미고정 입력을 하나로 세었던 주장"
+항목에서 고쳤습니다.
+
+당시 기록한 이유는 정당했습니다 — tarball을 받을 수 없어(프록시 403) sha256을 계산할 수
+없고, **검증하지 않은 해시는 핀이 아니라 핀의 외관**입니다. 그런데 그 기록은 대안 두 가지를
+적어 두고 **두 번째가 이 환경에서 가능한지 확인하지 않았습니다.** 가능했습니다:
+
+```
+$ git ls-remote https://github.com/pgvector/pgvector refs/tags/v0.7.4
+103ac50f1a90b47a72003e8e8628a55ec372f202	refs/tags/v0.7.4
+```
+
+tarball HTTP 요청만 403이고 **git 프로토콜은 프록시를 통과합니다.** peeled `^{}` ref가
+advertise되지 않으므로 `v0.7.4`는 lightweight 태그이고 위 이름이 커밋 자체입니다. 그 객체를
+실제로 받아 확인했습니다 — 타입 `commit`, subject `Version bump to 0.7.4 [skip ci]`, tree
+`97af667455d30dba56b092ce3b9241b991f7f888`, tree에 `Makefile`·`src/`·`sql/`·`vector.control`,
+그리고 `vector.control`의 `default_version`이 `'0.7.4'`입니다. 한 달 가까이 "환경이 막는다"로
+남아 있던 항목인데, **막고 있던 것은 환경이 아니라 한 번도 시도하지 않은 명령**이었습니다.
+
+**핀을 강제하는 것이 git 자신입니다.** 그래서 download가 아니라 fetch입니다 —
+`git fetch <sha>`는 받은 객체가 요청한 이름으로 해시되는지 검증하므로, 같은 이름으로 다른
+내용을 주는 서버는 빌드를 실패시킵니다. `git clone --branch <tag>`는 그 검증을 하지 않으므로
+핀처럼 보이지만 핀이 아니고, 아래 가드가 그 형태를 거절합니다. `PGVECTOR_VERSION`은 이미지
+라벨로만 남기고 pin된 tree의 `vector.control`과 빌드 중에 대조합니다 — 커밋 이름이 이미
+내용을 고정하므로 핀을 강화하지는 않고, 두 ARG가 따로 움직여 **이미지가 담고 있지 않은
+버전을 라벨로 붙이는 것**을 막습니다. `curl`은 더 이상 설치하지 않습니다.
+
+**한계를 적어 둡니다**: git 객체 이름은 SHA-1이므로 sha256 content digest보다 약하고, 가변
+태그보다는 확실히 강합니다. tarball에 닿는 환경에서 계산한 sha256으로 교체하는 것은 그대로
+개선입니다. `git archive`로 tarball을 재현해 해시를 뽑지는 않았습니다 — GitHub archive
+엔드포인트는 prefix·gzip 설정·mtime이 고정된 자기 형식이라 byte 단위로 재현되지 않고,
+재현되지 않은 해시는 다시 핀의 외관일 뿐입니다.
+
+**회귀 가드 `tests/test_build_input_pinning.py` 10건.** 고장났던 그 파일을 지목하지 않고
+저장소의 모든 Dockerfile을 찾아 검사합니다 — 나중에 추가되는 두 번째 미고정 입력도 같은
+결함이고, 파일 이름을 적어 둔 가드는 자기 목록과 대조하는 가드입니다. `FROM`은 `@sha256:`
+digest를, 소스 archive는 가변 ref URL 금지를, 빌드 중의 git fetch/clone은 40-hex 객체
+이름을, `*_COMMIT` ARG 기본값도 같은 형식을 요구합니다. Dockerfile의 line continuation과
+주석을 Docker와 같은 방식으로 접어 읽습니다 — 주석 줄에 산문이 있고 한 `RUN`이 여러 줄에
+걸쳐 있으므로, raw 줄 단위로 읽는 검사는 명령과 그 플래그를 다른 줄로 갈라 놓고 놓칩니다.
+
+역검증 5건, 모두 실패를 확인했습니다: 가변 태그 tarball 복원(2건 실패), 태그 ref로 git
+fetch(2건), 버전 대조 제거(1건), 축약 커밋 이름(2건), base image 태그만(1건).
+
+**정리하지 못한 것 하나**: `.claude/worktrees/` 아래에 완료된 workflow의 worktree 11개가
+154 MB로 남아 있습니다. gitignore 대상이라 저장소에는 영향이 없고 디스크도 28 GB 여유가
+있어 급하지 않습니다. 일괄 제거 명령이 권한 분류기에서 거절되었으므로 우회하지 않고
+그대로 두었습니다 — `git worktree remove --force` 11건이 필요합니다.
+
+### Added — alert 전달(routing)과 세 번째 alert 규칙 (feature)
+
+`SDP_ALERT_WEBHOOK_URL`은 이 저장소에서 가장 오래된 "선언만 되어 있고 구현되지 않은"
+항목이었습니다 — 패키지 전체에서 이 값을 읽는 곳이 `_sink_status`의
+`bool(alert_webhook_url)` 하나였고, `production.py`의
+`declared_unimplemented_environment`가 그 사실을 공표하고 있었습니다. 전달을
+구현했습니다. 함께 `request_observability_export` 인수 기준이 "이름만 지목되고 한 번도
+게시된 적 없다"고 적어 둔 **connector-probe-failure 규칙**도 게시·평가합니다.
+
+구현보다 먼저 결정해야 했던 것은 **빈도**입니다. `policy_audit_gap` 카운터는 미들웨어가
+요청마다 올리고, 그 표면은 credential을 요구하지 않습니다. 측정: 익명 probe 요청 25건이
+197.1 ms에 끝납니다. 따라서 "firing이면 POST"를 증가 지점에서 평가하면 **익명 트래픽
+200 ms당 운영자의 webhook으로 POST 25건**입니다. 규칙은 이렇게 정했습니다 —
+
+* **episode당 1회.** routable 규칙이 not-firing→firing으로 **전이**할 때만 보냅니다.
+  이미 firing인 동안의 2..N번째 증가는 세어서 버리고, 그 수(`increments_suppressed`)도
+  함께 게시합니다 — 1건의 alert가 1000건을 대표할 때 운영자가 억제와 거부를 구별할 수
+  있어야 하므로, breaker의 `skipped_exports`와 같은 규율입니다.
+* **re-arm은 타이머가 아니라 규칙 자신의 flag를 따릅니다.** `firing`은
+  `observed_total > 0`이고 `src/` 어디에도 이 카운터를 **감소시키는 경로가 없습니다** —
+  배포된 worker에서 한 번 발화한 규칙은 재시작까지 firing으로 남습니다. 최소 간격 규칙은
+  결코 해소되지 않는 조건에 영원히 재전송하고, "첫 전이만"은 reset 이후의 진짜 episode를
+  침묵시킵니다. 그래서 latch는 규칙이 firing을 그만둘 때 풀리고,
+  `reset_request_observability()`가 그 유일한 경로입니다.
+* **상한이 숫자입니다.** routable은 3건 중 2건이므로 reset 사이 한 worker가 보내는 POST는
+  버스트 크기와 무관하게 최대 2건입니다. `central_workflow_backlog`은 이 서비스가 관측할
+  수 없는 GitHub Actions 상태가 조건이므로 `routable: false`로 공표합니다 — routable로
+  적으면 결코 발화할 수 없는 전달을 약속하게 됩니다.
+* **read path에서는 절대 보내지 않습니다.** `build_observability_manifest`와
+  `prometheus_metrics_text`는 미인증으로 열린 두 라우트가 도달하고, manifest는 규칙의
+  `firing` flag를 이미 게시합니다 — read path 구현이 바로 그 값으로 행동하려 들 지점입니다.
+* **요청이 webhook을 기다리지 않습니다.** 전달은 자기 스레드에서 돌고 평가 지점은
+  `ALERT_HANDSHAKE_BUDGET_SECONDS`(0.25초)만 join합니다. 측정된 선례: 요청이 직접
+  await하는 log sink는 handshake만 받고 응답하지 않는 소켓에 대해 500 ms timeout에서
+  요청당 507.8–514.5 ms를 물렸습니다.
+
+**조건을 정직하게 고르는 것이 이 작업의 절반입니다.** connector-probe 규칙의 뻔한 조건
+("`ready_for_demo`에 도달하지 못한 probe를 센다")은 **배포되는 demo image에서 발화합니다**.
+seed catalogue 20쌍(connector 4 × dataset 5) 측정:
+
+    20쌍  4 ready_for_demo · 1 contract_only · 15 scheme mismatch(ValueError) · 0 기타
+
+`contract_only` 1건(`rest_connector`/`marketing-campaign`)은 고장난 것이 아닙니다 —
+optional한 `SDP_CONNECTOR_SECRET_*` 하나가 설정되지 않아 `credential_vault`가 fail-closed한
+것이고, 그 이름 하나를 설정하면 `ready_for_demo`로 바뀝니다(같은 프로세스에서 측정).
+`demo_smoke`의 ready gate는 `status == "ready_for_demo"`가 아니라
+`adapter_status == "implemented"`를 단언하며 그 상태로 `ready: true`를 보고합니다. 나머지
+15쌍은 caller가 dataset을 받치지 않는 connector를 지목한 것이고, `connector_id`는 caller가
+주는 path segment입니다 — 세면 path segment 오타가 운영자의 pager를 울립니다.
+
+남는 정직한 조건은 probe 자신의 `verdict_basis` 중 **빌드가 소유하는** 실패입니다:
+레지스트리가 선언한 adapter를 이 빌드가 구현하지 않음, 또는 required control이 선언한
+proof endpoint를 이 빌드가 서비스하지 않음. 둘 다 caller 통제도 설정도 아니고, 측정 결과
+20쌍 전부에서 0입니다. 규칙은 제외한 두 결과(설정 gap과 caller 실수)와, seed 20개
+control 행 중 19개가 `proof_route_served`에 기대고 있다는 사실을 `not_covered`로
+함께 공표합니다 — 0이 "모든 control이 통과했다"는 주장이 아니기 때문입니다.
+
+**이 "빌드가 소유하는 실패"는 그때 두 개가 아니라 세 개였어야 했습니다.** `verdict_basis`의
+conjunct는 셋이고 이 조건은 둘만 읽었습니다. 뒤의 "읽지 않은 conjunct" 항목에서 고쳤습니다.
+
+**공개 표면에 추가되는 것과 되지 않는 것.** `alert_routing: implemented` 옆에
+`alert_delivery`가 실측 전이·전달·억제 횟수를 게시하고, 규칙마다 `routable`·
+`alerts_delivered`·`alerts_failed`·`increments_suppressed`가 붙고, `/metrics`가
+`sdp_connector_probe_failures_total`·`sdp_alerts_delivered_total`을 내보냅니다.
+(뒤 항목에서 `alerts_delivered`/`sdp_alerts_delivered_total`은 **시도** 횟수를 읽고
+있었으므로 이름을 고쳤습니다 — 지금 이름은 `alerts_attempted`/`alerts_succeeded`/
+`alerts_failed`와 세 gauge입니다.)
+alert **대상 호스트는 redact해서도 게시하지 않습니다** — log sink가 redacted `target`을
+게시하는 이유(설정 오류와 미설정을 구별)는 `invalid_configuration`과
+`alert_webhook_routing`으로 이미 충족되고, 운영자의 paging endpoint 호스트는 이 서비스의
+거버넌스에 대한 사실이 아닙니다. webhook의 userinfo는 urllib가 보기 전에
+`_http_sink_request_parts`가 `Authorization` 헤더로 들어올립니다. 측정: userinfo를 담은
+webhook은 네트워크에 도달조차 하지 않고 `http.client`가 **복호화된 credential을 그대로
+인용하며** 예외를 던집니다.
+
+    https://sdp-alerts:p%40ssw0rd-42@alerts.invalid.example/hook
+      InvalidURL  "nonnumeric port: 'p@ssw0rd-42@alerts.invalid.example'"
+
+그래서 실패는 `str(exc)`가 아니라 **예외 타입과 단계만** 보관합니다 — URL의 어떤 조각도
+남기지 않습니다. alert body도 규칙과 그 보고서만 싣습니다. 이 모듈이 가진 context는
+`list_request_observations()`이고 그 행은 caller가 주장한 `tenant_id`·`actor`·
+`request_id`와 **구체적 경로**를 담습니다 — manifest가 per-request feed를 거부할 때 든
+바로 그 세 가지이고, alert webhook은 인증된 tenant 표면이 아니라 제3자 운영자 endpoint이므로
+붙이면 한 tenant의 governed-access 활동을 off-box로 재수출하는 것이 됩니다.
+
+**`declared_unimplemented_environment`에서 변수를 빼고, `required_environment`로
+옮기지는 않았습니다.** 낡은 "구현되지 않았다"는 선언은 섣부른 "구현되었다"와 같은 결함을
+같은 독자에게 저지릅니다. 그러나 게이트는 `_is_set`으로 **presence만** 보므로, 요구로
+돌리면 scheme이 없어 POST 자체가 불가능한 `'banana'`가 게이트를 통과합니다 — 이 레지스트리가
+거부하려는 결함이 반대 방향에서 도착하는 것입니다. 경보는 선택 사항입니다. 변수는
+`current_evidence`에 소비자·테스트와 함께 나열합니다.
+
+**역검증(mutate → 측정 → 복원), 모두 실패를 확인했습니다**: latch 제거(7건 실패),
+join 무제한(wedged webhook을 요청이 지불, 1건), 조건을 `status`로 keying(demo image에서
+발화, 4건), 원본 URL을 urlopen에 + `str(exc)` 보관(credential이 표면에, 1건), payload에
+observation 행 첨부(tenant/actor off-box, 1건), reset이 latch를 남김(다음 episode 침묵,
+2건), chokepoint 제거(직접 호출자 미집계, 5건), scheme gate 제거(1건), counter를
+dataset id로 keying(3건), backlog를 routable로 선언(1건), alert target 게시(1건).
+
+**역검증이 제 테스트에서 구멍 셋을 찾았고, 셋 다 메웠습니다.**
+
+1. **read-path 테스트 둘이 공허했습니다.** `build_observability_manifest` 맨 위에서 두
+   routable 규칙을 라우팅하는 mutation — 그 테스트들이 이름으로 지목하는 바로 그 결함 —
+   을 넣었는데 **통과했습니다(23 passed)**. 각 테스트는 seam이 살아 있음을 먼저 증명하려고
+   진짜 전이 하나를 일으키고, 그 전이가 규칙을 latch하므로 read-path 호출은 억제 분기에
+   떨어집니다. docstring이 호출 지점 제약의 공로로 돌린 일을 latch가 하고 있었고, latch가
+   있는 한 호출 지점 제약은 **측정되지 않았습니다**. 수리: liveness 전이 뒤에 latch만
+   비웁니다(`_disarm_the_latch`) — 규칙은 firing으로 남고 latch는 비므로 read-path 구현이면
+   첫 manifest build에서 POST합니다. 같은 mutation이 이제 두 테스트를 실패시킵니다.
+2. **scheme gate를 재는 테스트가 gate를 재지 않았습니다.** gate를 삭제해도 `ftp://`
+   케이스는 통과합니다 — 값이 `_http_sink_request_parts`를 지나 host가 해석되고 연결
+   가능한 URL이 만들어진 뒤 **DNS에서** 실패하기 때문입니다(측정: `URLError [Errno -2]`).
+   둘을 가르는 결함은 `file://`입니다. 측정: `file://` URL로의 POST는 실패하지 않고
+   `FileHandler`가 **로컬 경로를 열어 내용을 돌려줍니다** — gate가 없으면 firing episode마다
+   서버의 로컬 파일 읽기가 되고 **성공한 전달로 집계·게시됩니다**. 두 scheme 모두
+   구동하고, `file://` 케이스는 `deliveries_succeeded == 0`을 단언합니다. 그리고 URL은
+   `Path.as_uri()`가 아니라 명시적 `localhost` authority로 만듭니다 — 측정 결과
+   빈 authority 형태(`file:///...`)는 host 요구 조건에 걸려서, `as_uri()`로 쓰면 gate가
+   없는데도 있는 것처럼 보고합니다.
+3. **억제 횟수가 트래픽으로 채워질 수 있었습니다.** `note_connector_probe`에서
+   `observed_increment=True`를 무조건 넘기는 mutation(즉 정상 probe도 억제로 집계)이
+   **전부 통과했습니다(28 passed)**. gap 규칙은 이것을 잡을 수 없습니다 — 그 평가 지점의
+   모든 호출은 실제 증가이기 때문입니다. probe 규칙이 정상 트래픽에도 호출되는 유일한
+   규칙입니다. "1건 alert, 499건 억제"를 읽는 운영자는 governed 실패 500건을 결론해야
+   하는데, 정상 probe가 섞이면 그 숫자는 실패의 이름을 쓴 트래픽 양입니다. 혼합을
+   구동하는 테스트를 넣었습니다 — proof endpoint를 깨면 네 connector 모두 실패하므로,
+   대신 한 connector의 adapter를 제거해 그 하나만 실패하고 나머지 셋은 정상으로 둡니다.
+
+새 RED 테스트 33건(네 파일)과 `test_honest_metrics.py` 1건, 합계 **+34건**. 네 파일의
+prose는 측정된 head(= 이 커밋의 부모)를 가리키도록 과거형으로 다시 썼습니다 — RED 명세로
+쓰인 글을 현재형으로 두면 자신이 지키는 코드의 반대를 주장하는 파일 넷을 싣게 되고, 그것이
+이 저장소가 반복해서 찾아내는 결함 그 자체입니다.
+
+**이전 가드는 설계대로 실패했고, 설계대로 다시 썼습니다.**
+`test_nothing_posts_to_the_alert_webhook`의 docstring이 약속한 대로입니다. 후속 가드 둘:
+값의 **읽기 방식이 하나**임을 AST로 단언합니다(측정: `SDP_ALERT_WEBHOOK_URL="   "`일 때
+strip한 읽기는 falsy고 manifest는 `alert_webhook_configured: false`를 게시하지만, 같은
+변수의 strip하지 않은 읽기는 **truthy**입니다 — 전달 경로가 strip하지 않으면 manifest가
+"미설정"이라 적는 동안 `"   "`를 webhook으로 삼습니다), 그리고 값이 **어디에도 저장되지
+않음**(모든 대입 대상이 평범한 지역 이름; `_ALERT_TARGET["url"] = ...` 한 줄이면 공개
+manifest가 답하는 그 집합에 운영자 credential이 들어갑니다). 두 번째 후속 가드는
+"전달되지 않는다"는 문장을 README·CLAUDE.md·docs·src·tests에서 기계적으로 금지합니다 —
+평가에 대한 같은 종류의 가드가 이미 있었고, 전달 쪽에만 없으면 첫 재발은 잡고 두 번째는
+놓칩니다. 금지 문장은 **현재형만** 대상입니다(과거형 역사 기술은 남겨 둡니다).
+
+**가드가 자기 설명과 대조되는 결함이 이 사이클에서 다섯 번째였습니다.** 새 금지 목록도
+처음에는 자기 파일을 적발했습니다 — 목록의 리터럴 자체가 적발 대상이었습니다. 두 조각의
+연결로 조립해 리터럴이 소스에 존재하지 않게 했고(`tests/test_state_isolation.py`가 같은
+이유로 도달한 방법), 설명하는 산문에서는 금지 문장을 **인용하지 않고 바꿔 씁니다**.
+
+### Fixed — 그래프 스토어 제외의 *결론*이 세 파일에 현재형으로 남아 있었습니다 (medium)
+
+적대적 리뷰가 `c50eae7`을 대상으로 "제외 주장이 다섯 파일에 그대로 있고, 그것을 막으려고
+추가한 재발 가드가 통과한다"고 보고했습니다. HEAD에서 다시 측정했습니다 — **제외 주장
+자체는 모두 사라졌습니다**. `dd0c3f3`이 그 다섯 사이트를 잡는 문구 둘을
+`_RETRACTED_EXCLUSION_CLAIMS`에 추가했고, 지금 가드는 어느 것도 적발하지 않습니다.
+리뷰는 7개 커밋 뒤처진 head를 재고 있었습니다.
+
+남아 있던 것은 **한 단계 아래**이고 가드는 그쪽을 보지 않습니다. 세 docstring이 제외에서
+**파생된 규칙** — 그래프 수치에 의존하는 테스트는 자기 baseline을 잡아야 한다 — 을 현재의
+표준 규칙으로 제시하고 있었고, 그중 하나는 `56259e0`이 삭제한 `tests/conftest.py`의
+문장을 인용하고 있었습니다(측정: `grep -n "own baseline" tests/conftest.py` → 결과 없음).
+주장과 같은 이유로 문제입니다 — 이것이 표준 규칙이라고 읽은 사람은 파일별 그래프 cleanup을
+계속 쓰게 되고, 그것은 fixture 자신의 docstring이 "이 fixture가 막으려고 존재하는 바로 그
+구성"이라고 부르는 것입니다. 세 사이트를 고치고, 파생된 지시문 문구를 가드에 추가했습니다.
+
+파일별 fixture 자체는 **남겨 둡니다**. fixture docstring이 선행 사본들에 대해 이미
+정리한 바 — 중앙 fixture 안에 중첩되고 같은 값으로 복원하므로 틀린 것이 아니라 중복 —
+이고, 셋 중 둘은 여전히 유효한 두 번째 이유를 기록하고 있습니다(공유 스토어에 위반이나
+cycle을 남긴 테스트는 이후의 모든 단언을 파일 순서에 의존하게 만듭니다). 다만 중복이라는
+사실을 측정해서 적어 둡니다 — `test_graph_mirroring.py`의 fixture 본문을 빈 `yield`로
+바꿔도 그 파일 단독 14건과 스토어를 공유하는 두 파일과 함께 43건이 통과합니다.
+
+역검증: 철회한 지시문을 세 사이트가 쓰던 문구로 되돌리면
+`test_no_published_text_still_says_the_graph_store_is_excluded`가 실패합니다.
+
+### Fixed — alert 라우팅을 막는다는 tripwire가 실제로는 막지 않았습니다 (high)
+
+다음 기능(alert 라우팅)의 RED 테스트를 설계시키던 중, 에이전트 하나가 **그 기능을 막는
+가드가 작동하지 않는다**는 것을 측정해 왔습니다. 직접 재현했습니다.
+
+`tests/test_honest_metrics.py::test_nothing_posts_to_the_alert_webhook`의 docstring은
+"라우팅 경로가 추가되면 이 테스트가 실패하고, 추가한 사람이 변수를
+`required_environment`로 되돌리게 된다"고 적습니다. 본문은 세 가지를 단언했습니다 —
+변수를 언급하는 파일이 정확히 둘, `os.getenv` 읽기가 정확히 하나, 그 읽기의 정확한 텍스트.
+**셋 모두 작동하는 라우팅 경로와 양립합니다.** 값에 무슨 일이 일어나는지 보는 단언이
+하나도 없기 때문입니다. 측정:
+
+    observability.py에 _deliver_alert 추가
+      (urllib Request를 만들어 urlopen으로 POST)
+    기존 단일 getenv 읽기에서 _ALERT_TARGET["url"] = alert_webhook_url 한 줄로 급전
+      -> test_nothing_posts_to_the_alert_webhook: 3 passed
+
+즉 **라우팅이 완전히 구현된 상태에서 가드가 녹색입니다.** docstring이 본문이 치지 않는
+덫을 약속하고 있었습니다 — 이 사이클의 다른 모든 가드와 같은 모양(자기 목록과 대조하고,
+설명하는 대상과는 대조하지 않음)이고, 이번에는 **아직 만들지도 않은 기능을 막는 가드**가
+그랬습니다.
+
+**네 번째 단언을 넣었습니다.** 값은 한 번 읽히고 **boolean 문맥에서만** 쓰입니다 —
+`alert_webhook_configured` 필드를 위한 `bool(alert_webhook_url)` 두 번. 라우팅은 문자열
+자체가 필요하므로(파싱하든 접속하든 저장하든), 어떤 라우팅 경로든 값을 저장하거나
+넘기거나 반환하거나 변수를 다시 읽어야 합니다. AST로 파싱합니다 — 도달 대입과 그 사용은
+구조이기 때문입니다. 그리고 **load 단위로 identity 비교**합니다: 문장 단위로 쓴 첫 버전은
+허용된 두 사용이 모두 return 안의 dict 리터럴 안에 있어서 둘 다 escape로 보고했습니다.
+
+역검증: 예전 tripwire를 통과시킨 바로 그 라우팅 경로를 넣으면 이제
+`observability.py` 411행을 이름으로 말하며 실패합니다.
+
+**이 수리의 효과는 다음 커밋에서 나타납니다** — 라우팅을 구현하면 이 테스트가 설계대로
+실패하고, 그때 비로소 "의도적으로 다시 쓰고 변수를 `required_environment`로 옮긴다"는
+docstring의 약속이 지켜집니다.
+
+### Fixed — 6라운드: 공표된 열거가 **일어날 수 없는** 사유를 담고 있었습니다 (high)
+
+5라운드 커밋 둘(`56259e0`·`c50eae7`)을 다섯 축으로 다시 공격했습니다. 가장 심각한 것은
+제가 "고쳤다"고 적은 열거 자체였습니다.
+
+**1. 409 사유 (1)은 어떤 요청으로도 도달할 수 없습니다 (high).** 5라운드가 "여섯 가지"로
+넓힌 그 열거의 첫 항목 — "상한이 있는 리소스가 가득 찼고 비울 수 있는 항목이 없다
+(시드 개념 어휘는 eviction 대상이 아니다)" — 은 **구조적으로 죽은 코드**입니다.
+`_evict_one_registered_concept`의 `raise`는 상한에 도달한 모든 항목이 시드일 때만
+실행되는데, `SEEDED_CONCEPTS`는 5개 고정이고 `MAX_REGISTERED_CONCEPTS`는 500이므로
+루프는 항상 caller-added 개념을 찾아냅니다. 측정, 상한을 560회 넘겨 등록:
+
+    status 집계      {200: 560}
+    어휘 크기        500 (시드 5개 전부 생존, caller-added 495)
+    첫 409           없음
+
+독립 재측정은 더 강했습니다 — 순차 1200회, 24스레드 동시 1500회, 그리고 상한에서 시드
+이름을 그대로·공백 패딩·새 개념의 alias로 재등록 시도까지: **cap-full 거부는 한 번도
+발생하지 않습니다.** writer census도 시드 항목이 떠날 수 없고 상한을 낮출 수 없음을
+보였습니다. 어떤 테스트도 그 `raise`에 닿지 않습니다.
+
+`raise` 자체는 남깁니다 — 두 상수가 교차하면 evictor가 출하된 어휘를 지우는 것을 막는
+가드입니다. 하지만 **클라이언트가 볼 수 없는 것을 클라이언트용 열거에 적는 것은
+과대 주장**이므로 열거는 다섯 가지가 되었습니다. 열거를 "빠짐없이" 만드는 수리가 그
+자리에 일어날 수 없는 항목을 넣은 것입니다.
+
+**1b. 그 테스트는 자리를 보지 않았습니다 (medium).** 각 문구가 **자기 번호 항목** 안에
+있는지가 아니라 설명 문자열 **어딘가에** 있는지만 봤습니다. 두 가지 회피가 실증되었고
+둘 다 전 스위트 녹색이었습니다:
+
+    (a) 사유를 재배열해 digest 사유가 (6)이 되게 하고 꼬리의
+        "(2)에서 형식이 잘못된 digest는 ... 400이다"를 그대로 두면,
+        공표된 교차참조가 node-kind 충돌을 가리킵니다 (GET /openapi.json이 서빙).
+    (b) 사유 (4)를 alias 충돌로 바꾸고 사유 (3)을 "dataset id"를 담도록 고쳐 쓰면,
+        문서화된 사유가 사라지는데 문구 센서스는 통과합니다.
+
+문구 k를 마커 k에 묶는 것이 아무것도 없었습니다 — **자기 목록과 비교하는 목록**과 같은
+모양입니다. 지금은 `(n)` 마커로 항목을 쪼개 문구 k가 항목 k 안에 있는지 단언하고,
+꼬리의 교차참조가 digest 사유의 번호를 가리키는지도 함께 단언합니다. 역검증: 두 회피
+모두 이제 어느 사유가 틀렸는지 이름으로 말하며 실패합니다.
+
+**2. 그 테스트의 낡음 방지 주장이 거짓이었습니다 (medium).** 5라운드 docstring은 "코드에
+일곱 번째 409가 생기고 문서에 안 적히면 테스트가 빠진 것을 이름으로 말한다"고 적었지만,
+테스트는 문서를 **이 파일의 `_409_CAUSES`와** 비교합니다 — 코드와 비교하지 않습니다.
+양쪽이 다섯에서 일치하면 녹색입니다.
+
+**철회하면서 반대쪽으로 넓히지 않도록 경계를 측정했습니다.** 검증 에이전트가 "스위트가
+새 409에 완전히 눈이 멀었다"는 서술은 과하다고 지적했고, 맞았습니다 —
+`tests/test_api_error_contract.py`가 `api.py`를 AST로 전이 파싱해 라우트별 raiseable
+status를 `ROUTE_REFUSALS`와 양방향 대조합니다. 양쪽을 직접 측정했습니다:
+
+    409을 선언하지 않는 GET /audit/events에 도달 가능한 409 추가
+      -> test_every_refusal_the_code_can_raise_is_published 실패:
+         "these routes can refuse with statuses the OpenAPI document does not
+          mention: {('GET', '/audit/events'): [409]}"
+
+    이미 409을 선언한 PATCH /catalog/datasets/{id}에 여섯 번째 409 **사유** 추가
+      -> 대상 실행 exit 0, 스위트에서 아무것도 알아채지 못함
+
+즉 **라우트가 답할 수 있는 status는 지켜지고, 열거의 내용은 지켜지지 않습니다.** 그리고
+새 409 사유를 낼 수 있는 라우트는 전부 이미 409을 선언하고 있으므로(카탈로그 mutation 네
+개, graph·ontology write), 실무적으로 새 사유가 정확히 그 사각지대입니다. 과소 주장도
+과대 주장과 같은 결함이므로 양쪽 측정을 함께 적어 둡니다.
+
+**3. 그래프 스토어 제외 철회가 다섯 곳을 놓쳤고, 재발 가드가 통과했습니다 (high).**
+5라운드가 네 곳을 고치고 세 가지 문구를 금지했는데, **다섯 개 파일이 네 번째 문구**를
+쓰고 있었습니다(`test_catalog_mirror_kind_conflict.py`·`test_concept_graph_scope.py`·
+`test_graph_hierarchy_class_separation.py`·`test_graph_hierarchy_consistency.py`·
+`test_graph_mirroring.py`) — 그중 하나는 같은 파일 안에서 철회문 70줄 아래입니다.
+다섯 곳을 모두 현재 상태로 고치고 네 번째 문구를 금지 목록에 넣었습니다.
+
+**그리고 가드의 한계 둘을 적어 두었습니다** — 닫았다고 주장하지 않습니다. (a) 문구
+목록은 그 계열이 아닙니다. 아는 문구의 재발만 잡으며, 이것은 **409 열거의 결함이 옷을
+바꿔 입은 것**입니다(자기 목록과 비교하는 목록). (b) skip 조건이 구멍입니다 —
+`_graph_restore`를 이름만 바꾸면 복원은 그대로 동작하는데 가드는 "주장이 다시 참"이라는
+이유로 skip하고 보호 대상 전부가 다시 공표 가능해집니다.
+
+**4. baseline 가드가 노드만 단언했고, 복원의 근거는 간선이었습니다 (medium).**
+`_GRAPH_COLLECTIONS`에서 `_edges`만 빼고 측정:
+
+    누출 노드 0건   누출 간선 233건   전체 스위트 1265 passed, 15 skipped
+
+즉 이 테스트가 지키려고 만든 쪽을 **전 테스트 녹색인 채로** 제거할 수 있었습니다 —
+보지 않는 절반에 대해 성공을 보고하는 가드입니다. 간선 집합도 같은 방식으로
+**파생**해 단언합니다(일회용 스토어에 `seed_store`를 돌려 읽습니다. 설치하지 않으므로
+싱글턴을 건드리지 않습니다 — 이전 라운드가 정반대 방향으로 틀렸던 그 구분입니다).
+
+**5. 누출 내역이 네 번째 kind를 빠뜨려 합이 맞지 않았습니다 (low).** 전체 스위트
+누출을 277건이라고 적고 내역은 dataset·column·concept 세 kind만 열거했는데, 그 셋의 합은
+275입니다 — `service` 2건(`authz-node`·`svc-A`)이 빠졌습니다. 합이 맞지 않는 내역은
+맞지 않는 개수와 같은 결함입니다.
+
+**그리고 같은 수치가 세 곳에 있었는데 두 곳만 고쳤습니다** — 이 사이클에서 네 번째로
+같은 모양입니다(N곳에 공표하고 N보다 적게 고치기). 세 번째 곳(이 문서의 5라운드 절)은
+리뷰어가 "세 곳"이라고 적은 것을 세어 보고 나서야 찾았습니다. 그래서 숫자 하나가 아니라
+**산술 자체**를 기계화했습니다: 공표된 텍스트에서 "N nodes (a kind, b kind, …)" 형태를
+찾아 괄호 안의 합이 N과 같은지 단언합니다. 측정이 필요 없으므로 세 곳을 동시에 잡으며,
+빠진 kind를 이름으로 말할 수는 없지만 합이 틀렸다는 것은 말합니다.
+
+**6. 응답 스키마를 공표하지 않는 남은 사유가 20개 중 11개에 거짓이었습니다 (medium).**
+5라운드가 그래프 누출 사유를 철회하면서 "mutation을 구동해야 하므로"를 유일한 사유로
+남겼는데, `/browse/query`·`/graph/query`·`/ontology/resolve`·`/search/semantic`·
+`/policy/decision`·`/llm/*`·`/enterprise/auth/*` 등 **열한 개는 본문을 받는 읽기이고 아무
+것도 쓰지 않습니다.** 진짜 사유는 도구 경계입니다 — 생성기가 **GET만 실행합니다**
+(`tests/test_api_response_contract.py`의 docstring이 그렇게 적고 있습니다). 원칙처럼
+들리는 사유를 지어내 놓은 셈이어서, 실제 사유로 바꿨습니다.
+
+역검증 4건: `_edges`를 빼면 간선 가드가 누출된 간선을 이름으로 말하며 실패하고(이전에는
+녹색) · 네 번째 문구를 다시 공표하면 넓힌 가드가 그 파일을 이름으로 말하며 실패하고 ·
+일어날 수 없는 사유를 문서에만 다시 넣으면 마커 연속성 단언이 실패하고 · 개수 단어만
+"네 가지"로 바꾸면 파생된 개수와 불일치로 실패합니다.
+
+### Fixed — 카탈로그 mutation이 증빙 없이 커밋될 수 있었습니다 (high)
+
+적대적 리뷰가 **이 제품의 중심 주장 자체에 대한 위반**을 찾았습니다. 네 개의 카탈로그
+mutation은 모두 같은 세 줄을 같은 순서로 실행합니다 — `_DATA[id] = updated` ·
+schema 스냅샷 · **마지막에** 감사 행. 그 감사 행은 설정된 evidence store를 통해
+쓰이고, 그 store는 문서화된 두 배포 모두에서 실제 외부 의존성입니다
+(Docker 데모의 `SDP_SQLITE_PATH`, paid-pilot 프로파일의 `SDP_DATABASE_URL`).
+그 쓰기가 실패하면 — 테이블 드롭, 디스크 가득, Postgres 도달 불가 — **mutation은 이미
+커밋되어 있었습니다.** `record_decision`은 정상이고 `append_event`만 raise하는 store로 측정:
+
+    PATCH /catalog/datasets/crm-customer-master {"description": ...}
+      -> 400 {"error": "invalid_request", "reason": "request body is not valid"}
+         description 변경됨:   True
+         그 변경의 감사 행:     0건
+
+    POST /catalog/datasets            -> 500, 카탈로그 행 생성됨
+    POST .../publish, .../deprecate   -> 500, status 변경됨
+
+네 건 모두 **승인되었다는 증빙 없이 착륙한 governed write**입니다 — 이 저장소가
+`CLAUDE.md`에 "카탈로그 mutation과 browse/query 경로에 정책 평가와 evidence 기록을
+생략하는 변경은 회귀다"라고 적은 바로 그 회귀입니다. 그리고 patch 라우트는 추가로
+**서버측 저장 실패를 400 "request body is not valid"로 보고**했습니다 — 호출자의 본문에는
+아무 문제가 없는데 본문이 잘못됐다고 말한 것입니다.
+
+**두 가지를 고쳤습니다.**
+
+**1. 증빙을 기록할 수 없으면 write를 되돌립니다.** `_commit_dataset_with_evidence` 하나가
+저장·스냅샷·감사를 수행하고, 감사 쓰기가 raise하면 이전 dataset을 복원하거나(등록이라면
+키를 삭제하고) 이 mutation이 추가한 schema 스냅샷을 되돌린 뒤 store의 예외를 다시
+던집니다. 네 writer 전부 이 함수를 통과합니다. mutation 이전에 기록된 **정책 결정은 일부러
+남깁니다** — 권한은 실제로 평가되고 허용되었고, 감사 행도 mutation도 없는 상태에서 원장이
+그렇게 말하는 것이 실패한 write의 정직한 기록입니다.
+
+이것은 트랜잭션이 아닙니다. 한 Postgres store를 보는 서로 다른 프로세스의 두 writer에는
+여전히 직렬화 지점이 없고, store가 커밋한 **뒤** 이 함수가 반환하기 전에 실패하면 행은
+쓰이고 mutation은 되돌아갑니다. 제거한 것은 배포된 구성이 실제로 만들어내는 단일 프로세스
+경우입니다. 이 경계를 코드와 테스트에 적어 둡니다.
+
+**2. patch 라우트의 400 arm을 `ValueError`로 좁혔습니다.** 네 mutation 중 **이 하나만**
+`except Exception` 포괄 arm을 가지고 있었고, 그래서 이 하나만 서버 실패를 클라이언트
+오류로 보고했습니다(`publish`는 이미 `ValueError`, `create`·`deprecate`는 400 arm 자체가
+없어 500으로 올라갑니다). `ValueError`는 "이 본문이 검증을 통과하지 못했다"의 정확한
+계열이고(`pydantic.ValidationError`가 그것이며, `NodeKindConflict`는 위에서 잡히므로
+좁히기가 conflict를 흘려보내지 않습니다), store 실패(`RuntimeError`·`sqlite3.Error`·
+`psycopg.Error`·`OSError`)는 어느 것도 아니므로 이제 나머지 셋과 같이 5xx로 올라갑니다.
+
+**드리프트 가드도 넣었습니다.** 다섯 번째 writer가 `_DATA`를 직접 대입하면 테스트가
+실패합니다 — 이 영역의 이전 수리들이 전부 "넷 중 둘"만 덮었던 모양이기 때문입니다
+(kind 충돌 가드, IPv6 authority). 가드가 묻는 질문은 "`_record_audit_event`를 호출하는가"가
+아니라 "`_DATA`를 직접 대입하는가"입니다 — 전자로 쓴 첫 버전은 patch의 **no-op 분기**에서
+실패했습니다. 패치할 필드를 하나도 지정하지 않은 요청은 no-op을 원장에 기록하고 dataset을
+**건드리지 않고** 반환하며, 버전 범프와 스냅샷을 의도적으로 건너뜁니다. mutation 없는 감사
+행에는 되돌릴 것이 없습니다.
+
+역검증 2건: 네 writer 중 patch 하나만 원래의 세 줄로 되돌리면 동작 테스트와 드리프트 가드가
+함께 실패하고(`'감사실패변경' == '고객의 상태와...'`), 포괄 arm을 되돌리면 상태 단언이
+`(400, '{"detail":{"error":"invalid_request"...}}')`로 실패합니다.
+
+### Fixed — alert routing 설계 조사가 기존 코드에서 찾아낸 결함 셋 (medium)
+
+다음 개발 항목(`SDP_ALERT_WEBHOOK_URL` 라우팅 + connector-probe 규칙)을 설계하려고 읽기 전용
+조사를 돌렸고, **기능을 만들기 전에 기존 코드의 결함 세 건**이 나왔습니다. 둘은 제가 앞선
+라운드에서 넣은 것입니다.
+
+**1. IPv6 sink 주소의 대괄호가 사라집니다 (medium).** `urlparse().hostname`은 IPv6 리터럴의
+RFC 3986 대괄호를 벗기고, `_http_sink_request_parts`와 `_redacted_sink_target`은 둘 다
+`f"{host}:{port}"`로 authority를 **보간해서** 다시 만들었습니다. IPv6 주소에서는 주소 안의
+콜론과 포트 구분자가 구별되지 않습니다. 측정:
+
+    SDP_LOG_SINK_URL=http://[::1]:8000/x
+      재조립된 URL        http://::1:8000/x
+      urlopen            URLError: [Errno 97] Address family not supported
+      _sink_status()     {"configured": true, "target": "::1:8000"}
+
+    SDP_LOG_SINK_URL=http://[2001:db8::1]:9000/push
+      재조립된 URL        http://2001:db8::1:9000/push
+      _sink_status()     {"configured": true, "target": "2001:db8::1:9000"}
+
+즉 **모든 export가 실패하는 동안 manifest는 sink가 설정되어 있다고 보고하고**, 공표되는
+`target`은 authority도 아닙니다 — `_http_sink_request_parts`의 docstring이 userinfo 형태에
+대해 기록하고 제거한 바로 그 결함 쌍이, IPv6 형태로 살아 있었습니다. 그 수리가 authority를
+한 함수에 맡기지 않고 보간으로 다시 만들었기 때문입니다. 지금은 `_authority(host, port)`
+하나가 양쪽에 쓰이고, 호스트에 콜론이 있으면 대괄호를 씌웁니다. 세 번째 복사가 생기면
+AST 가드가 실패합니다 — grep이 아니라 파싱인 이유는 `_authority`의 docstring이 자신이
+대체한 보간을 **인용**하고 있어서, 문자열 검색으로 쓴 첫 버전이 그 설명 문구에 걸렸기
+때문입니다.
+
+**2. `/metrics`가 내보내는 gauge 개수를 두 곳이 틀리게 공표했습니다 (low).**
+`requirements.py`와 거기서 **생성되는** `docs/requirements-coverage.md`가 "`/metrics` exports
+seven gauges"라고 적었는데, 실제로는 여덟입니다 — `sdp_governed_requests_without_evidence_total`을
+추가한 커밋(`e475384`, 제 것)이 그 문장을 다시 보지 않았습니다. 고친 방식이 중요합니다:
+**숫자를 여덟으로 바꾸지 않았습니다.** 그러면 아홉 번째 gauge를 위해 같은 함정을 다시
+장전하는 것이고, 이 사이클에서 409 개수 단어로 똑같이 당했습니다. 문장이 개수를 말하지
+않게 바꾸고(요구사항의 논점은 "gauge만 있고 request-outcome counter가 없다"였으므로 개수는
+애초에 주장이 아니었습니다), 어느 공표 문서든 gauge 개수를 적으면 실패하는 테스트를
+넣었습니다 — **맞는 개수를 적어도 실패합니다.**
+
+**3. 금지된 문장 하나가 줄바꿈으로 가드를 통과해 `main`에 살아 있었습니다 (medium).**
+4라운드가 "alert 조건을 평가하는 코드가 없다"는 낡은 주장을 기계적으로 금지했는데, 그
+가드는 **정확한 부분문자열**로 비교했고 `docs/implementation-compliance.md`에는 그 문장이
+약 90열에서 줄바꿈된 사본이 있었습니다. 측정:
+
+    phrase "alert 조건을 평가하는 코드도 없"
+      exact match:      없음
+      normalised match: docs/implementation-compliance.md
+
+즉 **가드가 녹색인 채로 낡은 주장이 공표되고 있었습니다.** 문서를 고치고, 가드를 공백
+정규화로 올렸습니다. 같은 사이클에 제가 추가한 그래프 스토어 가드는 처음부터 정규화되어
+있었으므로, 둘 중 약한 쪽을 같은 기준으로 끌어올린 것입니다.
+
+역검증 3건: IPv6 수리를 URL 쪽에만 되돌리면(한쪽만 고치는 실패 모양) 왕복 테스트와 AST
+가드가 함께 실패하고 · 금지 문장을 줄바꿈된 원래 형태로 되돌리면 정규화된 가드가 그 파일을
+이름으로 말하며 실패하고 · gauge 개수를 **맞게**("eight") 적어 넣어도 개수 가드가 실패합니다.
+
+### Fixed — 5라운드: 4라운드가 남긴 결함 (high)
+
+직전 커밋(`3fe213c`)을 다시 공격해 다섯 건을 찾았습니다. **그중 둘은 4라운드가 "고쳤다"고
+적은 바로 그 항목이 덜 고쳐진 것이고, 하나는 4라운드가 추가한 테스트가 거짓 증거였습니다.**
+
+**1. 409 열거가 아직 두 사유를 빼먹었고, 새 테스트가 틀린 개수를 고정했습니다 (high).**
+3라운드가 "세 가지 → 네 가지"로 고쳤고 4라운드가 그 수리를 테스트로 묶었는데, 코드는
+그때 이미 **여섯 가지** 409를 던지고 있었습니다 — 계층 거부 둘(`ONT-002` class 경계,
+`ONT-007` 포섭 순환)이 처음부터 빠져 있었고, 두 라운드 모두 못 봤습니다. 그리고 새
+테스트가 `assert "네 가지" in description`으로 **틀린 개수를 고정**했으므로, 빠진 둘을
+채우려면 테스트부터 실패합니다.
+
+    api.py의 status_code=409 지점: 1222 1274 1350 1406 1550 1899 2180 2213 2271 2304
+    GraphIntegrityConflict 하위: NodeKindConflict ·
+        HierarchyClassSeparationConflict(ONT-002) · HierarchyCycleConflict(ONT-007)
+    문서가 열거한 사유: 4
+
+개수 단어를 고정하는 것이 낡는 방식 자체입니다 — 단어와 목록이 **고칠 곳 두 개**이고
+직전 라운드는 한쪽만 고쳤습니다. 지금 테스트는 개수를 적지 않습니다: `(n)` 마커를 읽어
+개수를 **파생**하고, 여는 단어가 그것과 일치하는지 보고, 사유 여섯 개를 각각 문구
+조각으로 호명합니다. 일곱 번째 409가 코드에 생기고 문서에 안 적히면 테스트가 빠진
+것을 이름으로 말합니다. README 행도 여섯으로 맞췄습니다.
+
+**2. "정리" 한 줄이 아무 일도 하지 않았고, 그래프 스토어 누출은 네 곳에 공표된
+사실이 틀어진 문제였습니다 (high).** 4라운드가 추가한 소유권 테스트 하나는
+`seed_store(InMemoryGraphStore())`로 끝났는데, `seed_store`는 **넘겨받은 스토어를 시드할
+뿐 설치하지 않습니다**(설치는 `graph_store.set_store`). 일회용 스토어를 만들어 버리는
+줄이 정리인 척 서 있었습니다.
+
+누출 자체를 측정했습니다(26노드 시드 baseline 기준, 복원 비활성 상태):
+
+    tests/test_catalog_mirror_kind_conflict.py 단독
+        노드 31건 누출 (dataset 18 · column 8 · concept 5), 간선 26건
+    전체 스위트
+        노드 277건 누출 (dataset 121 · column 129 · concept 25 · service 2), 간선 233건
+
+**복원을 넣으면 0건·0건입니다.** 기존 테스트 중 어느 것도 이 누출로 실패하지 않았으므로
+(복원 비활성에서 정순·역순·seed 11, 활성에서 다섯 순서 전부) 잠재 결함이지 활성 결함은
+아닙니다. 그대로 두지 않은 이유는 잠재성의 **모양**입니다: 이번 사이클이 "노드의 기존
+kind"에 걸리는 거부를 추가했으므로, 데이터셋 shape의 id에 남은 `concept` 노드는 이제
+나중 테스트의 200을 409로 만들고, 남은 `dataset` 노드는 나중 `POST /ontology/concepts`를
+같은 식으로 만듭니다 — 누출이 실패로 바뀌는 경로가 kind 규칙과 함께 늘어났습니다.
+
+제외의 근거는 "snapshot API가 없고 테스트용으로 제품 API를 만들 수 없다"였습니다. 제품
+API에는 맞지만 fixture는 이미 `catalog._DATA`에 손을 넣고 있고 스토어의 backend
+collection은 같은 종류의 모듈 레벨 상태이므로, 복사를 fixture 안에 두었습니다.
+`PostgresGraphStore`에는 그 collection이 없고 그 백엔드로 도는 테스트도 없으므로
+snapshot은 추측하지 않고 건너뜁니다.
+
+**그리고 이것이 이 사이클에서 세 번째로 같은 모양의 결함입니다** — 사실 하나가 N곳에
+공표되어 있고 한 곳만 고치는 것. 제외는 네 곳에 적혀 있었습니다: fixture docstring,
+`CLAUDE.md` 컨벤션, **제품 코드**(`api_response_contract.py` — 비-GET 20개 operation의
+응답 스키마를 공표하지 않는 두 사유 중 하나), 그리고 자기 정리의 근거로 그것을 인용한
+테스트 주석 둘. fixture만 고치면 제품 코드와 에이전트용 컨벤션 파일이 이미 없는 제약을
+우회하라고 다음 독자에게 말합니다. 네 곳 모두 고치고, alert 문장과 같은 기계적 재발
+가드를 붙였습니다(README·`CLAUDE.md`·`docs/**.md`·`src/**.py`·`tests/**.py`). 가드 자체가
+자기 정의에 걸렸으므로 금지 문구는 조각으로 조립해 둡니다 — 4라운드의 README 가드가
+인용을 잡았을 때와 같은 함정, 반대 방향입니다.
+
+**3. AST 가드가 대소문자를 구별해 우회 가능했습니다 (medium).** 3라운드가 "문자열
+리터럴 자체 금지"로 넓혔지만 `"X-SDP-Evidence-Ids"`를 **정확히** 비교했습니다. HTTP
+헤더 이름은 대소문자 무관이고 Starlette `Headers.get`도, 이 저장소의 `_header_value`도
+소문자로 내려 훑으므로, `request.headers.get("x-sdp-evidence-ids")`는 **작동하는 읽기**인데
+가드는 녹색입니다. 지금은 양쪽을 소문자로 비교합니다.
+
+**4. 테스트 double이 호출되지 않는 메서드를 정의했습니다 (medium).** 증빙 id를 "스토어
+쓰기 **뒤에**" 기록하는 수리는 chokepoint 두 곳(`record_policy_decision`,
+`append_audit_event`) 각각의 성질인데, `_RefusingStore`는 `append_event`를 정의하고
+아무도 호출하지 않았습니다 — audit 쪽은 묶여 있지 않았습니다. 측정: `append_audit_event`의
+`note_request_evidence_id`를 쓰기 위로 되돌리고 테스트를 직전 형태로 두면 **21건 전부
+녹색**입니다. 두 번째 arm을 넣었고, 같은 변이가 이제 실패합니다.
+
+**5. 테스트 docstring이 그 테스트가 닿지 못하는 절을 주장했습니다 (low).**
+`..._that_did_record_evidence_is_not_counted`는 gap 조건의 "증빙을 하나도 남기지 않음"
+절에 대한 테스트인 것처럼 적혀 있었지만, 404는 **2xx 가드에서 먼저** 걸러지므로 그 절을
+지워도 녹색입니다. 측정: `not collected.ids`를 미들웨어에서 제거하면
+`test_the_gap_condition_is_zero_on_ordinary_governed_traffic`과
+`test_no_governed_get_route_reports_a_gap_on_seed_data`가 실패하고 이 테스트는 통과합니다.
+이름과 docstring을 실제로 증명하는 것(거부도 상관 키를 공표한다)으로 바꾸고, 그 절을
+묶는 테스트 둘을 docstring에서 이름으로 가리킵니다.
+
+역검증 6건, 각각 되돌려 실패를 확인했습니다: 개수 단어를 다섯으로 바꾸면 불일치로 실패 ·
+사유 (6)을 개수까지 맞춰 지우면 `포섭 순환`을 이름으로 말하며 실패 · audit chokepoint의
+기록을 쓰기 위로 올리면 새 arm이 실패(직전 테스트 형태에서는 21건 녹색) ·
+`not collected.ids`를 지우면 2xx 테스트 둘만 실패 · 제외 문구를 제품 코드에 줄바꿈된
+형태로 다시 넣으면 재발 가드가 그 파일을 이름으로 말하며 실패 · fixture에서
+`_graph_restore`를 지우면 baseline 가드가 실패.
+
+**같은 커밋을 다시 읽고 세 건을 더 고쳤습니다.** 리뷰 라운드를 띄우지 않고 직접
+확인했습니다 — 이 세션의 지침이 에이전트/워크플로를 요청 없이 쓰지 말라고 하므로.
+
+**a. 열거의 exhaustive 주장이 경쟁 조건에서는 성립하지 않습니다 (medium).** 열 개
+409 지점을 하나씩 분류하다 보니, `ontology.register_concept`를 감싼
+`except ValueError`가 어휘 상한(1)뿐 아니라 그 함수가 **락 안에서 다시 확인하는**
+별칭 충돌에도 409를 답합니다. 평범한 경로에서는 그 충돌이 락 위에서 걸려 400입니다:
+
+    POST /ontology/concepts {"concept": "새로운개념하나", "aliases": ["customer"]}
+      -> 400 "alias conflict: 'customer' already belongs to '고객'"
+
+따라서 한 별칭을 두 writer가 동시에 집을 때만 거부로 올라오고, 그때는 같은 사유가 두
+status를 갖습니다. 열거에 **넣지 않고** 테스트에 경계로 적었습니다 — 400으로 문서화된
+사유에 race 전용 status를 공표하면 누락보다 더 오해를 만듭니다. status가 갈리는 것 자체는
+문서 문제가 아니라 코드 문제이므로 그대로 둡니다.
+
+**b. `deepcopy`가 load-bearing인데 주석이 그 이유를 적지 않았습니다 (medium).**
+`upsert_edge`는 같은 간선이 이미 있으면 교체하지 않고 `existing.properties.update(...)`로
+**담긴 객체를 제자리에서** 고칩니다. 그래서 한 단계 복사는 복원이 되지 않습니다:
+
+    one-level 스냅샷 후 upsert_edge(properties={"leaked_marker": ...}) 후 복원
+      -> leaked_marker 남아 있음: True
+    deepcopy 스냅샷으로 같은 절차
+      -> leaked_marker 남아 있음: False
+
+측정한 비용도 같이 적었습니다(시드 baseline 26노드·78간선·dimension 128, 200회 왕복):
+deepcopy 4.53 ms/test(스위트 약 5.8초, 약 6%) vs 한 단계 0.005 ms/test. 6%를 내고
+"담긴 객체의 변경에 뚫리지 않는" 스냅샷을 삽니다.
+
+**c. baseline 단언의 메시지가 kind 불일치를 말하지 못했습니다 (low).**
+`sorted(set(nodes) ^ set(expected))`는 id는 같고 **kind만 다른** 경우에 빈 집합입니다 —
+그런데 그것이 이번 사이클의 규칙들이 거부하려는 바로 그 "재분류된 노드"입니다. 메시지를
+`unexpected`/`missing`/`wrong_kind` 세 갈래로 바꿨습니다. 역검증: 시드 노드 하나를
+`kind="concept"`로 복원시키면 `{'wrong_kind': {'crm-customer-master': ('concept', 'dataset')}}`로
+실패합니다.
+
+### Fixed — 4라운드: 직전 수리가 만든 결함 (high)
+
+직전 커밋(`36a9407`)의 아홉 개 수리를 다시 공격했습니다. 리뷰어는 각자 자기 git worktree
+에서 작업했습니다 — 3라운드에서 에이전트들이 공유 트리를 동시에 수정하는 레이스가 있었기
+때문입니다. **직전 수리 중 둘이 결함이었고, 하나는 고치려던 노출을 다시 열었습니다.**
+
+**1. 소유권 추론이 세 번째로 틀렸고, 이번에는 누출입니다 (high).** 3라운드에서 추가한
+세 번째 조건("다른 `has_column` 간선이 이 노드를 가리키지 않음")은 **누가 썼는지가 아니라
+누가 관심있는지**를 묻습니다. 인증된 `POST /graph/edges` 한 번으로 컬럼 노드를 영구히
+고정할 수 있습니다.
+
+    데이터셋 leakowner가 pii: true 컬럼 customer_email 선언
+    POST /graph/edges  has_column  leakother -> leakowner:customer_email
+    PATCH /catalog/datasets/leakowner  (컬럼 내림)        -> 200
+      -> 노드 생존(leakother의 간선이 남아 있어서)
+    PATCH /catalog/datasets/leakother {"title": ...}       -> 200
+      -> 그 간선도 사라지지만 leakother 쪽에서는 모양 검사에 탈락
+    최종: pii: true · 간선 0개 · 어떤 카탈로그 행도 선언하지 않는 고아 column 노드.
+          `/search/semantic`과 `/graph/query`가 계속 서빙한다.
+
+선언된 컬럼은 정책 게이트가 걸린 `/browse`가 마스킹하지만 고아 노드는 아무것도 지배하지
+않습니다 — reconciliation이 존재하는 이유가 정확히 그 노출이고, 그것을 다시 열었습니다.
+
+**2. 같은 규칙이 남의 노드를 여전히 파괴했습니다 (medium).** `POST /graph/nodes`는 간선을
+만들지 않으므로, 다른 writer가 `kind: "column"`으로 쓴 노드가 이 데이터셋 접두사 아래
+있으면 세 조건을 모두 통과하고 title만 바꾸는 patch에 삭제됩니다(닿는 간선까지).
+`POST /graph/nodes`의 계약은 다른 writer가 노드의 거버닝 속성을 파괴하지 않는다는 것입니다.
+
+**그래서 소유권을 추론하지 않고 기록합니다.** 모양 → 모양+kind → 모양+kind+간선, 세 번의
+추론이 모두 한쪽으로 틀렸습니다. 지금은 `seed_dataset`이 쓰는 모든 컬럼 노드에 그 미러의
+데이터셋 id를 `mirrored_from`으로 찍고, reconciliation은 **자기 도장이 찍힌 노드만**
+수거합니다. 여섯 경우 전부 재측정했습니다: concept 생존 · 다른 데이터셋의 자기 노드 생존 ·
+다른 데이터셋이 소유한 컬럼 노드 생존 · 고정된 pii 노드 수거(누출 해소) · 남의
+`POST /graph/nodes` 노드 생존 · 자기 고아 컬럼은 여전히 수거. 선언된 경계 둘: 도장 이전에
+쓰인 노드(영속 Postgres 그래프)는 다시 미러될 때까지 건드리지 않고(파괴가 아니라 보존
+방향), 자기 노드에 남의 id를 일부러 찍는 writer는 그 미러의 산출물로 취급되기를 요청한
+것입니다.
+
+**3. 직전의 문서 수리가 한 단계 아래에서 같은 결함을 반복했습니다 (high).**
+readiness 문서는 "규칙 자체가 `not_covered`로 공표한다"고 적는데, 3라운드가 그 괄호 안에
+두 번째 사각지대("decision은 있고 audit 행만 없는 경우")를 **문서에만** 추가하고 필드는
+넓히지 않았습니다. 미인증 조달 표면(`GET /enterprise/observability`)에서 규칙의 사각지대를
+열거하는 감사자는 둘 중 하나만 보고 나머지는 덮인다고 결론 내립니다 — 그리고 빠진 쪽이
+측정상 **정상 상태**입니다(호출 가능한 governed GET 18건 중 16건). 필드를 넓혔고,
+테스트가 두 사각지대가 모두 공표되는지 단언합니다.
+
+**4. README가 여전히 "alert 조건을 평가하는 코드가 없다"고 공표했습니다 (high).**
+3라운드가 `observability.py`의 주석을, 4라운드가 `production.py`의 주석을, 그리고 README를
+각각 한 라운드 뒤에 찾았습니다 — 같은 문장이 세 곳에 있었고 README는 이 저장소의 1차 공표
+문서입니다. README를 믿은 운영자는 이 서비스가 실제로 계산하는 **단 하나의** 규칙에
+모니터링을 붙이지 않게 됩니다(계산을 추가한 이유의 정반대). 세 번 재발했으므로
+`tests/test_honest_metrics.py`가 그 문장을 README·`docs/**.md`·`src/**.py` 전체에서
+기계적으로 금지합니다 — 평가에 대한 주장만 금지하고 "전달되지 않는다"는 참인 주장은
+그대로 둡니다. (이 가드는 추가 직후 제 README 정정문이 그 문장을 **인용**하는 것을 잡아냈고,
+가드를 약화시키는 대신 인용을 풀었습니다.)
+
+역검증: 추론으로 되돌리면 누출 테스트와 남의 노드 테스트가 실패하고, 미러가 도장을 멈추면
+4건이 실패하며, `not_covered`를 좁히면 사각지대 테스트가, README 문장을 되돌리면 재발
+가드가 실패합니다.
+
+### Fixed — 3라운드 적대적 검증: 직전 세 커밋에서 찾은 결함 (high)
+
+직전 세 커밋(`70d19fa`, `4c8a9b9`, `e475384`)을 5개 축으로 다시 공격했습니다. 각 결함은
+코드를 실행해 재현했고, 독립적으로 재측정한 뒤 고쳤습니다. **세 축이 같은 결함 하나로
+수렴했고, 그것이 제일 심각했습니다.**
+
+**1. governed 경계 파생이 HTTP method를 버렸습니다 (high).** 거부 계약은 `(method, path)`로
+키가 잡히는데 `policy_gated_route_paths()`는 path만 모으고, 미들웨어도 path만 비교했습니다.
+`POST /ontology/concepts`가 403을 선언하므로 path `/ontology/concepts`가 governed 집합에
+들어가고, **열려 있는** `GET /ontology/concepts`까지 함께 끌려들어갔습니다 — actor도 없고
+정책 평가도 없고 아무것도 기록하지 않는, 코드가 스스로 "open"이라고 적어 둔 어휘 읽기입니다.
+
+    GET /ontology/concepts  (미인증, 1회)        -> 200
+      policy_audit_gap: firing: true, observed_total: 1,
+                        routes: {'/ontology/concepts': 1}   severity: critical
+
+바로 앞 항목이 공표한 "측정값 0 · 상시 경고가 아니라 회귀 탐지기"가 **첫 평범한 요청에
+깨집니다.** 그 측정은 403을 선언한 GET 템플릿만 재어 method를 고려했고 판정은 하지
+않았으니, 둘이 서로 다른 "governed"를 쓰고 있었습니다 — 그리고 맞아 보이는 쪽이
+측정이었습니다. 지금은 `policy_gated_route_methods()`가 `(method, path)` 쌍을 돌려주고
+미들웨어가 `(request.method, route_template)`로 비교합니다. 재측정: governed 쌍 39건
+(GET 22 · POST 16 · PATCH 1), 전부 앱이 실제로 서빙, 열린 method가 governed path에 얹혀
+있던 경우는 `GET /ontology/concepts` 1건이고 정확히 그것만 빠집니다. 집계 키도
+`"GET /catalog/datasets"` 형태로 method를 담습니다.
+
+**2. schema를 선언하지 않는 patch가 저장된 컬럼을 검사하지 않았습니다 (high).**
+직전 커밋에서 "무조건 검사"로 고쳤다고 적었지만, schema가 없으면 컬럼 목록으로 `[]`를
+넘겼습니다. `patch_dataset`은 schema가 없을 때 **저장된 schema를 유지**하고
+`seed_dataset`은 그 저장된 컬럼을 미러하므로, 아무도 묻지 않은 컬럼 노드가 쓰입니다.
+
+    저장 컬럼 'c:x'의 노드 id를 개념이 점유한 상태에서
+    PATCH /catalog/datasets/own {"title": "제목만 바꿈"}  -> 409
+      title 적용됨 · updated_at 이동 · schema-history 스냅샷 추가
+      감사 행: ('dataset.patch','success') 다음 ('dataset.patch','denied')  — 한 요청에 둘
+
+장부가 한 요청에 대해 성공과 거부를 동시에 기록합니다. 이 가드가 막으려던 바로 그
+결함이 가드를 추가한 라우트에 남아 있었습니다. 지금은 `_columns_the_mirror_will_write`가
+"선언된 schema가 있으면 그것, 없으면 저장된 schema"를 돌려주고, 그것을 검사합니다.
+
+**3. reconciliation의 소유권 판정이 모양만 봤습니다 (high).** 직전 커밋의
+`_owns_column_node`는 `{dataset_id}:` 접두사만 확인했고, **모양은 소유권이 아닙니다.**
+
+    POST /ontology/concepts {"concept": "g1:개념"} + has_column g1 -> g1:개념
+    PATCH /catalog/datasets/g1 {"title": "바꿈"}        -> 200
+      -> 개념 노드 삭제, GET /ontology/terms/g1:개념 -> 404
+
+    데이터셋 "f2"와 "f2:child" + has_column f2 -> f2:child
+    PATCH /catalog/datasets/f2 {"title": "x"}           -> 200
+      -> 데이터셋 f2:child의 **자기 노드**가 삭제되는데
+         GET /catalog/datasets/f2:child는 여전히 200 — 카탈로그/그래프 드리프트
+
+지금은 세 가지를 모두 묻습니다: 모양, 노드의 **kind가 `column`**, 그리고 (이 데이터셋의
+간선을 지운 뒤) **다른 `has_column` 간선이 더 이상 가리키지 않음**. 세 번째가 필요한
+이유는 `부모셋:자식셋`이 소유한 컬럼 노드 `부모셋:자식셋:컬럼`도 `부모셋:`으로 시작하고
+kind가 `column`이기 때문입니다 — 소유자의 간선만이 그것을 구별합니다.
+
+**4. 증빙 id를 스토어 쓰기 **전에** 기록했습니다 (low).** 쓰기가 실패하면 로그 행이
+원장에 없는 행을 가리키는 상관 키를 공표합니다(`evidence_id_source: server_recorded`를
+같이 공표하면서). 쓰기 뒤로 옮겼습니다.
+
+**5. `withheld_evidence_id_count`가 id 수가 아니라 시도 수를 셌습니다 (low).** 상한을
+넘긴 id 하나를 다섯 번 기록하면 5를 공표했습니다. 집합으로 바꿨습니다. HTTP 표면으로는
+도달 불가(한 요청이 쓰는 원장 행은 최대 2개)라는 점도 테스트가 함께 적습니다.
+
+**6. 409 열거가 세 가지로 남아 있었습니다 (medium).** 직전 커밋이 네 번째 사유(중복
+dataset id)를 추가했는데 `REFUSAL_DESCRIPTIONS[409]` — `GET /openapi.json`이 서빙하는
+문장 — 은 "세 가지 경우다"로 셋만 열거했습니다. README 행도 "세 가지"라 적고 넷을
+나열했습니다. 둘 다 고쳤습니다.
+
+**7. 공표 문구가 구현보다 넓었습니다 (medium).** CHANGELOG·compliance 문서가
+`policy_audit_gap`을 "모든 governed 경로에 decision과 audit 행"에 대한 자기검사라고
+적었지만, 구현은 **둘 다 없을 때만** 셉니다. 측정: 호출 가능한 governed GET 18건 중
+**16건이 decision만 남기고 audit 행은 남기지 않으며**, 그 상태에서 규칙은 정상적으로 0입니다.
+"decision은 있고 audit 행은 없음"은 덮지 않는다는 사실을 문서에 적었습니다.
+
+**8. 드리프트 가드의 선언이 실제 범위보다 넓었습니다 (low).** AST 가드가 "호출 인자로
+넘기는 것"만 금지했는데, 헤더 이름을 모듈 상수로 올리거나(`_HEADER = "X-SDP-..."`)
+mapping으로 읽으면(`headers["X-SDP-..."]`) 가드를 그대로 통과하면서 caller 제어 상관 키가
+복구됩니다. 지금은 docstring을 제외한 **문자열 리터럴 자체**를 금지합니다 — 주석은 AST에
+없으므로 설명은 그대로 남습니다.
+
+**9. 알림 블록 주석이 "어떤 조건도 계산하지 않는다"고 남아 있었습니다 (low)** — 그것을
+계산하는 함수 다섯 줄 위에서. 고쳤습니다.
+
+**테스트 결함도 같이 고쳤습니다.** 탐지기가 발화하는 것을 보이는 **유일한** 테스트가
+`api._POLICY_GATED_ROUTES`를 monkeypatch로 **대체**하고 있었습니다 — 정확히 그 값이
+틀렸는데도 전 스위트가 녹색이던 이유입니다. 미들웨어가 쓰는 값이 파생 결과와 같은지
+단언하는 테스트와, 미인증 `GET /ontology/concepts`가 세어지지 않는지 보는 테스트,
+그리고 **governed GET 라우트를 전부 훑어 gap이 0인지 보는** 테스트(손으로 한 번 한
+측정을 상시 테스트로)를 넣었습니다. `..._is_not_counted_as_a_gap`은 404를 몰고 있어서
+이름이 주장하는 2xx 가드를 검사하지 못했고(가드를 지워도 1241건 전부 녹색), 증빙을
+하나도 남기지 않는 400으로 바꿨습니다. 절대 경로 테스트는 자기 docstring이 말하는
+경로(사전 검사)를 전혀 거치지 않았으므로 가드의 no-op을 직접 단언합니다. drift 헬퍼
+세 곳은 재설정되지 않는 그래프 스토어 싱글턴에 `concept` 노드를 남겨 같은 프로세스의
+이후 테스트를 깨뜨릴 수 있었으므로 context manager로 바꿔 치웁니다.
+
+역검증: 9건 각각 되돌리면 자기 테스트만 실패합니다.
+
+### Added — `policy_audit_gap` alert를 선언에서 **평가**로 (medium)
+
+`GET /enterprise/observability`는 alert 규칙 2건을 `evaluated: false`,
+`alert_evaluation: declared_not_evaluated`로 게시했습니다. 정직한 선언이지만, 그중
+critical 등급인 `policy_audit_gap`은 이 제품의 중심 주장에 대한 **자기검사**입니다 —
+모든 governed 경로에 policy decision과 audit 행이 남는다는 주장. 그리고 바로 위 항목
+전까지는 평가할 수 없었습니다: `evidence_ids`가 caller 헤더에서 왔으므로 "이 요청이
+증빙을 남겼는가"에 서버가 답할 수 있는 값이 없었습니다.
+
+지금은 미들웨어가 셉니다 — policy-gated 라우트가 2xx인데 수집된 증빙 id가 **하나도**
+없는 경우. 미들웨어만이 매칭된 라우트 템플릿·상태코드·수집된 증빙을 한 스코프에서
+알기 때문입니다.
+
+    GET /enterprise/observability  alerts[policy_audit_gap]
+      evaluated: true,  evaluation: "measured_in_process"
+      observed_total: 0,  firing: false,  routes: {}
+      measurement_window: "this worker, since start"
+    GET /metrics
+      sdp_governed_requests_without_evidence_total 0
+
+**governed 경계는 공표된 거부 계약에서 파생합니다.** 403을 답할 수 있는 라우트는
+`policy.evaluate`를 물은 라우트이므로, `api_error_contract`가 이미 governed 표면을
+이름 짓고 있습니다. 같은 것을 두 목록으로 두면 드리프트하므로 두 번째 목록을 만들지
+않았습니다 — 새 governed 라우트는 자기 403을 선언하는 것으로 자기검사에 들어옵니다.
+반대 방향 드리프트(앱에서 사라진 라우트가 계약에 남는 것)는 테스트가 막습니다.
+
+**측정값 0입니다.** 시드 데이터로 호출 가능한 policy-gated GET 라우트 18건 전부가
+2xx에서 증빙 id를 담습니다. 그래서 이 규칙은 상시 경고가 아니라 **회귀 탐지기**입니다 —
+정책 평가를 빠뜨린 라우트가 추가되면 `firing: true`가 됩니다.
+
+> **이 측정은 맞았고, 판정이 틀렸습니다.** 바로 아래 항목을 보세요 — 이 18건은 403을
+> 선언한 **GET 템플릿**을 센 값(method를 고려한 값)인데, 미들웨어는 path만 비교하고
+> 있었으므로 측정과 판정이 서로 다른 "governed"를 썼습니다. 그래서 이 "0"은 참이면서도
+> 규칙이 미인증 요청 한 번에 발화하는 것을 막지 못했습니다.
+
+**좁다는 사실을 함께 공표합니다.** 선언된 조건은 "preview/query 수가 decision 또는
+audit 수를 초과"인데, 계산하는 것은 그 조건의 요청 단위 형태입니다. 요청 시점에 세므로
+사후에 원장에서 제거된 행은 보이지 않습니다 — 규칙이 `declared_condition`과
+`not_covered`를 같이 담아서, id가 가지지 않은 커버리지를 암시하지 않게 합니다. 계산한
+것의 이름을 쓰는 규칙(`shacl_compatible`, `cycle_count`가 가르친 것)의 세 번째 적용입니다.
+
+**남은 경계.** 전달은 여전히 미구현입니다 — `SDP_ALERT_WEBHOOK_URL`로 POST하는 코드는
+없고 변수는 `declared_unimplemented_environment`에 그대로입니다. `central_workflow_backlog`은
+GitHub Actions run 상태가 필요하므로 이 서비스가 평가할 수 있는 조건이 아니며,
+`not_evaluated_because`로 그 이유를 공표합니다. 최상위 `alert_evaluation`은 두 규칙에
+하나의 주장을 하지 않도록 `per_rule`로 바뀌었습니다 — 어느 쪽 문자열을 써도 절반은
+거짓이기 때문입니다. acceptance criterion이 이름을 올린 세 번째 조건(connector-probe
+실패)은 애초에 규칙으로 게시된 적이 없다는 사실도 criterion 본문에 적었습니다.
+
+라우트별 카운트는 상한(32)이 있고 초과분은 선언된 한 버킷으로 접힙니다(총합은 보존).
+새 모듈 레벨 가변 상태이므로 `tests/conftest.py`의 복원 fixture와
+`tests/test_module_state_coverage.py`의 분류에 함께 등록했습니다 — 한 테스트가 일부러
+만든 gap이 다른 테스트의 측정값이 되지 않도록.
+
+역검증: 카운트 호출을 지우면 firing 테스트가 실패하고, governed 집합에 `/health`를
+끼우면 "governed 밖은 세지 않는다" 테스트가 실패하며, 상한을 지우면 경계 테스트가,
+거부 계약 파생을 끊으면 파생 테스트가 실패합니다.
+
+### Fixed — 요청 로그의 증빙 상관 키를 caller가 정하고 있었습니다 (high)
+
+`GET /enterprise/observability`는 `structured_logs.fields`에 `evidence_ids`를 공표하고,
+readiness manifest의 `request_observability_export` acceptance criterion은 "request id,
+tenant, actor, route, status, latency, **and evidence ids** without request bodies"라고
+적혀 있으며 그 integration은 `implemented`입니다. 그런데 이 필드는 **caller가 보낸 요청
+헤더** `X-SDP-Evidence-Ids`에서 읽혔습니다. 인증된 governed read 1회 측정:
+
+    POST /browse/crm-customer-master/preview
+      headers: X-SDP-Evidence-Ids: 00000000-dead-beef-0000-000000000000,
+                                   another-forged-id
+      -> 200
+         서버가 실제 기록한 decision:  4ff4d6c7-52a3-4f51-a1e2-cb585180a27d
+         export된 행의 evidence_ids:   ['00000000-dead-beef-...', 'another-forged-id']
+         로그가 실제 decision을 담았나: False
+
+로그 행을 증빙 원장(`/policy/decisions`, `/audit/events`)에 연결하는 **그 키**를 행의
+주체인 caller가 고를 수 있었습니다. 감사자는 자기가 서버 기록이라고 믿는 값을 읽지만
+실제로는 caller 주장값이고, caller는 남의 요청 증빙을 가리키거나 아무것도 보내지 않아
+"증빙 없음"으로 보이게 할 수 있었습니다. 어떤 라우트도 이 헤더를 설정하지 않으므로
+**평상시 모든 governed 요청의 값은 빈 리스트**였습니다 — correlation을 주장하는 필드
+이름 아래에서.
+
+이것은 `tenant_id`가 이미 주석으로 인정한 결함과 같은 종류입니다("self-asserted by the
+very caller whose rows would be filtered"). 차이는 `tenant_id`는 주장값으로 **선언**되고
+미인증 manifest에서 집계만 공개되는 반면, `evidence_ids`는 correlation 키로 공표됐다는
+점입니다.
+
+지금은 모든 증빙 행이 반드시 지나는 두 지점 — `evidence.record_policy_decision`과
+`evidence.append_audit_event` — 에서 요청 단위로 수집하고(`collect_request_evidence_ids`),
+헤더는 읽지 않습니다. 라우트마다 보고를 추가하는 방식이 아니므로 새 라우트가 증빙을
+빠뜨릴 수도, 기록하지 않은 증빙을 보고할 수도 없습니다. 거부된 요청도 상관 가능합니다 —
+거부는 decision이고, 그 행이 바로 "거부된 시도"를 찾는 감사자가 읽는 것입니다(이 라우트의
+거부는 존재 oracle을 피하려 404로 답하므로, 사유를 담은 원장을 찾을 키가 더 중요합니다).
+
+구현 메모 하나: 요청 단위 수집은 `ContextVar`에 **가변 객체**를 담아서 합니다. FastAPI는
+이 앱의 `def` 핸들러를 threadpool에서 컨텍스트 **복사본**으로 실행하므로 핸들러 안에서
+ContextVar를 다시 바인딩해도 미들웨어에 보이지 않지만, 이미 들고 있는 객체를 변형하면
+보입니다. 상한(32)을 넘는 id는 버리지 않고 세어 `withheld_evidence_id_count`에 더합니다 —
+이 제품의 다른 모든 상한 리스트와 같은 규칙입니다.
+
+manifest도 계산한 것을 공표하도록 고쳤습니다: `evidence_id_source: server_recorded`,
+`caller_asserted_fields: [tenant_id, actor, request_id]`. 드리프트 가드는 AST 기반입니다 —
+`src` 안에서 그 헤더 이름을 **호출 인자로** 넘기는 곳을 금지하고 주석은 허용합니다(결함을
+설명하는 주석까지 금지하면 설명이 사라집니다).
+
+**남은 경계를 분명히 합니다.** 이 변경은 첫 번째 acceptance criterion을 사실로 만들 뿐이고,
+같은 integration의 두 번째 criterion(alert 조건 평가 + `SDP_ALERT_WEBHOOK_URL` 라우팅)은
+여전히 미구현입니다. `SDP_ALERT_WEBHOOK_URL`은 `declared_unimplemented_environment`에
+그대로 있고, 게시되는 alert 규칙 두 건도 `evaluated: false`입니다. 그중
+`policy_audit_gap`은 이제 in-process 상태로 평가할 수 있게 됐지만(이 키가 있어야 창
+단위로 셀 수 있습니다) 그것은 별도 변경입니다. `central_workflow_backlog`은 GitHub
+Actions 상태를 봐야 하므로 이 서비스가 평가할 수 있는 조건이 아닙니다.
+
+역검증: 헤더 읽기를 되돌리면 correlation 테스트 5건과 AST 가드가 실패합니다.
+`record_policy_decision`의 수집 호출을 지우면 로그에 audit event id는 남고 decision id는
+사라져 3건이 실패합니다 — 두 지점이 각각 필요하다는 뜻입니다. 미들웨어 배선을 지우면
+모든 행이 빈 리스트로 돌아가 5건이 실패합니다.
+
+### Fixed — kind 충돌 가드가 네 경로 중 두 곳만 덮었고, 그 두 곳도 틀린 id를 봤습니다 (high)
+
+바로 앞 항목의 수리를 2라운드 적대적 검증에 다시 걸었더니, **고친 쪽이 결함이었습니다.**
+같은 손상(그래프 미러가 노드의 kind를 바꿔야 하는 상태에서 카탈로그가 반쯤 적용됨)에
+도달하는 경로가 다섯 개 더 남아 있었고, 전부 1회 인증 요청으로 측정됐습니다.
+
+**1. `id`를 생략한 create는 가드를 통째로 비껴갔습니다.** 가드를 라우트에서
+`request.id`에 대고 불렀는데, 카탈로그가 id를 배정하는 요청에서 그 값은 `None`입니다 —
+`None`이라는 이름의 노드가 있느냐고 묻고 통과했습니다.
+
+    POST /catalog/datasets  (id 없음, dataset-001이 개념 노드)
+      수리 전 가드 기준:  500   행 생성 True,  이후 seed_store raise
+      지금:               409   행 생성 False, seed_store 정상
+
+id는 `register_dataset`의 `before_commit` 훅에서 — 확정된 **뒤**, 첫 쓰기 **전** —
+검사합니다. 라우트 바깥에서는 물을 수 없는 질문이었습니다.
+
+**2. `publish`와 `deprecate`는 아무것도 묻지 않았습니다.** `seed_dataset`은 네 개의
+mutation이 모두 호출하는데 가드는 두 곳에만 있었습니다.
+
+    POST /catalog/datasets/{id}/publish    -> 400, status 변경 **적용됨**
+    POST /catalog/datasets/{id}/deprecate  -> 500, status 변경 **적용됨**
+    두 경우 모두 감사 행: result='success'   (호출자가 본 것은 실패)
+
+장부가 호출자가 본 것과 반대를 기록하는 것이 이 중 가장 나쁩니다. 둘 다 저장된 행의
+컬럼으로 사전 검사해 409이고, `updated_at`까지 그대로입니다.
+
+**3. 제목만 바꾸는 patch도 가드를 건너뛰었습니다.** 검사가 `request.schema is not None`에
+걸려 있었는데, 데이터셋의 **자기 노드**는 schema를 선언하지 않는 patch도 다시 씁니다 —
+측정값은 400에 제목 변경이 적용된 상태. 이제 dataset id는 무조건 검사합니다.
+
+**4. 중복 dataset id가 500이었습니다.** `_register_dataset_locked`가 어느 라우트도 잡지
+않는 bare `ValueError`를 던졌습니다. 성격이 같은 거부(id가 이미 점유됨)이므로
+`DatasetAlreadyExists` 전용 타입으로 올리고 409로 답합니다. `pydantic.ValidationError`도
+`ValueError`이므로 전용 타입이 필요합니다 — 바로 앞 항목에서 같은 함정을 이미 한 번
+밟았습니다.
+
+**5. reconciliation이 남의 노드를 파괴했습니다(사전 결함).** 선언되지 않은 `has_column`
+간선의 **대상 노드를 무조건 삭제**했습니다. `POST /graph/edges`는 `has_column` 간선을
+아무 노드에나 허용하므로, 두 번의 정상 요청으로 개념 노드가 사라집니다.
+
+    POST /graph/edges  has_column  내데이터셋 -> 고객(시드 개념)  -> 200
+    PATCH /catalog/datasets/내데이터셋  (schema 선언)             -> 200
+      -> 고객 노드와 그에 닿는 모든 간선 삭제. 용어 해석 경로가
+         정의되지 않은 개념처럼 응답.
+
+이것이 1~3번이 거부해야 하는 상태로 가는 **도달 경로**이기도 합니다(카탈로그 행은 남고
+그래프 노드만 사라지므로, 그 id를 개념이 차지할 수 있습니다). 삭제는 `seed_dataset`이
+직접 쓰는 `{dataset_id}:` 노드로만 좁혔습니다 — 간선은 그대로 제거합니다, 그것은 이
+데이터셋의 간선이니까요.
+
+역검증(각각 수리를 되돌려 자기 테스트만 실패하는지 확인): `before_commit` 인자 제거 →
+no-id create 테스트 + 기존 create 테스트 3건 실패. `DatasetAlreadyExists` → bare
+`ValueError` → 중복 id 테스트 실패. patch 검사를 `if request.schema is not None`으로
+되돌림 → 제목만 patch 테스트 실패. `publish`/`deprecate` 사전 검사 제거(2곳) → 해당 2건
+실패. `_owns_column_node` 가드 제거 → reconciliation 테스트 실패. 다른 테스트는 어느
+경우에도 깨지지 않았습니다.
+
+새 테스트 자신의 결함 하나도 같이 고쳤습니다: no-id 테스트가 공유 그래프 스토어
+싱글턴(`conftest`의 복원 fixture 대상이 **아님**)에 개념 노드를 남겨
+`test_change_reason_evidence` 3건을 전체 실행에서만 깨뜨렸고, 반대로 그 id가 비어 있다고
+가정했더니 역순·seed 11 순서에서 자기가 깨졌습니다 — 앞서 돌아간 no-id 등록이 거기에
+`dataset` 노드를 남겼기 때문입니다. 지금은 먼저 치우고 쓰고 다시 치웁니다. 같은 파일의
+감사 테스트는 `list_audit_events`가 **최신 우선**으로 정렬된 한 페이지를 돌려주는데
+`rows[-1]`을 읽고 있었습니다 — 복원된 baseline이 비어 페이지가 한 줄일 때만 맞는
+단언이라 `rows[0]`으로 고쳤습니다.
+
+create 거부 행의 `action`도 고쳤습니다: `dataset.create`로 적혀 있었는데 허용 경로와
+403 거부 경로는 모두 `dataset.register`입니다 — action으로 필터하면 거부가 빠지므로
+"같은 action에 result로 결과를 구분한다"는 이 장부의 규칙을 깨고 있었습니다.
+
+가드의 **완전성**을 재는 테스트도 넣었습니다. 기존 테스트는 알려진 두 id 모양이
+거부되는지만 봤으므로, `seed_dataset`이 세 번째 노드 쓰기를 갖게 되고 가드가 그것을
+놓쳐도 계속 녹색이었습니다 — 두 라운드에서 네 번 재발견된 결함이 정확히 그 모양입니다.
+컬럼·용어·매핑·양방향 lineage·연관 데이터셋을 가진 데이터셋을 사설 스토어에 미러하고,
+가드가 묻는 node id 집합이 미러가 만든 집합과 **같음**을 단언합니다(간선은 노드 쓰기가
+아닙니다 — `upsert_edge`는 끝점을 만들지 않습니다). 역검증: 가드에서 컬럼 루프를 지우면
+이 테스트가 실패합니다.
+
+### Fixed — 카탈로그 쓰기가 그래프 미러의 kind 충돌로 반쯤 적용되던 두 경로 (high)
+
+적대적 검증이 "노드의 kind를 바꿀 수 있는 경로"를 전수 열거하다 찾은 두 구멍입니다. kind
+규칙(`assert_node_kind_is_stable`)을 넣은 커밋 자체에서 생긴 것이고, 직전 계층 작업과는
+무관합니다. 두 라우트 모두 **카탈로그 행을 먼저 쓰고 그 다음에** 그래프로 미러링하므로,
+kind 거부가 너무 늦게 도착했습니다. 측정값(각 1회 인증 요청):
+
+    POST /catalog/datasets {"id": "고객", ...}        (고객은 시드 개념)
+      -> 500
+         카탈로그 행 생성:               True
+         GET /catalog/datasets/고객:      200
+         그래프 노드 kind:               concept  (dataset 노드는 영원히 없음)
+         이후 seed_store(새 스토어):      ValueError
+
+    PATCH /catalog/datasets/{id} — 선언한 컬럼의 노드 id를 개념이 이미 점유
+      -> 400 {"error": "invalid_request", "reason": "request body is not valid"}
+         카탈로그 title:  '충돌검사셋 제목' -> '바뀐 제목'   (적용됨)
+         카탈로그 schema: []              -> ['컬럼']       (적용됨)
+
+첫 번째가 더 나쁩니다: 요청 한 번으로 그 프로세스가 **다시는 그래프를 시딩할 수
+없게** 됩니다 — `seed_store`가 모든 카탈로그 행을 돌면서 그 행에서 raise하기 때문입니다.
+두 번째는 본문이 잘못됐다고 답하면서 카탈로그는 두 변경을 모두 유지합니다.
+
+이제 `seed.assert_dataset_mirror_kinds_are_available`를 **카탈로그 행을 건드리기 전에**
+묻고 둘 다 409로 답하며 아무것도 쓰지 않습니다 — `POST /graph/nodes`와
+`POST /ontology/concepts`가 같은 충돌에 이미 주는 상태입니다. 검사는 `seed_dataset` 옆에
+둡니다: 그 함수가 쓰는 노드 id(데이터셋 id = kind `dataset`, `{id}:{컬럼}` = kind
+`column`)를 그대로 열거하므로 한쪽을 바꾸면 다른 쪽이 옆에 보입니다. 거부는 **자기 사유로**
+감사 기록됩니다 — 허용한 결정의 사유로 적으면 일어난 일의 반대로 읽힙니다.
+
+충돌은 이제 전용 타입 `NodeKindConflict`입니다. 처음에는 `except ValueError`로 잡았는데,
+`pydantic.ValidationError`도 `ValueError`이므로 숫자가 아닌 `quality_score`가 400 대신
+409가 되었습니다(측정 — 제 테스트가 잡았습니다). `GraphIntegrityConflict`의 하위 타입이고
+따라서 여전히 `ValueError`이므로, 기존에 `ValueError`를 잡던 핸들러는 모두 그대로
+동작합니다.
+
+### Fixed — 직전 두 커밋의 결함 세 건 (적대적 검증으로 발견, high)
+
+앞의 두 커밋(ONT-002 class 분리, ONT-007 순환 금지)을 5개 렌즈 서브에이전트로 적대적
+검증한 결과입니다. 한 건은 독립 반증 시도 네 번을 모두 견뎌 **CONFIRMED**로 확정되었고,
+나머지는 제가 직접 재현했습니다. 세 건 모두 제가 만든 결함입니다.
+
+**1. 한 요청이 스스로 순환을 선언하면 409가 아니라 500이었고, 절반이 기록되었습니다.**
+`POST /ontology/concepts {"broader": "P", "narrower": ["P"]}`는 두 개의 선언이 서로
+순환이지만, 쓰기 전 검증기가 **선언을 하나씩 저장된 계층에만** 비교했으므로 개별 검사는
+모두 통과했습니다. 그 뒤 라우트의 (어느 `try`에도 없는) 미러 쓰기에서 스토어 게이트가
+두 번째 간선을 거부합니다. 측정값:
+
+    POST /ontology/concepts {"concept":"순환개념","broader":"상대개념",
+                             "narrower":["상대개념"]}
+      -> 500, 어휘 레코드는 "서로가 서로의 한 종류"라고 게시된 상태로 남고,
+         그래프 노드와 두 간선 중 하나가 기록되고, 읽기 표면은 모두 200,
+         SKOS export에도 포함, 그런데 `hierarchy_consistency`는 conforms: true
+         (닫는 간선이 끝내 기록되지 않았으므로 리포트가 볼 수 없음),
+         이후 새 스토어에 `seed_store`를 돌리면 그 레코드에서 raise.
+
+이제 선언들을 **서로에 대해서도** 검사합니다(이미 수락한 쌍을 다음 검사로 넘기는
+overlay). 결과 409, 두 스토어 모두 무변경. 직전 커밋의 docstring이 "이 잔여는
+`hierarchy_consistency`가 보고한다"고 적어 두었던 것은 **거짓**이었습니다 — 리포트는
+간선을 읽고, 게이트가 닫는 간선을 막으므로 모순은 어휘 레코드에만 남아 구조적으로
+보이지 않았습니다. 선언된 한계에 적힌 보상 통제가 존재하지 않으면 그것도 결함입니다.
+
+**2. 리포트가 지수 시간이었고, 인증 없이 도달 가능했습니다.** 순환 탐색이 모든 단순
+경로를 열거하고 현재 경로만으로 가지치기했습니다. **순환이 없는** 합법적 SKOS
+다중상속 계층에서 측정:
+
+    개념 67개 / 포섭 88개 (모든 쓰기 인증 200, 순환 0)
+      -> GET /enterprise/shacl-validation (익명)  45.6초
+    같은 그래프, 수정 후                           0.001초
+
+이 리포트는 `/enterprise/shacl-validation`(익명)과 `/enterprise/steward-review`(두 번)가
+읽으므로, 평범한 쓰기 권한자가 순환 하나 없이 그 엔드포인트들을 응답 불가로 만들 수
+있었습니다. Tarjan 강결합 성분(반복 구현, 선형)으로 교체했고, 어휘
+상한(500개 개념)·간선 9,790개에서 어셈블리까지 0.44초입니다. 재발을 막는 비용 회귀
+테스트를 넣었습니다(2,400쌍 < 1초).
+
+여기 적혀 있던 "4,000쌍에서 0.945초"는 **분류기 수치가 아니었습니다** — 스토어를 세워
+리포트를 조립하는 경로를 잰 값이 분류기 수치로 잘못 옮겨졌습니다. 다시 측정한 분류기는
+2,400쌍 0.0044초, 4,000쌍 0.0078초입니다(각 3회 중 최소값). 0.945초를 분류기 수치로
+읽으면 선형 교체의 효과가 120배 작아 보이고, 비용 회귀 테스트의 1초 경계가 거의 꽉 찬
+것처럼 보입니다 — 실제 여유는 두 자릿수 배수입니다.
+
+**3. `cycle_count`는 단순 순환 수가 아니라 구성원 집합 수였습니다.** 같은 정점 집합
+위의 서로 다른 두 순환이 하나로 합쳐져 과소 보고됐습니다. 단순 순환 수를 세는 것은
+본질적으로 지수이므로, 세지 않습니다 — 공표 키를 `cyclic_group_count` /
+`cyclic_groups`로 바꿨습니다(강결합 성분 = 서로 포섭하는 개념 묶음, 또는 자기 자신을
+포섭하는 개념 하나). 릴리즈 게이트가 필요한 것은 "0이면 비순환"이고, 묶음은 읽는 사람이
+봐야 할 개념을 모두 이름 붙입니다. 계산한 것의 이름을 쓰는 규칙(`shacl_compatible`이
+가르쳐 준 것)을 같은 자리에 두 번 적용했습니다.
+
+**테스트 결함 두 건도 같이 고쳤습니다.** `..._terminates`는 가드를 되돌리면 실패가
+아니라 **영원히 멈춰** 있었습니다(pytest는 기다리고 CI는 판정 없이 죽습니다) — 스토어
+읽기 횟수에 예산을 둔 서브클래스로 바꿔 비종료가 평범한 assertion 실패가 되게 했습니다.
+
+**세 번째 결함이 바로 그 비용 회귀 테스트 자신에 남아 있었습니다.** 2,400쌍 그래프는
+600단 다이아몬드 사다리, 즉 단순 상향 경로가 2**600개입니다 — 경로 열거를 되돌리면
+`hierarchy_consistency(pairs)`가 45초가 걸리는 게 아니라 **돌아오지 않습니다**. 호출이
+반환된 *뒤에* 경과 시간을 보는 구조였으므로 assertion에 도달하지 못하고, 고쳤다던 결함과
+똑같이 판정 없이 멈춰 있었습니다. `ec4e533`의 커밋 메시지에 적은 "경로 열거를 되돌리면
+비용 테스트가 실패한다"와 docstring의 "느린 기계가 아니라 재발에 실패한다"는 둘 다
+**거짓**입니다 — 당시 'F'로 읽은 것은 타임아웃으로 잘린 pytest 출력이었습니다. 푸시된
+커밋 메시지는 고칠 수 없으므로 여기에 적습니다. 지금은 분류기를 워커 스레드에서 호출하고
+`join(timeout=30)` 뒤 `is_alive()`를 단언합니다 — 녹색 경로에서는 밀리초 안에 조인되고,
+진짜 재발만 스레드를 남깁니다(그때 스위트는 이미 빨강입니다). 역검증: 경로 열거를 되돌리니
+30초 뒤 명확한 실패 판정이 나옵니다(이전에는 무한 대기).
+
+`..._both_backends_call`의 후속 계약 테스트도 같은 종류로 약했습니다 — 소스에 이름이
+들어 있기만 하면 통과했으므로, 호출을 지우고 `# TODO: restore the
+self.assert_hierarchy_stays_acyclic(...) call` 주석만 남겨도 녹색이었습니다(반쯤 끝난
+리팩터가 정확히 남기는 모양입니다). `ast.Call` 노드에서 이름을 모으게 바꿨습니다.
+역검증: 같은 주석 치환으로 이제 실패합니다.
+`..._both_backends_call`은 이름이 주장하는 것(두 백엔드가 공유 규칙을 호출한다)을 검사하지
+않았습니다 — Postgres 백엔드는 이 스위트에서 실행되지 않으므로, 두 백엔드
+`upsert_edge`의 **소스**가 공유 규칙 호출을 잃지 않았는지 기계적으로 확인하는 계약
+테스트를 따로 넣고 원래 테스트는 실제로 검사하는 것으로 이름을 바꿨습니다.
+
+**거짓 수치 하나**: "어휘에 걸린 계층 간선 7개가 모두 concept -> concept"은 틀렸습니다 —
+5개가 concept -> concept이고 2개는 아예 노드가 아닌 target을 가리킵니다(존재하지 않는
+끝점에는 kind가 없습니다). 세 곳(shape 주석, ONT-002 비고, CHANGELOG)을 고쳤습니다.
+
+남은 경계도 선언해 둡니다: 어셈블리는 여전히 O(어휘 x 계층 간선)입니다 — 두 백엔드가
+가진 `edges_for` 노드 단위 primitive로 읽기 때문이고, 간선이 훨씬 많은 그래프는
+단일 패스 primitive가 필요합니다(Postgres 쪽 문장이 따로 필요하므로 별도 변경).
+
+### Fixed — 개념이 자기 자신보다 상위가 될 수 있던 두 경로 (ONT-007/ONT-003, high)
+
+`broader`/`narrower`는 포섭을 주장하는데, **저장된 계층이 이미 뭐라고 말하는지 아무도
+읽지 않았습니다**. 측정값(각 1회 인증 요청, 시드 그대로):
+
+    POST /graph/edges  broader  고객 -> 주문   -> 200
+    POST /graph/edges  broader  주문 -> 고객   -> 200   (서로가 서로의 한 종류)
+    POST /graph/edges  broader  고객 -> 고객   -> 200   (자기 순환)
+    POST /ontology/concepts {"concept": "순환상위", "broader": "고객"}  -> 200
+    POST /ontology/concepts {"concept": "고객", "broader": "순환상위"}  -> 200
+
+순환이 있는 상태에서도 `GET /ontology/term/고객/graph`,
+`GET /ontology/concept/고객`, `GET /ontology/search`, `POST /graph/query`가 모두
+200이었습니다 — 순회에 깊이 상한이 있어서 아무것도 터지지 않고, 그래서 **조용히** 틀린
+용어집이 서비스되고 있었습니다. 이것이 ONT-003의 "broader/narrower 관계 조회"이자
+ONT-007의 "unsatisfiable class 0개" 양쪽에 걸린 결함입니다.
+
+방향이 전부입니다. `narrower: 고객 -> 활성 고객`과 `broader: 활성 고객 -> 고객`은
+**같은 주장**이고 시드가 다섯 개 포섭 중 둘을 그렇게 양쪽에서 선언합니다. 반대 주장으로
+읽으면 시드 자체가 순환이 되므로, 방향은 `graph_store.subsumption_pair` 한 곳에서만
+정규화합니다. 시드의 계층 간선 7개 = 서로 다른 `(child, parent)` 주장 5개.
+
+**거부**: 순환을 닫는 간선은 두 게시 경로 모두에서 409. 상위로 거슬러 올라가는 탐색이라
+2단 순환뿐 아니라 긴 사슬도 잡고, 자기 순환은 같은 규칙의 퇴화 사례입니다. `visited`
+가드가 **이미** 순환인 계층에서도 탐색이 끝나게 합니다 — 역검증으로 확인: 순환 안에 있는
+노드를 부모로 제안하면 가드 없이는 15초 타임아웃까지 반환하지 않고, 가드가 있으면 정상
+반환합니다(그 간선은 순환을 닫지 않으므로). 첫 역검증 시도는 부모가 아무 부모도 없는
+노드여서 탐색이 순환에 닿기 전에 끝났고, 그래서 가드가 불필요한 것처럼 보였습니다 —
+그 사례를 테스트로 박아 두었습니다.
+
+**이번에 같이 고친 선행 커밋의 결함**: 두 계층 규칙(ONT-002의 class 분리와 이 순환
+규칙)은 이제 `validate_concept_registration`의 **이미 게시된 개념 조기 반환보다 위에서**
+검사합니다. 그 조기 반환의 근거("저장된 레코드는 게시 때 검증되었다")는 `definition`에는
+맞지만 계층 필드에는 틀립니다 — 라우트가 **제출된** broader/narrower를 그래프에
+미러링하므로 버려지지 않습니다. 측정: 아래에 두면 시드 개념 다섯 개 중 하나(`고객`)에
+대한 동일 요청이 **500**(미러 쓰기가 어느 try에도 없음), 미게시 개념에는 409였습니다.
+이름 검사(`_assert_concept_kind_is_available`)가 그 둘보다 앞에 섭니다 — 데이터셋 id를
+이름으로 쓴 개념은 "이름 충돌"이 더 정확한 진단이기 때문입니다.
+
+**공표**: `/enterprise/shacl-validation`의 `hierarchy_consistency`가 `cycle_count`,
+순환 구성 개념, `consistency_engine: builtin_graph_checks`,
+`reasoner_executed: false`를 게시합니다. 릴리즈 게이트가 읽을 숫자이고, 수용 기준이
+부르는 "unsatisfiable class"로 이름 붙이지 않았습니다 — 순환은 개념들을 서로 포섭하게
+만들 뿐이고 불충족성에는 이 저장소에 없는 disjointness axiom이 필요하므로, 계산한 것의
+이름(순환 수)을 씁니다. 순환성은 노드나 간선의 성질이 아니라 **그래프**의 성질이라
+SHACL shape 목록에는 넣지 않았습니다 — 넣으면 `shacl_compatible`이 shape이 아닌 제약을
+담게 됩니다.
+
+ONT-002의 class 분리와 달리, 이 게이트는 kind가 아니라 **간선**을 읽으므로 단일 쓰기로
+순환이 생기는 구멍은 없습니다(그쪽 게이트를 뚫는 순서를 이 게이트는 409로 막습니다 —
+측정). 리포트는 게이트가 본 적 없는 간선을 위한 것입니다: 게이트 이전에 쓰인 계층,
+`upsert_edge`를 우회하는 향후 일괄 경로, 그리고 Postgres 백엔드에서 도달 가능성 탐색이
+쓰기 트랜잭션 **밖에서** 돌기 때문에 생기는 동시 쓰기 창.
+
+미해결로 선언해 둔 것: reasoner도 OWL axiom도 없고, SKOS S27(`skos:related`와
+`skos:broaderTransitive`의 disjointness — 시드는 측정상 깨끗하지만 게이트 없음)은
+검사하지 않으며, 이 숫자를 묶을 릴리즈 게이트 자체가 저장소에 없습니다. ONT-007은
+`not_implemented`에서 `partial`로만 올립니다.
+
+### Fixed — data asset이 business class 계층에 들어갈 수 있던 두 경로 (ONT-002, high)
+
+`broader`/`narrower`는 이 그래프에서 "~의 한 종류"를 주장하는 유일한 관계인데,
+양 끝점의 `kind`를 **아무도 읽지 않았습니다**. 측정값(각 1회 인증 요청, 시드 그대로):
+
+    POST /graph/edges  broader  crm-customer-master -> 고객          -> 200
+    POST /graph/edges  broader  고객 -> crm-customer-master          -> 200
+    POST /graph/edges  narrower crm-customer-master -> 고객          -> 200
+    POST /ontology/concepts {"concept": "테스트개념하나",
+                             "broader": "crm-customer-master"}       -> 200
+    POST /ontology/concepts {... "narrower":
+                             ["crm-customer-master:customer_id"]}     -> 200
+
+즉 ONT-002의 수용 기준("table/dataset이 business class의 subclass가 되지 않도록")이
+글자 그대로 깨져 있었고, 거부에 필요한 사실(양 끝점의 kind)은 이미 저장되어 있었습니다.
+노드 id를 **재분류**하는 절반은 앞서 `assert_node_kind_is_stable`로 막혀 있었고, 이것은
+간선 절반입니다.
+
+**거부**(409 — 요청은 정상이고 충돌 대상은 저장된 kind라서, 재분류와 같은 읽기):
+
+- `GraphStore.assert_hierarchy_respects_class_separation` — 두 백엔드가 공유하는 순수
+  규칙(`hierarchy_class_separation_refusal`) 하나를 호출한다. 인메모리는 락 안에서,
+  Postgres는 같은 트랜잭션 안에서 kind를 읽으므로 검사와 쓰기 사이에 창이 없고, 두
+  백엔드가 거부 대상이나 메시지로 어긋날 수 없다.
+- `POST /ontology/concepts`는 **쓰기 전** 검증기에서 막는다. 스토어 게이트만 두고
+  역검증하면 같은 요청이 **500**이고 어휘 레코드와 그래프 노드가 이미 기록된다
+  (`upsert_concept`가 노드→어휘→간선 순서로 쓰고, 라우트의 미러 쓰기는 어느 `try`에도
+  들어 있지 않다). 남는 창은 kind 검사가 이미 갖고 있는 것과 같은 모양(검사와 미러
+  쓰기 사이의 동시 쓰기)이고, 닫으려면 두 쓰기가 한 트랜잭션이어야 하므로 상태 코드로
+  덮지 않았다.
+- `mapping`과 `related`는 그대로 허용한다 — `mapping`은 dataset↔concept를 잇는
+  모델링된 관계이고 `related`는 SKOS에서 연관 관계다. 규칙은 포섭 주장만 거부한다.
+
+**검증**(수용 기준의 "검증" 쪽) — `ConceptHierarchyShape`는 이 저장소에서 class 계층을
+표현하는 첫 shape이고, 계층 간선 양 끝점에 걸리는 `sh:class` 모양의 제약이다.
+`/enterprise/shacl-validation`의 `hierarchy_class_separation`이 그래프의 **현재 상태**를
+평가한다. 두 절반이 모두 필요한 이유는 측정으로 나온다:
+
+- 쓰기 게이트는 쓰는 시점에 알려진 kind만 읽으므로, 끝점이 없을 때 쓴 간선의 끝점이
+  나중에 dataset으로 생기면 두 쓰기 모두 200이다 — 그 뒤 리포트가 `conforms: false`,
+  `hierarchy_pass_rate` 0.875로 잡는다.
+- 끝점이 없는 간선을 violation으로 올리면 **시드 로드 자체가 실패한다**(역검증:
+  `seed_store`가 `narrower ... target '활성 고객'`에서 raise). 시드의 78개 간선 중
+  27개가 없는 노드를 가리키고 그중 2개가 계층 간선이다. 그래서 unknown은 violation이
+  아니라 `unknown_endpoint_count`로 따로 센다 — ConceptShape의 계층 target 제약이
+  warning에 머물러야 하는 것과 같은 판단이고, 이쪽은 violation으로 둘 수 있다
+  (시드의 계층 간선 7개 중 5개가 concept -> concept이고 2개는 존재하지 않는 target을
+가리켜 violation이 아니기 때문 — "7개 모두"라고 적었던 것은 틀렸고 적대적 검증이
+잡았습니다).
+
+선언해 둔 미해결 경계: SHACL 프로세서도 reasoner도 실행되지 않고
+(`shacl_engine_executed: false`), `kind`는 여전히 자유 문자열이며, 리포트 범위는 어휘에
+걸린 간선뿐이다 — `kind="concept"` 노드를 `POST /graph/nodes`로 직접 쓰면 어휘에 없으므로
+그 노드와 나중에 dataset이 되는 노드 사이의 계층 간선은 아무도 세지 않는다(측정).
+`conformance_scope`가 그 사각을 직접 선언한다. ONT-002 상태는 `partial`로 둔다 —
+수용 기준이 이름을 부른 SHACL/OWL 엔진이 없기 때문이고, 거부와 검증이 생겼다는 것이
+기준 전부를 충족한다는 뜻은 아니다.
+
+### Fixed — steward 신원이 인증 없이 공개되던 두 표면 (high)
+
+`GET /ontology/patches`는 **권한 검사를 전혀 하지 않았습니다.** `analyst`가 제안하고
+`admin`이 승인한 패치 하나를 두고 측정:
+
+    GET /ontology/patches                  200  requestor=analyst
+                                                reviewed_by=admin
+                                                reviewed_at=2026-10-14T18:44:32Z
+                                                review_comment='스튜어드 승인 사유'
+    GET /ontology/patches?user=anonymous   200  (같은 네 필드)
+    GET /ontology/patches?user=nobody      200  (같은 네 필드)
+
+같은 시점, 같은 신원에 대해:
+
+    GET /ontology/change-log               403
+    GET /audit/events                      403
+    GET /policy/decisions                  403
+
+즉 누가 어휘 변경을 제안했고 누가 승인했으며 심사자가 무슨 사유를 적었는지를 인증
+없는 호출자에게 게시하면서, 같은 사실을 그걸 담도록 만든 세 표면에서는 거부하고
+있었습니다. ONT-004가 변경 로그를 게이트한 근거는 `{actor_id, reviewer_id,
+recorded_at}`이 **접근 기록 그 자체**라는 것이었고, 이 경로는 그 기록에 심사 사유까지
+더해 서빙합니다 — 근거는 그대로 적용되며, 두 표면이 더는 엇갈리지 않습니다.
+ONT-004 당시 이 불일치는 "이번 변경이 넓히지 않은 기존 결함"으로 기록만 해 두고
+닫지 않았습니다. 그 기록이 이번에 닫혔습니다.
+
+**표면은 하나가 아니라 둘이었습니다.** 앱이 서빙하는 모든 GET 라우트를 열거하고,
+응답 본문을 필드 **이름으로 grep하지 않고** 파싱해 mapping key로 훑은 결과:
+
+    /ontology/patches            requestor, reviewed_by, reviewed_at, review_comment
+    /enterprise/steward-review   requestor
+
+그래서 앞의 경로만 게이트하면 제안자 이름은 뒤의 경로로 그대로 읽혔을 것입니다 —
+점검이 아니라 연극이 됩니다. 두 표면을 한 커밋에서 함께 바꿉니다.
+
+- **`GET /ontology/patches` → 거버닝 읽기.** `_authorize_evidence_read`(변경 로그와
+  같은 헬퍼, 평행 규칙이 아님)를 쓰고, 그 tenant 목록은 변경 로그와 같은 이유로
+  적용하지 않습니다 — 개념 어휘는 tenant 소유가 아니라 공유 자원이므로 제안을
+  범위 지을 tenant 술어가 없습니다. 적용되는 범위는 권한뿐이고, 응답은 그 사실을
+  `scope_note`로, 통과한 판정을 `policy_decision_id`로 말합니다. 권한 검사는
+  `?status=` 검증보다 **먼저** 돕니다(`ontology_patch_review`가 명시한 규칙):
+  400 본문이 `known_statuses`를 게시하므로 순서를 바꾸면 권한 없는 호출자가 물을
+  자격이 없는 질문에 답하게 됩니다. 측정: `?status=nope`는 actor 없이 403,
+  actor와 함께 400. 능력은 사라지지 않습니다 — 인증된 actor는 네 필드를 포함한
+  큐 전체를 그대로 읽습니다. steward가 제안을 판단하려면 제안자를 알아야 하므로
+  무조건 삭제가 아니라 게이트입니다.
+- **`/enterprise/steward-review` → `requestor` 미게시 + 선언.** 이쪽은 게이트하지
+  않습니다: 게시된 공개 증빙 링크(`OPEN_PROOF_ENDPOINTS`)이고
+  `test_every_published_proof_link_resolves_as_published`가 인쇄된 그대로 400 미만을
+  요구하며, 이 요약이 답하는 조달 질문(큐가 얼마나 깊은지, 핸드오프 준비가 됐는지)에
+  제안자 이름은 필요 없습니다. 짧아진 행이 "제안자 정보가 없는 행"으로 읽히지 않도록
+  `withheld_review_item_fields: ["requestor"]`와, 신원이 어디 있는지 말하는 note를
+  함께 게시합니다. 필드는 **권한이 있는 호출자에게도** 빠집니다 — 여기서 actor에 따라
+  신원을 바꾸려면 판정 행을 남기지 않는 술어로 권한을 결정해야 하고, 그러면 증빙 없는
+  권한 판단이 하나 생깁니다.
+
+**게이트냐 리댁션이냐를 가른 측정.** 모든 GET 라우트를 돌려 익명 호출의 상태와 원장
+증가를 함께 쟀습니다: 정책을 평가하는 19개 라우트는 **전부** actor 없이 403이고,
+**200을 주면서 원장에 행을 쓰는 GET은 하나도 없습니다.** 그래서 "평가하고 리댁션된
+200을 주는" 설계는 익명 성공에 원장 비용을 물리는 유일한 읽기를 만들게 됩니다 —
+인증 없는 호출자가 통제하는 무한 증가 표면입니다.
+`test_the_scoped_route_is_not_a_new_ledger_write_surface`가 한 라우트에 대해 말하던
+그 불변식을 이제 플랫폼 전체에 대해 기계적으로 고정합니다.
+
+**검사 도구 자체의 결함 세 건** — 전부 도구를 읽어서가 아니라 **돌려서** 찾았습니다.
+
+1. **거짓 양성.** 처음 쓴 열거 도구는 응답 **본문 텍스트**에서 필드 이름을 찾았고,
+   `"withheld_review_item_fields": ["requestor"]` — 그 필드가 **없다는 선언** — 을
+   유출로 보고했습니다. 선언은 유출이 아닙니다. 파싱 후 mapping key 순회로 바꿨고,
+   `test_the_declaration_is_not_itself_a_disclosure`가 그 구분을 고정합니다(본문
+   텍스트에는 `requestor`가 **있고**, 값을 담은 key는 **없다**) — 다음 사람이 선언을
+   지워 거짓 양성을 "고치지" 못하게.
+2. **JSON이 아닌 200을 전부 건너뜀.** 도구가 `response.json()`에서 예외가 나면
+   `continue`했고, 그 대상이 바로 200 HTML(`/enterprise/console`)과 200
+   text(`/metrics`)입니다 — 큐를 서버에서 렌더링하는 표면은 그것을 잡으려고 쓴
+   테스트를 그대로 통과했을 것입니다. 역검증: 콘솔 HTML에 `list_patches()`를
+   심어 보니 두 검출기가 모두 걸렸습니다(심사 사유 값, 그리고 행 id). `requestor`와
+   `reviewed_by`는 **구별 가능한 값으로 심을 수 없습니다** — 제안/심사 게이트를
+   통과하는 실제 actor여야 하고, `analyst`를 부분문자열로 찾으면
+   `/enterprise/rbac-matrix`의 `data-analyst` 역할에 걸립니다. 그래서 JSON이 아닌
+   표면은 **행 자체를 담지 않음**을 증명하는 쪽으로 덮습니다(행이 없으면 그 행의
+   제안자를 렌더링할 수 없습니다). 그 표면 목록도 열거해서 단언하므로 세 번째
+   non-JSON 표면이 생기면 함께 검사됩니다.
+3. **그 수리의 과잉 적용.** 2를 고치면서 심은 개념 이름과 patch id까지 "행 표지"로
+   보고 금지했고, 다섯 표면에서 걸렸습니다 — 그리고 **다섯 다 설계상 맞습니다**:
+   승인된 패치는 그 개념을 공개 어휘에 게시하고(`/ontology/concepts`,
+   `/ontology/vocabulary/jsonld`, `/enterprise/evidence-pack`),
+   `/enterprise/steward-review`는 큐 행의 id·concept·status·confidence를 게시합니다
+   (요약이 답해야 하는 "큐가 얼마나 깊고 무엇에 대한 것인가"입니다). 그것을 유출로
+   단언하면 고치려는 것과 **반대 방향의 거짓 주장**이 됩니다. 식별 값만 남겼습니다.
+
+값 검색은 **직렬화 형식에 민감**합니다: 위 역검증에서 심사 사유는 걸렸지만
+`reviewed_at`은 걸리지 않았습니다 — 콘솔은 datetime을 `2026-10-14 19:02:31+00:00`로,
+라우트는 ISO `...T...Z`로 쓰기 때문입니다. 그래서 값 검색은 세 검출기 중 하나이고,
+의지하는 쪽이 아닙니다. 이 한계도 테스트에 적어 둡니다.
+
+양방향 역검증: steward 요약에 `requestor`를 되살리면 4건 실패, 큐에서 게이트를 빼면
+5건 + `test_api_error_contract.py` 1건 실패, 게이트는 두고 거부 표를 되돌리면
+`api_error_contract` 2건 실패. 핸들러와 표를 따로 바꾸면 어느 쪽이든 실패합니다.
+
+**선언 자체도 파생값으로.** `withheld_review_item_fields`를 처음에는 `["requestor"]`
+리터럴로 썼습니다. 그러면 누군가 그 필드를 다시 넣어도 선언은 계속 "숨긴다"고
+주장합니다 — 이 제품이 거부하려는 바로 그 종류의 드리프트(코드와 어긋나는 게시된
+주장)입니다. 이제 항목들로부터 파생합니다: 필드가 되살아나면 선언에서 **자동으로
+빠집니다**. 역검증에서 `requestor`를 되살리니 선언이
+`['reviewed_by','reviewed_at','review_comment']`로 줄었고(주장이 거짓이 될 수 없음),
+그와 동시에 테스트 4건이 실패했습니다.
+
+### Fixed — ConceptShape 게이트가 스스로 만든 결함 6건 (적대적 검증에서 발견)
+
+바로 위 게이트를 다섯 개의 독립 렌즈로 반박 검증시켰고, 여섯 건이 재현되었습니다.
+일곱 번째는 그 수리를 검증하는 과정에서 순서 무관 측정이 직접 잡았습니다.
+전부 제 변경이 만든 것이거나 그에 인접한 것이므로 제가 고쳤습니다. 모든 재현은 제가
+직접 다시 측정했습니다.
+
+1. **잘못된 거부(회귀, high).** shape을 **제출된** 필드에 대해 평가했는데, 이미 게시된
+   개념에서는 그 제출이 버려집니다(승인이 배포된 정의를 조용히 덮어쓰지 않도록). 그래서
+   기존 개념의 graph edge·embedding을 갱신하는 유일한 경로가
+   `POST /ontology/concepts {"concept": "고객", "related": [...], "aliases": [...]}`
+   에서 **200 → 400**으로 회귀했습니다. 유일한 통과 방법은 어휘가 버릴 definition을
+   다시 보내는 것이었고, graph store는 그것을 **저장**하므로 하나의 200 응답이 어휘가
+   받아들인 적 없는 graph definition을 담았습니다. 이제 필수 속성 검사는 **새 개념에만**
+   적용됩니다(`_assert_no_alias_conflict`와 같은 조건). 저장된 레코드는 게시 시점에
+   검증되었으므로 다시 게이트하지 않습니다.
+2. **평가 대상 미표기(medium).** 재게시 경로의 보고가 어떤 레코드에 대한 판정인지
+   말하지 않아, 200 응답이 호출자가 보내지 않은 내용에 대해 `conforms: true`를 담을 수
+   있었습니다. `evaluated_record`(`submitted` / `published_vocabulary`)를 둡니다 —
+   `evaluated_shapes`가 제약에 대해 하는 일을 주체에 대해 합니다.
+3. **상한 없는 필수 필드(medium).** `definition`을 필수로 만들면서 상한을 두지 않았고,
+   측정 결과 **2,000,000자** definition이 200으로 저장되었습니다 — 500칸 프로세스
+   수명 어휘에서. 개념 **이름**은 게이트 세 줄 위에서 2000자로 묶여 있고 patch 경로도
+   같은 필드를 2000자로 묶습니다(2001자는 intake에서 400). shape이
+   `max_property_length`를 게시하고 두 경로가 **같은 상수**를 씁니다.
+4. **intake와 게이트의 술어 불일치(medium).** `POST /ontology/patches`는
+   `suggestion.strip()`을, 게이트는 가시 문자 술어를 썼고 `suggestion`이 바로
+   definition입니다. 그래서 U+200B·U+FEFF·U+00AD·NUL 제안이 공유 steward 큐에 200으로
+   들어가 **영원히 승인될 수 없었습니다** — 모든 승인이 400이고 patch는 `proposed`에
+   고정되어, 심사자에게 남은 선택은 제품 스스로 받아들인 제안을 거부하는 것뿐이었습니다.
+   권한 있는 분석가가 상한 있는 공유 큐를 그런 제안으로 채울 수 있었습니다. 이제
+   `propose_patch`(라이브러리 seam)가 같은 술어를 적용하고, 승인 시점 게이트는
+   backstop으로 남습니다.
+5. **읽기 전용 사본이 사본이 아니었습니다(medium).** `concept_vocabulary_snapshot`은
+   `dict(record)` — **얕은** 복사라서 돌려주는 aliases/narrower/related 리스트가 살아
+   있는 저장 리스트였습니다. 이 접근자만 써서(비공개 접근 없이)
+   `snapshot()["매출"]["narrower"].append(...)`로 해소 불가능한 계층 target을 게시된
+   어휘에 심을 수 있었고, alias로는 `_assert_no_alias_conflict`가 거부하는 용어를
+   가져갈 수 있었습니다. 원본을 참조하는 "사본"은 사본이 없는 것보다 나쁩니다 —
+   호출자가 docstring을 믿기 때문입니다. `deepcopy`로 고쳤습니다.
+6. **거부 타입(low).** `definition.strip()`이 비문자열에 `AttributeError`를 냈고 두
+   라우트는 `ValueError`만 매핑합니다 — 거부를 ValueError로 알린다고 문서화된 함수가
+   매핑되지 않는 예외 타입을 넘겼습니다. 강제 변환이 아니라 **거부**합니다: `str(5)`는
+   "5"를 정의로 게시하는 조작입니다.
+
+7. **두 스토어가 같은 개념의 정의를 두고 갈라졌습니다(high).** 1번을 고치고 나서 순서
+   무관 측정에서 드러난 것입니다 — 역순 파일 순서에서 **유지되고 있던** 테스트
+   `test_the_shared_vocabulary_itself_stays_open`이 실패했습니다. 라우트가 graph store에
+   **원본 제출**을 그대로 넘겼으므로, `definition`을 생략한 재-upsert가 어휘에는
+   아무 영향이 없으면서 graph store에는 `''`를 썼습니다. 그리고
+   `GET /ontology/term/{term}/graph`는 store를 읽으므로, 측정 결과 고객의 정의가
+   **빈 문자열로 서빙**되었습니다(어휘는 실제 정의를 그대로 들고 있는 동안). 어휘가
+   개념 정의의 권위이므로, 이제 mirror에 `ontology.published_concept_definition`이
+   돌려주는 **게시된 정의**를 넘깁니다 — 호출자의 다른 필드는 그대로 반영됩니다.
+   같은 라운드에서 제 새 테스트가 시드 개념의 graph 레코드를 건드려 상태를 흘리고
+   있었던 것도 고쳤습니다(graph store 싱글턴은 conftest 복원 대상이 아니라고 그
+   docstring이 선언합니다) — 자기 개념을 만들어 쓰도록 바꿨습니다.
+
+함께 선언한 경계 하나: `concept_conformance`는 **게시된 어휘**만 셉니다.
+`POST /graph/nodes {"kind": "concept", "properties": {"definition": ""}}`로 쓴 노드는
+어휘에 없으므로 세지 않습니다 — 측정 결과 그런 노드가 `GET /graph/nodes`로 서빙되는
+동안 pass rate는 1.0입니다. `conformance_scope`로 적어 둡니다.
+
+이 라운드에서 고치지 않고 남긴 것: shape이 자유 텍스트 주석 속성을 유일한 violation으로
+삼고, 요구사항이 실제로 말하는 `sh:class` 제약(ONT-002)은 warning입니다. 시드가 그
+제약을 10회 위반하기 때문인데, **새로 제출된** edge에만 violation으로 적용하면 시드를
+막지 않고 강화할 수 있습니다 — 별도 변경입니다.
+
+### Security — 개념 하나를 등록하면 데이터셋의 거버닝 메타데이터가 파괴되었습니다
+
+`upsert_node`는 새 `GraphNode`를 만들어 저장된 노드 **위에 덮어썼습니다**. 그래서 다른
+kind가 이미 쓰고 있는 id로 쓰면 그 노드를 통째로 교체했습니다. 시드에서, 권한 있는
+요청 하나로 측정:
+
+    GET  /graph/nodes/crm-customer-master   kind=dataset
+        label='고객 마스터'
+        properties={domain, owner, steward, tags, terms,
+                    sensitivity: 'medium', status: 'published'}
+
+    POST /ontology/concepts {"actor": "admin",
+                             "concept": "crm-customer-master",
+                             "definition": "...", "broader": "고객"}
+        -> 200
+
+    GET  /graph/nodes/crm-customer-master   kind=concept
+        label='crm-customer-master'
+        properties={definition, aliases, multilingual}
+
+온톨로지 쓰기 하나가 데이터셋의 분류(`sensitivity`·`owner`·`steward`·`status`)를
+조용히 지웠습니다 — 테넌트 경계와 masking obligation이 근거로 삼고
+`/search/semantic`·`/graph/query`가 서빙하는 바로 그 메타데이터입니다. 이 경계의 **테넌트
+쪽**은 이미 닫혀 있었지만(`_authorize_graph_write`가 대상 테넌트를 해소합니다) **kind
+쪽**은 권한 있는 누구에게나 열려 있었습니다.
+
+`GraphStore.assert_node_kind_is_stable`로 **node의 kind를 불변**으로 만듭니다. 기존 id를
+다른 kind로 다시 쓰는 요청은 409이고, in-memory 스토어는 락 안에서(검사와 쓰기가 한
+단계), Postgres 스토어는 **같은 트랜잭션 안에서 `FOR UPDATE`로** 읽습니다 —
+`get_node`로 읽으면 자기 커넥션을 열어 검사와 upsert 사이에 창이 생깁니다.
+
+이것은 **kind 허용목록이 아닙니다.** `kind`는 계속 free-form이므로 새 kind를 들일 수
+있고, 적대적 문자열을 kind로 넘기는 injection 회귀 테스트도 그대로 돕니다. 거부하는
+것은 **이미 존재하는 id의 재분류**뿐입니다 — 파괴만 거부하고 정당한 것은 아무것도
+거부하지 않습니다(같은 kind upsert는 카탈로그 미러·시드·개념 재등록이 모두 쓰는
+경로입니다).
+
+이 결함을 고정하고 있던 테스트가 하나 있었습니다.
+`test_the_export_never_derives_dataset_identity`가 hijack upsert의 **200을 단언**하고
+있었는데, 그 200이 결함입니다. 이제 409과 데이터셋 노드의 생존을 단언하고, 남은 경계는
+따로 고정합니다: 존재하는 노드와 **충돌하지 않는** 데이터셋 id 모양 이름은 여전히
+허용되며(ONT-002), 그것이 export에 라벨과 `@id`로 들어가되 mapping·distribution·
+dataset 구조는 함께 들어오지 않습니다.
+
+**적대적 검증 2차에서 세 건 더.** 같은 변경을 다섯 렌즈로 다시 반박시켜 나온 것들이고,
+전부 제가 직접 재현했습니다.
+
+1. **게이트가 세 경로 중 하나를 놓쳤습니다(high).** kind 검사가
+   `GraphStore.upsert_node` 안에만 있었으므로 **graph node를 쓰는 경로만** 덮었습니다.
+   `review_patch` → `register_concept`는 어휘만 건드리므로, 측정 결과
+   `crm-customer-master` 이름의 patch 승인이 **200**으로 통과해 데이터셋 id가 어휘와
+   공개 SKOS export에 들어갔습니다. 검사를 ConceptShape 게이트와 같은 공유 pre-write
+   검증기로 옮겨 세 경로 모두를 덮습니다. 그리고 한 충돌에 한 상태 코드가 되도록
+   `ConceptKindConflict`(ValueError 하위 클래스 — 기존 핸들러가 그대로 잡습니다)를 두고
+   두 라우트 모두 409로 답합니다(승인 라우트는 모든 ValueError를 400으로 매핑하므로
+   같은 충돌이 400으로 나가고 있었습니다).
+2. **거부가 원장에 ALLOW만 남겼습니다(medium).** 측정 결과 거부된 승인은 정책 결정
+   1건(`effect: allow`)과 감사 행 **0건**을, 거부된 upsert는 변경 **이전에** 기록되는
+   `authorized` 행 하나를 남겼습니다. 거부된 거버닝 쓰기를 찾는 감사자가 보는 것은
+   "게시가 허용되었다"는 기록 하나이고, 게시가 일어나지 않았다는 기록은 어디에도
+   없었습니다 — 카탈로그 mutation 라우트들이 이미 같은 이유로 수리된 결함입니다. 두
+   경로 모두 실제 결과를 기록합니다.
+3. **아무것도 게시하지 않은 승인이 `approved`로 기록되었습니다(medium).** 이미 게시된
+   개념에 대한 승인은 상태만 쓰고 아무것도 게시하지 않습니다(등록기가 저장된 레코드를
+   돌려주므로 승인이 배포된 정의를 덮어쓸 수 없습니다). 측정 결과 200 + `status:
+   approved`였고, 그것만 보면 게시된 것으로 읽힙니다. 감사 결과를
+   `approved_without_publication`으로 적습니다.
+
+함께 고친 순서 문제: store 쓰기가 `register_concept` **이전**이고 무조건적이었으므로,
+`register_concept`의 거부(어휘 상한, 락 안에서 다시 확인하는 alias 충돌)가 409를 내면서
+graph node는 이미 써진 상태가 되었습니다 — 쓰기를 막으려던 거부가 두 스토어를
+갈라놓았습니다. 이제 **어휘를 먼저 쓰고 store가 그것을 mirror**하며, kind 검사를 포함한
+모든 검증이 두 쓰기보다 앞에 있습니다.
+
+4. **"우회할 수 없다"를 테스트 **이름**이 주장하고 있었습니다(medium).**
+   `test_the_gate_cannot_be_bypassed_by_a_future_caller`는 검증기를 직접 불러
+   거부되는지만 단언했고, 그것은 같은 파일의 다른 테스트가 이미 덮는 내용입니다 —
+   호출자나 쓰기 지점에 대해서는 아무것도 말하지 않았습니다. 리뷰어가 어휘를 직접 쓰는
+   함수 16줄을 `ontology.py`에 덧붙여 **전체 스위트가 그대로 green**인 것을
+   측정했고(정의 없는 개념이 모든 읽기 표면에 게시되는 동안), 그 중에는 이 테스트도
+   있었습니다. "우회할 수 없다"는 **코드 모양의 속성**이므로
+   `tests/test_concept_write_chokepoint.py`가 AST로 검사합니다 —
+   `tests/test_module_state_coverage.py`와 같은 열거 방식입니다: 어휘를 쓰는 모든
+   statement가 선언된 쓰기 지점 안에 있는지, 게시 함수의 **첫 실행 문장**이 공유
+   검증기인지, `register_concept`의 호출자 집합이 선언된 둘과 정확히 같은지. 리뷰어의
+   그 16줄로 역검증했고, 새 테스트는 실패하고 옛 테스트는 통과합니다 — 그것이 간극의
+   증명입니다. 옛 테스트는 실제로 검사하는 것으로 이름을 바꿨습니다.
+
+고치지 않고 남긴 것 하나: `shacl_compatible`은 이름은 "SHACL로 표현 가능"으로 읽히지만
+계산은 "게시된 shape 전부가 이 검증기로 평가되는가"(평가 커버리지)입니다. 게시된 키를
+바꾸는 것은 계약 변경이고 테스트가 그 값을 단언하므로 이번에 묶어 넣지 않았습니다 —
+별도 변경으로 적어 둡니다.
+
+ONT-002는 여전히 `partial`입니다. 아직 열려 있는 쪽은 **edge**입니다:
+`POST /graph/edges`에 kind 검사가 없으므로 데이터셋 노드에서 개념으로 `broader` edge를
+붙일 수 있고, 그것이 수락 기준이 말하는 class separation 위반입니다 — 거부에 필요한
+사실은 모두 이미 존재하고 쓰이지 않고 있습니다.
+
+부수 수리: `tests/test_requirements_coverage.py`의 `func:` 포인터 해소기가
+`module.attribute`만 처리해서 `func:sdp.graph_store.GraphStore.assert_node_kind_is_stable`을
+"is not a package"로 거부했습니다 — 존재하지 않는 포인터가 아니라 **표현할 수 없는**
+포인터였고, dangling 증빙을 잡는 것이 일인 테스트에는 잘못된 실패 방식입니다. 이제
+가장 긴 import 가능한 prefix에서 점 경로를 따라가므로 클래스의 메서드도 함수와 똑같이
+인용할 수 있습니다. 존재하지 않는 메서드·클래스·모듈은 여전히 각각의 정확한 사유로
+거부됩니다(역검증).
+
+### Security — 정의 없는 개념이 공유 용어집에 게시될 수 있었습니다 (ONT-005)
+
+ONT-005(P0) 수락 기준은 "**reasoner + SHACL + reviewer 승인** 후 병합"이고, 심사자
+승인이 유일한 게이트였습니다. `review_patch`는 승인 결정에서 곧바로
+`register_concept`로 가고, 그 검사는 이름 비어있지 않음·길이·alias 충돌·어휘 상한뿐
+입니다. 게시되는 **개념 자체를 보는 것은 아무것도 없었고**, `semantic_validation`에는
+개념을 target하는 shape이 하나도 없었습니다.
+
+HTTP로 측정한 결함:
+
+    POST /ontology/concepts {"actor": "admin", "concept": "정의누락개념"}
+        -> 200,  저장된 definition = ''
+    GET  /ontology/search?q=정의누락개념   -> count 1, definition = ''
+    GET  /ontology/concept/정의누락개념    -> definition = ''
+
+모든 읽기 표면이 참조하는 공유 용어집이 **정의 없는 개념**을 담을 수 있었고, 그것이
+권한 있는 라우트를 통해 게시되었습니다. 용어의 정의가 없는 용어집은 용어집이 아닙니다.
+
+`ConceptShape`를 shape 카탈로그에 추가하고 **공유 pre-write 검증기**
+(`validate_concept_registration`)에서 평가합니다. 그래서 두 게시 경로(직접 upsert와
+승인)가 하나의 검사로 막히고, 세 번째 호출자가 우회할 수 없습니다. 승인 경로에서는
+`register_concept`가 상태 기록 **이전에** 실행되므로(기존 순서 수리), 비적합 개념은
+patch를 `approved`로 남기지 않고 `proposed`로 둡니다 — 승인은 기록되고 노출은 없는
+상태를 만들지 않습니다.
+
+shape의 강도는 경계를 명시합니다. 엔진은 `builtin_shape_checks`이고
+`shacl_engine_executed`는 계속 false입니다 — shape이 SHACL로 표현 가능하고 동등한
+in-process 검사로 강제된다는 것이 RDF 스택 없이 할 수 있는 가장 정직한 주장입니다
+(`pyshacl`·`rdflib`은 의존성이 아니고 CI는 hash-pinned requirements로 설치하며,
+`tests/test_semantic_validation.py`가 그 부재를 `pytest.raises(ImportError)`로
+고정합니다).
+
+제약 선택도 측정에 따릅니다:
+
+- `definition`만 **필수**로 둘 수 있습니다. 최상위 개념에는 `broader`가 없고 리프에는
+  `narrower`가 없으므로 둘 중 하나를 요구하면 올바른 어휘를 거부합니다. `aliases`는
+  같은 이유로 **권고**(warning)입니다. 그리고 `propose_patch`는 concept+suggestion만
+  만들므로, aliases/multilingual/broader에 `sh:minCount 1`을 걸면 **모든 patch 승인이
+  거부**됩니다.
+- 계층 target이 Concept이어야 한다는 `sh:class` 모양의 제약은 **warning**입니다.
+  시드 어휘가 9개 미정의 이름에 대해 10회 위반하며, violation으로 올리면 시드 개념
+  5개 전부(고객·매출·이탈·이탈 고객·활성 고객)가 비적합이 됩니다(역검증으로 측정).
+  제품 자신의 시드를 거부하는 제약은 게시를 막을 수 없습니다. alias 전용 target은
+  alias index로 해소되므로(휴면 고객 → 이탈 고객) warning이 아닙니다.
+
+게시된 보고가 **어떤 shape을 적용했는지** 말합니다. 카탈로그가 4개가 되었으므로,
+카탈로그만 게시하면 데이터셋 보고가 ConceptShape으로 데이터셋을 검증한 것처럼 읽힙니다
+— 이 모듈의 역사가 바로 그 오독에 관한 것입니다. 각 보고가 `evaluated_shapes`를 담고,
+`tests/test_semantic_validation.py::test_every_published_required_property_is_evaluated`의
+열거가 ConceptShape까지 확장되어 게시된 필수 속성이 평가되지 않는 상태를 막습니다.
+`/enterprise/shacl-validation`은 어휘 전체의 `concept_conformance`를 게시하므로 shape의
+효과가 게시 순간이 아니라 플랫폼 단위로 측정됩니다.
+
+**ONT-005는 여전히 `partial`입니다.** reasoner가 없고(ONT-007), 속성 존재 shape은
+consistency 검사가 아니며, export에는 reasoner가 작용할 OWL axiom이 없습니다 —
+NFR-QUAL-002도 그대로 미충족이고, 그 note의 "SHACL shape도 적용하지 않는다"는 서술을
+정정했습니다.
+
+### Security — "있음"의 정의가 `str.strip()`이었습니다
+
+위 ConceptShape 게이트의 첫 버전은 `str.strip()`으로 정의 존재를 판정했습니다.
+`strip`은 `str.isspace()`가 참인 문자만 제거하고 **Unicode format 범주(Cf)는
+whitespace가 아닙니다**. 측정 결과 U+200B(zero-width space)·U+200C·U+00AD(soft
+hyphen)·U+200E·U+2060·U+FEFF(BOM)·NUL 각각 하나로만 이루어진 정의가 게이트를
+통과했고, `/ontology/search`가 그 개념을 **빈 화면으로 렌더되는 정의**와 함께
+돌려주었습니다 — 게이트가 막으려던 바로 그 결함을, `strip`이 건드리지 않는 문자
+부류를 통해서 재현한 것입니다.
+
+같은 뿌리가 개념 **이름**에도 있었습니다. `validate_concept_registration`의 검사는
+`strip()` 후 비어있지 않음 뿐이어서, 측정 결과 `POST /ontology/concepts`로
+U+200B·U+FEFF·NUL **이름의 개념 3개가 200으로 게시**되었습니다. 읽는 사람이 볼 수
+없는 이름의 개념은 해석도 검색도 인용도 되지 않으면서 상한이 있는 어휘의 자리를
+차지합니다.
+
+하나의 술어(`semantic_validation.has_visible_character`)로 둘을 닫습니다: 값에
+Unicode separator(Zs/Zl/Zp)와 control/format(Cc/Cf) 범주 **밖의** 문자가 최소 하나
+있어야 합니다. 이 규칙은 `sh:minCount 1`보다 **엄격합니다**(보이지 않는 literal도
+minCount는 만족시킵니다) — 그래서 shape이 `required_property_basis`로 그 규칙을
+게시하고, 강제하는 규칙과 선언한 규칙이 갈라지지 않습니다. 규칙은 "보이지 않는 문자가
+없어야 한다"가 아니라 "보이는 문자가 하나는 있어야 한다"이므로 `"\u200b 실제 정의
+\ufeff"`는 적합합니다. 역검증: `str.strip()`으로 되돌리면 7개 문자 케이스 전부가
+실패합니다.
+
+### Added — 온톨로지에 버전·변경 로그·심사자 기록이 생겼습니다 (ONT-004)
+
+ONT-004(P0)은 "OWL/RDFS 기반 도메인 ontology를 **버전관리**해야 한다"이고 수락 기준은
+"ontology version, change log, reviewer 기록"입니다. 세 가지 모두 없었습니다. 개념
+어휘는 릴리즈 정체성이 없는 모듈 수준 Python dict였고, 서로 모순되는 게시 주장이
+동시에 떠 있었습니다:
+
+* 요구사항 매트릭스는 ONT-004를 `not_implemented`로 기록하고 있었고 — 맞는 기록이었습니다;
+* 같은 시점에 `rdf_connector` 컨트롤 `ontology_version_pin`은
+  `status: implemented` / `verification: proof_route_served`를, proof endpoint로
+  `/ontology/search`와 `/ontology/resolve`를 들고 게시되고 있었습니다. 측정해 보면
+  두 응답 어디에도 "version"이라는 문자열이 없습니다. 컨트롤의 proof route가 그
+  컨트롤에 대해 아무것도 증명하지 않았습니다.
+* 유일한 심사자 신원은 `OntologyPatch.reviewed_by`뿐이고, 이는 patch 경로에만
+  존재합니다. `POST /ontology/concepts`는 모든 읽기 표면이 참조하는 공유 어휘에
+  심사 기록 없이 게시했고, 그 감사 행은 `result: "authorized"`이며 **변경 이전에**
+  기록됩니다 — alias 탈취 POST가 400으로 거부되어 아무것도 게시되지 않았는데도
+  동일한 "authorized" 행이 남는 것을 측정했습니다. 게시가 실제로 일어났다는 증거가
+  어디에도 없었습니다.
+
+`src/sdp/ontology_version.py`가 세 가지를 모두 소유합니다(`sdp.ontology`를 import하지
+않습니다 — 어휘를 인자로 받아 의존을 한 방향으로 유지합니다):
+
+* **version**: 기록된 baseline(revision 1)에서 시작하는 단조 `ontology_revision`과,
+  **매번 살아 있는 내용에서 다시 계산하는** sha256 `content_digest`. revision은
+  프로세스 수명 한정이므로 `revision_is_durable: false` /
+  `revision_scope: "process_lifetime"`으로 선언하고, 재시작을 넘는 정체성은 digest
+  쪽입니다. digest는 **의미 기준**입니다 — aliases/multilingual/narrower/related는
+  의미상 순서가 없으므로(RDF에서 무순서, alias index는 집합 취급) 정렬해서 해싱합니다.
+  순서만 뒤바뀐 두 배포가 서로 다른 버전을 보고하면, 의미 없는 차이로 클라이언트의
+  pin을 거절하게 됩니다. 멤버를 더하거나 빼면 여전히 움직입니다.
+* **change log**: 유효 변경 1건당 1개 항목, 최신 우선, 상한 500건이고 잘린 양을
+  `withheld_change_count`로 선언합니다. 이미 게시된 개념을 다시 등록하는 것은
+  no-op이므로(측정: 제출한 payload 전체를 버리고 저장된 레코드를 돌려줍니다) 아무것도
+  기록하지 않습니다. 어휘 상한에서의 **eviction은 자기 revision**입니다 — 게시된 용어가
+  무관한 호출자의 성공의 부작용으로 온톨로지를 떠나는데, 그때까지 그 삭제의 유일한
+  흔적은 그것의 부재였습니다(감사 행도, 호출자도 없었습니다).
+* **reviewer 기록**: 승인된 patch는 제안자(`actor_role: proposer`)와 승인한 심사자를
+  함께 기록합니다. 직접 upsert는 `reviewer_id: null` +
+  `review_basis: "direct_admin_upsert"`이고, recorder는 심사가 없는 source에 대한
+  reviewer를 **거부**합니다(조용히 버리지 않습니다). `catalog.deprecate_dataset`이
+  `reason`을 `"deprecated"`로 기본값 처리해 호출자가 주지 않은 사유를 보고했던 것과
+  같은 규칙입니다. `actor_id`의 뜻은 source마다 다르므로(직접 게시에서는 게시자,
+  승인에서는 **제안자**) 항목마다 `actor_role`을 적고 전체 매핑을 공개합니다 — 한
+  컬럼만 훑어 "누가 이것을 온톨로지에 넣었나"를 답하면 모든 승인에서 틀립니다.
+  그리고 `actor_id`는 요청 본문에서 오는 **권한이 확인된 주장**이지 인증된 신원이
+  아니므로 `actor_identity_basis`로 선언합니다.
+
+revision이 이름 붙이는 **artifact**도 생겼습니다. `GET /ontology/vocabulary/jsonld`가
+어휘를 SKOS/RDFS JSON-LD로 직렬화하고 `owl:versionInfo`에 revision+digest를 담습니다
+(기존 DCAT export와 같은 방식 — 손으로 쓴 inline `@context`, 새 의존성 없음). 그
+전에는 RDF artifact가 전혀 없었습니다: DCAT export는 dataset을 덮고 그
+`mappings[].concept`은 평범한 literal이라, 어디에도 개념을 가리키는 triple이 없었습니다.
+dict 위의 숫자는 버전관리가 아닙니다.
+
+export가 **선언하는** 것들:
+
+* 정의되지 않은 계층 target은 IRI를 만들지 않습니다. 측정: 시드 어휘의 19개
+  broader/narrower/related edge가 13개의 서로 다른 target을 가리키고, 그 중 **10개
+  edge**가 어휘가 정의하지 않는 이름(9개 distinct: 구매·거래·회원가입·구매자·재구매·
+  가입자·매출 성장·매출 채널별 집계·가격)을 가리킵니다. 존재하지 않는 개념의 IRI를
+  만들면 정의도 레이블도 scheme도 없는 subject 9개를 게시하는 것이므로,
+  `sdp:undefinedHierarchyTarget`로 개수와 함께 선언합니다. 이 결함이 읽는 사람에게
+  보이게 된 것도 이번이 처음입니다.
+* alias 전용 target은 alias index로 해소합니다(활성 고객 related 휴면 고객 →
+  이탈 고객). 그래프 순회는 여전히 해소하지 않습니다 — 그쪽은 ONT-003의 결함입니다.
+* **dataset id를 담지 않습니다.** `ontology._INDEX`에는 tenant 술어가 없고, 그것을
+  서빙하는 것이 바로 `concept_assets`가 자기 정책 결정이 거부한 호출자에게 모든
+  테넌트의 dataset id를 흘렸던 경로입니다. 이 라우트는 공개이므로 어휘만 담고,
+  개념↔dataset 매핑은 거버닝 읽기에 남습니다(`sdp:datasetMappingIsVersioned false`).
+
+**버전 고정(pin)**도 가능해졌습니다. `/ontology/search`와 `/ontology/resolve`가 답한
+버전을 스탬프하고, 호출자가 컴파일 시점의 digest를 `ontology_content_digest`로 고정하면
+다른 어휘로 조용히 응답하는 대신 **거부**합니다(불일치 409, 형식 오류 400 — 오타를
+"서버가 다른 어휘를 들고 있다"로 보고하면 클라이언트가 잘못된 조치를 합니다). revision은
+고정 대상이 아닙니다: 프로세스 수명 한정이므로 재시작 뒤 내용이 완전히 달라도 같은
+번호를 다시 쓰고, 그러면 조용히 고정이 풀리는 pin이 됩니다. 이로써
+`ontology_version_pin`은 route 존재가 아니라 **predicate를 양방향으로 실행해**
+`runtime_probe_verified`로 등급이 매겨집니다(살아 있는 digest는 통과, 한 글자 다른
+digest는 거부, 형식 오류는 거부). `credential_vault`에만 있던 runtime 검사 자리는
+control→검사 dispatch로 일반화했고, `_RUNTIME_VERIFIED_CONTROLS`는 그 dispatch에서
+**파생**합니다(같은 집합을 손으로 두 번 쓰면 갈라지고, 게시 판정을 결정하는 쪽이
+조용히 이깁니다).
+
+남은 경계 하나는 선언해 둡니다: `ontology_content_digest`는 `/ontology/search`에서는
+query parameter이므로 OpenAPI 문서에 자동으로 실리지만, `/ontology/resolve`에서는 이미
+`dict[str, str]` 본문을 받는 라우트의 느슨한 키이므로 **기계 판독 계약에는 실리지
+않습니다**. 이 라우트는 모델을 만들지 않는 10개 본문의 선언된 경계
+(`tests/test_api_request_contract.py::test_the_untyped_bodies_that_remain_are_the_ones_with_no_model`)
+안에 있고 이번 변경도 그 경계를 넘지 않지만, 그 경계에 키 하나를 **더한** 것은
+사실이므로 README에 적고 여기에도 적어 둡니다.
+
+### Fixed — 개념 IRI가 서로 다른 두 개념에 같은 식별자를 발급했습니다
+
+`concept.replace(" ", "-")`는 단사(injective)가 아닙니다. 측정: 개념 `활성 고객`과
+따로 등록 가능한 `활성-고객`이 **동일한 IRI**를 발급합니다. 해석 응답에서는 혼란스러운
+식별자일 뿐이지만 RDF 문서에서는 두 개념이 하나의 subject로 합쳐져 레이블·정의·계층이
+병합됩니다. IRI 세그먼트에 올 수 없는 문자(`%` 먼저, 그 다음 공백·`/`·`?`·`#`·`[`·`]`)만
+percent-escape합니다 — `urllib.parse.quote`는 비ASCII 전부를 인코딩해서 `고객`이
+`%EA%B3%A0%EA%B0%9D`가 되고, IRI는 Unicode를 담을 수 있으며 이 export는 사람이 읽는
+문서입니다. `resolve_terms`도 같은 함수를 쓰므로 정의가 하나입니다.
+
+### Fixed — 해석 결과가 정의되지 않은 용어에 정의된 개념과 똑같은 IRI를 붙였습니다
+
+`_INDEX`는 `dataset.terms`로 만들어지고 그것들은 dataset이 선언한 용어이지 등록된
+개념일 필요가 없습니다. 측정: `/ontology/resolve`가 캠페인·전환·비즈니스 용어에 대해
+term IRI를 게시하는데, 어휘는 그 중 어느 것도 정의하지 않습니다 — 정의된 개념의 IRI와
+형태가 동일해서, 클라이언트는 찾아볼 수 있는 정의와 아무데도 닿지 않는 식별자를
+구별할 수 없었습니다. 각 행에 `defined_in_vocabulary`를, 응답에
+`undefined_resolution_count`를 둡니다. 해석 자체는 계속 돌려줍니다 — dataset을 가리키는
+진짜 포인터이기 때문입니다.
+
+### Fixed — 어휘 변경에 락이 없었습니다
+
+`ontology.py`에는 `threading` 참조가 하나도 없었고, 비슷한 상태를 들고 있는 형제
+스토어 둘(`catalog`, `graph_store`)은 측정된 check-then-act 손상 때문에 이미 재진입
+락을 갖고 있었습니다. 임계 구역은 존재 확인 읽기부터 19줄 뒤의 저장 쓰기까지입니다.
+`ontology_version.vocabulary_change_lock()`(재진입)이 어휘·alias index·revision
+카운터·(승인 시)patch 상태를 한 구역으로 묶고, 공개 wrapper가 **존재 확인 읽기보다
+먼저** 락을 잡습니다 — 읽기 뒤에 잡으면 창이 그대로 열려 있습니다. 회귀 테스트는
+경쟁시키지 않고 **읽기 안에서** 첫 번째 writer를 멈춥니다: 이 구역에는 I/O도
+GIL을 놓는 호출도 없어서 CPython에서는 창이 저절로 열리지 않고, 열 수 없는 테스트는
+락이 하는 일을 보여줄 수 없습니다. 역검증: 공개 wrapper의 `with ...lock()`을
+`if True`로 바꾸면 한 개념에 대해 `already_published: False`가 2건 나오고 revision이
+2 올라갑니다.
+
+### Fixed — 모듈 수준 가변 상태 2건이 autouse fixture 밖에 있었습니다
+
+`tests/conftest.py`의 autouse fixture는 20여 개 파일이 격리 fixture를 갖지 않아
+역순 실행에서 5건이 깨졌기 때문에 존재합니다. 그런데 그 fixture의 재고 목록과 그것을
+지키는 `test_state_isolation.py`는 **둘 다 손으로 쓴 목록**이라, 새 스토어는 누군가
+기억했을 때만 덮입니다 — 바로 이 fixture가 막으려는 배치가 한 단계 위에서 반복되고
+있었습니다. 측정 결과 `authz._JWKS_CACHE`와 `observability._SINK_BREAKER`가 fixture에
+없었고, 그것을 더럽히는 두 파일이 테스트마다 각자 치우고 있었습니다
+(`test_honest_metrics.py`는 `_SINK_BREAKER["open_until"] = 0.0`을 다섯 곳에서,
+`test_authz.py`는 `clear_jwks_cache()`를 세 곳에서). 전체 스위트에 테스트별 probe를
+걸어 측정한 유출은 **두 스토어 모두 0건**입니다 — 지금 깨지고 있던 것은 없고, 잠재적
+취약성입니다. 둘을 fixture로 옮기고, `tests/test_module_state_coverage.py`가 두 패키지의
+모듈 수준 `dict`/`list`/`set`/`deque`를 **열거**해 각각이 "fixture가 복원함" 또는
+"런타임에 변경되지 않음"으로 선언되었는지 검사합니다. 선언하지 않고 추가하면 여기서
+실패합니다 — 작성자에게는 한 줄 판단이고, 그러지 않으면 다음 사람에게 파일 순서에
+의존하는 실패가 됩니다. 이 검사의 "fixture가 claim한 것을 실제로 복원하는가" 부분은
+처음에 파일 전체를 훑어서, 복원 줄을 지우고 snapshot 줄만 남겨도 통과했습니다(측정).
+`finally:` 이후로 범위를 좁혀 역검증했습니다.
+
+### Security — 마스킹이 선언된 세 근거 중 하나만 보고 있었습니다
+
+POL-003(P0)은 "**PII, sensitive, confidential** tag 기반 masking을 지원해야 한다"이고
+수락 기준은 "policy decision 결과에 **masking rule** 포함"입니다. 정책은 세 근거 중
+하나만 읽고 rule은 전혀 게시하지 않았습니다:
+
+    obligations["masking"] = [col.name for col in dataset.schema if col.pii]
+
+그래서 **sensitive나 confidential로 분류된 컬럼은 공개되었습니다** — `ColumnMetadata`에
+분류를 적을 자리가 없었고 그것을 마스킹하는 코드도 없었습니다. 그리고 판단은 어떤
+컬럼이 마스킹되는지만 말하고 **어떤 근거로**인지는 말하지 않았으므로, 감사자는 PII
+마스킹과 기밀 마스킹을 구별할 수 없고 선언된 세 근거 중 둘이 한 번도 조회되지 않았다는
+사실도 알 수 없었습니다.
+
+`ColumnMetadata.classification`을 두고 세 근거 전부가 마스킹하게 했습니다.
+`obligations.masking_rules`가 컬럼마다 `bases`와 `action`을 담고,
+`masking` 이름 목록은 형태를 유지합니다(`apply_mask`와 게시된 응답이 읽습니다).
+
+**알 수 없는 라벨도 마스킹합니다** — `unrecognized_classification`을 근거로 보고합니다.
+마스킹은 **보류하는** 통제이므로 fail-closed 방향은 이해하지 못한 것을 마스킹하는
+쪽입니다: 라벨 오타 때문에 컬럼이 공개되는 것이 문제가 되는 실패입니다.
+`pii: true`와 `classification: ["pii"]`는 같은 진술이고 어느 쪽이든 마스킹하므로 둘이
+결과를 두고 어긋날 수 없습니다. 대소문자와 앞뒤 공백은 라벨을 무력화하지 못합니다.
+
+`classification`은 `pii`와 **정확히 같은 방식으로** 거버닝됩니다 — discovery 표면에서
+withhold하고(컬럼의 민감도 라벨은 PII 플래그만큼 노출적입니다), schema diff는 값을
+공개하지 않으면서 그 필드가 바뀌었다고 보고합니다.
+
+`browse.preview`의 마스킹 **floor도 같이 넓혔습니다**. floor가 `column.pii`만 읽고
+있었으므로 정책이 confidential 컬럼을 더 이상 나열하지 않게 되면 그것이 공개됩니다 —
+정책보다 좁은 floor는 floor가 아닙니다. 테스트가 소스에서 그것을 단언합니다.
+
+이에 따라 POL-003은 `implemented`입니다. 하지 않는 것도 적어 둡니다: obligation의
+action은 항상 `mask`이고(suppression이 아니라) 컬럼을 자동 분류하는 것은 없습니다 —
+라벨은 `pii`와 마찬가지로 운영자가 선언합니다.
+
+### Security — 카탈로그 변경 사유가 기록되지 않았고, 하나는 날조되었습니다
+
+CAT-005의 수락 기준은 네 가지를 호명합니다: "변경 전후 diff, actor, timestamp,
+**reason** 기록". 앞의 셋은 기록되고 있었고 **사유는 기록되지 않았습니다**.
+`_build_dataset_payload`가 모든 카탈로그 쓰기에 `reason="ok"`를 하드코딩하는데 그것은
+행의 **결과**이고 호출자의 변경 사유가 아니며, 사유를 받는 경로는
+`POST .../deprecate` 하나뿐이었습니다. 측정:
+
+    PATCH /catalog/datasets/{id} {"reason": "buyer audit reason"}
+      -> 200, details 키: after, before, changes, tenant_id  (reason 없음)
+
+호출자의 사유가 200과 함께 **버려졌습니다** — 요청 모델이 그 필드를 선언하지 않고
+pydantic은 추가 키를 무시하기 때문입니다.
+
+이제 네 경로 전부 `details.change_reason`으로 기록합니다. 사유를 요청 모델에 추가하지
+않고 **원시 payload에서 읽는** 이유는, 그것이 변경에 **대한** 메타데이터이고 데이터셋
+상태가 아니기 때문입니다 — 요청 모델의 필드는 `Dataset` 필드의 **부분집합**이어야 하고
+(`tests/test_catalog_field_forwarding.py`가 단언합니다) `reason` 필드는 그 불변식을
+깨뜨립니다. 모델 밖에서 읽는 키는 문서에 선언해야 클라이언트가 보낼 수 있으므로
+`REQUEST_BODY_EXTRA_PROPERTIES`에 등록했습니다 — **request-contract 테스트가 바로 그
+누락을 잡았습니다**.
+
+키는 사유가 없을 때도 `None`으로 **게시합니다**. 생략하면 "호출자가 사유를 주지
+않았다"와 "이 표면은 사유를 기록하지 않는다"를 독자가 구별할 수 없고, 그 구별이 바로
+이 행이 존재하는 이유입니다.
+
+**이 작업에서 제 테스트가 날조된 기본값 하나를 잡았습니다.** `deprecate`는
+`payload.get("reason", "deprecated")`로 사유 없는 호출을 **문자열 "deprecated"** 라는
+사유로 바꿔 기록하고 있었습니다 — 호출자가 주지 않은 사유를 준 것처럼 적은 것이고,
+이 표면이 절대 하지 말아야 할 한 가지입니다. 네 경로 모두 `None`을 보고합니다.
+`deprecate`의 `details["reason"]`도 `change_reason`으로 통일했습니다 — 한 값에 두 키가
+있으면 한 키로 필터링하는 원장 독자가 넷 중 셋을 찾거나 하나만 찾습니다.
+
+빈 문자열·공백만·문자열 아님은 모두 `None`입니다("빈 사유를 보냈다"와 "사유를 보내지
+않았다"는 같은 사실이고, 전자를 사유로 기록하면 산문이 있어야 할 자리에 빈 문자열이
+들어갑니다). 512자 상한을 둡니다 — 호출자가 주는 값이고 행은 보존됩니다.
+
+### Security — 거부된 카탈로그 변경이 감사 기록을 남기지 않았습니다
+
+`CLAUDE.md`가 이 제품의 거버넌스 불변식을 선언합니다: 카탈로그 mutation과 browse/query
+경로에 정책 평가 **그리고** evidence 기록이 따른다. browse 경로는 거부에서도 양쪽을
+지켰지만(`browse.py`가 `ingest_event(decision="denied", ...)`를 호출합니다), 네 개 카탈로그
+mutation은 정책을 평가하고 바로 raise해서 **거부된 시도가 decision만 남기고 감사 행을
+남기지 않았습니다**. 권한 없는 actor로 각 verb를 측정:
+
+    PATCH  /catalog/datasets/{id}            -> 403  decisions +1  audits +0
+    POST   /catalog/datasets/{id}/publish    -> 403  decisions +1  audits +0
+    POST   /catalog/datasets/{id}/deprecate  -> 403  decisions +1  audits +0
+    POST   /catalog/datasets                 -> 403  decisions +1  audits +0
+
+거부된 시도는 **감사자가 정확히 찾는 것**인데 `/audit/events`와
+`/catalog/datasets/{id}/audit` 어디에도 없었습니다.
+
+`tests/test_governed_write_evidence.py`는 이미 이 짝을 단언하고 있었지만, 그
+`GOVERNED_WRITES` 목록은 `/ontology/concepts`·`/ontology/patches`·`/graph/edges` —
+감사를 수행하는 `_authorize_graph_write`를 공유하는 세 라우트 — 만 덮습니다. 네 개
+카탈로그 mutation은 인라인으로 권한을 검사하고, **손으로 쓴 governed-write 목록**이
+바로 그것들을 빼놓는 모양입니다. 새 테스트는 커버리지를 **라우트 테이블에서 유도**하므로
+다섯 번째 mutation이 추가되면 케이스를 받거나 의식적으로 제외되기 전까지 실패합니다.
+
+응답이 숨기는 경우에도 원장은 실제 사유를 적습니다 — 범위 밖 데이터셋은 상태와 본문이
+존재 oracle이 되지 않도록 일반적인 detail과 함께 404를 돌려주고, 거부된 호출자가 읽을 수
+없는 원장은 엔진이 준 사유를 유지합니다. browse가 이미 하는 것과 같은 분리입니다.
+
+### Security — 동시성: 유실된 쓰기, 거짓 증빙, 그래프 모순
+
+4번째 적대적 스윕(8 에이전트, 모든 발견을 독립 재현으로 검증)이 올린 15건 중
+`high` 4건이 여기 있습니다. FastAPI는 이 패키지의 `def` 핸들러를 워커 스레드풀에서
+실행하므로 두 요청이 **실제로 교차**하는데, 모듈 dict에 대한 read-modify-write를
+직렬화하는 것이 아무것도 없었습니다.
+
+- **동시 PATCH가 쓰기를 유실시키고, 감사 원장이 그 유실을 `success`로 인증했습니다.**
+  읽기와 쓰기 사이에서 한쪽 작성자를 멈춰 교차를 강제해 측정:
+
+      PATCH description=FIRST  -> 200
+      PATCH steward=SECOND     -> 200
+      저장 상태: description=FIRST, steward=<변경 없음>, version=1.0.1
+      audit:  success {"description": "FIRST"}
+      audit:  success {"steward": "SECOND"}
+
+  유실된 쓰기도 나쁘지만 **감사 행이 더 나쁩니다**. 이 제품이 선언한 거버넌스
+  불변식은 모든 거버닝 쓰기에 정책 판단과 감사 이벤트가 따른다는 것인데, 여기서
+  원장은 **저장소에 없는 변경을 인증**했습니다 — 이벤트가 작성자 자신의 `updates`로
+  만들어지고 `_DATA`를 다시 읽지 않으므로 알아챌 수 없습니다. 직렬화 없이 동시 PATCH
+  50건이 version을 25만 전진시켰습니다. `catalog`에 재진입 가능한 mutation lock을 두어
+  네 개 mutation 전부를 감쌌습니다.
+- **동시 생성이 같은 생성 id를 여러 호출자에게 주고 데이터셋을 조용히 파괴했습니다.**
+  id 없는 동시 생성 8건이 각각 200을 받고 카탈로그는 5개만 늘었습니다(한 id가 세
+  호출자에게 간 경우도 있습니다). `len(_DATA) + 1`과 `if dataset_id in _DATA`와 저장이
+  세 개의 분리된 단계였기 때문입니다. 락 안에서 **비어 있는 첫 id를 스캔**합니다 —
+  개수는 "어떤 id가 비었나"라는 실제 질문에 답하지 않습니다(호출자가 `dataset-NNN`
+  형태 id를 직접 등록한 경우 순차 실행에서도 충돌합니다).
+- **카탈로그와 그래프가 영구히 모순되었습니다.** 두 개의 동시 schema PATCH가 카탈로그에는
+  한 순서로, 그래프에는 반대 순서로 적용되어(30회 중 11회 측정) 그래프가 카탈로그에
+  없는 `pii: true` 컬럼을 보유했습니다 — `/search/semantic`이 그것을 최상위로 반환하고
+  `/browse/{id}/schema`는 마스킹할 수 없었습니다(카탈로그에 없는 컬럼이므로).
+  `api`가 mutation lock을 **mutation과 그래프 미러에 걸쳐** 잡습니다.
+- **lineage 엣지를 선언한 쪽이 아닌 쪽의 변경이 그 엣지를 삭제했습니다.** `A -> B`는
+  A의 `lineage_outputs`나 B의 `lineage_inputs` **어느 쪽으로도** 선언되고 미러는 양쪽에서
+  만드는데, reconcile은 변경된 데이터셋 자신의 절반만 봤습니다. 상류만 선언한 쌍에서
+  측정: 상류 seed 후 엣지 존재 → 하류 seed(아무 변경이나, 또는 시작 부트스트랩) 후
+  엣지 소멸, 카탈로그는 계속 선언. 시작 부트스트랩이 모든 데이터셋을 차례로 seed하므로
+  나중에 seed된 쪽이 다른 쪽 선언을 지웠습니다. 이제 **어느 엔드포인트도 선언하지 않을
+  때만** 제거합니다.
+- **`/search/semantic`이 온보딩 중 500을 반환했습니다** — `_embeddings`를 순회 중에
+  증가시켜 `RuntimeError: dictionary changed size during iteration`. 리더 2 + 라이터 2로
+  42건 중 17건(40%) 실패. 보고된 한 줄만 스냅샷하지 않고 **스토어에 락**을 넣었습니다:
+  `_edges`는 `delete_edge`/`delete_node`가 통째로 재구성하는 동안 `edges_for`/`traverse`가
+  순회하고, `delete_node`는 세 컬렉션을 순차로 바꾸므로 리더가 임베딩이 이미 사라진 노드를
+  볼 수 있었습니다. 보고된 줄만 고치면 나머지가 남습니다.
+
+회귀 테스트는 **경쟁을 기다리지 않고 교차를 강제**합니다 — 한쪽 작성자를 읽기와 쓰기
+사이에서 멈추면 락이 없을 때 매번 실패하고 있을 때 매번 통과합니다. 임계 구역 **안의**
+barrier는 검증하려는 락과 교착하므로 barrier가 아니라 일시 정지입니다. 각 수리를
+되돌려(락을 no-op 컨텍스트 매니저로 교체) 해당 테스트가 실패하는 것을 확인했습니다.
+`test_an_edge_read_survives_edges_being_rebuilt`는 락 없이도 통과한다는 점을 자기
+docstring에 적어 둡니다 — 리스트 재할당은 CPython에서 예외를 내지 않으므로 그것은
+재현이 아니라 하드닝입니다.
+
+이에 따라 CAT-005와 LIN-001은 `implemented` → `partial`입니다(각각 수락 기준의
+before/after diff와 source/job/target이 여전히 없습니다). NFR-SEC-005는 `implemented`를
+유지하되 비고에 "원장이 100% 완전하면서 부분적으로 거짓이었다"는 사실을 적습니다.
+
+### Security — 테넌트 경계와 존재 oracle
+
+- **SQL 안전성 게이트가 증명하지 못하는 것을 증명했습니다.** 두 가지 unsoundness를
+  allowlist = `customer`로 측정했습니다. (1) 토큰 `[A-Za-z_][\w.]*`가 `$`와 0x80 이상
+  바이트에서 끊겨 `FROM customer$pii_raw`를 `customer` + 버려진 alias로 쪼갰습니다 → 경고
+  **0건**. PostgreSQL identifier continuation은 `[A-Za-z\200-\377_0-9$]`이므로 엔진은 단일
+  테이블 `customer$pii_raw`를 읽습니다. 이미 critical로 닫은 comma-FROM 우회와 같은 부류입니다.
+  (2) 함수 allowlist가 없어 무인자·정수인자 호출이 안전 경로에 남았습니다 →
+  `pg_terminate_backend(12345)`·`lo_unlink(1)`·`pg_sleep(100000)`·`pg_reload_conf()` 모두
+  경고 0건. PRD BRW-005는 이를 **P0**로 선언합니다. deny-list는 무한집합이라 증명할 수 없으므로
+  allowlist로 막습니다. 실행 엔진이 없으므로(`execute_query`는 mock) 함수 부작용과 `$`의 의미는
+  측정한 것은 게이트의 판정입니다 — 어느 쪽이든 결함은 **거짓 인증**입니다.
+  **정정**: PostgreSQL 쪽도 추론이 아니라 측정입니다. 이 발견에 대한 독립 검증이 일회용 UTF-8
+  클러스터를 띄워 `customer`·`customer$pii_raw`·`customer×pii_raw`를 세 개의 서로 다른 테이블로
+  만들고, `SELECT count(*), max(secret) FROM customer$pii_raw` → `1 | ssn-123-45-6789`,
+  `SELECT count(*) FROM customer` → `0`을 확인했습니다. 즉 이 validator가 `customer`로 인증한
+  인용 없는 참조는 실제로 다른 행을 가진 다른 테이블로 해석됩니다. 이 저장소에서는 아무것도
+  실행되지 않으므로(`execute_query`는 mock) 여기 테스트가 측정하는 것은 게이트의 판정입니다.
+
+- **purpose binding이 공백 하나로 우회**되었습니다. `policy.evaluate`가 `action`은
+  `.strip().lower()`로 정규화하면서 `purpose`는 `.lower()`만 했습니다. 측정:
+  `'external-export'`·`'EXTERNAL-EXPORT'` → 403, `' external-export'` → **200**
+  (preview와 governed query 양쪽). 기록된 결정은 `effect: allow`였으므로 **증빙 원장이 그
+  반출을 정책 승인으로 증명**했습니다 — 우회보다 이게 더 나쁩니다. 대소문자는 막히므로
+  통합 담당자가 공백 민감성을 의심할 단서가 없었습니다. 같은 필드의 거울 결함: high
+  sensitivity row-level filter가 정확 비교여서 `'Analysis'`·`' analysis'`에서 조용히
+  사라졌습니다(거부 아님, obligation 누락). 진입점에서 한 번 정규화합니다.
+- **`GET /ontology/term/{term}/graph`가 미인증 호출자에게 모든 테넌트의 dataset id를
+  제공**했습니다 — 정책 평가 0, 감사 이벤트 0. 같은 사실을 주는 형제 두 라우트는 거부합니다
+  (`/ontology/concept/{concept}` → `dataset_ids: []`, `withheld 4`; `POST /llm/search` → 403).
+  이 payload의 **세 번째** 유출 경로입니다. 제품이 스스로 게시하는 guardrail("No unauthorized
+  dataset existence disclosure")과 거버넌스 invariant 양쪽에 어긋납니다. 네 번째를 잡기 위해
+  게시된 응답 계약에서 `dataset_ids`를 반환하는 라우트를 **열거**합니다.
+- **그래프 쓰기 경계가 fail-open**이었습니다. `create`는 소유 테넌트를 카탈로그에서 해석할 수
+  없는 유일한 분기이고 `target_tenant_id`를 받지 못해 테넌트 검사를 건너뛰었습니다. 측정:
+  tenant=demo `data-admin`이 `zeta-secret:customer_email`을 읽으면 **404**, 쓰면 **200**,
+  `pii: true → false`. 읽을 수도 없는 컬럼의 PII 분류를 외부 테넌트가 조용히 뒤집었고 그
+  메타데이터는 semantic search와 graph query가 씁니다. 엣지는 두 끝점 모두 검사합니다.
+  남은 구별(없는 데이터셋 접두사는 허용 / 외부 테넌트는 403)은 `admin` 역할이 필요해
+  익명·analyst로 닫은 oracle보다 좁으며, 닫지 않은 이유와 함께 테스트에 명시했습니다.
+- **preview 거부가 원장을 통해 존재를 누출**했습니다. HTTP 본문은 이미 동일했지만 호출자
+  자신의 `GET /policy/decisions`는 외부 id에 0행, 없는 id에 1행이었습니다. 형제 라우트는
+  모두 `evaluate_dataset_scope_refusal`을 쓰는데 preview만 빠진 **놓친 호출자**였습니다.
+
+- 데이터셋을 **지목할 수 있는 모든 수단**(경로 파라미터, 요청 본문, 쿼리
+  파라미터, 변경 라우트, what-if 리소스)에 대해, 타 테넌트 데이터셋과 존재하지
+  않는 id의 응답이 **상태 코드와 본문까지 동일**해집니다. 같은 결함이 여섯 번
+  반복됐기 때문에 검사도 URL 모양이 아니라 명명 수단 단위로 열거합니다.
+- `/policy/decision`의 측면 채널을 닫았습니다. 인증 없이 호출 가능했고 데이터셋의
+  존재 여부와 **소유 테넌트까지** 드러냈으며, 같은 내용을 읽는 형제 라우트는 이미
+  403이었습니다. (원 MVP 병합 이후 main에서 동일하게 재현되는 사전 결함입니다.)
+- 증빙 표면을 통한 oracle도 닫았습니다: 거부 기록이 prober가 읽을 수 있는 원장에
+  나타나는 방식이 "비어 있는 id일 때만 보이는" 신호가 되지 않도록, 두 거부를 모두
+  prober 범위 밖에 파일링합니다. 소유 테넌트의 감사자는 자기 자산에 대한 시도를
+  그대로 봅니다.
+- 카탈로그 discovery / 데이터셋별 조회 / 그래프 읽기 / 증빙 읽기 / SHACL 요약 /
+  steward 큐를 전부 호출자 테넌트로 범위화했습니다. 범위에서 빠진 항목은
+  `withheld_*` 카운터로 **선언**합니다 — 짧은 목록이 빈 큐로 읽히지 않도록.
+- preview row를 지목된 데이터셋의 스키마로 제한했습니다(다른 데이터셋의 PII
+  컬럼에 도달하던 경로 차단). 선언된 PII 컬럼은 정책 obligation이 빠뜨려도
+  마스킹됩니다 — 마스킹은 최선이 아니라 하한입니다.
+- 정책 엔진의 fail-open을 닫았습니다: 평가할 수 없는 action에 `allow`를 주고
+  있었고, 공개된 action 이름 10개 전부가 그 경로였습니다.
+- SQL validator 우회 3건, 수식된 테이블 우회, 금지 키워드의 부분 문자열 일치를
+  고쳤습니다(이제 단어 단위).
+- OIDC: `oidc-verify`가 operator 설정만 신뢰합니다(요청 본문이 trust anchor를
+  공급해 self-signed platform-admin을 만들던 경로 차단). group→role 매핑은
+  tenant scoped이고 매핑마다 audit event를 남깁니다.
+- DSN 자격증명 노출과 log sink 자격증명의 공개 manifest 노출을 제거했습니다.
+- 호출자가 제어하는 작업량과 메모리 증가에 상한을 두었습니다(쿼리 길이, 개념
+  어휘, 제안 큐, 두 증빙 원장). 상한이 생기면 창의 길이로는 "기록됐는가"에 답할
+  수 없으므로 단조 카운터를 함께 추가했습니다.
+
+### Fixed — 증빙 페이지가 자기 행을 중복시키며 실제 행을 빠뜨렸습니다
+
+`list_policy_decisions`와 `list_persisted_audit_events`는 페이지를
+`reversed(_POLICY_DECISION_LOG)` — **살아 있는 리스트에 대한 lazy iterator** — 로
+만들었고, `record_policy_decision`은 같은 리스트의 앞부분을
+`del _POLICY_DECISION_LOG[:-MAX_IN_MEMORY_POLICY_DECISIONS]`로 잘라냅니다. 순회 중에
+앞이 사라진 역방향 iterator는 밀린 원소를 다시 방문하고 다른 원소를 건너뜁니다 —
+그래서 한 페이지가 같은 `decision_id`를 두 번 담고 그만큼의 실제 행을 조용히
+빠뜨릴 수 있었습니다. cap에 도달한 로그에 리더 2 + 라이터 2로 측정:
+
+    pages read 14303, 중복된 decision_id를 담은 page 142
+
+수리는 lock이 아니라 **snapshot**입니다. 리스트의 `list(...)`는 한 번의 C 레벨
+복사이므로 trim의 앞이나 뒤에서 찍히고 trim 도중에는 찍히지 않습니다 — 읽기 경로에
+경합을 추가하지 않습니다. `catalog.list_audit_events`는 이미 이렇게 읽고 있었고,
+그래서 `evidence`의 페이지만 찢어졌습니다. 수리 후 같은 조건에서 14817 페이지 중
+**0건**입니다.
+
+테스트가 숨기지 않고 적어 두는 한계: 페이지는 시점 뷰이므로 snapshot 이후에 추가된
+행은 **정당하게** 없습니다. 단언하는 것은 어떤 행도 **두 번** 나타나지 않는다는 것과
+창이 선언된 상한 안에 머문다는 것이고, 페이지가 일관된 트랜잭션 읽기라는 것이
+아닙니다 — in-memory fallback 로그는 그것을 제공하지 않습니다(append-then-trim은 두
+단계라 cap보다 한 행 많은 상태가 보일 수 있고, 그것은 찢어진 페이지가 아니라 여분의
+한 행입니다).
+
+이 테스트를 쓰면서 제 테스트 자신의 결함을 하나 잡았습니다: 두 라이터 스레드가 모두
+`written-0`, `written-1`…을 만들어서 리더가 센 중복이 로그의 것이 아니라 테스트의
+것이었습니다. 라이터마다 고유한 tag를 붙였습니다.
+
+### Fixed — 아무것도 바꾸지 않은 요청이 증빙을 만들어냈습니다
+
+같은 스윕의 세 건. 모양이 같습니다 — **변경하지 않은 요청이 변경한 것처럼 기록**되어
+원장과 version 수열과 `updated_at`이 일어나지 않은 작업을 서술했습니다.
+`publish_dataset`은 이미 정답을 구현하고 있었고(이미 published인 경우를 guard하고
+그 시도를 no-op으로 기록), 다른 두 경로는 그렇지 않았습니다. `crm-customer-master`에서 측정:
+
+    POST .../deprecate x3   -> 200, 200, 200
+                               version 1.0.1 -> 1.0.2 -> 1.0.3
+                               "dataset.deprecate / success" 원장 행 3개
+                               snapshot 3개 추가
+    PATCH {"actor": "admin"} -> 200
+                               version bump, updated_at 이동, snapshot 추가, 변경 0
+    GET  .../schema-versions -> ["1.0.0", "1.0.0", "1.0.0", "1.0.0"]
+
+- **재실행된 deprecate**가 매번 version을 올리고 원장에 새 `success` 행을 쓰고 snapshot을
+  추가했습니다 — 원장 독자가 재시도와 세 번의 의도적 deprecate를 구별할 수 없었습니다.
+- **빈 PATCH**(`{"actor": "admin"}`은 patch 가능한 필드를 하나도 지정하지 않습니다)가
+  version과 `updated_at`을 움직였습니다 — 수정하지 않은 요청에 대해 데이터셋이 수정 시각을
+  주장했습니다. 값이 전부 `None`인 본문도 같습니다(검증은 통과하고 필드별로 skip됩니다).
+  그래서 guard는 요청된 집합이 아니라 **실제 적용된 집합**을 봅니다 — 요청된 집합을 봤다면
+  이 경우를 놓쳤습니다. 같은 이유로 원장의 `changes`/`before`/`after`도 실제 적용된
+  필드만 담습니다(이전에는 skip된 필드가 적용된 변경으로 기록되었습니다).
+- **`/schema-versions`가 같은 버전을 반복**했습니다. snapshot은 모든 mutation마다
+  기록되고(컬럼뿐 아니라 lineage·mapping·tag·status·score도 담아 drift 탐지가 읽습니다)
+  목록은 snapshot당 한 줄이었으므로, 스키마가 바뀌지 않은 patch가 버전을 복제했습니다.
+  diff는 버전을 dict 키로 해석하므로 애초에 버전당 하나만 도달할 수 있었습니다 — 목록이
+  넷을 광고하고 diff가 하나를 서비스했습니다. 이제 목록의 **모든 항목이 주소 지정
+  가능**하고, 실제 스키마 변경은 여전히 새 항목을 만듭니다.
+
+세 경우 모두 **감사 행은 유지합니다** — 재실행된 요청은 실재하는 사건이고 숨기는 것이
+반대 방향의 결함입니다. 바뀐 것은 행이 `noop: true`를 달고 데이터셋이 그대로 반환된다는
+점입니다. 각 guard를 되돌려 해당 테스트가 실패하는 것을 확인했고, 실제 변경이 여전히
+bump된다는 테스트는 guard 없이도 통과하므로 그 셋은 guard의 존재만 탐지하는 것이
+아닙니다.
+
+### Fixed — 문서화된 개발자 경로가 테스트를 한 건도 돌리지 못했습니다
+
+- **문서화된 설치로 문서화된 테스트 명령이 0건을 수집했습니다.** `requirements-dev.txt`는
+  README·CLAUDE.md가 설치하라고 말하는 산출물이고 `PYTHONPATH=src pytest`는 그 다음에
+  실행하라고 말하는 명령입니다. 깨끗한 venv에서 측정:
+
+      pip install --require-hashes -r requirements-dev.txt   -> ok
+      PYTHONPATH=src pytest
+        -> ERROR tests/fuzz/test_fuzz_properties.py
+           Interrupted: 1 error during collection
+           0건 실행
+
+  lock에 `hypothesis`·`sortedcontainers`·`sqlalchemy`·`greenlet`이 빠져 있었습니다 —
+  `pyproject.toml`의 `dev` extra가 첫째와 셋째를 선언하고 **파일 자신의 헤더가 그 extra로
+  컴파일했다고 주장**하는데도 그랬습니다. CI는 영향받지 않았습니다(CI는 넷을 모두 pin하는
+  `requirements-test.txt`를 설치합니다) — 그래서 파이프라인의 어떤 것도 알아챌 수
+  없었습니다. 수리 후 같은 깨끗한 venv에서 **968 passed**입니다.
+  추가된 네 개는 **CI가 pin한 버전 그대로**입니다. 자유 해석은 `hypothesis==6.169.1`과
+  `sqlalchemy==2.1.4`를 잡는데 CI는 `6.156.6`/`2.0.51`을 pin하고, SQLAlchemy는
+  `src/sdp/graph_store.py`와 `src/sdp/config.py`가 올라서는 라이브러리입니다 — minor가
+  갈리면 로컬 green이 CI red을 가립니다. 네 개만 묶는 `constraints-dev.txt`를 두어
+  다른 pin은 전혀 움직이지 않습니다(그래서 pip-compile로 생성되는 Docker lock
+  `requirements-graph.txt`와의 합의도 그대로 유지됩니다).
+  `tests/test_dependency_locks.py`가 이제 강제합니다: dev extra가 선언한 모든 패키지가
+  lock에 있는지, 스위트가 import하는 것을 설치할 수 있는지, dev와 CI가 공유 pin마다
+  일치하는지, 각 lock의 헤더가 자신을 재생성하는 **실행 가능한** 명령인지.
+  일치 테스트에는 `tzdata` 하나를 **사유와 함께 선언된 예외**로 둡니다 — 전역 합의를
+  강제하려면 pip-compile로 생성되는 Docker lock(자체 `constraints-graph.txt`가
+  `greenlet==3.2.5`를 pin하는)까지 재생성해야 하므로, 이 저장소가 현재 충족하지 못하는
+  gate를 선언하지 않습니다. 예외가 더 이상 실재하지 않으면 테스트가 그 예외를 지우라고
+  실패합니다.
+- **README의 로컬 설치 블록이 어느 셸에서도 통째로 실행되지 않았습니다.** ```bash 펜스
+  안에 PowerShell 활성화 경로(`.venv/Scripts/Activate.ps1`)가 있고 그다음 줄은 POSIX 전용
+  `VAR=value command` 구문이었습니다. POSIX 활성화로 바꾸고 Windows 대응 경로를 주석으로
+  달았습니다.
+- **`docs/enterprise-readiness.md`의 두 명령이 `PYTHONPATH=src`를 빼먹었습니다.**
+  문서화된 설치는 프로젝트 자체를 설치하지 않으므로 `uvicorn sdp.api:app`은
+  `ModuleNotFoundError: No module named 'sdp'`로 실패합니다(측정 확인).
+  같은 스윕이 `AGENTS.md`의 `pip install -e .[dev]` 경로도 같은 결함이라고 보고했는데
+  **그것은 재현되지 않았습니다** — editable 설치는 실제로 동작하고 `PYTHONPATH` 없이
+  import됩니다. 그래서 그 줄은 고치지 않았습니다.
+- **컨테이너 healthcheck 경로를 문서가 틀리게 적고 있었습니다.** README와 CLAUDE.md는
+  `/health`를 노출한다고 했지만 `Dockerfile`과 `docker-compose.yml`은 `/healthz`를
+  조회합니다 — README의 더 아래 단락은 그 구분(상수 응답 vs 백엔드 준비 상태 503)을
+  정확히 설명하고 있어서 같은 문서가 자신과 모순이었습니다.
+
+### Fixed — 문서화된 워크플로가 실제로 동작하지 않던 것들
+- **운영 콘솔이 유효한 actor에게 "플랫폼이 고장났다"고 보고**했습니다. 측정
+  (`?user=external-analyst` — 출하되고 문서화된 유효 actor, 단 그 테넌트는 콘솔이 조회하는
+  데이터셋을 소유하지 않음): connector probe가 **404**(테넌트 범위 — 경계가 동작한 것),
+  나머지 패널은 200인데 badge는 `evidence load failed: connectors`였습니다. 버킷 두 개로는
+  부족했습니다: 4xx는 게이트가 **이 요청**을 거부한 것이고, 플랫폼 실패는 5xx(또는 클라이언트가
+  읽을 수 없는 상태)뿐입니다. Chromium 실측: signed-out → `signed-out view - add ?user=`,
+  external-analyst → `refused for this actor: connectors`, analyst/admin →
+  `ready for pilot review`. 패널 힌트도 버킷별로 다릅니다 — actor를 **보낸** 사람에게 "actor가
+  필요합니다"라고 말하는 것은 두 번째 오답입니다. 새 버킷에 상태 allow-list를 쓰지 않았습니다:
+  그게 이전 결함의 원인이고, 그것을 금지하는 테스트가 제 첫 시도를 잡았습니다.
+- **반쯤 적용된 tenant 마이그레이션이 영구히 복구되지 않았습니다.** `_add_tenant_column`이
+  컬럼이 이미 있으면 **자기 backfill 전에** 반환했습니다. 이 메서드는 ALTER만 하는 형태로 먼저
+  출시되었으니, 그 빌드로 업그레이드된 SQLite 원장은 전부 컬럼이 있고 backfill이 영원히 돌지
+  않습니다. 측정(payload에 복구 가능한 tenant가 있는 원장): 현재 스토어로 열어도
+  `['unresolved']` — 소유 테넌트의 감사자가 모든 과거 행을 잃습니다. SQLite는 문서화된
+  데모/파일럿 배포(영속 볼륨)이므로 정확히 이 in-place 업그레이드 경우입니다. backfill이 매번
+  돌고 미복구 행만 건드리므로 idempotent이며, 복구 불가한 행은 `unresolved`로 남습니다.
+- **drafter가 자기 validator가 거부하는 SQL을 내보냈습니다**(이 부류 세 번째). source table
+  이름이 SQL 절 키워드(`order` 등 24개)와 겹치면 파서가 테이블 목록을 벗어나 `None`을 반환하고
+  validator가 `unauthorized_table_reference`로 거부합니다 — 측정: draft **200** → execute
+  **400**. 문서화된 draft-then-execute 흐름에서 제품이 자기 출력을 거버넌스 위반으로 고발하는
+  셈이고, `FROM order`는 인용 없는 예약어 SQL이라 PostgreSQL도 거부합니다. 명확한 사유와 함께
+  거부하고, 더불어 완성된 질의를 **자기 validator로 자체 검사**해 네 번째 원인을 보고 없이
+  잡습니다(앞의 둘은 `interval '<n> day'` 리터럴과 이 절 키워드였고, 하나씩 고쳐졌습니다).
+- **선언된 컬럼명을 조용히 바꾸고 원래 이름을 보고**했습니다. `order amount` → SQL은
+  `order_amount`, `requested_columns`는 `order amount`, assumptions는 "카탈로그에서 검증된
+  컬럼만 사용" — 응답이 스스로 모순이었고 구매자는 창고가 `column "order_amount" does not
+  exist`라고 답할 때 알게 됩니다. 변환은 유지하되(인용 식별자는 이 게이트가
+  `literal_values_not_allowed`로 거부하므로 실행 불가, 하이픈 차단 계약도 존재)
+  `emitted_identifiers`로 보고하고, 다른 선언 컬럼과 충돌하는 **모호한 변환은 거부**합니다 —
+  매핑이 injective가 아니라 엉뚱한 컬럼을 집계할 수 있었습니다.
+- **`POST /browse/query`가 500**이었습니다. `profile.row_count`가 JSON 문자열이면
+  (`profile`은 `Dict[str, Any]`이고 `POST /catalog/datasets`가 그대로 저장합니다)
+  `_row_count_estimate`가 `TypeError`로 죽어 그 데이터셋의 governed query 경로가 영구히
+  죽었습니다. 500보다 중요한 건 crash 위치입니다 — **정책 결정과 감사 기록 사이**에
+  떨어져 `decisions +1 audits +0`, CLAUDE.md가 타협 불가로 선언한 짝이 깨졌습니다. 모든
+  타입을 열거해 처리하고, 숫자가 아닌 값은 추정치로 라벨하지 않고
+  `unusable_catalog_profile_row_count`로 보고합니다. 제 첫 수정은 `float(v) != int(v)`를
+  써서 `NaN`에 `ValueError`, `Infinity`에 `OverflowError`를 냈고(둘 다 Python `json`이
+  리터럴로 받으므로 **같은 함수의 두 번째 미포착 500**이었습니다) `10**30`도 오분류했습니다
+  — 값 열거가 잡았습니다.
+- `POST /enterprise/auth/oidc-preview`가 **운영자 role map의 열거 oracle**이었습니다.
+  측정(`SDP_OIDC_GROUP_ROLE_MAP={"acme-finance": {"admins": ["platform-admin"]}}`, 자격증명
+  없음): 임의 subject·tenant로 `groups: ["admins"]`를 보내면 200과 함께
+  `roles: ["platform-admin"]`, `tenant_scope: "acme-finance"`가 돌아왔고 매핑되지 않은 group은
+  빈 scope·빈 role이어서 **구별 가능**했습니다 — group 이름을 하나씩 추측해 배포의 group→role
+  정책 전체와 유효한 tenant scope를 읽을 수 있었습니다. trust anchor를 request body에서 거절한
+  이유, 이 라우트의 원장 기록에 actor를 요구한 이유와 같은 범주입니다. 수정은 좁습니다: 호출자가
+  보낸 `role_map`과 저장소 상수인 기본 map은 비밀이 아니므로 그대로 두고, actor 없는 호출에서
+  `SDP_OIDC_GROUP_ROLE_MAP`만 쓰지 않습니다. 매핑된 group과 매핑되지 않은 group의 응답은 이제
+  이름을 제외하면 동일합니다(이 제품이 외부 테넌트 데이터셋과 없는 id에 적용하는 것과 같은 규칙).
+- 같은 라우트가 **미인증 증폭기**였습니다. claim 목록이 개수·길이 모두 무제한이고 group 이름이
+  `groups`와 `group_role_bindings[].group_name`에 두 번 돌아왔습니다. 측정, 요청 1건:
+  group 10 → 1,162 B / group 1,000 → 72 KB / group 20,000 → 1.50 MB(135 ms) /
+  group 100,000 → **7.58 MB**(642 ms), 그리고 2 MB짜리 group 이름 하나 → **4.00 MB**
+  (요청보다 큰 응답). 상한은 256개/256자이고 지금은 각각 17.8 KB와 1.2 KB이며, 잘린 양은
+  `declared_group_count`/`withheld_group_count`와 `...[truncated]` 표시로 선언합니다.
+  `observability.py`의 무제한 관측 행과 같은 결함 범주를 다른 표면에서 만난 것입니다.
+  이 상한의 **첫 구현은 권한 결과를 조용히 바꿨습니다**: 길이 제한을 `_claim_values` 안에 두어
+  group→role 조회에 쓰이는 값까지 잘랐는데, map의 **키**는 자르지 않으므로 256자를 넘는 정상적인
+  group 이름이 자기 map 항목과 더 이상 일치하지 않았습니다(측정: 300자 group 이름 →
+  `roles: []`, 이전 `["data-analyst"]`). 부여가 아니라 보류이므로 fail-closed이지만 조용했고,
+  group이 개수 상한 안에 있었으므로 `withheld_group_count`가 0이어서 사라진 이유를 알 수 없었습니다.
+  매칭은 실제 값으로 하고 **내보낼 때만** 자릅니다 — 증폭기 수정에 필요했던 것은 그것뿐이었습니다
+  (커진 것은 응답이었습니다). 개수 상한은 매칭에도 적용되며(group당 작업량이 미인증 호출자가
+  곱할 수 있는 비용), 그쪽은 `withheld_group_count`로 선언합니다.
+
+
+- 문서화된 draft→execute 워크플로에 **통과 경로가 없었습니다**. 통과합니다.
+- 제안→승인→노출 루프가 두 개의 단절된 개념 저장소 때문에 승인에서 멈춰
+  있었습니다. 승인이 실제로 노출로 이어집니다.
+- 온보딩한 데이터셋이 그래프에 전혀 도달하지 않았습니다(`POST /catalog/datasets`
+  200 직후 `/graph/nodes/<new>` 404). 이제 도달하고, **삭제도 반영**됩니다 —
+  미러가 append-only여서 카탈로그에서 제거된 PII 컬럼이 그래프에 남아 semantic
+  search 최상위 결과로 나왔습니다.
+- DCAT/JSON-LD export가 소비 불가능했습니다. `@id` 키워드, 실제 컨텍스트 문서,
+  그리고 **중첩 속성**까지 매핑했습니다(distribution과 business mapping의
+  속성들이 conforming 프로세서에서 전부 버려지고 있었습니다 — pyld로 확인).
+- `/llm/draft-query`가 모든 실패에 200을 답하고 증거를 남기지 않았습니다.
+- `dataset_ids` 누락 시 500, 문자열 아닌 `user`/`purpose`에 500 → 400.
+- 운영 콘솔이 미인증 뷰에서 스스로를 "evidence load failed"로 보고했습니다.
+  분류를 상태 코드 allow-list에서 **actor 유무**로 바꿨으므로 어떤 4xx로 바뀌어도
+  다시 깨지지 않습니다. actor 안내 문구도 죽은 코드였습니다 — 이제 표시됩니다.
+- 증빙 팩이 공개한 proof 링크를 그대로 따라가면 403이었습니다. 열린 링크와
+  actor가 필요한 링크를 분리해 게시합니다.
+- 죽은 log sink가 API 처리량의 상한이 되지 않도록 breaker를 넣고, sink export를
+  event loop에서 내렸습니다.
+- 마이그레이션이 끝까지 실패하면 컨테이너가 기동을 거부합니다.
+
+- URL에 credential을 담은 http(s) 로그 sink는 **단 한 건도 전송되지 않았습니다**.
+  URL 전체를 `urllib`에 넘겨 userinfo가 연결 host로 남았기 때문입니다 — Loki·Elastic·
+  서명 webhook의 문서화된 push URL 형태가 전부 여기에 해당합니다. 측정:
+  `https://sdp-ingest:TOKEN@logs.example.net/push`로 설정하면 urllib가
+  `sdp-ingest:TOKEN@logs.example.net`에 접속을 시도해 `InvalidURL: nonnumeric port`로
+  실패하는데, manifest는 `configured: true, target: logs.example.net`을 계속
+  보고했습니다. 게다가 그 예외 메시지가 authority를 인용해 **credential이
+  `_EXPORT_ERRORS` 링에 프로세스 수명 내내 보존**되었습니다. 이제 userinfo를 URL에서
+  분리해 `Authorization` 헤더(password 있으면 `Basic`, token 하나면 `Bearer`)로
+  보내고, host가 없거나 port가 숫자가 아닌 http sink도 file sink와 같은 resolver를
+  통과해야 `configured: true`가 됩니다.
+- sink export breaker에 **half-open 상태가 없었습니다**. cooldown이 끝나는 순간 모든
+  요청이 죽은 sink를 동시에 재시도해, 모든 동기 route가 공유하는 anyio threadpool의
+  빈 slot을 `SDP_LOG_SINK_TIMEOUT_MS`만큼 전부 점유했습니다 — breaker를 추가한 이유
+  그 자체가 cooldown마다 되돌아왔습니다. 측정(실제 async 경로, 응답하지 않는 sink,
+  cooldown 만료 직후 동시 20건): slot 8개면 sink 호출 **8회**, 무제한이면 **20회**,
+  outage가 계속되는 동안 cooldown마다 반복. 이제 정확히 **1회**만 probe하고 나머지는
+  skip하며, probe가 성공하면 그 즉시 모두에게 닫힙니다. 실패한 probe는 cooldown을
+  다시 걸되 claim을 놓아 주므로 복구가 영구히 막히지 않습니다.
+
+### Changed — 정직한 측정
+- **거버넌스 카운트가 자기 페이지 크기였습니다.** `sdp_request_observations_total`은 이미
+  고쳤는데 감사·정책 gauge는 같은 방식으로 읽혀 남아 있었습니다. 측정(거버닝 mutation 700건):
+  실제 700 → `/metrics` **500**, `/enterprise/evidence-pack` **500**,
+  `/enterprise/observability` **500**. 세 표면 모두 `list_*(limit=500)`의 `len()`입니다. 실제
+  카운트로 바꾸고, 상한 도달 시 값이 아니라 하한으로 게시합니다. 다음 사례는 **AST 검사**가
+  잡습니다 — `list_*(limit=N)`에서 대입된 변수의 `len()`이 `*_count`/`*_total`로 게시되는 모양.
+- **`license`를 어떤 API 경로로도 설정할 수 없었습니다.** 두 request 모델에 필드가 없어 값이
+  조용히 버려졌습니다(create `CC-BY-4.0` → `internal`, patch `MIT` → `internal`, 시드 전체
+  `internal`). 노출만으로는 부족했습니다: `register_dataset`이 필드를 손으로 나열해 새 필드를 또
+  무시했습니다. request 필드를 펼쳐 생성하고 **전 필드 forwarding을 기계적으로** 검사합니다.
+- **`metadata_completeness` KPI의 target을 비교하는 코드가 없었습니다.** `>=90 percent` +
+  `status: implemented`인데 0.90 비교가 어디에도 없었습니다(있던 임계값은 다른 측정의 0.95와
+  ontology의 0.7). `mean_metadata_completeness`를 측정해 게이트합니다.
+- **가정적 판정이 실제 접근 시도처럼 기록**되었습니다. `POST /policy/decision`은 "이 subject라면
+  정책이 뭐라고 할까"에 답하는 것이 목적이므로 `subject`는 의도적으로 호출자 지정입니다. 그런데
+  그 가정적 답이 **라벨 없이** 증빙 원장에 저장되었고, 지목된 subject에 귀속되며, **누가 물었는지는
+  기록되지 않았습니다**. 측정(`analyst`가 `external-analyst`에 대해 질의): 응답과 원장 모두
+  `subject: external-analyst, action: preview, effect: deny, reason: tenant boundary denied` —
+  감사자는 다른 테넌트의 다른 신원이 거부된 preview를 시도한 기록으로 읽습니다. 그런 시도는
+  없었고, 행을 만든 호출자의 이름은 어디에도 없었습니다. `subject`는 그대로 두고(그게 목적입니다)
+  행에 `evaluation_mode: hypothetical`·`asked_by`·`subject_is_caller`를 더했습니다. `provenance`는
+  opt-in이므로 다른 호출자의 행 모양은 바뀌지 않습니다(테스트로 고정).
+
+- `paid_pilot_ready`가 작성된 `status` 리터럴에서만 유도되어 **반증 불가능**했습니다.
+  이제 배포에서 측정합니다. 더불어 게이트를 충족시키던
+  `SDP_EVIDENCE_RETENTION_DAYS`는 `src/` 어디에도 소비자가 없었고 `'banana'`로도
+  통과했습니다 — 게이트에서 빼고 `unimplemented_environment`로 **게시**합니다.
+  보존 기능은 구현하지 않았습니다(타이머로 감사 기록을 지우는 것은 결함 수정이
+  아니라 제품 결정입니다). 레지스트리 전체에 대해 소비자 없는 변수를 금지하는
+  기계적 검사를 추가했습니다.
+- `local_evidence_retention` 컨트롤은 이름이 보존 정책을 주장하는데 실제로는
+  **내구성**(재시작 생존)만 제공했습니다. label과 설명을 사실에 맞췄습니다.
+- 같은 이유로 `SDP_ALERT_WEBHOOK_URL`도 게이트에서 뺐습니다. 이 변수를 읽는 코드는
+  `_sink_status`가 **설정 여부**를 보고하는 한 곳뿐이고, 이 URL로 POST하는 코드도
+  `GET /enterprise/observability`가 게시하는 alert 조건을 평가하는 코드도 없습니다.
+  이 사례는 위의 "소비자 없는 변수 금지" 검사의 한계를 드러냅니다 — 소비자가
+  **존재**했고(자기 자신의 존재 여부만 읽는 소비자) 검사를 통과했습니다. 그래서
+  능력에 대한 증빙은 이름 검색이 아니라 전용 테스트가 담당합니다. 게시되는 alert
+  규칙은 삭제하지 않았습니다(조건 자체는 올바르고 operator가 자기 모니터링 스택에
+  그대로 구현할 수 있습니다) — 대신 `alert_evaluation: declared_not_evaluated`,
+  규칙별 `evaluated: false`, `alert_webhook_routing: declared_unimplemented`로
+  표시합니다. alert 평가와 라우팅은 구현하지 않았습니다.
+- mock 실행의 수치에 출처 라벨을 붙였습니다. 하나의 라벨
+  (`catalog_profile_estimate`)이 세 가지 provenance에 쓰이고 있었고, 그 중 하나는
+  주장하는 추정값과 **600배** 차이나는 상한이었습니다. 네 provenance에 네 라벨.
+- 거버닝 쓰기의 mutation 이전 감사 행이 `allowed`라고 주장했습니다 —
+  `authorized`로 바꾸고, 결과를 아는 라우트는 실제 결과를 기록합니다. 리뷰 한 건이
+  증거를 두 번 남기던 문제도 함께.
+- `ontology_mapping_coverage`는 **커버리지를 줄이면 올라갔습니다**. `승인 mapping /
+  전체 mapping`이었고, 자기 KPI 정의("buyer critical glossary terms 중 매핑된 비율")와 분모가
+  달랐습니다. 측정: mapping 12건 중 7건을 지우면 0.917 → **1.0**. 이 값은 `demo_smoke`의
+  `ready`와 saleability gate를 0.7 기준으로 통제합니다. 그 분모는 두 가지를 더 가렸습니다 —
+  mapping이 전혀 없는 glossary 개념 `이탈 고객`(분모에 없어서 유일한 실제 갭이 보이지 않았음),
+  그리고 ontology가 정의하지 않은 개념을 가리키는 mapping 3건(`고객 이탈`·`전환`·`캠페인`;
+  이 중 2건이 approved여서 **미정의 개념에 대한 승인 mapping이 ontology coverage의 분자**였습니다).
+  세 수치를 각자의 이름으로 게시합니다: glossary 기준 coverage(0.8), 옛 숫자인
+  `ontology_mapping_approval_rate`(0.917), 그리고 `unmapped_glossary_concepts` /
+  `unregistered_mapping_concept_count`. KPI 정의의 "또는 진행 중인 steward patch 제안" 구절은
+  같은 KPI의 guardrail과 모순이었고 구현이 guardrail을 따르고 있었으므로, 숫자를 느슨하게
+  맞추는 대신 정의를 엄격한 쪽으로 정정했습니다. **0.8 ≥ 0.7이므로 gate와 `ready`는
+  불변입니다** — 결함 수정이고 제품 결정이 아닙니다.
+  이 수리에 대한 적대적 리뷰가 두 방향을 더 짚었고 둘 다 처리했습니다. (1) steward가 유일하게
+  커버되지 않은 glossary 개념에 mapping을 **제안**하는 것 — 실제 커버리지를 가장 크게 개선하는
+  행동 — 이 옛 지표에서는 숫자를 **떨어뜨렸습니다**(측정 0.917 → 0.846; 제안 행이 분모에만
+  들어가므로). 지표가 측정 대상과 역상관이었습니다. glossary 기준 coverage는 구조적으로 이를
+  해결하며(검증: 제안 시 0.8 → 0.8, 승인하면 상승), 방향을 테스트로 고정했습니다.
+  (2) gate의 `evidence`와 KPI의 `source_endpoints`가 `/ontology/patches`를 게시하는데 측정은
+  patch 큐를 **읽지 않습니다**. 게시된 증빙을 따라간 diligence 독자는 아무것도 기여하지 않는 큐를
+  가져갔습니다. 측정이 실제로 읽는 표면(`/ontology/concepts` = 분모,
+  `/catalog/datasets/{dataset_id}` = 분자, `/enterprise/evidence-pack` = 게시 지점)으로
+  교체했습니다. patch 큐는 그것을 실제로 읽는 steward-review 표면의 증빙입니다. 보고된 1건만
+  보지 않고 일반 경우도 확인했습니다: 전 manifest의 endpoint 형태 증빙 포인터 **34건**이 모두
+  실제 라우트이며, 라우트 이름이 바뀌어 404를 가리키지 않도록 기계적으로 고정했습니다.
+
+- 게시된 SHACL shape catalog가 **평가되지 않았습니다**. `required_properties`를 읽은
+  사람은 그것이 `conforms`를 만든 제약이라고 받아들이는데, 실제로 돌던 것은 shape id만
+  빌려 쓴 손으로 쓴 규칙 세 개였습니다. 측정: `format`과 `endpoint`가 빈 distribution →
+  `conforms: true`, violation 0건. `concept`가 빈 mapping → `concept`를 지목하는 violation
+  없음. 그리고 `DatasetShape`는 실제로 강제되는 `description`·`sensitivity`·`title`·
+  `update_frequency`를 게시 목록에서 빠뜨렸습니다 — 카탈로그가 **양방향으로** 틀렸습니다
+  (검사하지 않는 property를 게시하고, 검사하는 property를 게시하지 않음). 이제 게시된 모든
+  property가 그것을 선언한 항목에 의해 평가되고, `DatasetShape`는 `REQUIRED_METADATA_FIELDS`에서
+  유도되어 다시 어긋날 수 없으며, "승인 mapping 최소 1건"은 property 존재 검사가 아니라
+  cardinality로 선언됩니다. `shacl_compatible`은 하드코딩 `true`에서 "게시된 모든 shape가
+  평가되는가"로 바뀌었고, SHACL 엔진이 돌지 않는다는 사실(`pyshacl`은 의존성이 아닙니다)을
+  `validation_engine`/`shacl_engine_executed`로 함께 게시합니다. **시드는 이미 모든 shape를
+  만족하므로 `validation_pass_rate`는 1.0에서 움직이지 않았습니다** — gate가 더 많이 측정하면서
+  숫자는 그대로입니다.
+
+- connector probe의 control 판정이 **사전 멤버십 동어반복**이었습니다.
+  `implemented = bool(_IMPLEMENTED_PROOF.get(control, []))` — "이 control이 구현되었는가"를
+  "이 control 이름이 스무 줄 위 손으로 쓴 dict의 키인가"로 답했습니다. 측정(유효한 5쌍,
+  필수 control 11종 전부): dict에 11/11이 있어 `planned`가 **도달 불가능**했고, 전체 행렬에서
+  판정을 움직일 수 있는 것은 `credential_vault`의 secret 존재 확인 하나뿐이었습니다. control 11개가
+  "implemented"라고 세고 있던 구매자는 **주장 11개**를 세고 있었습니다. 각 control의 효과를 실제로
+  검증하는 것은 결함 수정이 아니라 별도 프로젝트이므로, 이번 변경은 주장을 **거짓이 될 수 있게** 만들고
+  **강도를 말하게** 합니다: control은 자신이 선언한 proof endpoint를 이 빌드가 전부 서비스할 때
+  implemented이고, 행마다 `verification`(`declared_only`/`proof_route_served`/
+  `runtime_probe_verified`)과 probe 단위 `control_verification_counts`, 그리고 `verdict_basis`를
+  게시합니다. 여기서 나오는 정직한 숫자: 기본 데모 배포에서 runtime 검증 control은 **0개**입니다.
+  환경변수 이름이 `proof_endpoints`에 섞여 있던 것도 `config_proof`로 분리했습니다.
+
+### Added — 기계가 읽는 계약
+
+- **거부 계약을 OpenAPI 문서에 게시**합니다. 변경 전: 에러 상태를 하나라도
+  문서화한 operation이 60개 중 **0개**. 이제 42개이고, 남은 18개는 실제로 거부가
+  없는 열린 읽기입니다. 계약은 표 하나에 있고, 코드가 낼 수 있는 상태는
+  `sdp.api`의 AST를 따라 유도해 **양방향**으로 대조합니다.
+- **200 응답 계약을 게시**합니다. 변경 전: 쓸 수 있는 200 스키마를 가진 operation이 60개 중
+  **0개**(54개가 `{"type":"object","additionalProperties":true}`, 4개 bare array, 1개 빈
+  스키마, 1개 타입만). 모든 핸들러가 `-> dict[str, Any]`여서 사실이지만 소비자에게는 무정보였고,
+  문서로 클라이언트를 만드는 구매자는 카탈로그·evidence pack·모든 거버닝 읽기에 `Dict[str, Any]`를
+  받았습니다. JSON을 반환하는 GET **39개**에 스키마를 게시합니다 — **라우트를 실행해 유도**하고
+  (손으로 쓴 응답 스키마는 이 제품이 거부하는 drift 그 자체입니다) 테스트가 실제 응답과 대조합니다.
+  그 테스트가 제 유도 코드의 narrowing 버그를 잡았습니다: `{}`("any")가 타입에 흡수되어 `null`로
+  관측된 `mappings[].steward`/`approved_at`에 `string`을 게시하고 있었습니다. 유도 규칙은
+  `required` 미표시, `integer` 대신 `number`, 관측된 `null`·빈 배열 items·타입 충돌은 `{}`입니다.
+  게시하지 않는 22개는 사유와 함께 선언하고 선언의 정확성도 테스트합니다.
+- `GET /metrics`가 `application/json` + 빈 스키마로 문서화되어 있었습니다. 실제로는
+  `text/plain; version=0.0.4; charset=utf-8`(Prometheus exposition)을 반환하므로, 생성된
+  클라이언트는 Prometheus 텍스트를 JSON으로 파싱하려 했을 것입니다. 실제 content type으로
+  정정했습니다.
+- **요청 본문 계약을 게시**합니다. 네 라우트(`POST /catalog/datasets`,
+  `PATCH /catalog/datasets/{id}`, `POST /llm/draft-query`, `POST /browse/query`)는
+  이미 pydantic 모델로 검증되고 있었지만 문서에는 `additionalProperties: true`로만
+  나타났습니다. 런타임은 그대로이고(400 형태 유지), 게시한 모델이 핸들러가 실제로
+  생성하는 모델인지 AST로 확인합니다.
+- **profile 수치가 "누가 언제 측정했는지"를 말하게 했습니다(LIN-003).** 수락 기준은
+  **metric timestamp와 계산 범위 표시**인데 라우트는 숫자만 공개하고 둘 다 공개하지
+  않았습니다 — 그래서 **선언이 측정으로 읽혔습니다**. 시드 카탈로그에서 측정:
+
+      GET /catalog/datasets/crm-customer-master/profile
+        -> row_count: 1200000
+           schema_profile[1]: {null_ratio: 0.01, distinct_ratio: 0.99}
+
+  이 중 아무것도 이 서비스가 계산하지 않았습니다. `demo_seed.py`의 픽스처 값이거나,
+  호출자가 등록 요청 본문에 넣은 값입니다. 프로파일러가 없으므로 소스의 행을 읽는
+  코드가 없고, 따라서 null 비율을 셀 수 없습니다. evidence 표면에서 "120만 행, 1% null"을
+  읽은 구매자는 **이 제품이 한 적 없는 주장**을 읽고 있었습니다.
+  숫자는 그대로 둡니다(소스 자신의 선언이고 그 자체로 유용합니다) — 대신 출처와 함께
+  보냅니다: `computed_by_this_service: false`, `measurement_status: declared_by_source`,
+  `computation_scope: source_declared_scope_unknown_to_this_service`,
+  그리고 `metric_timestamp`는 **선언된 값이거나 `null`**입니다. 읽은 시각을 찍는 것이
+  여기서 유일하게 적극적으로 오해를 만드는 선택입니다 — 측정 시점을 모르는 수치에
+  매 요청마다 새 timestamp를 붙이면 낡은 선언이 신선하게 보입니다. 값이 문자열이
+  아니면 `str()`로 강제하지 않고 없는 것으로 취급합니다.
+  `declared_unavailable_metrics`가 LIN-003이 요구하지만 이 제품에 없는 지표를 사유와
+  함께 적습니다. `duplicate_ratio`는 행을 훑어야 하므로 계산할 수 없습니다.
+  `distinct_count`는 `distinct_ratio * row_count`로 **유도하지 않습니다** — 둘 다
+  선언값이고, 곱하면 어느 입력도 뒷받침하지 않는 측정을 만들어냅니다. "없다"와
+  "유도하기를 거부한다"는 다른 주장이고 사실인 쪽은 후자이므로, 사유 문구가 그렇게
+  말하고 테스트가 그 문구를 고정합니다.
+- **품질 임계값을 선언하고 위반을 경고하게 했습니다(LIN-004).** 재료는 전부 있었고
+  전부 쓰이지 않았습니다: `quality_score`·`freshness_score`·`metadata_completeness`와
+  컬럼별 `nullable_ratio`·`distinct_ratio`·`quality_issues`가 저장되고 공개되고
+  있었지만, 임계값을 선언한 코드가 어디에도 없었으므로 위반이 성립할 수 없었고 경고가
+  존재할 수 없었습니다. **임계값 없는 숫자는 품질 신호가 아니라 그냥 숫자입니다.**
+  규칙 여섯 개를 선언하고 위반마다 수락 기준이 명시한 `rule`·`observed_value`·`threshold`를
+  담아 데이터셋 상세와 거버닝 스키마 조회에 공개합니다. 세 가지를 지킵니다.
+  (1) **평가할 수 없는 규칙은 통과가 아닙니다** — 입력이 없거나 숫자가 아니거나
+  NaN/inf이거나 bool이면(bool은 `int` 서브클래스라 `True`가 `1.0`으로 비교될 수 있습니다)
+  `unevaluated`와 사유를 보고하고 셉니다. 없는 데이터를 "임계값 이내"로 처리하면 품질
+  표면의 목적이 정확히 뒤집힙니다. (2) **경고는 discovery 경계를 넘지 않습니다** —
+  "컬럼 `ssn`이 94% null"은 `discovery_view`가 withhold하는 컬럼별 통계를 quality 필드로
+  우회시키는 것입니다. 그래서 규칙에 범위가 있습니다: dataset 범위는 discovery가 이미
+  공개하는 필드를 읽고 거기 나타나며, column 범위는 정책 게이트 뒤에만 나타나고 공개
+  표면에는 `withheld_quality_warning_count`가 갑니다. (3) **임계값은 한 곳입니다** —
+  `metadata_completeness`는 saleability gate가 이미 비교하는 0.90을 재사용합니다(두 벌이
+  어긋나면 같은 데이터셋이 pass이면서 gap입니다).
+  테스트가 규칙 **여섯 개 전부에 대해 위반 픽스처를 만들어 실제로 발화하는 것을
+  확인합니다** — 시드 데모 데이터는 모든 임계값에 대해 깨끗하므로, 시드만 읽는 테스트는
+  한 번도 발화하지 않는 규칙 집합을 통과시킵니다. 임계값과 **같은** 값은 발화하지 않고
+  (시드의 `semantic-glossary.broader_concept`가 null 비율 0.200으로 정확히 경계에
+  있습니다) 0.001 넘으면 발화하는 것도 함께 확인합니다 — 그래야 앞의 단언이 죽은 규칙
+  때문에 통과하는 것이 아님이 증명됩니다. 이에 따라 LIN-004는 `not_implemented` →
+  `implemented`입니다.
+  한 가지를 자체 점검에서 고쳤습니다: 임계값 비교 전의 내부 불변식이 `assert`였는데
+  `-O`에서는 제거되므로 threshold가 `None`인 규칙이 `numeric < None`에 도달해 공개된
+  읽기 안에서 TypeError를 냈을 수 있습니다. 이제 잘못 선언된 규칙은 예외 대신
+  `unevaluated`로 자기 상태를 보고합니다.
+- **PRD가 선언한 여섯 개 지연 예산을 측정하게 했습니다 — 단방향으로.**
+  `docs/prd-trd.md`는 표면별 p95 예산을 선언합니다(NFR-PERF-001~006: catalog 검색 2초,
+  dataset 상세 1.5초, schema browsing 3초, preview 10초, LLM 답변 15초, ontology term
+  resolution 500ms). 이 중 **어느 것도** 저장소의 어떤 코드와도 관계가 없었습니다.
+  미들웨어는 요청별 `latency_ms`를 처음부터 기록했고 `/enterprise/observability`가 그것을
+  공개했지만, 예산을 호명하는 코드가 없었으므로 선언된 여섯 개 목표는 비교 대상이
+  없었습니다 — **비교 대상이 없는 목표는 gate가 아닙니다**. CAT-001의 수락 기준도 같은
+  2초를 말하면서 같은 상태였습니다.
+  `GET /enterprise/latency-budgets`가 각 예산을 그것이 적용되는 라우트에 묶고(라우트
+  분류는 앱 자신의 컴파일된 패턴으로 하므로 dispatch와 어긋날 수 없습니다) 성공 응답의
+  nearest-rank p95와 비교합니다. **측정은 의도적으로 단방향입니다.** 관측은 이
+  프로세스에서 나오고(in-memory store, seed 데이터, 단일 워커, 네트워크 없음) 배포는
+  데이터베이스·실제 데이터 규모·동시성·네트워크 홉을 더해 느려지기만 하므로, in-process
+  p95는 배포 p95의 **하한**입니다. 예산 초과는 결정적이고 예산 미달은 배포에 대해 아무것도
+  증명하지 않습니다. 그래서 필드 이름이 `within_budget`이 아니라 `budget_refuted`이고,
+  `budget_confirmation_possible: false`와 그 사유를 함께 게시합니다 — `within_budget: true`는
+  "SLO를 충족한다"로 읽히고 이 측정은 정작 중요한 방향으로 그것을 뒷받침할 수 없습니다.
+  표본이 20 미만인 표면은 `insufficient_sample`로 보고하고 **어느 방향으로도** 판정하지
+  않습니다(표본 몇 개의 p95는 이름만 백분위인 표본 최댓값입니다). 거부 응답은 세지
+  않습니다 — 거부는 검색이 아니고, 빠른 4xx를 세면 가장 일을 덜 한 요청들이 모든 p95를
+  끌어내립니다. 공개하는 것은 라우트 **템플릿**뿐이어서, 요청별 피드를 withhold하는
+  manifest의 공개 경계 안에 머무릅니다.
+  `tests/test_latency_budget_measurement.py`가 각 표면에 실제 트래픽을 흘려 여섯 개 전부를
+  평가시키고 어느 것도 반증되지 않음을 확인합니다. 그리고 **반증 경로가 실제로 작동하는
+  것을 증명합니다** — 예산보다 느린 관측을 넣어 판정이 뒤집히는 것을 봅니다. 이것이 없으면
+  모든 `budget_refuted: false`는 한 번도 일어나지 않은 비교일 수 있습니다. 이 gate가 잡을
+  종류의 결함이 이미 저장소에 기록되어 있습니다: `src/sdp/catalog.py:468`이 데이터셋
+  1005개에 대해 2000-토큰 질의 **5.10초**를 측정하고 있고, 이는 NFR-PERF-001의 2초 예산을
+  넘습니다(그래서 질의 길이가 최적화가 아니라 상한으로 막혀 있습니다).
+  이에 따라 NFR-PERF-001~006은 `not_implemented` → `partial`로, CAT-001의 비고는 지연
+  측면이 측정되었음을 반영해 갱신했습니다.
+  라우트 분류에는 bounded cache를 붙였습니다. 한 번의 리포트가 버퍼 용량만큼의 경로를
+  전체 라우트에 대조하고 `prometheus_metrics_text`가 observability manifest를 통해 거기
+  도달하므로, scrape마다 그 작업이 반복되고 있었습니다. 서로 다른 경로 500개로 채운
+  버퍼에서 측정: `/metrics` **37.0 → 5.8 ms**, `/enterprise/latency-budgets`
+  **73.6 → 6.2 ms**. `{dataset_id}` 경로는 호출자가 주는 값이므로 캐시는 **상한이 있어야**
+  합니다(무한 맵은 외부에서 프로세스 메모리를 키우는 경로입니다) — 테스트가 상한을
+  단언합니다. 라우트 테이블은 import 시점에 고정되고 이후 등록되는 라우트가 없으므로
+  캐시된 분류가 낡을 수 없습니다.
+  표면별로 `sample_window_seconds`도 함께 공개합니다. 관측 버퍼는 **모든** 라우트가
+  공유하는 하나의 ring이므로 바쁜 표면이 조용한 표면의 행을 밀어냅니다 — 며칠에 걸친
+  요청 20개의 p95와 지난 1분의 요청 20개의 p95가 같은 종류의 숫자처럼 나란히
+  놓이는데, 같지 않습니다. 창의 **너비**는 읽는 사람이 필요한 값이고 달리 알 방법이
+  없으므로 공개하고, timestamp가 아니라 초 단위 span으로 공개합니다 — 거버닝 읽기가
+  **언제** 일어났는지는 필요하지 않고, 그것이 바로 unauthenticated manifest가 요청별
+  피드를 withhold하는 이유입니다. stamp가 없거나 문자열이 아니거나 파싱되지 않거나
+  aware/naive가 섞여 있어도(섞인 채로 빼면 예외입니다) 공개된 읽기가 터지지 않고 span만
+  `null`이 됩니다. `implemented`가 아닌 이유는 위의 단방향성
+  그대로입니다 — 요구사항은 배포에 대한 진술이고 이 측정은 그것을 확인할 수 없습니다.
+- **그 매트릭스를 적대적 감사에 걸어 38건을 정정했습니다.** 전수 매핑을 만든 직후
+  스스로 감사했습니다(요구사항군별 에이전트 11개가 모든 행을 코드에 대고 검증 →
+  제기된 발견 45건을 각각 **독립 에이전트가 반증 시도**, 총 56 에이전트). 36~38건이
+  확인되고 **7건이 기각**되었습니다.
+  **상태 판정 기준이 제 초기 매핑에서 느슨했던 것이 드러났습니다.** 기준은 PRD의
+  **수락 기준(ACCEPT 열)** 이어야 합니다 — 기능이 어떤 형태로든 존재하는지가 아니라
+  그 요구사항이 명시한 메커니즘이 있는지입니다. 수락 기준이 이 저장소에 없는
+  메커니즘을 호명하면 기능이 대체로 동작해도 `implemented`가 아닙니다.
+  `implemented` **37건 → 13건**, `partial` 20건 → 45건, P0 `implemented` 21건 → 6건.
+  정정의 대표적인 근거(모두 코드 인용과 함께 재현):
+  `CAT-002`는 상세 페이지가 표시해야 할 11개 필드 중 `source_system`을 거버넌스
+  경계 때문에 의도적으로 withhold합니다(10/11). `CAT-005`의 수락 기준은 변경
+  **사유** 기록인데 `_build_dataset_payload`가 모든 카탈로그 쓰기에 `reason="ok"`를
+  하드코딩하고, `deprecate`만 호출자 사유를 받습니다(3/4 경로가 사유 없음).
+  `CAT-009`의 수락 기준은 business key 또는 ontology mapping 기반 추천인데
+  `get_join_candidates`는 `dataset.mappings`를 **읽지 않고** 컬럼 이름 일치를 쓰므로,
+  승인된 mapping만 공유하는 두 데이터셋은 `[]`를 돌려받고 `id`/`amount` 같은 일반
+  컬럼명만 공유하는 둘은 추천됩니다. `POL-003`의 마스킹은 `col.pii`만 보고 subject·
+  purpose·PRD가 호명한 sensitive/confidential 태그를 보지 않습니다. `ONT-002`·`ONT-005`의
+  수락 기준은 SHACL/OWL 검증과 reasoner인데 둘 다 없습니다. `NFR-QUAL-004`의 수락
+  기준은 **CQ pass rate**이고 그 전제인 CQ 등록(`ONT-008`)이 미구현입니다.
+  **반대 방향도 있습니다.** `NFR-SEC-004`를 `external`에서 `partial`로 올렸습니다 —
+  수락 기준이 "모든 **내부/외부** 통신 TLS"이고, 이 저장소가 소유한 내부 링크 세 개가
+  평문을 허용합니다(JWKS fetch가 http 허용, log sink가 Authorization 헤더를 지고 http
+  허용, 배포되는 postgres 프로파일이 `SDP_DATABASE_SSLMODE: disable`). 게다가 제
+  비고는 **이 저장소에 존재하지 않는 Traefik 설정**을 책임자로 지목하고 있었습니다
+  (`grep -rn traefik` → 제 비고 자신만). 다른 저장소의 모양을 가져다 쓴 것이고,
+  근거 없는 책임 전가였습니다.
+  `NFR-REL-001`/`002`는 `not_implemented` → `external`입니다. 매트릭스가 **자기
+  어휘와 모순**이었습니다 — `external`의 정의가 "배포/호스트 플랫폼의 책임"이고 그
+  세 예시 중 하나가 바로 "availability targets"인데, 가용성 요구사항을
+  `not_implemented`로 적어 두었습니다. `NFR-SEC-006`은 `implemented` → `external`:
+  LLM provider로 데이터를 보내지 않는다는 주장이 **통제가 있어서가 아니라 provider
+  경계가 아예 없어서** 성립하고, 인용된 테스트는 카탈로그 DSN redaction을 단언할
+  뿐 model egress에 대해 아무것도 말하지 않습니다.
+  기각된 7건은 **전부 제가 감사 도중에 이미 고친 것**이었습니다(CAT-001과
+  NFR-PERF-001~006 — 검증자가 "제기된 current status가 파일에 존재하지 않는다"로
+  기각). 감사를 제 수정과 병행 실행한 비용이고, 검증 단계가 그것을 잡았습니다.
+  인용도 세 건 교체했습니다. 감사가 지적한 대로 `CAT-004`/`ONT-003`이 인용한
+  concept-graph 테스트는 glossary 개방성만 단언하고 mapping status나 hierarchy
+  traversal을 다루지 않으며, `CAT-005`가 인용한 governed-write 테스트는 카탈로그
+  라우트를 하나도 건드리지 않습니다.
+  생성 문서에 **판정 기준과 이 분포의 의미를 명시**했습니다 — `partial` 45건은
+  정보가 없다는 뜻이 아니라 **정보가 상태가 아니라 비고에 있다**는 뜻입니다.
+  이 작업에서 제 적용 스크립트의 결함 하나도 저장소 가드레일이 잡았습니다:
+  긴 `tests/x.py::test_name` 인용이 wrap 경계에서 쪼개져 식별자 안에 공백이 들어갔고,
+  anti-dangling-evidence 테스트가 "존재하지 않는 테스트 3건"으로 실패했습니다.
+- **요구사항 대응 매트릭스를 전수로 만들고 기계가 강제하게 했습니다.**
+  `CLAUDE.md`가 요구사항 대응 매트릭스로 지목하는 `docs/implementation-compliance.md`를
+  PRD에 대고 측정한 결과: PRD의 요구사항 **74건**(기능 52 + NFR 22) 중 문서가 언급하는 것은
+  **13건**, P0 34건 중 **25건이 아예 없었습니다**. 빠진 것들이 대부분 실제로는 구현되어
+  있다는 점이 문제를 더 나쁘게 만듭니다 — 읽는 사람은 어느 쪽인지 구별할 수 없고, 부재는
+  부재로 읽힙니다. 손으로 유지하는 매트릭스가 낡는 방향이 정확히 이쪽입니다.
+  `docs/requirements-coverage.md`는 **생성 문서**입니다: 목록을 PRD에서 파싱하므로 원본과
+  어긋날 수 없고, 모든 ID가 명시적 상태(`implemented`/`partial`/`not_implemented`/`external`)와
+  증빙 포인터를 가져야 합니다. `tests/test_requirements_coverage.py`가 (1) 모든 PRD ID의 매핑
+  존재, (2) 반대 방향 — PRD가 더 이상 선언하지 않는 ID의 매핑 금지, (3) 모든 증빙 포인터의
+  실제 해석(이 앱이 서비스하는 route / import 가능한 attribute / **pytest가 수집하는** test id),
+  (4) `implemented` 주장의 수집되는 test 보유, (5) 약한 상태의 사유 기재, (6) 문서와 생성
+  결과의 글자 단위 일치를 강제합니다. 역검증으로 10가지 훼손이 모두 실패를 일으키는 것을
+  확인했습니다 — 그중 하나가 **PRD에 요구사항이 추가되면 답할 때까지 스위트가 깨진다**는
+  것으로, 이 문서가 다시 낡지 않게 하는 성질입니다.
+  이 기계장치가 제 자신의 작업에서 두 가지를 잡았습니다. 첫째, 제가 기억으로 쓴 증빙
+  포인터 **102개 중 25개가 해석되지 않았습니다**(존재하지 않는 함수 이름 1개, 수집되지 않는
+  test id 24개) — 손으로 쓴 인용은 쓰는 그 순간에도 틀립니다. 둘째, 게시한 상태 어휘는
+  `implemented`를 "구현이 답하고 **테스트가 덮는다**"로 정의하는데 게이트는 route 포인터
+  하나만으로도 통과시켰습니다(CAT-009가 그 상태였습니다 — 실재하는 route 2개, 실재하는
+  테스트 2개, 인용된 테스트 0개). 어휘와 게이트가 같은 말을 하도록 `test:` 포인터를
+  요구하게 좁혔습니다.
+  **CAT-001은 이 과정에서 `implemented` → `partial`로 내렸습니다.** 수락 기준이
+  "2초 이내 95p 응답, facet count 포함"인데 둘 다 성립하지 않습니다: `/catalog/search`
+  응답은 `{query, count, items}`로 facet count가 없고(facet은 별도 라우트입니다), p95
+  지연을 측정해 2초 예산과 대조하는 코드가 없습니다. 이 저장소가 기록하는 유일한 지연
+  수치는 오히려 예산을 넘습니다 — `src/sdp/catalog.py:468`이 데이터셋 1005개에 대해
+  2000-토큰 질의 **5.10초**를 측정하고 있고, 그래서 입력이 최적화가 아니라 상한으로
+  막혀 있습니다.
+- demo smoke의 `ready` 게이트가 12단계 HTTP 표면을 실제로 통과해야 참이 됩니다.
+- 테스트 격리를 `tests/conftest.py`의 autouse fixture 하나로 모든 파일에
+  적용했습니다. 이전에는 `test_api.py`에만 있어서 파일 순서를 뒤집으면 5건이
+  실패했습니다.
+
+### Known limitations (덮지 않고 적어 둡니다)
+
+- `PostgresGraphStore`의 삭제 경로(`edges_for`/`delete_edge`/`delete_node`)는
+  라이브 Postgres+AGE+pgvector에서 **실행해 보지 못했습니다**. in-memory 쪽은
+  테스트가 덮고, 실제 DB가 필요한 단언은 `tests/test_integration_age.py`에
+  있습니다(DSN 없으면 skip).
+- 200 응답 스키마는 JSON을 반환하는 GET 38개에 게시했고, 본문이 필요한 non-GET 20개는
+  미게시입니다(스키마를 유도하려면 mutation을 구동해야 하고, 그러면 검증 테스트가 그래프 스토어
+  상태를 남깁니다 — 요청 본문 쪽은 이미 게시되어 있습니다). `response_model`은 쓰지 않았습니다:
+  필드를 필터링하므로 동작 변경 위험이 있어, 런타임을 건드리지 않는 `responses=` 문서화 경로를
+  택했습니다.
+- 요청 본문 10건은 모델이 없는 라우트입니다(느슨한 키 읽기). 스키마를 손으로
+  써 붙이면 핸들러가 읽는 것과 어긋날 수 있고, 모델을 주면 400이 422로 바뀝니다.
+- 그래프 스토어 싱글턴은 테스트 격리 대상에서 제외했습니다(snapshot API가 없고,
+  테스트를 위해 제품 API를 만드는 것은 범위를 넘습니다).
+- alert 조건 평가와 `SDP_ALERT_WEBHOOK_URL` 라우팅은 구현되지 않았습니다(위 참조).
+  조건은 게시하지만 계산하지 않습니다.
+- http(s) sink의 `Authorization` 분리는 **로컬에서 포착한 요청 객체**로 검증했습니다
+  (urllib이 다이얼하는 host, 재구성된 URL, 헤더). 실제 원격 sink에 대한 왕복은
+  실행하지 않았습니다.
+- `oidc-verify`에서 claim 상한은 **권한 결과를 바꿀 수 있습니다**: 상한을 넘은 group은 role을
+  부여하지 않습니다. 부여가 아니라 보류이므로 fail-closed이지만 동작 변경이며, 그래서 verify 응답도
+  `declared_group_count`/`withheld_group_count`를 게시해 운영자가 사라진 role의 이유를 볼 수
+  있게 했습니다. 256개를 넘는 group을 담은 토큰을 쓰는 배포는 이 상한을 먼저 검토해야 합니다.
+- connector control의 `proof_route_served`는 "선언된 proof endpoint가 이 빌드의 라우트로
+  존재한다"는 뜻이고, 그 control이 실제로 동작한다는 뜻이 **아닙니다**. 11종 중 runtime 확인이
+  있는 것은 `credential_vault` 하나뿐이며, 나머지 10종에 실제 검증을 붙이는 것은 별도 작업입니다
+  (그래서 강도를 게시합니다 — 세 단계가 하나의 "implemented"로 합쳐져 있었습니다).
+- SHACL 엔진은 돌지 않습니다. 게시된 shape가 SHACL로 표현 가능하고 동등한 in-process
+  검사로 강제된다는 것이 이 표면이 할 수 있는 정직한 주장이며, 그 둘을 모두 게시합니다.
+  `pyshacl`을 의존성으로 들이는 것은 (RDF 스택을 끌어오고 CI가 hash-pinned 설치를 쓰므로)
+  별도 결정입니다.
+- `docs/product-technical-gap-baseline.md`의 `ontology_mapping_coverage | 0.917` 표기는
+  head `52bc571` 당시의 보존된 스냅샷이라 고치지 않았습니다. 그 문서가 이미 해당 문단을
+  "현재 상태로 인용하지 말 것"이라고 표시하고 있습니다.
