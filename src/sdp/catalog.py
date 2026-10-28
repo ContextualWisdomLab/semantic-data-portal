@@ -572,9 +572,35 @@ def dataset_in_scope(dataset_id: str, tenant_ids: list[str] | None) -> Optional[
 
 
 
-def get_join_candidates(
-    dataset_id: str, *, limit: int = 10, tenant_ids: list[str] | None = None
-) -> list[dict[str, Any]]:
+@dataclass(frozen=True)
+class JoinCandidatePage:
+    """One page of join candidates beside the exact total the scoring produced.
+
+    The same shape ``SearchPage`` carries, and for the same reason: the route
+    published a capped list with no count at all, so a buyer read 100 rows as
+    the whole recommendation. The total is exact - the scoring runs over the
+    whole scoped catalog in-process before the slice - so the page can declare
+    what it left out instead of implying there was nothing.
+    """
+
+    items: list[dict[str, Any]]
+    total_candidate_count: int
+
+
+def get_join_candidate_page(
+    dataset_id: str,
+    *,
+    limit: int = 10,
+    offset: int = 0,
+    tenant_ids: list[str] | None = None,
+) -> JoinCandidatePage:
+    """Score every in-scope dataset against this one and return one page.
+
+    ``offset`` exists because ``limit`` is capped at 100 by the route: with no
+    offset, candidate 101 was reachable by **no request this API accepts**.
+    Measured against a tenant holding 124 scoring candidates, 24 of them were
+    reachable by nothing, and the body carried no field that said so.
+    """
     dataset = get_dataset_or_404(dataset_id)
     candidates = []
 
@@ -605,7 +631,19 @@ def get_join_candidates(
         )
 
     candidates.sort(key=lambda row: row["score"], reverse=True)
-    return candidates[:limit]
+    return JoinCandidatePage(
+        items=candidates[offset : offset + limit],
+        total_candidate_count=len(candidates),
+    )
+
+
+def get_join_candidates(
+    dataset_id: str, *, limit: int = 10, tenant_ids: list[str] | None = None
+) -> list[dict[str, Any]]:
+    """The first page's rows only, for callers that want no page metadata."""
+    return get_join_candidate_page(
+        dataset_id, limit=limit, tenant_ids=tenant_ids
+    ).items
 
 
 def _initialize_schema_history() -> None:
@@ -712,6 +750,14 @@ def search_catalog_page(
     offset: int = 0,
     tenant_ids: list[str] | None = None,
 ) -> SearchPage:
+    """Match the whole scoped catalog, then return one page of it.
+
+    ``get_join_candidate_page`` is the same shape for the same reason; this one
+    came first and shipped without a docstring, which left the function that
+    *defines* this product's truncation vocabulary undocumented while the module
+    around it explained the vocabulary at length. The slice is taken after the
+    full match, so ``SearchPage.total_match_count`` is exact.
+    """
     tokens = [t.strip() for t in query.split() if t.strip()]
     token_patterns = _compiled_query_tokens(tokens)
     if not tokens:

@@ -28,7 +28,8 @@ The state covered here was enumerated from the modules, not listed from memory::
 
     sdp.catalog          _DATA, _AUDIT_LOG, _SCHEMA_HISTORY
     sdp.evidence         _POLICY_DECISION_LOG, _AUDIT_EVENT_LOG
-    sdp.ontology         _CONCEPT_DEFINITIONS, _ALIAS_TO_CANONICAL, _ONTOLOGY_PATCHES
+    sdp.ontology         _CONCEPT_DEFINITIONS, _ALIAS_TO_CANONICAL, _ONTOLOGY_PATCHES,
+                         _PATCH_QUEUE_STATE
                          (the concept-to-dataset map was here too, as ``_INDEX``;
                          it is derived from the catalog on read now, so there is
                          no snapshot left to restore)
@@ -145,6 +146,11 @@ def restore_in_memory_app_state():
     policy_log = list(evidence._POLICY_DECISION_LOG)
     audit_event_log = list(evidence._AUDIT_EVENT_LOG)
     patches = [patch.model_copy(deep=True) for patch in ontology._ONTOLOGY_PATCHES]
+    # Restored together with the queue, for the reason ``_REVISION_STATE`` is
+    # restored together with ``_CHANGE_LOG``: the counter describes that list,
+    # and restoring one without the other leaves the pair disagreeing about
+    # how many proposals the cap dropped.
+    patch_queue_state = dict(ontology._PATCH_QUEUE_STATE)
     concept_definitions = deepcopy(ontology._CONCEPT_DEFINITIONS)
     alias_to_canonical = dict(ontology._ALIAS_TO_CANONICAL)
     change_log = [dict(entry) for entry in ontology_version._CHANGE_LOG]
@@ -174,6 +180,8 @@ def restore_in_memory_app_state():
         evidence._POLICY_DECISION_LOG[:] = policy_log
         evidence._AUDIT_EVENT_LOG[:] = audit_event_log
         ontology._ONTOLOGY_PATCHES[:] = patches
+        ontology._PATCH_QUEUE_STATE.clear()
+        ontology._PATCH_QUEUE_STATE.update(patch_queue_state)
         ontology._CONCEPT_DEFINITIONS.clear()
         ontology._CONCEPT_DEFINITIONS.update(concept_definitions)
         ontology._ALIAS_TO_CANONICAL.clear()

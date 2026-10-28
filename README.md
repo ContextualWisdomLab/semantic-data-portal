@@ -525,6 +525,16 @@ SDP_CONNECTOR_TIMEOUT_MS='2s'          gate 통과, probe 라우트 400
 - `GET /catalog/datasets/{dataset_id}/jsonld`
 - `GET /catalog/datasets/{dataset_id}/validate`
 - `GET /catalog/datasets/{dataset_id}/semantic-validation`
+- `GET /catalog/datasets/{dataset_id}/join-candidates?limit=&offset=` — 조인 후보
+  추천. `/catalog/search`와 같은 모양으로 공표한다: `count`는 **이 페이지의 길이**,
+  전체 후보 수는 `total_candidate_count`, 남은 수는 `withheld_candidate_count`,
+  잘렸는지는 `candidate_list_is_truncated`. `limit`은 100이 상한이므로 그 이상은
+  `offset`으로 넘긴다 — `offset`이 없던 동안에는 후보 124건 중 **24건을 어떤
+  요청으로도 받을 수 없었고**, 본문에는 개수·전체·절단 필드가 **하나도** 없어서
+  100행이 추천 전체로 읽혔다. 그때 `?offset=100`은 400이 아니라 200으로 **첫
+  페이지를 다시** 돌려줬다(선언되지 않은 파라미터는 거부되지 않고 버려지므로,
+  페이지를 넘기려는 가장 자연스러운 시도가 조용한 오답을 받았다). 총계는 하한이
+  아니라 정확하다(점수 계산이 자르기 전에 범위 내 카탈로그 전체를 돈다)
 - `POST /policy/decision`
 - `GET /policy/decisions?limit=&offset=&resource=&decision_id=&user=` — 증빙 읽기.
   `decision_id`는 호출자가 자기 200 응답에서 받은 `policy_decision_id`로 **그 행만**
@@ -565,6 +575,24 @@ SDP_CONNECTOR_TIMEOUT_MS='2s'          gate 통과, probe 라우트 400
   `?status=nope`는 actor 없이는 403, actor와 함께는 400이다.
   `/enterprise/steward-review`는 공개 증빙 링크로 남고 `requestor`를 담지 않으며,
   그 사실을 `withheld_review_item_fields`로 선언한다.
+  대기열은 상한(`MAX_ONTOLOGY_PATCHES` = 500)에서 **가장 오래된 제안을 밀어낸다** —
+  새 제안을 거부하지 않는 쪽이 의도적 선택이지만(대기열을 채워 정당한 제안을
+  막을 수 없게 한다), 그 사실이 어디에도 공표되지 않았다. 측정: 제안 1건 +
+  502건 뒤 이 라우트는 `count: 500` 외에 아무 숫자도 없이 응답하고, 첫 id는
+  `patches`에 없고, `POST /ontology/patches/{그 id}/review`는 404다 — 제품이 200과
+  id로 받아준 제안이 유일하게 처리 가능한 라우트에서 거부되는데 그 손실을 말하는
+  필드가 없었다. 이제 `/ontology/change-log`와 같은 세 필드를 함께 공표한다:
+  대기열이 지금 담은 수는 `patch_queue_entry_count`(`?status=` 필터와 무관한
+  **대기열 자체**), 상한이 밀어낸 수는 `withheld_patch_count`, 잘렸는지는
+  `patch_queue_is_truncated`. 같은 세 필드가 `POST /ontology/patches`의 200 응답에도
+  실린다 — 가득 찬 대기열에 도착한 수락이 **더 오래된 제안을 밀어냈다는 사실**은
+  그 쓰기에 대한 사실이고, 이후의 어떤 읽기도 그 손실을 이 쓰기에 귀속시키지
+  않는다. (이 자리에 "제안자는 자기 행이 살아남았는지 구분할 수 없는 유일한
+  당사자다"라고 적혀 있었고 제품이 그것을 반박합니다: 제안할 수 있는 신원은 모두
+  `GET /ontology/patches`에서 200을 받고 그 응답은 모든 행의 `id`를 담으므로,
+  자기 id를 든 제안자는 생존·소멸을 직접 읽습니다. 수락 시점에도 성립하지 않습니다 —
+  방금 덧붙인 행은 가장 오래된 것의 축출에서 항상 살아남으므로 이 세 필드는
+  **총량 손실**을 말하고 자기 행의 생존은 말하지 않습니다.)
 - `POST /ontology/concepts`·`POST /ontology/patches/{id}/review` — 게시 전에
   **ConceptShape**를 평가하고(`definition` 필수) 결과를 `concept_validation`으로
   응답에 담는다. 비적합 개념은 게시되지 않는다(400). 계층 target이 등록된 개념으로

@@ -47,6 +47,29 @@ def test_every_test_starts_from_the_seeded_baseline() -> None:
     ], sorted(ontology._CONCEPT_DEFINITIONS)
     assert sorted(ontology._CONCEPT_DEFINITIONS) == sorted(ontology.SEEDED_CONCEPTS)
     assert not ontology._ONTOLOGY_PATCHES
+    # The queue's eviction counter is restored **with** the queue, for the
+    # reason the revision is restored with the change log (see
+    # ``test_the_ontology_revision_and_the_vocabulary_are_restored_together``):
+    # the counter describes that list, and a run that put the list back while
+    # leaving the counter where a saturating test moved it would publish
+    # ``patch_queue_is_truncated: true`` beside an empty queue for the rest of
+    # the session.
+    #
+    # An earlier version of this comment justified the assertion with "only one
+    # test saturates the queue, so without this the restore could be missing and
+    # every file order would still agree". Both halves were wrong. Four tests
+    # saturate it - ``test_resource_bounds.py`` at ``MAX + 5``,
+    # ``test_ontology_version_identity.py`` at ``MAX + 1``, and the two in
+    # ``test_bounded_lists_declare_their_bound.py`` - and the number of them was
+    # never the reason the leak was invisible: **no test read the counter at
+    # all** before it existed, and a restore for state nothing asserts on is
+    # unobservable however many tests move it. The assertion is what observes
+    # it, not the order variation.
+    assert ontology.patch_queue_state() == {
+        "patch_queue_entry_count": 0,
+        "withheld_patch_count": 0,
+        "patch_queue_is_truncated": False,
+    }
     # Every alias points at a concept the vocabulary actually holds.
     for term, owner in ontology._ALIAS_TO_CANONICAL.items():
         assert owner in ontology._CONCEPT_DEFINITIONS, f"{term!r} -> missing {owner!r}"

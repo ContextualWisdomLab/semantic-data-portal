@@ -103,6 +103,15 @@ _ONTOLOGY_PATCHES: list[OntologyPatch] = []
 # Bounds on the process-lifetime proposal queue; see propose_patch.
 MAX_ONTOLOGY_PATCHES = 500
 MAX_ONTOLOGY_PATCH_FIELD = 2000
+# What the cap dropped, for the life of the process. The eviction itself is
+# deliberate (``propose_patch`` explains why it is preferred to refusing), but
+# it was entirely undeclared: a proposal accepted with 200 and an id answered
+# 404 on the only route that can act on it, while ``GET /ontology/patches``
+# reported ``count: 500`` as if that were the whole queue. The change log - the
+# other evicting store in this package - had been publishing its own
+# ``withheld_change_count`` since ONT-004, so the vocabulary existed; only this
+# queue was missing it.
+_PATCH_QUEUE_STATE: dict[str, int] = {"withheld": 0}
 _ALIAS_TO_CANONICAL: Dict[str, str] = {}
 
 
@@ -1163,8 +1172,45 @@ def propose_patch(concept: str, suggestion: str, *, requestor: str = "anonymous"
     )
     _ONTOLOGY_PATCHES.append(patch)
     if len(_ONTOLOGY_PATCHES) > MAX_ONTOLOGY_PATCHES:
+        dropped = len(_ONTOLOGY_PATCHES) - MAX_ONTOLOGY_PATCHES
         del _ONTOLOGY_PATCHES[:-MAX_ONTOLOGY_PATCHES]
-    return patch.model_dump()
+        _PATCH_QUEUE_STATE["withheld"] = int(_PATCH_QUEUE_STATE["withheld"]) + dropped
+    # The queue's state travels with the accept because it is a fact about the
+    # write the caller just performed: an accept that arrived at a full queue
+    # displaced an older proposal, and no later read attributes that loss to
+    # this write.
+    #
+    # An earlier version of this comment justified it differently - "the
+    # proposer is the one party who cannot read the queue later and tell whether
+    # their own row survived" - and the product refutes that. Measured: all six
+    # subjects seeded in ``authz`` get 200 from both this route and
+    # ``GET /ontology/patches``, the two gates resolve to one plane check, and
+    # that route returns the whole queue with every row's ``id``, so a proposer
+    # holding its own id reads presence or absence directly (a reviewed row
+    # stays listed with status ``approved``, so absence means eviction). The
+    # claim did not even hold at accept time: a freshly appended row always
+    # survives the eviction of the oldest, so these three fields report
+    # aggregate loss and never own-row survival. The real gap the counter closes
+    # is the one ``review``'s 404 leaves: it cannot distinguish an evicted id
+    # from one that never existed, and the aggregate is what distinguishes them.
+    return {**patch.model_dump(), **patch_queue_state()}
+
+
+def patch_queue_state() -> dict[str, Any]:
+    """What the proposal queue holds, and what its cap dropped.
+
+    Field-for-field the disclosure ``vocabulary_change_log`` publishes for the
+    other evicting store in this package, so the two cannot describe the same
+    kind of loss in two vocabularies. ``patch_queue_entry_count`` is the queue
+    itself, never a filtered page: a ``?status=`` filter must not make the queue
+    look smaller than it is.
+    """
+    withheld = int(_PATCH_QUEUE_STATE["withheld"])
+    return {
+        "patch_queue_entry_count": len(_ONTOLOGY_PATCHES),
+        "withheld_patch_count": withheld,
+        "patch_queue_is_truncated": withheld > 0,
+    }
 
 
 # What the published ``confidence`` on a patch row means, for every surface that

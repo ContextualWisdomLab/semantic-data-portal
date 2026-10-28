@@ -35,7 +35,7 @@ from .catalog import (
     get_dataset_audit_events,
     get_dataset_profile,
     get_dataset_lineage,
-    get_join_candidates,
+    get_join_candidate_page,
     get_dataset_schema_diff,
     get_dataset_schema_history,
     list_dataset_schema_versions,
@@ -1279,12 +1279,43 @@ def catalog_dataset_schema_versions(
 def catalog_dataset_join_candidates(
     dataset_id: str,
     limit: int = Query(default=10, ge=1, le=100),
+    # Added with the disclosure below, for the reason ``/catalog/search`` and the
+    # three evidence reads gained theirs: the cap published a page as if it were
+    # the whole recommendation, and candidate 101 was reachable by no request at
+    # all. Measured against a tenant holding 124 scoring candidates, 24 of them
+    # were reachable by nothing - and ``?offset=100`` answered 200 with the
+    # *first* page, because an undeclared parameter is dropped rather than
+    # refused, so the obvious attempt to page returned a silent wrong answer.
+    offset: int = Query(default=0, ge=0),
     user: str = Query(default="anonymous"),
 ) -> dict[str, Any]:
     _, tenant_ids = _scoped_dataset_and_tenants(dataset_id, user)
+    page = get_join_candidate_page(
+        dataset_id, limit=limit, offset=offset, tenant_ids=tenant_ids
+    )
+    # The same four *kinds* of field ``/catalog/search`` publishes, computed the
+    # same way - only ``count`` is literally the same name; the other three are
+    # named for this surface (``total_candidate_count`` /
+    # ``withheld_candidate_count`` / ``candidate_list_is_truncated`` against
+    # search's ``total_match_count`` / ``withheld_match_count`` /
+    # ``search_is_truncated``), which follows search's own pattern of a subject
+    # noun on the counts and a surface noun on the flag.
+    #
+    # ``count`` is the page, the total is exact, and the remainder is clamped at
+    # zero so a request past the end cannot report a negative withholding. The
+    # ``offset`` term is load-bearing: dropping it and sizing the remainder from
+    # ``limit`` instead publishes ``offset + count + withheld`` greater than the
+    # body's own total on every page past the first, and an exhausted page that
+    # claims rows are still being withheld. That mutation passed 444 tests
+    # before ``test_the_published_numbers_agree_on_every_reachable_page``.
+    withheld = max(page.total_candidate_count - offset - len(page.items), 0)
     return {
         "dataset_id": dataset_id,
-        "join_candidates": get_join_candidates(dataset_id, limit=limit, tenant_ids=tenant_ids),
+        "count": len(page.items),
+        "join_candidates": page.items,
+        "total_candidate_count": page.total_candidate_count,
+        "withheld_candidate_count": withheld,
+        "candidate_list_is_truncated": withheld > 0,
     }
 
 
@@ -2173,6 +2204,15 @@ def ontology_patches(
     return {
         "count": len(patches),
         "patches": patches,
+        # The queue evicts its oldest proposal at the cap and said nothing about
+        # it. Measured, after one proposal and 502 more: this route answered
+        # ``count: 500`` with no other number, the first id was absent from
+        # ``patches``, and ``POST /ontology/patches/<that id>/review`` answered
+        # 404 - so the product accepted a proposal with 200 and an id and then
+        # refused the only route that can act on it, with nothing anywhere
+        # declaring the loss. ``/ontology/change-log`` was publishing exactly
+        # this disclosure for the same kind of loss at the same moment.
+        **ontology.patch_queue_state(),
         "scope_note": (
             "제안 큐의 각 행은 제안자/승인자 신원을 담으므로 이 읽기는 "
             "거버닝 읽기다. 온톨로지 어휘는 테넌트 소유가 아니라 공유 자원이므로 "
