@@ -348,37 +348,38 @@ def test_the_published_evidence_names_the_surfaces_the_measurement_reads() -> No
 
 
 def test_every_published_evidence_endpoint_is_a_real_route() -> None:
-    """Enumerated across every manifest, because one dangling pointer is enough.
+    """One implementation, shared with the companion guard.
 
-    Measured: 34 endpoint-shaped evidence pointers across the readiness gates,
-    KPIs, controls and production integrations, all of which currently resolve.
-    Pinned so a renamed route cannot leave a diligence reader following a 404.
+    This test hand-listed four manifests and four field names and asserted a
+    literal floor (``>= 34``, then ``>= 35``/``>= 13``). Both halves were wrong
+    in opposite directions, and an adversarial review demonstrated each:
+
+    * The hand-listed reach missed seven pointer-bearing fields. Measured, a
+      structural walk finds **83** route references across **11** fields of
+      **5** manifests where this form reached 48 across 4 - including the whole
+      of ``buyer_demo_activation_plan()``, whose ``proof_endpoints`` field name
+      is where ``getattr(item, "proof_endpoints", None)`` came from.
+    * A literal floor goes stale upward in silence: adding one pointer to one
+      manifest leaves ``>= 35`` green against a population of 36, which is the
+      condition ``>= 34`` was diagnosed for, one notch higher.
+    * And a floor *derived from the manifests it guards* is ``x >= x``, which
+      catches nothing at all - demonstrated by reinstating the
+      ``proof_endpoints`` bug with a derived floor in place and watching the
+      guard pass, where the literal ``>= 13`` fails as ``assert 5 >= 13``.
+
+    So no floor, literal or derived. The property asserted is that every route
+    reference the walk finds resolves, and the walk is structural, so what used
+    to be a number to maintain is now a reach that cannot silently narrow.
+    ``tests/manifest_pointers.py`` holds the enumeration; the companion file
+    ``tests/test_published_proof_names_a_live_mechanism.py`` asserts the
+    per-manifest and per-method properties on the same data.
     """
-    from fastapi.routing import APIRoute
-
     from sdp.api import app
-    from sdp_core import (
-        enterprise_controls_manifest,
-        enterprise_kpi_framework,
-        enterprise_production_readiness_manifest,
-        enterprise_readiness_manifest,
-    )
 
-    routes = {route.path for route in app.routes if isinstance(route, APIRoute)}
-    pointers: list[tuple[str, str, str]] = []
-    for item in enterprise_readiness_manifest().enterprise_gates:
-        pointers.extend(("gate", item.id, ref) for ref in item.evidence)
-    framework = enterprise_kpi_framework()
-    for item in framework.primary_kpis + framework.guardrail_kpis:
-        pointers.extend(("kpi", item.id, ref) for ref in item.source_endpoints)
-    for item in enterprise_controls_manifest().controls:
-        pointers.extend(
-            ("control", item.id, ref) for ref in (getattr(item, "proof_endpoints", None) or [])
-        )
-    for item in enterprise_production_readiness_manifest().integrations:
-        pointers.extend(("integration", item.id, ref) for ref in item.current_evidence)
+    from tests import manifest_pointers
 
-    endpoint_like = [row for row in pointers if row[2].startswith("/")]
-    assert len(endpoint_like) >= 34, len(endpoint_like)
-    dangling = [row for row in endpoint_like if row[2] not in routes]
+    served = manifest_pointers.served_paths(app)
+    references = manifest_pointers.route_references(app)
+    assert references, "the walk must find references for this to measure anything"
+    dangling = sorted({(m, f, p) for m, f, p, _ in references if p not in served})
     assert not dangling, f"published evidence pointing at routes that do not exist: {dangling}"

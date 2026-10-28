@@ -3769,6 +3769,100 @@ counts: {'고객': number, '고객행동': number, '매출': number, '온톨로�
 
 이 절은 측정 기록이고 병합 허가가 아닙니다.
 
+## 하나의 응답이 자기 어댑터를 구현됨이라 하고 같은 본문에서 계획 중이라 불렀습니다 (2026-10-28 02:36Z)
+
+```
+네 커넥터, 각자 백엔드가 되는 데이터셋에 대한 probe 응답
+  sql_connector        ready_for_demo  implemented  proof=/browse/query and /llm/draft-query
+  rdf_connector        ready_for_demo  implemented  proof=/ontology/search and /catalog/.../jsonld
+  rest_connector       contract_only   implemented  proof='planned connector contract …'
+  file_lake_connector  ready_for_demo  implemented  proof='planned connector contract …'
+
+demo_smoke의 릴리즈 게이트  file_probe.status == ready_for_demo
+                           rest_probe.adapter_status == implemented      -> exit 0, ready: true
+
+끊긴 포인터 가드가 닿는 참조  48개 (manifest 4개, 필드 4개)
+구조적 walk가 찾는 참조       83개 (manifest 5개, 필드 11개)
+proof_endpoints로 읽힌 것     control evidence 46개 중 0개
+```
+
+세 가지가 같은 가족입니다. (1) `file_lake_connector`의 probe 본문이 자기와 어긋납니다 —
+어댑터 구현됨 + 데모 준비됨을 보고하면서 proof가 그것을 계획 중인 계약이라 부릅니다. 제품
+자신의 릴리즈 게이트가 그 둘을 요구하고 통과합니다. (2) 같은 본문의 `contract_methods`가
+두 메서드를 싣는데 이 빌드의 어떤 라우트도 어댑터의 `preview`를 호출하지 않습니다 — 유일한
+호출 지점은 `source_adapter.inspect_schema`입니다. (3) 끊긴 포인터 가드가 공표된 라우트 참조
+83개 중 48개만 봅니다 — manifest 네 개와 필드 이름 네 개를 손으로 적었고, control은 존재하지
+않는 필드 이름(`proof_endpoints`)으로 읽혀 0개이며, `buyer_demo_activation_plan()`은 manifest
+하나 전체로 빠져 있습니다(그 모델의 필드 이름이 문자 그대로 `proof_endpoints`이고, 틀린 필드
+이름의 출처가 거의 확실히 그것입니다).
+
+**수리:** 두 proof가 어댑터를 호출하는 유일한 라우트를 지목하고,
+`exercised_contract_methods`·`unexercised_contract_methods`가 분할을 공표하고, 가드는
+manifest를 **구조적으로 walk**해서(필드 이름을 손으로 적지 않고) 모든 라우트 참조를
+해소하며, 메서드가 적힌 참조는 메서드까지 대소문자 구분으로 확인하고, **하한은 쓰지
+않습니다**(아래 절이 이유입니다). `sdp_core`는 `sdp`를 import하지 않으므로(의존 반대 방향)
+manifest 쪽에서 어댑터를 볼 수 없고, 그 결합은 양쪽 레이어를 보는 `tests/`의 파생 가드가
+유지합니다.
+
+### 커버리지 하한은 리터럴이어도 파생이어도 틀린다 — 쓰지 않는 것이 답이다
+
+이 라운드의 첫 판본은 하한을 리터럴로 올려 적고(`>= 34` → `>= 35`·`>= 13`), 기록에는 그것을
+"manifest에서 파생했으므로 낡을 수 없다"고 적었습니다. **둘 다 틀렸고, 두 리뷰어가 서로
+반대 방향으로 실연했습니다.**
+
+* 리터럴 하한은 **위로 조용히 낡습니다.** manifest에 포인터 하나를 더하면 모집단이 36인데
+  `>= 35`가 green입니다 — `>= 34`를 진단한 바로 그 조건이 한 칸 올라간 것이고, 그 위에
+  "낡을 수 없다"는 문장이 얹혀 있었습니다.
+* **자기가 지키는 데이터에서 파생한** 하한은 `x >= x`라서 아무것도 잡지 못합니다.
+  `proof_endpoints` 버그를 되살려 두고 하한을 파생시키면 가드가 **통과**하고, 리터럴
+  `>= 13`은 `assert 5 >= 13`으로 떨어집니다. 처방을 그대로 따르면 이 라운드가 고친 결함이
+  조용히 되돌아옵니다.
+
+그래서 하한을 **쓰지 않습니다.** 단언은 두 가지입니다: 구조적 walk가 찾은 모든 참조가
+해소된다, 그리고 다섯 manifest가 **모두** 검사 집합에 기여한다(manifest 레지스트리에서
+파생되므로 manifest 하나가 walk에서 빠지는 — control이 46개 중 0개를 기여한 — 실패 모드에서
+red입니다). 유지해야 할 숫자가 사라지고, 닿는 범위가 구조로 보장됩니다.
+
+변이 10종 중 8종 red이었고, green 둘은 하한 단언 자체를 지운 것이었습니다 — 이제 지울 하한이
+없습니다. 구조적 walk로 다시 쓴 뒤 12종을 돌려 **전부 red**입니다.
+
+### 자기가 고정하려는 predicate를 재구현하는 테스트는 아무것도 증명하지 않는다
+
+메서드 비교를 떼는 변이(경로만 비교)가 **처음에는 살아남았습니다.** 두 가지가 겹쳤습니다 —
+공표된 포인터 중 메서드가 틀린 것이 하나도 없어서 가드가 잡을 **데이터**가 없었고, 그래서
+추가한 near-miss 테스트가 가드의 비교를 **다시 구현**해 자기 사본을 검사했습니다. 비교를
+`tests/manifest_pointers.py`의 함수 하나(`unserved_method_references`)로 빼고 가드와 near-miss
+테스트가 **같은 함수**를 부르게 하자 둘 다 red가 됩니다(그 함수가 메서드를 무시하게 해도,
+아무것도 플래그하지 않게 해도).
+
+near-miss 쌍은 라우트 테이블에서 파생합니다 — 서비스되는 경로 하나와 그 경로에 대해
+서비스되지 않는 메서드 하나 — 그래서 라우트가 바뀌어도 낡지 않고, 반대 방향(서비스되는 쌍은
+플래그되지 않는다)도 같은 함수로 단언해 predicate가 전부 거부하는 것이 아님을 보입니다.
+
+enumeration은 `tests/manifest_pointers.py` 하나로 공유합니다: 같은 성질의 두 번째 약한 구현이
+이 라운드가 고치는 드리프트입니다.
+
+경로 토큰은 문자열의 처음이거나 공백 뒤에 있을 때만 라우트 참조로 셉니다. 앵커 없는 형태는
+`production.acceptance_criteria`의 산문 "The policy/audit gap condition IS evaluated"를
+서비스되지 않는 `/audit` 참조로 읽어 **발견을 하나 만들어 냈고**, 문자열을 읽어서 걸러냈습니다.
+제 휴리스틱의 오탐이므로 그렇게 적습니다.
+
+### 닫지 않은 것
+
+(a) 어댑터의 `preview`는 어떤 라우트도 호출하지 않는 채로 남습니다 — 라우트를 붙이는 것은
+별개 변경이고, `unexercised_contract_methods`가 선언된 공백입니다. (b) `sdp_core`의 `proof`는
+여전히 손으로 쓴 문자열이고, 레이어 경계 때문에 구조적으로 보장할 수 없습니다 — 테스트
+보장입니다. (c) `exercised_contract_methods`를 제어 흐름에서 파생시킨 것은 **살아 있는
+결함을 고친 것이 아닙니다** — 세 리뷰어가 도달 불가로 측정했고(레지스트리가 모듈 리터럴이고
+probe가 그 밖의 id를 거부), 그래도 바꾼 이유는 라운드 18의 교훈과 두 줄이라는 비용입니다.
+(d) 직전 라운드의 커밋 `1402489`의 **커밋 메시지**는 수리 단락에서 폐기된 정당화
+("제안자는 … 유일한 당사자")를 적고 **여섯 단락** 뒤에 그것이 거짓이었음을 기록하며(측정:
+5번째 단락과 11번째 단락), 테스트 수를 2023으로 적는데 측정값은 2025였습니다. 둘 다 2차 수리가 이미 쓰인 메시지의 앞
+단락에 전파되지 않은 것입니다. 저장소 파일에는 정정된 형태만 있고, push된 히스토리를
+force-push로 덮지 않았으므로 여기에 적어 둡니다.
+
+이 절은 측정 기록이고 병합 허가가 아닙니다.
+
 ## 경계가 있는 목록 둘이 그 경계를 말하지 않았고, 200으로 받아준 제안이 도달 불가가 되었습니다 (2026-10-28 00:27Z)
 
 ```

@@ -667,7 +667,20 @@ SDP_CONNECTOR_TIMEOUT_MS='2s'          gate 통과, probe 라우트 400
   없는 데이터셋이 한 가지 답으로 합쳐지므로 존재 여부를 열거할 수 없다(403보다
   강한 통제이며, `/enterprise/evidence-pack`의 `actor_scoped_proof_note`가 이
   차이를 설명한다). 합쳐진 두 사유는 감사 행의 `reason`과 `response_status`에
-  남는다 — 이 거부도 다른 두 exit과 같이 정책 결정 1건 + 감사 행 1건을 남긴다
+  남는다 — 이 거부도 다른 두 exit과 같이 정책 결정 1건 + 감사 행 1건을 남긴다.
+  응답은 **실행한 계약 메서드**를 공표한다: `contract_methods`는 어댑터가 가진
+  메서드 둘이고, `exercised_contract_methods`는 이 probe가 실제로 호출한 것
+  (`inspect_schema`), `unexercised_contract_methods`는 나머지(`preview`)다 —
+  이 빌드의 **어떤 라우트도 어댑터의 `preview`를 호출하지 않는다**(유일한 호출
+  지점은 `connector_probe`의 `source_adapter.inspect_schema`이고
+  `/browse/{dataset_id}/preview`는 `browse.preview`를 돌린다). 둘을 한 목록으로
+  싣던 동안에는 "probe가 이 둘을 실행했다"로 읽은 독자가 둘 중 하나를 신뢰로
+  받았다. 그리고 각 커넥터의 `proof`는 **호출할 수 있는 라우트**를 지목한다 —
+  `rest_connector`·`file_lake_connector`는 "planned connector contract in
+  sdp_core.SourceConnector"라고 적혀 있었고, 같은 본문이 그 둘의
+  `adapter_status`를 `implemented`로 보고하며 `file_lake_connector`는
+  `status: ready_for_demo`까지 보고했다(`demo_smoke`의 릴리즈 게이트가 바로 그
+  둘을 요구하고 통과한다)
 
 ## 테스트
 

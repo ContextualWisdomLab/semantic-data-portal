@@ -402,6 +402,19 @@ class DemoRESTConnector(SourceConnector):
         return selected
 
 
+# The adapter contract's methods, in one place, because three fields publish
+# them: ``contract_methods`` (what the adapter has) and the exercised /
+# unexercised split (what this probe invoked). Writing the split as a constant
+# beside the branch that fills it is how the first version of this got it wrong:
+# ``["inspect_schema"]`` was published unconditionally while the call above runs
+# only ``if source_adapter``, so a capability with no adapter would have reported
+# a method the code skipped. Three independent verifiers measured that state as
+# unreachable today - the registry is a module-level literal and
+# ``connector_probe`` refuses any id outside it - and it is derived anyway,
+# because an unreachable branch is the one that breaks in the deployment that
+# reaches it.
+CONTRACT_METHODS = ("inspect_schema", "preview")
+
 _SOURCE_CONNECTORS: dict[str, SourceConnector] = {
     "sql_connector": DemoSQLConnector(),
     "rdf_connector": DemoRDFConnector(),
@@ -430,8 +443,12 @@ def connector_probe(connector_id: str, dataset_id: str) -> dict[str, Any]:
     source_adapter = _SOURCE_CONNECTORS.get(connector_id)
     inspected_schema = None
     adapter_status = "planned"
+    # Which contract methods this probe actually invoked, derived from the
+    # branch that invokes them rather than written as a constant beside it.
+    exercised_methods: list[str] = []
     if source_adapter:
         inspected_schema = source_adapter.inspect_schema(dataset_id)
+        exercised_methods.append("inspect_schema")
         adapter_status = "implemented"
 
     served = _served_route_paths()
@@ -497,7 +514,19 @@ def connector_probe(connector_id: str, dataset_id: str) -> dict[str, Any]:
         "source_type": connector.source_type,
         "source_system": redacted_source_system(dataset.source_system),
         "status": "ready_for_demo" if ready_for_demo else "contract_only",
-        "contract_methods": ["inspect_schema", "preview"],
+        "contract_methods": list(CONTRACT_METHODS),
+        # Which of those this probe actually invoked. ``contract_methods`` is
+        # true about the adapter - both methods exist on all four - but no route
+        # in this build calls an adapter's ``preview``: the only call site is
+        # ``source_adapter.inspect_schema`` above, and ``/browse/{id}/preview``
+        # runs ``browse.preview`` instead. So a reader taking the pair as "the
+        # probe exercised these" was taking one of the two on trust. Published
+        # rather than left to be inferred, the way ``verdict_basis`` and
+        # ``control_verification_counts`` are.
+        "exercised_contract_methods": list(exercised_methods),
+        "unexercised_contract_methods": [
+            method for method in CONTRACT_METHODS if method not in exercised_methods
+        ],
         "adapter_status": adapter_status,
         "data_contract": {
             "schema_fields": len(inspected_schema["columns"]) if inspected_schema else len(dataset.schema),
