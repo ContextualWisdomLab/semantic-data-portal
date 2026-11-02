@@ -1452,7 +1452,7 @@ head 세 개가 동시에 움직였고, 확인해 보니 owner의 계획된 스�
 | 확인 | 결과 |
 | --- | --- |
 | anyio 4.15.1이 Python 3.10을 지원하는가 | **지원합니다.** PyPI의 `requires_python`은 4.14.1·4.14.2·4.15.0·4.15.1 모두 `>=3.10`입니다. 즉 "Python 3.10 하한" 자체가 4.14.2를 설명하지는 못합니다 |
-| 두 lock의 입력이 같은가 | **다릅니다.** `requirements.txt`는 `pyproject.toml`에서, `requirements-test.txt`는 `requirements-test.in`에서 `--universal --python-version 3.12`로 컴파일됩니다(헤더에 기록되어 있음) |
+| 두 lock의 입력이 같은가 | **다릅니다.** `requirements.txt`는 `pyproject.toml`에서, `requirements-test.txt`는 `requirements-test.in`에서 컴파일됩니다(헤더에 기록되어 있음). **라운드 27 정정:** 이 행은 원래 `--universal --python-version 3.12`를 test lock 쪽에만 붙여 플래그 대비로도 읽혔는데, 라운드 27이 `requirements.txt`에도 그 플래그를 더했으므로(그 lock이 자기 헤더 명령으로 재생성되지 않던 것을 고치면서) 이제 **대비는 입력 파일 하나뿐**입니다. 아래 세 번째 행의 근거가 더 강하므로 철회 자체는 그대로 성립합니다 |
 | test lock에서 anyio는 어디서 오는가 | **전이 의존뿐입니다** — `# via httpx, starlette`. 반면 `requirements.txt`에서는 `# via semantic-data-portal (pyproject.toml), starlette`로 **직접 의존**입니다 |
 
 즉 test lock에는 anyio에 대한 직접 제약이 없고, 그 값은 그 입력 집합에서 httpx·starlette가 허용하는 해에 따라 결정됩니다. **같은 숫자가 아닌 것이 곧 재생성 누락이라는 뜻은 아닙니다.** 어느 쪽인지는 이 문서가 확인하지 못했으므로 "drift"라는 단정을 철회하고 "입력이 다르므로 값이 다를 수 있다"까지만 남깁니다. 판별하려면 `requirements-test.in`과 그 전이 제약을 그 명령으로 다시 컴파일해 결과가 4.14.2인지 보아야 하며, 이 세션은 그것을 하지 않았습니다.
@@ -6245,6 +6245,73 @@ episode 경계를 만드는 reset을 제품이 수행하지 않습니다. 그래
 움직여 두 절이 모두 거짓이 되었습니다. 줄 번호를 버리고 **함수 이름**(`alert_routing_state()`)
 으로 바꿨습니다. 다섯 번째는 CHANGELOG 4680의 `observability.py:907`로, 인용하는 주석 문구가
 지금 트리의 어디에도 없고 907행은 무관한 코드입니다 — 인용만 남기고 줄 번호를 버렸습니다.
+
+### `pyjwt`가 두 권고의 범위 안에 있었고, 그 중 하나가 이 문서의 병합 순서를 뒤집습니다 (2026-11-02)
+
+**표면.** `src/sdp/authz.py`의 OIDC/JWKS 서명 검증 경로. 고정 자리는 다섯입니다 —
+`pyproject.toml`, `requirements-test.in`, 그리고 `requirements.txt`·`requirements-dev.txt`·
+`requirements-test.txt`. `requirements-graph.txt`에는 pyjwt가 없습니다.
+
+**측정(primary source: 상류 권고 페이지).**
+
+| 권고 | 심각도 | 영향 범위 | 수정 |
+|---|---|---|---|
+| `GHSA-ffc3-869f-jxw9` / CVE-2026-102268 / CWE-347 | Critical, CVSS 9.1 | `<= 2.13.0` | 2.14.0 |
+| `GHSA-x33g-cr3x-6449` / CVE-2026-102275 | Moderate, CVSS 6.5 | `>= 2.1.0` ~ `<= 2.14.0` | 2.15.0 |
+
+**이 문서의 병합 순서 정정.** 1376행이 `main`의 취약 pin 해소 경로로 `#81` → `#37` → `#28`을
+적어 두었고 `#81`의 pyjwt는 2.14.0입니다. 2.14.0은 두 번째 권고 범위 **안**이므로 `#81`만으로는
+pyjwt가 닫히지 않습니다 — `#109`의 2.15.0이 닫습니다. Critical의 바닥에서 유추하면 놓치고,
+두 번째 권고의 범위를 **직접 읽어야** 나옵니다.
+
+**올린 버전.** 2.15.1(PyPI 최신, 2026-09-28). 릴리스: 2.13.0(05-21) · 2.14.0(09-11) ·
+2.15.0(09-23) · 2.15.1(09-28). 요구는 `>= 2.15.0`이고 수정 계열의 최신 패치를 택했습니다.
+`#109`의 2.15.0과 패치 하나 차이이고, 흡수 시 더 높은 쪽을 택하면 됩니다.
+
+**도달 가능성 — 측정해서 부정했습니다.** Critical의 전제는 둘이 동시에 필요합니다(allow-list가
+HMAC과 비대칭을 섞고, 공개키가 raw PEM). 유일한 `jwt.decode` 자리가 둘 다 독립적으로
+거부합니다: `_ALLOWED_JWT_ALGORITHMS`가 `{RS256,RS384,RS512,ES256,ES384,ES512}`로 비대칭
+전용이고 `alg`는 키 자료를 읽기 전에 거부되며 `algorithms=[alg]`는 원소 하나이므로 섞인
+allow-list가 없고, 키는 `PyJWK.from_dict(jwk).key`(cryptography 객체)이지 raw PEM이 아닙니다.
+Moderate는 OKP JWK에 관한 것이고 OKP도 allow-list에 없습니다. 그래서 **바닥 미달 발견**이고
+실증된 익스플로잇이 아닙니다 — pin이 범위 안이고 그 자리가 서명 경로라는 것만으로 올릴 이유는
+충분하되, 이 제품에서 실증된 critical로 공표하지는 않습니다.
+
+**재지 않은 것.** `GHSA-8wjv-2p76-3863`·`GHSA-42vr-xj54-vc7v`(RecursionError 둘)의 범위는
+가져오지 않았습니다. 이 저장소는 `jwt.get_unverified_header`를 **미인증 토큰**에 호출하므로
+위 둘과 달리 전제가 도달 가능할 수 있습니다. 2.15.1이 측정된 모든 수정 버전 이상이므로 아마
+포함되지만 추론입니다. 권고 목록 2·3페이지도 열거하지 않았습니다.
+
+**두 번째 발견: lock 하나가 자기 헤더의 명령으로 재생성되지 않았습니다.** `requirements.txt`를
+헤더 명령으로 재생성하면 `colorama`(`# via click`)와 `tzdata`(`# via psycopg`)가 사라집니다 —
+둘 다 Windows 전용 전이 의존입니다. uv는 출력 파일이 있으면 기존 pin을 보존하지만 그것은
+*버전*만 고정하고 *그래프 멤버십*은 고정하지 않으므로, Linux 해석에서 둘이 그래프에서 빠집니다.
+즉 커밋된 내용은 자기 명령으로 만들어질 수 없었고, 형제 lock 둘에는 있는 `--universal`이
+이것만 없으면서 내용에는 universal 산물을 **마커 없이** 들고 있었습니다.
+`--universal --python-version 3.12`를 더해 재생성하면 둘이 마커와 함께 돌아오고
+(`; sys_platform == 'win32'`), `cffi`·`psycopg-binary`·`pycparser`도 마커를 얻고, pyjwt 외
+버전은 하나도 움직이지 않습니다. 그 명령이 파일을 바이트 단위로 재생산하는 것을 재컴파일 +
+`cmp`로 확인했습니다.
+
+**그 변경이 이 문서의 한 행에 기대고 있던 전제를 바꿉니다(1455행).** 그 행은
+`requirements.txt`(입력 `pyproject.toml`)와 `requirements-test.txt`(입력
+`requirements-test.in`, `--universal --python-version 3.12`)의 **대비**로 anyio 값 차이를
+설명하고 "drift" 단정을 철회했습니다. 이제 둘 다 `--universal --python-version 3.12`이므로
+대비의 **플래그 쪽은 사라지고 입력 파일 쪽만 남습니다.** 철회 자체는 그대로 성립합니다 — 같은
+표의 세 번째 행이 test lock에서 anyio가 `# via httpx, starlette` 전이 의존일 뿐이고
+`requirements.txt`에서는 직접 의존이라는 더 강한 근거를 이미 들고 있습니다. 근거가 둘에서
+하나로 좁아졌을 뿐 결론은 같습니다.
+
+**검증에서 잡은 것: 올린 버전을 실행하지 않은 상태였습니다.** lock을 2.15.1로 바꾼 뒤에도 테스트
+venv 둘이 `jwt.__version__ == '2.13.0'`이었습니다. 그 상태의 초록은 2.15.1에 대해 아무것도
+증명하지 않습니다 — 실행되지 않은 보안 수리를 공표하는 것이 됩니다. lock의 pyjwt 블록을 그대로
+떼어 `pip install --no-deps --require-hashes`로 두 venv에 설치한 뒤(손으로 적은 해시가 아니라
+lock의 해시) 스위트를 돌렸습니다: 2132 collected / 2101 passed / 31 skipped / 실패 0.
+
+**닫지 않은 것.** trivy-fs는 **merge ref**를 스캔하므로 `main`의 2.13.0이 게이트가 보는
+값입니다. 이 브랜치의 수리는 필요하지만 `main`을 비우지 않습니다. 그리고 이 네 파일에는 이미
+독립 writer 넷(`#81`·`#107`·`#109`·`#82`)이 있고 이 변경이 다섯 번째입니다 — 어느 조합이
+옳은지는 owner의 순서 결정입니다.
 
 ## 운영 메모
 
