@@ -300,8 +300,13 @@ drift(코드와 일치하지 않는 게시된 주장)이기 때문입니다. `te
 - **`license`를 어떤 API 경로로도 설정할 수 없었습니다.** `Dataset`은 처음부터 이 필드를 갖고
   있었지만 두 request 모델에 없어 값이 조용히 버려졌습니다 — 측정: create에 `CC-BY-4.0`을 보내도
   `internal`, patch에 `MIT`를 보내도 `internal`, 시드 전체가 `internal`. 데이터 카탈로그에서
-  라이선스는 diligence 독자가 가장 먼저 확인하는 필드이고, `metadata_completeness` KPI 정의가
-  세는 필드 목록에도 들어 있습니다. 노출만으로는 부족했습니다: `register_dataset`이 필드를 손으로
+  라이선스는 diligence 독자가 가장 먼저 확인하는 필드이고, `metadata_completeness` KPI 정의도
+  이 필드를 이름으로 부르고 있었습니다. 이 항목은 그것을 "정의가 세는 필드 목록에도 들어 있다"고
+  적었는데 **그 쪽이 틀렸습니다** — `license`는 `REQUIRED_METADATA_FIELDS`에 없어서 그 숫자가
+  센 적이 없고, 필드를 노출해도 그 숫자는 움직이지 않습니다(움직이는 것은 `recommended_score`:
+  `license`만 다른 데이터셋에서 0.7059 -> 0.7647). 정의 쪽 수리는 CHANGELOG에서
+  `### Fixed — 게이트가 걸린 정의가`로 시작하는 항목입니다. 노출만으로는 부족했습니다:
+  `register_dataset`이 필드를 손으로
   나열해 생성했기 때문에 새 필드를 또 무시했습니다. 이제 request의 필드를 그대로 펼쳐 생성하고,
   **모든 request 필드가 저장 모델에 도달하는지 기계적으로** 검사합니다.
 - **`metadata_completeness` KPI의 target을 아무것도 비교하지 않았습니다.**

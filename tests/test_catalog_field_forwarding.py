@@ -9,9 +9,14 @@ value was silently dropped. Measured before the repair::
     every seeded dataset's license                     -> ["internal"]
 
 A data catalog whose licence cannot be set is missing the field a diligence
-reader checks first, and the ``metadata_completeness`` KPI's own definition
-names ``license`` among the fields it counts - so the number was computed over a
-field no caller could populate.
+reader checks first. This paragraph used to continue "and the
+``metadata_completeness`` KPI's own definition names ``license`` among the
+fields it counts - so the number was computed over a field no caller could
+populate", and both halves of that were false: ``license`` is not in
+``REQUIRED_METADATA_FIELDS``, so the number was never computed over it at all.
+The definition was the thing that was wrong about it, and it is repaired in
+``sdp_core.kpis.metadata_completeness_definition`` with its own guard in
+``tests/test_the_definition_names_what_the_number_counts.py``.
 
 Exposing it was not enough: ``register_dataset`` built the ``Dataset`` from a
 hand-written list of ``payload.<field>`` arguments and ignored the new one, so
@@ -169,11 +174,20 @@ def test_a_patched_dataset_keeps_every_field_the_caller_sent(field: str) -> None
     assert stored[field] == PROBE_VALUES[field], (field, stored[field])
 
 
-def test_the_license_is_what_the_kpi_definition_counts() -> None:
-    """The field and the measurement that names it must agree.
+def test_the_definition_names_license_and_the_number_does_not_count_it() -> None:
+    """A field the definition names must at least be settable.
 
-    ``metadata_completeness``'s definition lists ``license`` among the fields it
-    counts, which was being computed over a field no caller could set.
+    This test was called ``test_the_license_is_what_the_kpi_definition_counts``
+    and its docstring said the definition "lists ``license`` among the fields it
+    counts, which was being computed over a field no caller could set" - while
+    its own last assertion pins the opposite, that ``license`` is **not** in
+    ``REQUIRED_METADATA_FIELDS``. The assertions were right and the name was
+    wrong, so a reader reaching for the guard against that drift found a name
+    claiming the drift was the intended behaviour.
+
+    What this file owns is the settability half. That the definition's own
+    clauses agree with the two measures is guarded in
+    ``tests/test_the_definition_names_what_the_number_counts.py``.
     """
     from sdp_core import enterprise_kpi_framework
     from sdp_core.contracts import REQUIRED_METADATA_FIELDS

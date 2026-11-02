@@ -325,8 +325,16 @@ class DatasetCreateRequest(BaseModel):
     # stored ``None``; ``PATCH`` with ``license: "MIT"`` answered 200 and left
     # ``internal``; every seeded dataset reads ``internal``. A data catalog whose
     # licence cannot be set is missing the field a diligence reader checks
-    # first - and the ``metadata_completeness`` KPI's own definition names
-    # ``license`` among the fields it counts.
+    # first - and the ``metadata_completeness`` KPI's own definition named
+    # ``license`` too.
+    #
+    # That last clause said the definition "names ``license`` among the fields
+    # it counts", and the definition was the thing that was wrong: ``license``
+    # is not in ``REQUIRED_METADATA_FIELDS``, so the number never counted it and
+    # exposing the field did not move it. What exposing it moved is
+    # ``recommended_score`` (measured: 0.7059 -> 0.7647 on a dataset differing
+    # only in ``license``). The definition now names the ten fields it does
+    # count and says where the four it used to name are scored.
     license: str = "internal"
     quality_score: float = Field(ge=0, le=1)
     freshness_score: float = Field(ge=0, le=1)

@@ -1177,7 +1177,10 @@ def _register_dataset_locked(
     # it, and when it was exposed this constructor still ignored it - so a
     # ``POST`` naming a licence answered 200 and stored the default. A catalog
     # whose licence cannot be set is missing the field a diligence reader checks
-    # first, and ``metadata_completeness``'s own definition counts it.
+    # first. This comment used to end "and ``metadata_completeness``'s own
+    # definition counts it", which was false in the definition rather than here:
+    # ``license`` is absent from ``REQUIRED_METADATA_FIELDS``, so that number
+    # never counted it. Exposing the field moves ``recommended_score``.
     #
     # ``DatasetCreateRequest``'s fields are a strict subset of ``Dataset``'s
     # (asserted by ``tests/test_catalog_field_forwarding.py``), so the spread is

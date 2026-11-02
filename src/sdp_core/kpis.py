@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from .contracts import REQUIRED_METADATA_FIELDS
+
 
 class SaleabilityKPI(BaseModel):
     id: str
@@ -54,6 +56,74 @@ class KPIFramework(BaseModel):
     guardrail_kpis: list[SaleabilityKPI]
 
 
+# ``metadata_completeness``'s definition named eight fields while the number
+# counts ten, and only four of them are the same four. Measured on the
+# published definition against ``REQUIRED_METADATA_FIELDS``::
+#
+#     named by the definition : owner steward schema lineage quality freshness
+#                               license sensitivity
+#     counted by the number   : owner steward title description domain
+#                               sensitivity update_frequency source_system
+#                               schema distributions
+#     named AND counted       : owner steward schema sensitivity
+#     named but NOT counted   : lineage quality freshness license
+#     counted but NOT named   : title description domain update_frequency
+#                               source_system distributions
+#
+# A diligence reader who computes the definition's own ratio gets a different
+# number from the one gated at 0.90, in both directions. The counted clause is
+# built from ``REQUIRED_METADATA_FIELDS`` below rather than written out, so the
+# sentence cannot drift from the tally again - the same remedy the tally itself
+# needed when three hand-written copies of it disagreed.
+#
+# The four it named and did not count do not all land in the same place, and
+# saying they did would have been the next unverified claim. Measured per field
+# on a dataset that differs only in that field::
+#
+#     license          -> completeness 1.0->1.0   recommended 0.7059->0.7647
+#     lineage_inputs   -> completeness 1.0->1.0   recommended 0.7647->0.8235
+#     quality_score    -> completeness 1.0->1.0   recommended 0.7647->0.7647
+#     freshness_score  -> completeness 1.0->1.0   recommended 0.7647->0.7647
+#
+# So two of them are scored somewhere and two are scored nowhere.
+
+# Absent from ``REQUIRED_METADATA_FIELDS`` and read by
+# ``Dataset.metadata_recommendation_score``, which is published per dataset as
+# ``recommended_score``.
+RECOMMENDATION_SCORED_FIELDS = ("license", "lineage_inputs")
+
+# Absent from ``REQUIRED_METADATA_FIELDS`` and read by neither score. Their two
+# entries in ``metadata_recommendation_score`` are ``quality_score is not None``
+# and ``freshness_score is not None``, and both are **non-optional floats** on
+# ``Dataset`` - constructing one without either is refused - so the two tests
+# are tautologies. A dataset reporting ``quality_score: 0.0`` scores the same
+# recommendation point as one reporting ``1.0``. That is a second defect, in the
+# measure rather than in this sentence, and whether a measured ``0.0`` counts as
+# present is a product decision rather than a wording fix; it is filed
+# separately. This sentence only stops the definition claiming these two are
+# scored.
+UNSCORED_DISPLAY_FIELDS = ("quality_score", "freshness_score")
+
+
+def metadata_completeness_definition() -> str:
+    """The definition sentence, with its counted clause derived from the tally.
+
+    Public because the guard in
+    ``tests/test_the_definition_names_what_the_number_counts.py`` pins each of
+    its three clauses to a measurement rather than to a copy of this string.
+    ``tests/test_catalog_field_forwarding.py`` owns a different half - that a
+    field this sentence names is settable through the API at all.
+    """
+    counted = ", ".join(REQUIRED_METADATA_FIELDS)
+    return (
+        f"Share of priority datasets carrying all {len(REQUIRED_METADATA_FIELDS)} "
+        f"required fields: {counted}. Not counted here: "
+        f"{' and '.join(RECOMMENDATION_SCORED_FIELDS)}, which recommended_score "
+        f"scores instead; {' and '.join(UNSCORED_DISPLAY_FIELDS)}, whose values "
+        "neither score reads."
+    )
+
+
 def enterprise_kpi_framework() -> KPIFramework:
     return KPIFramework(
         product="Semantic Data Portal",
@@ -76,7 +146,7 @@ def enterprise_kpi_framework() -> KPIFramework:
                 id="metadata_completeness",
                 label="Metadata completeness",
                 decision_question="Are buyer priority datasets complete enough for diligence and analyst use?",
-                definition="Share of priority datasets with owner, steward, schema, lineage, quality, freshness, license, and sensitivity present.",
+                definition=metadata_completeness_definition(),
                 # This target was published with ``status: implemented`` while
                 # nothing in the code compared anything to 0.90 - the only
                 # thresholds in the evidence path were 0.95 on

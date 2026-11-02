@@ -6083,6 +6083,96 @@ p95는 프로덕션 예산을 확증할 수 없고 **반증만** 할 수 있다"
 외 다섯, 전부 0건) 아무 기록도 없다는 것을 확인했습니다. 라운드 23에서는 같은 검사가 제
 프레이밍을 **반박**했고, 이번에는 **확인**했습니다 — 규칙이 양쪽으로 작동합니다.
 
+### 게이트가 걸린 정의가 여덟 필드를 부르고 숫자는 열을 세며, 겹치는 것은 넷입니다 (2026-11-02)
+
+**표면.** `/enterprise/kpis`와 `/enterprise/evidence-pack`. `metadata_completeness`는 후자가
+`mean_metadata_completeness`를 0.90과 비교해 `saleability_gates`에 `pass`/`gap`을 쓰는
+**게이트된** KPI이고, 두 엔드포인트 모두 미인증 200입니다.
+
+**측정.** 공표된 정의를 `REQUIRED_METADATA_FIELDS`에 대고 재면:
+
+| | 필드 | 수 |
+|---|---|---|
+| 정의가 부름 | owner steward schema lineage quality freshness license sensitivity | 8 |
+| 숫자가 셈 | owner steward title description domain sensitivity update_frequency source_system schema distributions | 10 |
+| 부르고 셈 | owner steward schema sensitivity | 4 |
+| 부르지만 안 셈 | lineage quality freshness license | 4 |
+| 세지만 안 부름 | title description domain update_frequency source_system distributions | 6 |
+
+정의를 따라 계산한 비율과 공표된 `mean_metadata_completeness`는 양쪽 방향으로 다릅니다.
+실사 독자가 0.90과 비교할 수 있는 수를 제품이 공표하지 않는다는 뜻입니다.
+
+**수리.** 세는 절을 `REQUIRED_METADATA_FIELDS`에서 파생시킵니다
+(`src/sdp_core/kpis.py::metadata_completeness_definition`). 집계가 한 벌이므로 문장과 숫자가
+다시 어긋날 수 없고, 남는 실패 모양은 서식 오류뿐이며 그것도 가드가 봅니다.
+
+**초안이 틀린 자리(공표 전 교정).** 첫 문장은 안 세는 넷 전부를 "`recommended_score`가 대신
+센다"로 묶었습니다. 필드 하나만 다른 데이터셋에서 두 점수를 재면:
+
+    license          completeness 1.0->1.0   recommended 0.7059->0.7647
+    lineage_inputs   completeness 1.0->1.0   recommended 0.7647->0.8235
+    quality_score    completeness 1.0->1.0   recommended 0.7647->0.7647
+    freshness_score  completeness 1.0->1.0   recommended 0.7647->0.7647
+
+둘은 세어지고 둘은 어디에서도 세어지지 않습니다. 거짓 주장을 빼는 수리가 새 거짓 주장을 넣기
+직전에 측정이 잡았습니다.
+
+**열지 않고 기록하는 것.** `metadata_recommendation_score`의 17개 항목 중 둘이
+`quality_score is not None`·`freshness_score is not None`이고 `Dataset`에서 두 필드는
+non-optional float입니다(`is_required() -> True`, 생략하면 `ValidationError`). 두 항목은
+항진명제이고 공표되는 모든 `recommended_score`에 2/17 = 0.1176의 가짜 바닥을 깝니다.
+수리는 제품 결정입니다 — 분모를 15로 내리면 공표된 모든 수가 바뀌고, `> 0`으로 바꾸면 정직한
+0.0 측정을 "없음"이라 부르는 새 거짓이 되며, Optional로 바꾸는 것은 request 모델·validator·
+시드·응답 스키마에 걸친 계약 변경입니다. 이 라운드는 공표만 고치고 나머지는 열어 둡니다.
+
+**거짓 산문 다섯(기록에는 하나, 제 계획은 셋).** 라운드 23의 규칙대로 바꾼 성질의 어휘로
+트리를 쓸고 세었습니다(자르지 않았습니다). 수리 전 줄 번호로:
+`src/sdp_core/contracts.py:329`, `src/sdp/catalog.py:1180`, `README.md:304`,
+`tests/test_catalog_field_forwarding.py:13`, 같은 파일 `:172-177`.
+마지막 것은 테스트 **이름**이 자기 마지막 단언
+(`"license" not in REQUIRED_METADATA_FIELDS`)의 반대를 주장하고 있었으므로, 그 drift에 대한
+가드를 찾아온 독자가 drift를 의도된 동작이라 선언한 이름을 만납니다. 다섯 자리 모두 철회한
+주장을 인용한 뒤 반박하는 모양으로 바꿨습니다.
+
+**가드.** `tests/test_the_definition_names_what_the_number_counts.py` 11건. 정의의 세 절을
+문자열 비교가 아니라 측정에 고정합니다 — 세는 절 = 집계, 안 세는 이름은 집계에 부재, 그리고
+각 이름이 문장이 말하는 곳에서 실제로 움직이는지. 결함 변이 여섯 전부 red, 정당한-수리 변이
+하나 green:
+
+    M1 손으로 쓴 옛 정의를 다시 공표      red x1  test_the_published_definition_is_the_derived_one
+    M2 세는 절을 앞 여덟 개만 렌더링      red x2  test_the_counted_clause_is_the_tally +
+                                                test_a_reader_following_the_definition_reproduces_the_published_number
+    M3 license를 집계에 넣어 두 절에 동시 등장  red x2  test_an_uncounted_field_is_absent_from_the_tally[license] +
+                                                test_a_recommendation_scored_field_moves_that_score_and_not_this_one[license]
+    M4 quality_score가 recommended_score로  red x1  test_a_recommendation_scored_field_moves_that_score_and_not_this_one[quality_score]
+       세어진다고 주장
+    M5 필수 필드를 다른 분모로 나눔        red x1  test_a_reader_following_the_definition_reproduces_the_published_number
+    M6 안 세는 절에서 이름들을 빼 버림      red x4  test_an_uncounted_field_is_absent_from_the_tally[네 필드 전부]
+    M7 열한 번째 필수 필드(`tags`)를 집계에  GREEN   가드가 정당한 수리를 막지 않습니다 — 결함이 아니라
+       정당하게 추가                              수리를 변이시킨 쪽이고, 통과해야 맞습니다
+
+**이 라운드의 자기 결함.** 가장 센 가드가 처음에는 측정값 `0.8`을 고정했고(라운드 22가 기록한
+"고정된 측정이 자기 수리를 금지하는 게이트" 모양), 그것을
+`(집계 길이 − 빈 필드 수) / 집계 길이`로 파생시킨 **두 번째 판본도 같은 함정**이었습니다 —
+`tags`를 열한 번째 필수 필드로 추가하면 `COMPLETE_DATASET`이 설정하지 않는 필드라 빈 필수
+필드가 셋이 되고, 식은 9/11을 기대하는데 세 측정값은 전부 8/11입니다. 기대값을 프로브 자신의
+필드를 세어 파생시키는 세 번째 판본이 함정을 없앱니다. 찾은 방법이 요점입니다 — 결함만
+변이시키지 않고 **정당한 수리를 변이시켰습니다**(M7). 규칙: 가드를 공표할 때 결함 변이 옆에
+정당한-수리 변이를 하나 둘 것.
+
+같은 모양을 라운드 24의 기록에서 하나 더 찾았습니다 — CHANGELOG 검증 블록의 괄호 하나가
+"이 head의 열 번은 전부 깨끗합니다"로 시작하는데 그것은 라운드 24 이전 head의 서술이고,
+라운드 24의 head는 바로 위 괄호가 적은 143.84ms flake를 냈습니다. 같은 블록이 두 가지를
+동시에 말하고 있었습니다. 수리 쪽 괄호만 더하고 감싸는 블록을 다시 읽지 않으면 생기는
+모양이고, 여기서는 fenced block이 아니라 괄호 둘이 서로를 반박하는 형태로 나타났습니다.
+
+**닫지 않은 것.** `recommended_score`의 항진 항목 둘(위), 그리고 `metadata_completeness`
+외의 KPI 정의들이 같은 종류로 어긋나는지는 이 라운드가 재지 않았습니다 — 작업 항목
+`#28`("Two KPI definitions name quantities the figures do not compute")이 그 범위이고 아직
+열려 있습니다. 이번 가드는 `metadata_completeness` 한 건에 묶여 있으므로, 이 저장소가 이미
+한 번 기록한 모양("가드가 `item.id == "metadata_completeness"` 한 건에 묶여 일반화되지
+않았습니다")을 되풀이할 수 있습니다. 일반화는 `#28`에서 합니다.
+
 ## 운영 메모
 
 - Database objects: 두 단어 이상 `snake_case`, 3NF. Catalog plane 테이블은 #73의 `migrations/0002_ontology_catalog_plane.sql`.
