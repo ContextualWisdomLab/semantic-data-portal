@@ -112,6 +112,13 @@ MAX_ONTOLOGY_PATCH_FIELD = 2000
 # ``withheld_change_count`` since ONT-004, so the vocabulary existed; only this
 # queue was missing it.
 _PATCH_QUEUE_STATE: dict[str, int] = {"withheld": 0}
+# Concepts this process evicted at the cap. Counted here for the reason
+# ``_PATCH_QUEUE_STATE`` exists: the vocabulary is bounded by
+# ``MAX_REGISTERED_CONCEPTS`` and ``_evict_one_registered_concept`` drops a
+# published term to make room, so ``concept_count`` is a lower bound on what
+# was registered and nothing said so. A dict rather than a bare int so the
+# module-state enumeration in tests can hold it.
+_VOCABULARY_STATE: dict[str, int] = {"withheld": 0}
 _ALIAS_TO_CANONICAL: Dict[str, str] = {}
 
 
@@ -837,6 +844,7 @@ def _evict_one_registered_concept(*, actor_id: str | None = None) -> None:
         for term in stale_aliases:
             del _ALIAS_TO_CANONICAL[term]
         del _CONCEPT_DEFINITIONS[candidate]
+        _VOCABULARY_STATE["withheld"] = int(_VOCABULARY_STATE["withheld"]) + 1
         # A deletion with no caller and no audit row was invisible: the only
         # trace of a published term leaving the vocabulary was its absence.
         # ``actor_id`` is whoever's registration forced the eviction, not
@@ -950,9 +958,26 @@ def published_concept_definition(concept: str) -> str | None:
     return str(_CONCEPT_DEFINITIONS[canonical].get("definition", ""))
 
 
+def vocabulary_withheld_count() -> int:
+    """Concepts this process evicted at the cap.
+
+    Exact rather than inferred: ``_evict_one_registered_concept`` is the single
+    place a concept leaves the vocabulary for capacity reasons, so the count is
+    taken there. ``concept_count`` cannot be compared against the cap to get
+    this number - at exactly the cap nothing has been evicted yet, and a
+    truncation flag derived from ``len == capacity`` would declare a loss that
+    did not happen.
+    """
+    return int(_VOCABULARY_STATE["withheld"])
+
+
 def ontology_version_identity() -> dict[str, Any]:
     """The live ontology version identity (ONT-004). See ``ontology_version``."""
-    return ontology_version.ontology_version_identity(_CONCEPT_DEFINITIONS)
+    return ontology_version.ontology_version_identity(
+        _CONCEPT_DEFINITIONS,
+        withheld_concept_count=int(_VOCABULARY_STATE["withheld"]),
+        concept_capacity=MAX_REGISTERED_CONCEPTS,
+    )
 
 
 def vocabulary_change_log(limit: int = 100) -> dict[str, Any]:

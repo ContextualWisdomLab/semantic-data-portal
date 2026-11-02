@@ -17,7 +17,13 @@ from .evidence import (
     count_policy_decisions,
     list_policy_decisions,
 )
-from .ontology import canonical_concept_or_none, list_concepts, ontology_version_identity
+from .ontology import (
+    MAX_REGISTERED_CONCEPTS,
+    canonical_concept_or_none,
+    list_concepts,
+    ontology_version_identity,
+    vocabulary_withheld_count,
+)
 from .semantic_validation import enterprise_shacl_validation_summary
 from .steward_review import build_steward_review_summary
 
@@ -100,6 +106,10 @@ def ontology_mapping_coverage_detail() -> dict[str, Any]:
         if mapping.status == MappingStatus.APPROVED:
             approved_concepts.add(canonical)
 
+    # One sample per payload: the count below and the flag derived from it must
+    # describe the same instant, or a concurrent registration between two reads
+    # makes them contradict each other.
+    withheld_glossary_concepts = vocabulary_withheld_count()
     covered = sorted(approved_concepts)
     return {
         # Coverage *of the glossary*: what the published definition describes.
@@ -110,6 +120,15 @@ def ontology_mapping_coverage_detail() -> dict[str, Any]:
             len(mappings),
         ),
         "glossary_concept_count": len(glossary),
+        # The denominator above is the LIVE glossary, which is correct as this
+        # metric is defined - an evicted term is not in the glossary. What a
+        # reader could not tell is whether 500 is the whole glossary or what is
+        # left of it, because the vocabulary evicts silently at
+        # ``MAX_REGISTERED_CONCEPTS``. Declared here so the ratio says what set
+        # it was computed over.
+        "glossary_concept_capacity": MAX_REGISTERED_CONCEPTS,
+        "withheld_glossary_concept_count": withheld_glossary_concepts,
+        "glossary_is_truncated": withheld_glossary_concepts > 0,
         "covered_glossary_concept_count": len(covered),
         # Declared, not hidden: the concepts a buyer would ask about next.
         "unmapped_glossary_concepts": sorted(set(glossary) - approved_concepts),
@@ -133,6 +152,12 @@ def ontology_version_summary() -> dict[str, Any]:
         "content_digest": identity["content_digest"],
         "revision_is_durable": identity["revision_is_durable"],
         "concept_count": identity["concept_count"],
+        # The vocabulary is bounded and evicts at its cap, so a pack that
+        # printed only the count let a reader take a truncated glossary for a
+        # complete one.
+        "concept_capacity": identity["concept_capacity"],
+        "withheld_concept_count": identity["withheld_concept_count"],
+        "concept_vocabulary_is_truncated": identity["concept_vocabulary_is_truncated"],
         "change_log_entry_count": identity["change_log_entry_count"],
         "digest_matches_recorded_revision": identity["digest_matches_recorded_revision"],
     }

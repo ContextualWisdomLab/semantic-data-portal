@@ -341,7 +341,12 @@ def record_vocabulary_change(
         return dict(entry)
 
 
-def ontology_version_identity(vocabulary: Mapping[str, Any]) -> dict[str, Any]:
+def ontology_version_identity(
+    vocabulary: Mapping[str, Any],
+    *,
+    withheld_concept_count: int = 0,
+    concept_capacity: int | None = None,
+) -> dict[str, Any]:
     """The published version identity, with every limitation named.
 
     Carries no actor or reviewer identity: those live in the change log, which
@@ -365,6 +370,24 @@ def ontology_version_identity(vocabulary: Mapping[str, Any]) -> dict[str, Any]:
             "digest_algorithm": DIGEST_ALGORITHM,
             "digest_basis": DIGEST_BASIS,
             "concept_count": len(vocabulary),
+            # The vocabulary is bounded and evicts at its cap, so this count is
+            # a lower bound once anything has been dropped. Declared the way the
+            # change log two keys below declares its own truncation, rather than
+            # left for a reader to infer from a count that stopped moving.
+            #
+            # The cap lives in ``ontology``, which imports this module, so it
+            # cannot be read from here - the caller supplies it. Omitting both
+            # arguments therefore means "I do not publish these three fields",
+            # and the only in-repo caller that omits them is
+            # ``vocabulary_jsonld_document`` below, which reads just
+            # ``ontology_revision`` and ``content_digest`` (measured: none of
+            # the three appears in ``GET /ontology/vocabulary/jsonld``). A
+            # future surface that starts publishing them must pass them, or it
+            # will publish "capacity unknown, nothing withheld" over a
+            # vocabulary that has truncated.
+            "concept_capacity": concept_capacity,
+            "withheld_concept_count": withheld_concept_count,
+            "concept_vocabulary_is_truncated": withheld_concept_count > 0,
             "revision_scope": REVISION_SCOPE,
             "revision_comparison_note": REVISION_COMPARISON_NOTE,
             # The revision restarts at the baseline on restart, because the

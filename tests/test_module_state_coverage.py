@@ -64,6 +64,7 @@ RESTORED_BY_FIXTURE = frozenset(
         "sdp.ontology._CONCEPT_DEFINITIONS",
         "sdp.ontology._ONTOLOGY_PATCHES",
         "sdp.ontology._PATCH_QUEUE_STATE",
+        "sdp.ontology._VOCABULARY_STATE",
         "sdp.ontology_version._CHANGE_LOG",
         "sdp.ontology_version._REVISION_STATE",
     }

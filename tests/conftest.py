@@ -31,7 +31,7 @@ The state covered here was enumerated from the modules, not listed from memory::
                          _RECORDED_POLICY_DECISION_COUNT, _RECORDED_AUDIT_EVENT_COUNT,
                          _STORE_AUDIT_WRITE_FAILURES, _STORE_DECISION_WRITE_FAILURES
     sdp.ontology         _CONCEPT_DEFINITIONS, _ALIAS_TO_CANONICAL, _ONTOLOGY_PATCHES,
-                         _PATCH_QUEUE_STATE
+                         _PATCH_QUEUE_STATE, _VOCABULARY_STATE
                          (the concept-to-dataset map was here too, as ``_INDEX``;
                          it is derived from the catalog on read now, so there is
                          no snapshot left to restore)
@@ -177,6 +177,7 @@ def restore_in_memory_app_state():
     # and restoring one without the other leaves the pair disagreeing about
     # how many proposals the cap dropped.
     patch_queue_state = dict(ontology._PATCH_QUEUE_STATE)
+    vocabulary_state = dict(ontology._VOCABULARY_STATE)
     concept_definitions = deepcopy(ontology._CONCEPT_DEFINITIONS)
     alias_to_canonical = dict(ontology._ALIAS_TO_CANONICAL)
     change_log = [dict(entry) for entry in ontology_version._CHANGE_LOG]
@@ -216,6 +217,8 @@ def restore_in_memory_app_state():
         ontology._ONTOLOGY_PATCHES[:] = patches
         ontology._PATCH_QUEUE_STATE.clear()
         ontology._PATCH_QUEUE_STATE.update(patch_queue_state)
+        ontology._VOCABULARY_STATE.clear()
+        ontology._VOCABULARY_STATE.update(vocabulary_state)
         ontology._CONCEPT_DEFINITIONS.clear()
         ontology._CONCEPT_DEFINITIONS.update(concept_definitions)
         ontology._ALIAS_TO_CANONICAL.clear()

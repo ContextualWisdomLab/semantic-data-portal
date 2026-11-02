@@ -4124,7 +4124,7 @@ high에서 medium으로 내렸고, 그 근거를 표에 적었습니다. (j)와 
 측정했습니다:
 
 ```
-경계가 있는 링이 둘이 아니라 셋   observability.py:886 retained_failures = len(_ALERT_ERRORS), maxlen=50
+경계가 있는 링이 둘이 아니라 셋   observability.py:890 retained_failures = len(_ALERT_ERRORS), maxlen=50
 메서드 서로소 경로가 셋이 아니라 넷  /catalog/datasets/{dataset_id}(GET/PATCH)를 빼먹었습니다
 withheld null 경로 둘의 이유가 다름  하나는 사실로, 하나는 구조로 묶입니다 — 한 문장으로 묶으면 안 됩니다
 ```
@@ -4372,7 +4372,7 @@ monotonicity를 잃었고, 그 비대칭은 의도된 것이므로 테스트가 
   순수 함수이므로 캐시가 동작을 바꿀 수 없어 자기 분류가 필요합니다.
 * **같은 모양이 셋입니다.** `request_observations_total`(`maxlen=500`),
   `observability_export_errors_total`(`maxlen=50`), 그리고 `alert_delivery` 아래
-  공표되는 **`retained_failures`**(`observability.py:886`, `len(_ALERT_ERRORS)`,
+  공표되는 **`retained_failures`**(`observability.py:890`, `len(_ALERT_ERRORS)`,
   `maxlen=50`). 셋 다 경계가 있는 링의 길이를 플래그도 withheld도 없이 공표합니다.
   기존 기록이 하나만 이름 지었고 이 라운드의 초안은 둘까지만 적었습니다 — 항목의
   목적이 완결성이므로 셋을 다 적습니다. 리뷰가 세 번째를 찾았고 확인했습니다.
@@ -5899,6 +5899,134 @@ wheel이 없어 이 저장소에서 **실제 퍼징 실행**을 확인한 것은
 이미지의 파일 집합 안에서 import를 통과하고 oracle을 바인딩한다는 것까지입니다.
 
 이 절은 측정 기록이고 병합 허가가 아닙니다.
+
+### 경계가 있는 그릇이 여덟이 아니라 **아홉**이었고, 아홉 번째가 공표된 판매 게이트의 분모였습니다 (2026-11-02)
+
+`_CONCEPT_DEFINITIONS`(`src/sdp/ontology.py:22`)는 `MAX_REGISTERED_CONCEPTS = 500`으로
+묶여 있고, `ontology.py:776`이 `if len(_CONCEPT_DEFINITIONS) >= MAX_REGISTERED_CONCEPTS:
+_evict_one_registered_concept(...)`로 공표된 용어를 **지워서** 자리를 만듭니다. 측정:
+인증된 `POST /ontology/concepts`로 714건(채우기 494 + 초과 220)을 **전부 200으로** 받아
+준 뒤 어휘는 정확히 500이고, `GET /ontology/version`은 `concept_count: 500`을 capacity도
+withheld도 truncation 플래그도 없이 공표했습니다.
+
+**같은 응답이 다른 그릇의 손실은 공표하고 있었습니다** — `change_log_capacity: 500`,
+`withheld_change_count: 436`, `change_log_is_truncated: true`. 그래서 이 누락은 모호한
+것이 아니라 **더 나쁩니다**: 세 키 떨어진 곳에서 truncation을 보는 독자는
+`concept_count`를 완전한 수로 읽을 이유가 생깁니다.
+
+**그리고 그 수는 구매자가 읽는 실사 팩의 분모입니다.** `GET /enterprise/evidence-pack`:
+`glossary_concept_count: 500`(분모), `covered_glossary_concept_count: 4`,
+`ontology_mapping_coverage: 0.008`, `saleability_gates.ontology_mapping_coverage: "gap"`.
+이 비율은 `sdp.demo_smoke`의 `ready` 플래그와 판매 게이트를 `>= 0.7`로 가릅니다
+(`demo_smoke.py:255`, `console.py:419`가 그 비율을 렌더합니다).
+
+**주장을 좁힙니다 — 비율 자체는 자기 정의대로 맞습니다.** 처음에 "분모가 잘려서 coverage를
+10배 과대평가한다"고 쓰려다 멈췄습니다. 분모는 `list_concepts()`, 즉 **살아 있는** 용어집이고
+퇴거된 용어는 실제로 용어집에 없습니다. 그러므로 틀린 것은 산수가 아니라 **공시**입니다:
+독자가 완전한 500과 **남은** 500을 구별할 방법이 없었고, 500을 넘긴 조직은 자기가 등록한
+집합이 아니라 **제품이 퇴거 순서로 골라 준** 집합에 대해 측정됩니다.
+
+**이 지표는 같은 계열의 결함으로 이미 한 번 수리된 자리입니다.**
+`enterprise_evidence.ontology_mapping_coverage_detail`의 docstring이 그것을 적고 있습니다 —
+"분모가 존재하는 매핑의 집합이었으므로 지표가 **coverage가 떨어질 때 올랐다**"(측정:
+12개 매핑 중 7개를 지우자 0.917 → 1.0). 그 수리가 분모를 용어집으로 옮겼고, **그 용어집이
+스스로 묶여 있다는 것을 아무도 확인하지 않았습니다.** 같은 함수, 한 단계 아래, 같은 모양.
+
+#### 왜 모든 열거가 이것을 놓쳤는가
+
+제 자신의 열거도 놓쳤고, 그 열거는 "여덟 개, 측정으로 완전함"이라고 **주장했습니다.** 그
+스캔은 `deque(maxlen=)`과 `del x[:n]` / `if len(x) > CAP`+Delete 두 모양만 찾습니다. 이
+그릇은 **함수 호출**로 퇴거하므로 둘 다 아닙니다. 공표도 모듈을 건너갑니다 —
+`ontology_version.py:367`의 `"concept_count": len(vocabulary)`에서 `vocabulary`는 **함수
+파라미터**이고, `enterprise_evidence.py:135`는 `identity["concept_count"]`로 `len()`이
+아예 없습니다. 이 라운드가 만들던 AST 전제는 셋 다 보지 못합니다.
+
+#### 수리 — 이 모듈이 이미 쓰는 패턴 하나를 그대로
+
+`ontology.py:114`에 `_PATCH_QUEUE_STATE: dict[str, int] = {"withheld": 0}`가 이미 있고,
+trim 자리에서 증가하고 공표 자리에서 읽히고 상태 가드에 분류돼 있습니다. 어휘도 같게
+했습니다 — `_VOCABULARY_STATE`를 **퇴거 자리 한 곳**에서 증가시키고, 얇은 래퍼
+`ontology.ontology_version_identity()`가 순수 공표자에게 넘겨 주므로
+`ontology_version`은 여전히 `ontology`를 import하지 않습니다. 한 번의 변경이 **두 표면**에
+모두 닿습니다.
+
+측정(경계마다):
+
+    등록 0건  (퇴거 0)  concept_count   5  withheld   0  truncated False
+    정확히 꽉 (퇴거 0)  concept_count 500  withheld   0  truncated False
+    한 건 초과(퇴거 1)  concept_count 500  withheld   1  truncated True
+    260건 초과(퇴거 260) concept_count 500 withheld 260  truncated True
+
+**플래그는 세어진 퇴거에서 파생되고, `len == capacity`에서는 절대 파생되지 않습니다.**
+정확히 꽉 찬 상태에서는 아직 아무것도 퇴거되지 않았고, 그릇의 **모양**에서 파생한 플래그는
+일어나지 않은 손실을 공표합니다 — 이 저장소가 이미 한 판본을 **철회한** 바로 그 인공물입니다.
+
+#### 이 라운드가 처음에 하려던 것 넷이 측정으로 반박되었습니다
+
+코드를 쓰기 전에 적대적 렌즈 다섯을 돌렸고, 네 항목이 죽었습니다. 각각을 적어 둡니다 —
+다음 독자가 같은 설계를 다시 고르지 않도록.
+
+1. **`itertools.count`로 모노토닉 총계를 들겠다** — `itertools.count`에는 **전진 없는 읽기가
+   없습니다.** `next()`가 읽기이자 소비입니다. 측정: 변하지 않은 포화 링을 다섯 번 읽으면
+   withheld가 149, 150, 151, 152, 153으로 **올라갑니다.** 비전진 읽기는
+   `__reduce__()[1][0]`(피클 내부)과 repr 파싱뿐입니다. 제가 댄 근거("`next()`는 atomic")는
+   참이지만 **무관합니다** — atomicity는 readability가 아닙니다. 그리고 `_MUTABLE_TYPES =
+   (dict, list, set, bytearray, collections.deque)`가 `itertools.count`를 담지 못하므로
+   모듈 상태 가드는 분류되지 않은 카운터를 들고도 **green**입니다.
+2. **"총계를 len보다 먼저 읽으므로 과소보고만 가능하다"** — **거짓입니다.** 증가-후-append
+   배치에서 공표값은 in-flight 호출 수만큼 **과대보고**합니다(측정: writer 1/2/4/8/16/32에서
+   1/2/4/8/16/32행). 과대보고가 위험한 방향입니다. 그리고 링과 함께 리셋하지 않으면
+   **비워진** 링이 `withheld 651`을 공표합니다 — 일어나지 않은 손실.
+3. **`len(ring) == ring.maxlen`을 lower-bound 플래그로 쓰겠다** — 정확히 꽉 찬 상태에서
+   `is_lower_bound: True`를 `withheld: 0` 옆에 공표합니다(측정: 499→False/0, **500→True/0**,
+   501→True/1). 이 모양 때문에 앞선 판본이 철회됐고, 그 기록은 "그 사례를 놓친다고 말하는
+   테스트 없이는 다시 넣을 수 없다"고 적고 있습니다 — 제 제안에는 그 테스트가 없었습니다.
+4. **산문 세 자리를 재조정하겠다** — 그 세 문장은 **참입니다.** 네 자리 전부가 이미 수리된
+   **페이지 크기** 결함으로 범위가 잡혀 있고, 각각 그렇게 말하는 제목 밑에 있습니다
+   ("A published count must not be the size of the page it was read from"). 저는 `이미 고쳤`을
+   읽고 그 위의 제목을 읽지 않았습니다. 진짜 결함은 다른 것입니다 — `README.md:233`이
+   그 카운터가 고쳐졌다고 하고 `README.md:287-291`이 **열려 있다**고 하므로, 하나의
+   구매자 문서가 같은 식별자에 대해 **자기와 모순**합니다.
+
+#### 가드 설계에 대한 교훈 하나 — 이것이 가장 값집니다
+
+제가 만들던 AST 전제는 경계가 **공표되었는지**만 검사하고 그 경계가 **참인지**는 검사하지
+않습니다. 그래서 2번·3번의 거짓 숫자와 함께 출하하면, 정직한 RED 다섯이 green discharge
+여섯으로 바뀌면서 공표값은 거짓이 됩니다 — **가드가 결함을 적극적으로 변호합니다**(측정:
+`offenders=7 discharged=1` → `offenders=2 discharged=6`). 그 전제의 정밀도는 5/7이고
+(두 오인은 모두 이 문서가 **올바른 참조 구현**이라 부르는 자리), 관용적 변형 여섯 가지에
+대한 재현율은 **0/6**이었습니다(모듈 간 공표, Pydantic 필드, `dict(k=v)`, 두 홉 헬퍼,
+위치 인자 `deque([], 50)`, `sum(1 for ...)`). 네 세대가 각각 앞 세대의 반례를 고치고 새
+반례를 들여왔습니다. **구조만으로는 이 일을 할 수 없고**, 실제 일을 하는 것은 검토된
+자리별 레지스트리입니다.
+
+#### 과대일반화를 막는 반례 하나
+
+`_GOVERNED_EVIDENCE_GAPS`(`MAX_TRACKED_EVIDENCE_GAP_ROUTES = 32`)는 **키 카디널리티**를
+묶고 카운트를 묶지 않습니다 — 32개 라우트를 넘으면 증가분이 공표된 `'[other routes]'`
+버킷으로 접히므로, gap 이벤트 250건이 `observed_total: 250`을 공표하고 **아무것도 잃지
+않습니다**. 그러므로 정직한 술어는 "그릇이 상한에 닿았는가"가 아니라 **"공표된 수가
+정보를 잃는가"**입니다. 상한 동등성으로 쓴 규칙은 여기에 공시를 요구해서 **거울상 결함**을
+만듭니다.
+
+#### 제가 쓴 포인터 둘이 낡아 있었습니다
+
+`4127`행과 `4375`행이 `retained_failures`를 `observability.py:886`으로 지목합니다. 측정:
+886행은 `"evaluation_failures"`이고 `retained_failures`는 **890**행입니다. 라운드 22에서
+제가 쓴 포인터가 블록 재번호와 함께 네 줄 낡았고, 그것이 세 번째 링을 확인하러 가는
+독자가 따라갈 수 있는 **유일한** 포인터였습니다. 고쳤습니다.
+
+#### 그리고 이미 기록된 갭을 제가 **두 번째로** 다시 "발견"했습니다
+
+`README.md:286-292`가 이 라운드의 처음 계획을 **그대로** 적고 있었습니다 —
+"`request_observations_total`은 같은 결함 계열이고 **이 라운드가 닫지 않습니다** ... 같은
+모양이 둘 더 있습니다 — `observability_export_errors_total`과 `retained_failures`." 라운드
+22가 링 **셋**을 이름까지 적고 열려 있다고 선언했는데, 제 사전 측정은 그것을 네 번의
+프레이밍에 걸쳐 발견하듯 재도출했습니다. 이 세션에서 **두 번째**입니다(첫 번째는 RBAC
+deny-side 항목이고, 이 문서가 앞선 에이전트의 오진으로 이미 적어 두었습니다).
+
+**규칙:** 라운드를 프레이밍하기 전에 고치려는 것의 **어휘로** README·CHANGELOG·이 문서를
+그렙하십시오. 이 저장소는 보통 그것이 닫혔는지 **이미 말하고 있습니다.**
 
 ## 운영 메모
 
