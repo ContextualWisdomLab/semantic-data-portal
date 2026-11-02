@@ -61,6 +61,7 @@ from .api_error_contract import policy_gated_route_methods
 from .evidence import collect_request_evidence_ids, list_policy_decisions
 from .latency_budgets import latency_budget_report
 from .observability import (
+    route_is_monitoring,
     build_observability_manifest,
     build_request_observation,
     note_governed_request_without_evidence_async,
@@ -206,7 +207,8 @@ async def record_request_observability(request: Request, call_next):
             # The sink write is blocking, so it is awaited off the event loop;
             # see record_request_observation_async. Setting the header first
             # keeps the response untouched by the export path.
-            await record_request_observation_async(observation)
+            if not route_is_monitoring(request.method, route_template):
+                await record_request_observation_async(observation)
 
 
 def _change_reason(payload: dict[str, Any] | None) -> str | None:

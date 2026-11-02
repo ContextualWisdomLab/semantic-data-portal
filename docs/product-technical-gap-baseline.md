@@ -6028,6 +6028,61 @@ deny-side 항목이고, 이 문서가 앞선 에이전트의 오진으로 이미
 **규칙:** 라운드를 프레이밍하기 전에 고치려는 것의 **어휘로** README·CHANGELOG·이 문서를
 그렙하십시오. 이 저장소는 보통 그것이 닫혔는지 **이미 말하고 있습니다.**
 
+### 창을 들여다보는 행위가 창을 채웠습니다 — 운영자가 자주 볼수록 볼 것이 없어집니다 (2026-11-02)
+
+`GET /metrics`와 `GET /enterprise/observability`는 자기들이 **공표하는** 관찰 링에
+스스로 기록되고 있었습니다. 측정: 빈 링에 manifest 한 번이면 1행, 거기에 scrape 한
+번을 더하면 2행입니다. 그리고 인증된 schema 읽기 60건 뒤에 `/metrics`를 500번 — 10초
+간격 대시보드 폴링으로 약 80분 — 긁으면 창은 scrape 498행 + manifest 2행을 담고
+거버닝 트래픽은 **한 행도 남지 않습니다.** 그 결과
+`latency_budgets`의 `schema_browsing`이 실측 `observed_p95_ms: 2.721`에서
+`insufficient_sample`로 떨어집니다.
+
+**이것이 왜 단순한 불편이 아닌가.** 이 링은 NFR-PERF 여섯 예산에 대한 제품의 **유일한**
+in-process 증거이고, 그 payload는 이미 `budget_confirmation_possible: false`로 "in-process
+p95는 프로덕션 예산을 확증할 수 없고 **반증만** 할 수 있다"고 말합니다. 표본이 사라지면
+그 반증 능력까지 사라집니다. 그래서 **가장 성실하게 관측한 운영자가 가장 적게 보게**
+되며, 이것은 대시보드의 목적을 뒤집습니다.
+
+**거짓을 공표한 것은 아닙니다 — 그래서 이 저장소의 정직성 결함과는 다른 종류입니다.**
+각 surface는 자기 `routes`로 필터하고 `minimum_sample: 20` 아래에서는
+`measurement_status: "insufficient_sample"`을 말합니다. scrape 행은 어떤 예산의 표본에도
+들어가지 않습니다. 저는 이것을 "KPI 위조"로 두 번 프레이밍했다가 두 번 측정으로
+접었습니다. 공표값은 **정직하게 degrade**하고, 파괴되는 것은 숫자가 아니라 **증거**입니다.
+
+**수리.** 링 자체에서 제외합니다 — 예산 표본에서만 빼는 것은 아무것도 바꾸지 않습니다
+(surface가 이미 자기 라우트로 필터하므로 scrape 행은 표본에 들어가지 않고, 피해는 전부
+**퇴거**입니다). 키는 `request.url.path`가 아니라 매칭된 **라우트 템플릿과 메서드**입니다:
+같은 미들웨어가 이미 `_POLICY_GATED_ROUTES`에서 "경로만 맞추면
+`GET /ontology/concepts`를 거버닝으로 오분류했다 — 같은 경로의 `POST`가 403을 선언하므로
+메서드가 그 요청이 무엇이었는지 말하는 쪽"이라고 적고 있습니다.
+
+측정(수리 후):
+
+    manifest 1 + scrape 1   -> 링 0행 (전: 2행)
+    schema 60 + scrape 500  -> sample_size 60, evaluated True, p95 2.108 (전: insufficient_sample)
+    창 구성                 -> {'/browse/crm-customer-master/schema': 60}
+
+**제외는 공표합니다.** 제외는 `request_observations_total`의 **의미**를 "서비스한 요청"에서
+"서비스한 **제품** 요청"으로 좁힙니다. 공표된 수의 의미를 조용히 좁히는 것이 바로 이
+제품이 거부하는 결함 계열이므로, 좁힘을 카운트 옆에
+`request_observations_excluded_routes`로 적습니다 — 독자가 나타나지 않는 트래픽으로부터
+추론하게 두지 않습니다.
+
+**받아들인 결과 하나:** 운영자는 이 표면에서 모니터링 엔드포인트의 지연을 더는 읽을 수
+없습니다. 자기 클라이언트가 그것을 재므로 받아들일 수 있지만, 발견되게 두지 말고
+적어 둡니다.
+
+**좁게 건드렸습니다.** 미들웨어에서 건너뛰는 것은 관찰 append **하나**이고,
+`policy_audit_gap` 평가와 correlation 헤더는 그대로 모든 요청에 대해 돕니다 — 그것을
+가드로 고정했습니다(`test_excluding_the_observation_does_not_drop_the_correlation_header`).
+라우트 템플릿이 없는 요청(404)은 제외가 아니라 **관찰**이며 그것도 가드가 있습니다.
+
+**이 항목은 라운드 23의 규칙을 적용해서 시작했습니다.** 프레이밍 전에 저장소를 그 어휘로
+그렙했고(`자기 요청`·`self-record`·`records itself`·`exclude.*observation`·`scrape.*ring`
+외 다섯, 전부 0건) 아무 기록도 없다는 것을 확인했습니다. 라운드 23에서는 같은 검사가 제
+프레이밍을 **반박**했고, 이번에는 **확인**했습니다 — 규칙이 양쪽으로 작동합니다.
+
 ## 운영 메모
 
 - Database objects: 두 단어 이상 `snake_case`, 3NF. Catalog plane 테이블은 #73의 `migrations/0002_ontology_catalog_plane.sql`.

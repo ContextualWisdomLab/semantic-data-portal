@@ -818,6 +818,8 @@ RESPONSE_SCHEMAS: dict[tuple[str, str], dict[str, Any]] = {
                                                    'enterprise_controls_planned': {'type': 'number'},
                                                    'enterprise_controls_external': {'type': 'number'},
                                                    'request_observations_total': {'type': 'number'},
+                                                   'request_observations_excluded_routes': {'type': 'array',
+                                                                                            'items': {'type': 'string'}},
                                                    'observability_export_errors_total': {'type': 'number'},
                                                    'governed_requests_without_evidence_total': {'type': 'number'},
                                                    'connector_probe_failures_total': {'type': 'number'},

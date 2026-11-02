@@ -28,6 +28,32 @@ from .evidence import (
 
 
 _REQUEST_OBSERVATIONS: deque[dict[str, Any]] = deque(maxlen=500)
+
+# The two surfaces that PUBLISH this ring are not recorded into it. Measured
+# before this exclusion: a fresh ring held 1 row after one
+# ``GET /enterprise/observability`` and 2 after one further ``GET /metrics``,
+# and 500 scrapes of ``/metrics`` after 60 governed schema reads left the window
+# holding 498 scrape rows and 2 manifest rows with NONE of the governed traffic -
+# taking ``latency_budgets`` for ``schema_browsing`` from a real
+# ``observed_p95_ms: 2.721`` to ``insufficient_sample``. An operator watching the
+# dashboard destroyed the only evidence the dashboard exists to show, and the
+# more often they looked the less there was to see.
+#
+# Keyed on the matched route template and the method, not on the raw path: this
+# middleware already records (see ``_POLICY_GATED_ROUTES`` in ``api``) that
+# matching a path alone mis-classified ``GET /ontology/concepts`` because
+# ``POST`` on the same path declares 403, and that the method is the half which
+# says what a request was.
+MONITORING_ROUTES: frozenset[tuple[str, str]] = frozenset(
+    {("GET", "/metrics"), ("GET", "/enterprise/observability")}
+)
+
+
+def route_is_monitoring(method: str, route_template: str | None) -> bool:
+    """Whether this request is one of the surfaces that publishes the ring."""
+    if route_template is None:
+        return False
+    return (method.upper(), route_template) in MONITORING_ROUTES
 _EXPORT_ERRORS: deque[dict[str, Any]] = deque(maxlen=50)
 
 
@@ -1481,6 +1507,15 @@ def build_observability_manifest() -> dict[str, Any]:
             "enterprise_controls_external": controls.external_controls,
             # Real buffer occupancy, not the size of the page rendered below.
             "request_observations_total": count_request_observations(),
+            # What the window holds BY CONSTRUCTION. Excluding the two
+            # publishing surfaces narrows this count from "requests served" to
+            # "product requests served", and silently narrowing a published
+            # number's meaning is the defect class this product exists to
+            # refuse - so the narrowing is declared rather than left for a
+            # reader to infer from traffic that never appears.
+            "request_observations_excluded_routes": sorted(
+                f"{method} {route}" for method, route in MONITORING_ROUTES
+            ),
             "observability_export_errors_total": count_observability_export_errors(),
             # The ``policy_audit_gap`` condition as a number, so an operator's
             # own monitoring can alert on it without parsing the manifest.
