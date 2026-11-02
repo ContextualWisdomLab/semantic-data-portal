@@ -28,11 +28,15 @@ from .domain import (
 )
 from .evidence import (
     MAX_IN_MEMORY_AUDIT_EVENTS,
+    EvidenceCount,
     append_audit_event,
     audit_tenant_id,
     has_configured_evidence_store,
+    forget_refused_audit_write,
     list_persisted_audit_events,
+    recorded_audit_event_count,
     tenant_is_in_scope,
+    unreachable_audit_event_count,
 )
 
 
@@ -43,6 +47,18 @@ def _seed_datasets() -> List[Dataset]:
 _DATA = {dataset.id: dataset for dataset in _seed_datasets()}
 for _dataset in _DATA.values():
     _dataset.recompute_scores()
+# ``del`` because the loop variable outlives the loop: without it
+# ``sdp.catalog._dataset`` is a module attribute holding the *same object* as a
+# live catalog row (measured: ``catalog._dataset is catalog._DATA[...]`` was
+# True). No enumeration in ``tests/test_module_state_coverage.py`` can see it -
+# a ``Dataset`` is not in ``_MUTABLE_TYPES`` and the name carries no ``global``
+# - so it is module state that is neither classified nor classifiable there.
+# Review reported it as an isolation hole as well; that half does not hold, and
+# the measurement is the fixture: ``restore_in_memory_app_state`` snapshots each
+# row with ``model_copy(deep=True)``, so an in-place mutation through this alias
+# *is* restored. The reason to delete it is the invisible state, not an observed
+# leak. ``ontology`` already deletes its equivalent at the end of the same shape.
+del _dataset
 _AUDIT_LOG: list[AuditEvent] = []
 _SCHEMA_HISTORY: dict[str, list[dict[str, Any]]] = {}
 
@@ -497,6 +513,11 @@ def _commit_dataset_with_evidence(dataset: Dataset, event: AuditEvent) -> Datase
     try:
         _record_audit_event(event)
     except Exception:
+        # The refusal was counted as a destroyed row where it happened, and
+        # this rollback is what makes that false: the mutation the row would
+        # have evidenced is about to be undone, so nothing is destroyed. Told
+        # first, because the publication must never see the fabricated number.
+        forget_refused_audit_write()
         # Undo in the reverse order, so an exception in the rollback itself
         # cannot leave the dataset visible with the snapshot already gone.
         appended = _SCHEMA_HISTORY.get(dataset.id)
@@ -1493,16 +1514,96 @@ EVIDENCE_COUNT_CEILING = 100_000
 
 def count_audit_events(
     *, resource: str | None = None, tenant_ids: list[str] | None = None
-) -> tuple[int, bool]:
-    """How many audit events exist in scope, and whether that is a lower bound.
+) -> EvidenceCount:
+    """How many audit events exist in scope, and what bounded that number.
 
     Scoped exactly as :func:`list_audit_events` scopes its page, so the count
     and the page agree about what they are counting.
+
+    The loss is measured against the **unscoped reachable set**, which is why
+    this reads the page a second time when a scope is given. Two reasons, both
+    paid for:
+
+    * Against a cap it is wrong. ``list_audit_events`` merges and de-duplicates
+      two windows, so rows reaching only one of them raise the recorded counter
+      without shrinking the union - measured at 2300 recorded / 2300 reachable
+      while a cap comparison claimed 300 destroyed.
+    * Against the *scoped* page it is meaningless. A trimmed row's scope cannot
+      be recovered, so ``resource="no-such-dataset"`` would have reported that a
+      dataset which never held a row had lost 300 of them.
+
+    So a scoped call publishes no number and says so, while the flag is still
+    answered from the unscoped loss.
+
+    The second read is not a cost any route pays. Measured: all four callers of
+    the two count functions - two in ``enterprise_evidence`` and two in
+    ``observability`` - call them with no scope, so the branch below that reads
+    twice is reachable from inside the package and from the suite, not from an
+    endpoint. The parameters are kept because ``list_audit_events`` takes them
+    and a count that cannot be scoped the way its page is scoped would be the
+    next version of the defect this function exists to fix; the contract is
+    pinned by ``test_a_scoped_count_publishes_no_number_it_cannot_know`` so a
+    route that starts passing a scope cannot quietly publish an unscoped loss
+    as its own.
     """
+    # Sampled before the page. That order is the whole fix for a measured
+    # fabrication; see ``evidence.unreachable_audit_event_count``.
+    recorded = recorded_audit_event_count()
     events = list_audit_events(
         limit=EVIDENCE_COUNT_CEILING, resource=resource, tenant_ids=tenant_ids
     )
-    return len(events), len(events) >= EVIDENCE_COUNT_CEILING
+    # ``bool(resource)``, not ``resource is not None``: the page filters with
+    # ``if resource``, so ``resource=""`` is an unscoped page (measured: same
+    # length as the unscoped one) and suppressing a knowable number for it
+    # would be two readings of one argument. ``tenant_ids`` is different -
+    # ``None`` means every tenant and an empty list yields no rows, so presence
+    # is the scope there.
+    scoped = bool(resource) or tenant_ids is not None
+    if len(events) >= EVIDENCE_COUNT_CEILING:
+        # The page stopped before the rows did, so it has not seen what it left
+        # out: always a lower bound. The loss can still be knowable - with a
+        # store configured it is the writes that raised, and the ceiling is
+        # reachable in exactly that configuration - so it is asked for rather
+        # than assumed away. Returning ``None`` here published ``null`` for a
+        # field the response contract declares ``number``, measured at exactly
+        # 100,000 store rows on both surfaces.
+        truncated_loss = unreachable_audit_event_count(
+            recorded_count=recorded, reachable_count=None
+        )
+        return EvidenceCount(
+            visible_count=len(events),
+            withheld_count=None if scoped else truncated_loss,
+            is_lower_bound=True,
+        )
+    reachable = (
+        len(list_audit_events(limit=EVIDENCE_COUNT_CEILING)) if scoped else len(events)
+    )
+    loss = unreachable_audit_event_count(
+        recorded_count=recorded, reachable_count=reachable
+    )
+    # No ``or predates_this_process`` here, and that clause is withdrawn rather
+    # than never written: this round added it so a restart would stop
+    # republishing a permanent store-path loss as "complete", and review
+    # measured the cost. With a store configured ``reachable`` counts rows from
+    # every process while the counter counts this one's attempts, so the clause
+    # fired after **any** restart - permanently, for a count that is exact and
+    # untruncated, beside ``withheld 0`` - and all three surfaces then called a
+    # complete count a lower bound. That is a false incompleteness traded for a
+    # false completeness, and the flag's published meaning ("more rows exist
+    # than the gauge can show") is false in that state.
+    #
+    # What the restart case actually needs is for the *withheld number* to say
+    # what it covers, which is what ``WITHHELD_COUNT_SCOPE`` publishes beside
+    # it: ``withheld 0`` means no row **this process recorded** is unreachable,
+    # and makes no claim about earlier processes. The flag keeps its own
+    # meaning.
+    return EvidenceCount(
+        visible_count=len(events),
+        withheld_count=None if scoped else loss,
+        # ``reachable`` is a number here, so the loss is too - the ``None``
+        # answer belongs to the truncated branch above.
+        is_lower_bound=bool(loss),
+    )
 
 
 def get_dataset_audit_events(

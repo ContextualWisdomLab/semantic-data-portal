@@ -27,7 +27,9 @@ they nest inside this one and restore to the same values.
 The state covered here was enumerated from the modules, not listed from memory::
 
     sdp.catalog          _DATA, _AUDIT_LOG, _SCHEMA_HISTORY
-    sdp.evidence         _POLICY_DECISION_LOG, _AUDIT_EVENT_LOG
+    sdp.evidence         _POLICY_DECISION_LOG, _AUDIT_EVENT_LOG,
+                         _RECORDED_POLICY_DECISION_COUNT, _RECORDED_AUDIT_EVENT_COUNT,
+                         _STORE_AUDIT_WRITE_FAILURES, _STORE_DECISION_WRITE_FAILURES
     sdp.ontology         _CONCEPT_DEFINITIONS, _ALIAS_TO_CANONICAL, _ONTOLOGY_PATCHES,
                          _PATCH_QUEUE_STATE
                          (the concept-to-dataset map was here too, as ``_INDEX``;
@@ -145,6 +147,30 @@ def restore_in_memory_app_state():
     schema_history = deepcopy(catalog._SCHEMA_HISTORY)
     policy_log = list(evidence._POLICY_DECISION_LOG)
     audit_event_log = list(evidence._AUDIT_EVENT_LOG)
+    # Restored together with the two logs, for the reason the patch-queue
+    # counter is restored together with its queue: a restore that puts the logs
+    # back without them leaves the pair disagreeing, and a published number is
+    # derived from the difference now, so the disagreement is observable - a
+    # test that floods the window hands every later test 0 visible rows and 200
+    # withheld, in whatever file order puts it first.
+    #
+    # They count recording **attempts**, not rows kept and not rows dropped.
+    # Measured: the increment happens before the write and regardless of
+    # destination, so a store whose ``append_event`` raises leaves the counter
+    # one higher with no row anywhere. ``unreachable_*_count`` is the
+    # derivation that turns an attempt count into a loss, and the subtraction
+    # it makes is sound only on the no-store path: with a store configured the
+    # store may hold rows from earlier processes, so the counter is not
+    # comparable and the published loss is the writes the store refused -
+    # which is why those two counters are restored here as well.
+    recorded_policy_decisions = evidence.recorded_policy_decision_count()
+    recorded_audit_events = evidence.recorded_audit_event_count()
+    # Restored with them: these say how many rows a configured store refused,
+    # and the published loss is that number on the store path. A test that
+    # drives a failing store would otherwise hand every later test its
+    # failures.
+    store_audit_failures = evidence._STORE_AUDIT_WRITE_FAILURES
+    store_decision_failures = evidence._STORE_DECISION_WRITE_FAILURES
     patches = [patch.model_copy(deep=True) for patch in ontology._ONTOLOGY_PATCHES]
     # Restored together with the queue, for the reason ``_REVISION_STATE`` is
     # restored together with ``_CHANGE_LOG``: the counter describes that list,
@@ -179,6 +205,14 @@ def restore_in_memory_app_state():
         catalog._SCHEMA_HISTORY.update(schema_history)
         evidence._POLICY_DECISION_LOG[:] = policy_log
         evidence._AUDIT_EVENT_LOG[:] = audit_event_log
+        # Assigned by name, like every other entry here: a module-level
+        # scalar is rebound from outside the module exactly as the module's
+        # own ``global`` statement rebinds it, so this needs no production
+        # helper written for the suite.
+        evidence._RECORDED_POLICY_DECISION_COUNT = recorded_policy_decisions
+        evidence._RECORDED_AUDIT_EVENT_COUNT = recorded_audit_events
+        evidence._STORE_AUDIT_WRITE_FAILURES = store_audit_failures
+        evidence._STORE_DECISION_WRITE_FAILURES = store_decision_failures
         ontology._ONTOLOGY_PATCHES[:] = patches
         ontology._PATCH_QUEUE_STATE.clear()
         ontology._PATCH_QUEUE_STATE.update(patch_queue_state)

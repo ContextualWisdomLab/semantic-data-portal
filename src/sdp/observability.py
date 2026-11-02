@@ -20,7 +20,11 @@ from anyio import to_thread
 from sdp_core import enterprise_controls_manifest
 
 from .catalog import count_audit_events, list_audit_events, list_datasets
-from .evidence import count_policy_decisions, list_policy_decisions
+from .evidence import (
+    WITHHELD_COUNT_SCOPE,
+    count_policy_decisions,
+    list_policy_decisions,
+)
 
 
 _REQUEST_OBSERVATIONS: deque[dict[str, Any]] = deque(maxlen=500)
@@ -1372,8 +1376,8 @@ def build_observability_manifest() -> dict[str, Any]:
     datasets = list_datasets()
     audit_events = list_audit_events(limit=500)
     policy_decisions = list_policy_decisions(limit=500)
-    audit_event_count, audit_count_is_lower_bound = count_audit_events()
-    policy_decision_count, policy_count_is_lower_bound = count_policy_decisions()
+    audit_counted = count_audit_events()
+    policy_counted = count_policy_decisions()
     controls = enterprise_controls_manifest()
     request_observations = list_request_observations(limit=25)
     export_errors = list_observability_export_errors()
@@ -1459,10 +1463,19 @@ def build_observability_manifest() -> dict[str, Any]:
             "catalog_datasets_total": len(datasets),
             # Real counts; these were ``len()`` of the 500-row page above and
             # reported 500 for 700 events on three published surfaces.
-            "audit_events_observed_total": audit_event_count,
-            "policy_decisions_observed_total": policy_decision_count,
-            "audit_events_observed_total_is_lower_bound": audit_count_is_lower_bound,
-            "policy_decisions_observed_total_is_lower_bound": policy_count_is_lower_bound,
+            "audit_events_observed_total": audit_counted.visible_count,
+            "policy_decisions_observed_total": policy_counted.visible_count,
+            "audit_events_observed_total_is_lower_bound": audit_counted.is_lower_bound,
+            "policy_decisions_observed_total_is_lower_bound": policy_counted.is_lower_bound,
+            # Recorded rows that can no longer be read. ``null`` means the
+            # number is not recoverable rather than that nothing was lost - the
+            # flag above still says more exist. Not declared monotonic: it is
+            # derived from a process counter against the reachable set, and an
+            # earlier draft of this round asserted monotonicity it could not
+            # keep.
+            "audit_events_withheld_total": audit_counted.withheld_count,
+            "policy_decisions_withheld_total": policy_counted.withheld_count,
+            "withheld_count_scope": WITHHELD_COUNT_SCOPE,
             "enterprise_controls_implemented": controls.implemented_controls,
             "enterprise_controls_planned": controls.planned_controls,
             "enterprise_controls_external": controls.external_controls,
@@ -1600,6 +1613,65 @@ def build_observability_manifest() -> dict[str, Any]:
     }
 
 
+def _withheld_series(name: str, help_text: str, value: int | None) -> list[str]:
+    """Render one withheld series, or nothing when the number is not recoverable.
+
+    A scrape has no way to say "unknown": any number published here would be
+    read as a measurement, and ``0`` in particular would assert that nothing
+    was lost. So the series is omitted instead, which Prometheus already has a
+    vocabulary for (``absent()``).
+
+    An earlier version of this docstring finished that argument with "and the
+    paired ``*_is_lower_bound`` field on the JSON surface still says more rows
+    exist". True, and useless to a scrape: measured, no series name emitted by
+    :func:`prometheus_metrics_text` contained ``lower_bound`` at all, so the
+    one surface that could lose this series was the one surface with no flag -
+    and the HELP line that teaches the absence convention is itself inside the
+    omitted block, so it is never scraped either. The flag is emitted as its
+    own series now, beside the count it qualifies, and that is what carries the
+    truncation when this one is absent.
+
+    Declared ``gauge`` rather than ``counter``: the value is derived from a
+    process counter against the reachable set, not accumulated at trim time, so
+    it is not monotonic under every path. An earlier draft of this round
+    declared it a counter, which told an operator to build ``rate()`` on a
+    series that can step backwards.
+
+    The example that reason used to give - "a store selected after rows were
+    dropped returns it to 0" - was measured true when written and is false now:
+    the store path derives the loss from this process's successful writes
+    against the whole reachable set, so that transition publishes 200 on the
+    audit side of a 2200-recorded / 2000-window process, not 0. The gauge
+    choice stands on a different measured path: ``forget_refused_audit_write``
+    un-counts a refused write that was rolled back, and a rolled-back
+    ``patch_dataset`` moves this series from 1 to 0. A series that can step
+    down is a gauge whichever path steps it.
+    """
+    if value is None:
+        return []
+    return [
+        f"# HELP {name} {help_text}",
+        f"# TYPE {name} gauge",
+        f"{name} {value}",
+    ]
+
+
+def _bound_series(name: str, help_text: str, is_lower_bound: bool) -> list[str]:
+    """Render one lower-bound marker as its own series.
+
+    The flags lived only in :func:`build_observability_manifest`'s ``metrics``
+    dict, so a scrape saw ``sdp_audit_events_observed_total 100000`` as a bare
+    number and had nothing to tell it the true total was larger. ``1``/``0``
+    rather than a label, because the alternative is re-publishing the count
+    under a second name and a reader then has two numbers to reconcile.
+    """
+    return [
+        f"# HELP {name} {help_text}",
+        f"# TYPE {name} gauge",
+        f"{name} {1 if is_lower_bound else 0}",
+    ]
+
+
 def prometheus_metrics_text() -> str:
     manifest = build_observability_manifest()
     metrics = manifest["metrics"]
@@ -1613,6 +1685,28 @@ def prometheus_metrics_text() -> str:
         "# HELP sdp_policy_decisions_observed_total Number of policy decisions visible to the API.",
         "# TYPE sdp_policy_decisions_observed_total gauge",
         f"sdp_policy_decisions_observed_total {metrics['policy_decisions_observed_total']}",
+        *_withheld_series(
+            "sdp_audit_events_withheld_total",
+            "Recorded audit events this process can no longer read. Scope: this process only -"
+            " a row an earlier process recorded and lost is not counted here.",
+            metrics["audit_events_withheld_total"],
+        ),
+        *_withheld_series(
+            "sdp_policy_decisions_withheld_total",
+            "Recorded policy decisions this process can no longer read. Scope: this process only -"
+            " a row an earlier process recorded and lost is not counted here.",
+            metrics["policy_decisions_withheld_total"],
+        ),
+        *_bound_series(
+            "sdp_audit_events_observed_total_is_lower_bound",
+            "1 when more audit events exist than the observed gauge can show.",
+            metrics["audit_events_observed_total_is_lower_bound"],
+        ),
+        *_bound_series(
+            "sdp_policy_decisions_observed_total_is_lower_bound",
+            "1 when more policy decisions exist than the observed gauge can show.",
+            metrics["policy_decisions_observed_total_is_lower_bound"],
+        ),
         "# HELP sdp_enterprise_controls_implemented Number of implemented enterprise controls.",
         "# TYPE sdp_enterprise_controls_implemented gauge",
         f"sdp_enterprise_controls_implemented {metrics['enterprise_controls_implemented']}",

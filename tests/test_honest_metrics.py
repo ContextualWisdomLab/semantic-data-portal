@@ -899,9 +899,9 @@ def test_a_saturated_count_is_declared_a_lower_bound(monkeypatch: pytest.MonkeyP
 
     _flood_audit_events(20)
     monkeypatch.setattr(catalog, "EVIDENCE_COUNT_CEILING", 5)
-    count, is_lower_bound = catalog.count_audit_events()
-    assert count == 5
-    assert is_lower_bound is True
+    counted = catalog.count_audit_events()
+    assert counted.visible_count == 5
+    assert counted.is_lower_bound is True
 
 
 def test_no_published_count_is_the_length_of_a_paged_read() -> None:

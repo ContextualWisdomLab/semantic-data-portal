@@ -292,7 +292,10 @@ def refused_webhook():
 
 def _evidence_counts() -> tuple[int, int]:
     """The policy-decision and audit-event totals, as the published counters read them."""
-    return catalog.count_audit_events()[0], evidence.count_policy_decisions()[0]
+    return (
+        catalog.count_audit_events().visible_count,
+        evidence.count_policy_decisions().visible_count,
+    )
 
 
 def _fire_probe(using: TestClient = client) -> Any:

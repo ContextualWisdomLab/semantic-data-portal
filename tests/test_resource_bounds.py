@@ -192,8 +192,10 @@ def test_a_trimmed_ledger_can_still_answer_whether_a_write_happened() -> None:
 
     A bounded window reports a constant length once it is full, so "was this
     decision recorded?" has no answer from the window alone - and the answer it
-    implies is the wrong one, "no". The monotonic counters keep the question
-    answerable, which is what the two assertions above now rely on.
+    implies is the wrong one, "no". The counters keep the question answerable
+    because they do not stop rising at the cap, which is what the two
+    assertions above rely on - not strict monotonicity, which the audit
+    counter gives up on the rollback path.
     """
     evidence._POLICY_DECISION_LOG[:] = []
     evidence._AUDIT_EVENT_LOG[:] = []

@@ -65,9 +65,9 @@ def test_an_anonymous_caller_is_refused_by_every_graph_read(path: str) -> None:
 
 def test_the_stats_route_records_a_policy_decision() -> None:
     """The evidence half of the invariant, not only the refusal."""
-    before = evidence.count_policy_decisions()[0]
+    before = evidence.count_policy_decisions().visible_count
     refused = client.get("/graph/stats")
-    after_refusal = evidence.count_policy_decisions()[0]
+    after_refusal = evidence.count_policy_decisions().visible_count
     assert refused.status_code == 403
     assert after_refusal > before, (
         "the refusal recorded no policy decision, so the governance ledger "
@@ -75,7 +75,7 @@ def test_the_stats_route_records_a_policy_decision() -> None:
     )
 
     allowed = client.get("/graph/stats", params={"actor": "data-admin"})
-    after_allow = evidence.count_policy_decisions()[0]
+    after_allow = evidence.count_policy_decisions().visible_count
     assert allowed.status_code == 200, allowed.text
     assert after_allow > after_refusal, (
         "the allowed read recorded no policy decision"

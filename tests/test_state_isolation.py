@@ -82,6 +82,28 @@ def test_the_evidence_ledgers_start_empty_for_each_test() -> None:
     assert not evidence._AUDIT_EVENT_LOG
 
 
+def test_the_evidence_counters_start_where_the_ledgers_do() -> None:
+    """The four counters beside those ledgers, asserted here and not by luck.
+
+    The fixture's own self-check is a substring match on its restore block, so
+    a restore line that restores nothing satisfies it. Until this test the only
+    thing that would have caught a broken restore of these four was a *product*
+    assertion in a third file - a test that floods the retention window and then
+    adds visible to withheld - which catches it by accident of what it measures.
+    This file's stated job is the restore, so the baseline belongs here, in the
+    same shape as the patch-queue counter above it.
+
+    ``0`` and not "whatever the snapshot held": the fixture snapshots before each
+    test and the ledgers beside these counters start empty, so a nonzero counter
+    here means the pair disagrees about how many rows the cap discarded - which
+    is exactly the disagreement a published withheld number is derived from.
+    """
+    assert evidence.recorded_audit_event_count() == 0
+    assert evidence.recorded_policy_decision_count() == 0
+    assert evidence._STORE_AUDIT_WRITE_FAILURES == 0
+    assert evidence._STORE_DECISION_WRITE_FAILURES == 0
+
+
 def _seeded_edge_set() -> set[tuple[str, str, str]]:
     """The edges the seed writes, derived by seeding a throwaway store.
 

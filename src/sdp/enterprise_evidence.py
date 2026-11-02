@@ -12,7 +12,11 @@ from sdp_core import (
 )
 
 from .catalog import count_audit_events, list_audit_events, list_datasets, validate_metadata
-from .evidence import count_policy_decisions, list_policy_decisions
+from .evidence import (
+    WITHHELD_COUNT_SCOPE,
+    count_policy_decisions,
+    list_policy_decisions,
+)
 from .ontology import canonical_concept_or_none, list_concepts, ontology_version_identity
 from .semantic_validation import enterprise_shacl_validation_summary
 from .steward_review import build_steward_review_summary
@@ -187,8 +191,8 @@ def build_enterprise_evidence_pack() -> dict[str, Any]:
     policy_decisions = list_policy_decisions(limit=500)
     # Real counts, not the size of the page above. See
     # ``catalog.count_audit_events``.
-    audit_event_count, audit_count_is_lower_bound = count_audit_events()
-    policy_decision_count, policy_count_is_lower_bound = count_policy_decisions()
+    audit_counted = count_audit_events()
+    policy_counted = count_policy_decisions()
 
     return {
         "product": readiness.product,
@@ -212,11 +216,51 @@ def build_enterprise_evidence_pack() -> dict[str, Any]:
             for key, value in ontology_mapping_coverage_detail().items()
             if key != "unregistered_mapping_concepts"
         },
-        "policy_decision_count": policy_decision_count,
-        "audit_event_count": audit_event_count,
-        # Declared rather than silently wrong, if the ceiling is ever reached.
-        "policy_decision_count_is_lower_bound": policy_count_is_lower_bound,
-        "audit_event_count_is_lower_bound": audit_count_is_lower_bound,
+        "policy_decision_count": policy_counted.visible_count,
+        "audit_event_count": audit_counted.visible_count,
+        # Declared rather than silently wrong, when either bound is reached:
+        # the read page's ceiling, or the retention window that trims the
+        # in-memory log. The withheld count says how many recorded rows can no
+        # longer be read; ``null`` says the number is not recoverable, which is
+        # not the same as 0 and must not be published as 0.
+        "policy_decision_count_is_lower_bound": policy_counted.is_lower_bound,
+        "audit_event_count_is_lower_bound": audit_counted.is_lower_bound,
+        "withheld_policy_decision_count": policy_counted.withheld_count,
+        "withheld_audit_event_count": audit_counted.withheld_count,
+        # What those two numbers are scoped to, published as a field rather
+        # than left for a reader to assume: both are derived from this
+        # process's counters, so a row an earlier process recorded and lost is
+        # not in them. It is also not knowable from here - the fact lived only
+        # in that process's memory, and persisting it would need a write to the
+        # store that was refusing writes - so the scope is the honest answer
+        # and not a placeholder for one.
+        #
+        # Not "monotonic", and **neither are the recording counters** - an
+        # earlier form of this comment claimed they were, and said the store
+        # path's published number "is the refusal counter". Both halves were
+        # true when written and the same round falsified both.
+        #
+        # ``forget_refused_audit_write`` un-counts the refusal *and* the
+        # recording attempt when a mutation whose audit row the store refused is
+        # rolled back: nothing was destroyed and no row exists, so neither is
+        # counted. Measured: a rolled-back ``patch_dataset`` published
+        # ``withheld 1`` before that repair and ``withheld 0`` after, so the
+        # published number steps **down** on that path - which is why it is a
+        # gauge on ``/metrics`` and not a counter.
+        #
+        # And the store path is no longer the refusal counter alone: it is
+        # ``refusals + max(successes - reachable, 0)``, so rows this process
+        # wrote and can no longer read are named even when nothing refused
+        # them. Measured on a 2200-recorded / 2000-window process: attaching a
+        # store publishes 200 on the audit side (unchanged from no store) and
+        # 2200 on the policy side, where the reader serves store rows
+        # exclusively and so loses the whole window.
+        #
+        # The flag beside them does **not** carry the predating case, and a
+        # draft of this round that made it do so is withdrawn: see
+        # :func:`sdp.evidence.unreachable_audit_event_count` and the comment in
+        # :func:`sdp.catalog.count_audit_events` for the measurement.
+        "withheld_count_scope": WITHHELD_COUNT_SCOPE,
         "production_demo_release_ready": production.demo_release_ready,
         "production_paid_pilot_ready": production.paid_pilot_ready,
         "production_paid_pilot_blockers": len(production.paid_pilot_blockers),
