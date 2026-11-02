@@ -2845,6 +2845,72 @@ redaction). 패턴이 분명합니다 — 수리는 맞았지만 **같은 결함
 역할을 빼앗는 쪽이든 매트릭스를 바꾸는 쪽이든 의도를 알아야 고를 수 있으므로, 번들링을
 공개하고 scope 주장이 grant보다 좁아지면 깨지는 contract test만 두었습니다.
 
+**같은 오진이 두 번째로 올라왔습니다 (2026-11-02). 이번에는 제가 올렸습니다.** 위 3번이
+이미 적어 둔 것을 다시 "발견"했고, 코드를 쓰기 전에 적대적 리뷰 여섯 렌즈에 걸어서
+죽었습니다. 네 검증자가 각자 증거를 다시 재서 확인했고, 그중 둘은 자기 쪽 논거를 더 강한
+측정으로 **교체**했습니다(한 쪽은 역할 행이 9/10이 아니라 **10/10** 참임을 세었습니다).
+
+**그것을 만든 측정 오류 둘을 적어 둡니다 — 다음 독자가 밟을 함정이기 때문입니다.**
+
+1. **라우트 이름을 함수 이름에서 추론하고 한 번도 호출하지 않았습니다.**
+   `GET /enterprise/rbac`는 **404**입니다. 실제 라우트는 `GET /enterprise/rbac-matrix`이고,
+   그 응답이 바로 "가려져 있다"고 주장한 것을 **in-band로 싣고 있습니다** — top-level 키가
+   `['feature_gate', 'roles', 'action_catalog', 'policy_source', 'seeded_subject_bindings']`이고
+   `security`의 바인딩은 `{"subject":"security","roles":["security","platform-admin"],
+   "crosses_tenant_boundary":true}`, `data-admin`은 `false`입니다(그 `false`가 측정된
+   403 `tenant boundary denied`와 맞습니다).
+2. **가드를 테스트 파일 하나에서만 찾고 "없다"고 결론했습니다.**
+   `grep -rln denied_actions tests/`는 **둘**을 돌려줍니다 —
+   `tests/test_policy_action_vocabulary.py`와 `tests/test_api.py`. 전자의
+   `test_the_published_matrix_is_evaluable_and_agrees_for_every_clean_row`가
+   `expected = "allow" if action in allowed_actions else "deny" if action in denied_actions`로
+   **deny 쪽을 엔진에 직접 겁니다**. 공표된 거부를 거짓으로 만드는 변이 넷이 각각 기존
+   테스트를 red로 만듭니다.
+
+그리고 역할 단위 행 자체는 정직합니다: `roles=["security"]`만 가진 subject를 심어 엔진을
+열거하면 열 칸 전부가 행과 일치합니다(`preview_data`·`run_governed_query`·`register_dataset`·
+`patch_dataset`·`publish_dataset`·`deprecate_dataset`·`administer_tenants` 전부 deny).
+행은 **역할**에 대한 진술이고 그 진술은 참이며, subject 단위 union은 같은 응답이 이미
+공개합니다.
+
+**다음에 이 항목을 다시 올리기 전에 두 명령을 돌리십시오:** (a) `/enterprise/rbac-matrix`를
+**호출**해서 `seeded_subject_bindings`를 보고, (b) `grep -rln denied_actions tests/`를
+돌리십시오. 각각 한 명령이고, 각각 이 오진을 그 자리에서 끝냅니다. 위 4번이 적은 교훈의
+형태가 같습니다 — **범위가 주장보다 좁은 검증은 검증이 아닙니다.** 4번은 남의 숫자였고
+이번은 제 그렙이었습니다.
+
+**그 리뷰가 트리에 변이를 둘 남겼습니다 — 하나는 커밋 직전 `git status`로, 하나는
+리뷰어 자신이 잡았습니다.**
+
+1. `src/sdp_core/rbac.py:119`의 `tenant_scope`가 `platform_evidence_only` →
+   `own_tenant_only`로 바뀐 채 남아 있었습니다(공표된 scope 주장이 가드되는지 보려는
+   변이였고 복원되지 않았습니다). 그대로 커밋했다면 **공표된 주장을 거짓으로 만드는
+   변경**을, 바로 그 종류의 결함을 다루는 기록과 함께 출하했을 것입니다. 되돌린 뒤
+   119행이 `platform_evidence_only`로, 80·96행이 원래대로 `own_tenant_only`인 것을
+   확인했습니다.
+2. 더 나쁜 쪽: `src/sdp/policy.py:143`의 `_DATA_READER_ROLES`에 `"security"`가 다시
+   들어가 있었습니다(mtime 11:41:49) — **이미 커밋된 수리를 되돌리는** 편집이고,
+   `tests/test_policy.py::test_security_role_may_read_metadata_but_not_data`를 red로
+   만듭니다(`assert 'allow' == 'deny'`). 이것은 제가 아니라 **렌즈 하나가 스스로
+   발견해 공개했고**, 그 뒤 `git archive HEAD | tar -x`로 커밋된 head의 깨끗한 사본을
+   만들어 **모든 측정을 거기서 다시 했습니다**. 그 위생이 이 리뷰에서 가장 잘 된
+   부분입니다 — 더러운 트리를 발견하고, 자기 앞선 측정 둘이 서로 어긋난 것을 적고,
+   깨끗한 사본으로 옮겼습니다.
+
+**커밋은 영향을 받지 않았습니다.** `c2abd45`는 11:29:52에 만들어졌고 두 편집은 그
+뒤(11:36 이후 워크플로 중)에 생겼습니다. 커밋된 `policy.py:143`은 3-tuple이고
+커밋된 `rbac.py:119`는 `platform_evidence_only`입니다 — 둘 다 `git show`로 확인했습니다.
+라운드 22의 게이트·변이 실행도 전부 그 이전입니다.
+
+이 저장소의 변이 하네스는 바로 이것 때문에 pristine 사이드카를 두고 모든 복원을 md5로
+검증합니다. 서브에이전트에는 그 규율이 **기본으로** 없습니다 — 둘 중 하나는 스스로
+갖췄고 하나는 못 갖췄습니다. **규칙 둘:** (a) 변이로 측정하는 에이전트는 공유 트리가
+아니라 `git archive HEAD`로 뜬 사본에서 작업한다(렌즈 하나가 발견 후 실제로 그렇게
+했습니다). (b) 오케스트레이터는 **커밋 전에 트리를 검증한다** —
+`git status --porcelain`이 자기 편집만 보여야 하고, 어긋나면 커밋하지 않는다. 측정이
+측정 대상을 바꿔 놓고 떠나는 것은 이 라운드가 되풀이해 맞은 모양의 또 다른 변종이고,
+이번에는 **공표된 주장을 거짓으로 만드는 쪽으로** 바꿔 놓았습니다.
+
 ### pgvector 빌드 입력 핀 — 기록만 했던 항목을 닫았습니다 (2026-10-26)
 
 `docker/postgres-age-pgvector.Dockerfile`은 pgvector를 **가변 GitHub 태그 URL**에서
