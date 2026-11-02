@@ -284,11 +284,17 @@ drift(코드와 일치하지 않는 게시된 주장)이기 때문입니다. `te
   정확하고 절단 없는 수를 첫 프로세스 이후 **영구히** 하한으로 표시하면서도(측정: 도달
   가능 15·공표 15에 하한 true) 정작 추가된 사례 — 이전 프로세스가 아무것도 영속하지
   못한 경우 — 에서는 거짓이었습니다. `request_observations_total`은 같은
-  결함 계열이고 **이 라운드가 닫지 않습니다** — `maxlen=500` deque의 `len()`이라 650 요청
-  뒤 500을 플래그도 withheld도 없이 게시하며, 새 구조 가드의 범위는 "이미 존재하는 플래그"
-  이지 "경계가 있는 창에서 온 카운트"가 아닙니다. 같은 모양이 둘 더 있습니다 —
+  결함 계열이고 **그 라운드가 닫지 않았습니다** — `maxlen=500` deque의 `len()`이라 650 요청
+  뒤 500을 플래그도 withheld도 없이 게시하며, 그 라운드의 새 구조 가드의 범위는 "이미 존재하는
+  플래그"이지 "경계가 있는 창에서 온 카운트"가 아니었습니다. 같은 모양이 둘 더 있었습니다 —
   `observability_export_errors_total`(`maxlen=50`)과 `alert_delivery` 아래
   `retained_failures`(`maxlen=50`)입니다.
+  **셋 다 이제 닫혔습니다(라운드 26).** 각각 자기 cap과 이 프로세스가 cap에서 버린 행 수,
+  그리고 그 수에서 파생된 하한 플래그를 함께 게시합니다 —
+  `*_cap` / `*_withheld_total` / `*_is_lower_bound`이고, `metrics` 블록에 이미 있던
+  `withheld_count_scope`가 범위를 말합니다. 측정: alert ring에 cap+7을 넣으면
+  `retained_failures` 50, `*_cap` 50, `*_withheld_total` 7, `*_is_lower_bound` true이고,
+  **정확히 cap만큼** 넣으면 withheld 0 · 플래그 false입니다(가득 찬 링은 잃은 것이 없습니다).
 - **반쯤 적용된 tenant 마이그레이션이 영구히 복구되지 않았습니다.** `_add_tenant_column`이 컬럼이
   이미 있으면 **자기 backfill 전에** 반환했습니다. 이 메서드는 ALTER만 하는 형태로 먼저 출시되었으므로
   그 빌드로 업그레이드된 SQLite 원장은 전부 컬럼이 있는 상태이고 backfill이 영원히 돌지 않습니다

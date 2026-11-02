@@ -59,6 +59,7 @@ RESTORED_BY_FIXTURE = frozenset(
         "sdp.observability._EXPORT_ERRORS",
         "sdp.observability._GOVERNED_EVIDENCE_GAPS",
         "sdp.observability._REQUEST_OBSERVATIONS",
+        "sdp.observability._RING_WITHHELD",
         "sdp.observability._SINK_BREAKER",
         "sdp.ontology._ALIAS_TO_CANONICAL",
         "sdp.ontology._CONCEPT_DEFINITIONS",

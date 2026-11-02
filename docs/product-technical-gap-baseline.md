@@ -4124,7 +4124,7 @@ high에서 medium으로 내렸고, 그 근거를 표에 적었습니다. (j)와 
 측정했습니다:
 
 ```
-경계가 있는 링이 둘이 아니라 셋   observability.py:890 retained_failures = len(_ALERT_ERRORS), maxlen=50
+경계가 있는 링이 둘이 아니라 셋   alert_routing_state()의 retained_failures = len(_ALERT_ERRORS), maxlen=50
 메서드 서로소 경로가 셋이 아니라 넷  /catalog/datasets/{dataset_id}(GET/PATCH)를 빼먹었습니다
 withheld null 경로 둘의 이유가 다름  하나는 사실로, 하나는 구조로 묶입니다 — 한 문장으로 묶으면 안 됩니다
 ```
@@ -4372,7 +4372,7 @@ monotonicity를 잃었고, 그 비대칭은 의도된 것이므로 테스트가 
   순수 함수이므로 캐시가 동작을 바꿀 수 없어 자기 분류가 필요합니다.
 * **같은 모양이 셋입니다.** `request_observations_total`(`maxlen=500`),
   `observability_export_errors_total`(`maxlen=50`), 그리고 `alert_delivery` 아래
-  공표되는 **`retained_failures`**(`observability.py:890`, `len(_ALERT_ERRORS)`,
+  공표되는 **`retained_failures`**(`alert_routing_state()`, `len(_ALERT_ERRORS)`,
   `maxlen=50`). 셋 다 경계가 있는 링의 길이를 플래그도 withheld도 없이 공표합니다.
   기존 기록이 하나만 이름 지었고 이 라운드의 초안은 둘까지만 적었습니다 — 항목의
   목적이 완결성이므로 셋을 다 적습니다. 리뷰가 세 번째를 찾았고 확인했습니다.
@@ -6012,7 +6012,14 @@ trim 자리에서 증가하고 공표 자리에서 읽히고 상태 가드에 �
 #### 제가 쓴 포인터 둘이 낡아 있었습니다
 
 `4127`행과 `4375`행이 `retained_failures`를 `observability.py:886`으로 지목합니다. 측정:
-886행은 `"evaluation_failures"`이고 `retained_failures`는 **890**행입니다. 라운드 22에서
+886행은 `"evaluation_failures"`이고 `retained_failures`는 **890**행입니다.
+
+**이 정정 자체가 그 뒤 다시 낡았고, 라운드 26이 줄 번호를 버립니다.** 49c2b37에서 다시
+재면 886행은 **빈 줄**이고 `retained_failures`는 **916**행입니다 — 포인터가 26줄
+움직였으므로 이 정정의 두 절이 모두 거짓이 되었습니다. 줄 번호를 고치면 다음 커밋에서 또
+낡으므로, 위 두 자리와 CHANGELOG의 같은 자리를 **함수 이름**(`alert_routing_state()`)으로
+바꿨습니다. 함수가 사라지면 그 참조는 찾을 수 있는 방식으로 깨지고, 줄이 움직이는 것만으로는
+깨지지 않습니다. 라운드 22에서
 제가 쓴 포인터가 블록 재번호와 함께 네 줄 낡았고, 그것이 세 번째 링을 확인하러 가는
 독자가 따라갈 수 있는 **유일한** 포인터였습니다. 고쳤습니다.
 
@@ -6172,6 +6179,72 @@ non-optional float입니다(`is_required() -> True`, 생략하면 `ValidationErr
 열려 있습니다. 이번 가드는 `metadata_completeness` 한 건에 묶여 있으므로, 이 저장소가 이미
 한 번 기록한 모양("가드가 `item.id == "metadata_completeness"` 한 건에 묶여 일반화되지
 않았습니다")을 되풀이할 수 있습니다. 일반화는 `#28`에서 합니다.
+
+### 한 블록이 두 수량은 정확한 카운트로, 세 수량은 포화한 `len()`으로 공표했습니다 (2026-11-02)
+
+**표면.** `/enterprise/observability`의 `metrics`·`alert_delivery` 블록과 `/metrics`. 셋 다
+미인증 200입니다.
+
+**선언되어 있었고, 닫히지 않았습니다.** 이 항목은 새 발견이 아닙니다 — `README.md`와 이 문서가
+셋을 전부 이름으로 부르며 "그 라운드가 닫지 않는다"고 적어 두었습니다. 라운드 26이 닫습니다.
+
+| 링 | cap | 공표 이름 |
+|---|---|---|
+| `_REQUEST_OBSERVATIONS` | 500 | `metrics.request_observations_total` |
+| `_EXPORT_ERRORS` | 50 | `metrics.observability_export_errors_total` |
+| `_ALERT_ERRORS` | 50 | `alert_delivery.retained_failures` |
+
+같은 `metrics` 블록의 다른 둘(`audit_events_*`, `policy_decisions_*`)은 이미
+`*_is_lower_bound`·`*_withheld_total`·`withheld_count_scope`를 갖고 있었습니다. 그래서 한
+블록을 읽는 사람이 **두 수량에는 정확한 값을, 세 수량에는 포화한 길이를** 받으면서 그 둘을
+가를 근거가 payload 안에 없었습니다. 수리 전: 60 governed requests →
+`evaluation_failures 60` 옆에 `retained_failures 50`, 열 행이 플래그·withheld·cap 없이
+버려짐. payload 전체에서 공표되는 cap은 `latency_budgets.observation_window.buffer_capacity`
+하나뿐이었습니다.
+
+**수리.** append 자리 **넷**을 하나의 seam(`_append_bounded`)으로 모으고, 그 안에서 점유
+검사·append·증가를 **한 critical section**으로 묶습니다. 증가는 링이 이미 꽉 찬 경우에만
+일어나므로 버려진 행을 세고 시도된 append를 세지 않습니다. `is_lower_bound`는 drop 수에서
+파생되고 `len == maxlen`에서 파생되지 않습니다(라운드 23이 그 술어의 산물을 이미 쟀습니다).
+측정: cap+7 → visible cap·withheld 7·flag true, 정확히 cap → withheld 0·flag false,
+5회 읽기 → `[3,3,3,3,3]`, reset → 셋 다 0.
+
+**이 라운드의 자기 결함 둘, 둘 다 기계가 잡았습니다.**
+
+1. 라운드 25가 더한 규칙(정당한-수리 변이를 하나 둘 것)이 **한 라운드 뒤에** 저를 잡았습니다.
+   오버플로 크기를 오늘의 cap에 맞춰 손으로 박아 넣었으므로 cap을 올리는 정당한 변경 둘이
+   가드를 red로 만들었습니다. 결함 변이 여섯은 전부 red였으니 그 규칙이 없으면 "가드가
+   건강하다"로 끝났을 것입니다. 크기를 각 링의 `maxlen`에서 파생시켜 고쳤습니다.
+2. **JSON 쪽만 공표하고 scrape 쪽을 빠뜨렸습니다.**
+   `test_the_scrape_surface_exposes_every_withheld_number_it_has`는 기대값을 metrics
+   payload에서 **파생**하므로, `*_withheld_total`을 JSON에 더하고 `sdp_*` 계열을 더하지
+   않으면 그 기존 가드가 red가 됩니다. 라운드 22가 `/metrics`에 절단 신호가 아예 없다는 것을
+   찾아 만든 가드이고, 그것이 제가 같은 비대칭을 되살리는 것을 잡았습니다. 두 withheld
+   카운터와 두 하한 표식을 gauge로 내보냅니다.
+
+**닫지 않은 것(경계를 분명히).** `retained_failures`의 공표는 JSON 표면에만 있습니다 —
+`/metrics`에는 retained-failure 계열이 원래도 없었고 이 라운드가 더하지 않았습니다. 위 가드는
+`metrics` 블록에서 파생되므로 이 자리를 요구하지 않고, 더하는 것은 scrape 표면의 범위를 넓히는
+별개 판단입니다. 적어 두고 열어 둡니다.
+
+**측정해서 다시 쓴 동시성 항목(`#71`), 고치지 않고 기록합니다.** 작업 항목의 문장("가드가 ring
+append에는 붙지 않았다")은 **틀렸습니다** — 가드는 있고 consult되며, CHANGELOG가 그 추가와
+변이 red를 이미 적어 두었습니다. 좁은 주장(consult와 append가 원자적이지 않다)은 네 방향으로
+쟀고 전부 재현되지만, **배포 형상에서는 창이 열리지 않습니다**: `reset_alert_routing()`의
+`src/` 안 유일한 호출자는 `reset_request_observability`이고 그 함수의 `src/` 안 호출자는
+**0개**입니다(라우트도 시작 훅도 없고 모든 호출자가 `tests/` 아래). 또 `#71`이 제안한 수리는
+**두 경로 모두에서 불충분**합니다 — clear()를 lock 안으로 옮겨도 delivery 누출은 그대로이고,
+evaluation 경로는 generation이 아예 도달하지 않으므로 원자적 reset이 배제할 대상이 없습니다.
+evaluation 경로의 교차-episode 누출은 11920 episode 중 1549에서 계측 없이 재현되지만 그
+episode 경계를 만드는 reset을 제품이 수행하지 않습니다. 그래서 이것은 라이브러리가 자기 테스트
+픽스처 아래에서 갖는 성질이고 구매자가 보는 결함이 아닙니다.
+
+**낡은 포인터 다섯.** `retained_failures`를 줄 번호로 지목하는 자리 넷(이 문서 4127·4375·
+6014-6015, CHANGELOG 482-484)이 전부 현재 head에 반박됩니다 — 886행은 **빈 줄**이고 실제는
+916행입니다. 뒤의 둘은 **바로 이 포인터의 네 줄 드리프트를 고치려고 쓴 정정**인데 26줄 더
+움직여 두 절이 모두 거짓이 되었습니다. 줄 번호를 버리고 **함수 이름**(`alert_routing_state()`)
+으로 바꿨습니다. 다섯 번째는 CHANGELOG 4680의 `observability.py:907`로, 인용하는 주석 문구가
+지금 트리의 어디에도 없고 907행은 무관한 코드입니다 — 인용만 남기고 줄 번호를 버렸습니다.
 
 ## 운영 메모
 

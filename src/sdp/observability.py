@@ -22,12 +22,97 @@ from sdp_core import enterprise_controls_manifest
 from .catalog import count_audit_events, list_audit_events, list_datasets
 from .evidence import (
     WITHHELD_COUNT_SCOPE,
+    EvidenceCount,
     count_policy_decisions,
     list_policy_decisions,
 )
 
 
 _REQUEST_OBSERVATIONS: deque[dict[str, Any]] = deque(maxlen=500)
+
+# How many rows each bounded ring has dropped at its cap, in this process.
+#
+# README and the gap baseline name three counters that publish a bounded ring's
+# ``len()`` "with neither flag nor withheld", and both say in as many words that
+# the round which found them did not close it. They are
+# ``request_observations_total`` (``maxlen=500``),
+# ``observability_export_errors_total`` (``maxlen=50``) and ``retained_failures``
+# (``maxlen=50``). Two counters in the very same ``metrics`` block already carry
+# the honest-count treatment - ``audit_events_observed_total_is_lower_bound``
+# beside ``audit_events_withheld_total`` and ``withheld_count_scope`` - so a
+# reader of that block got an exact count for two quantities and a saturating
+# length for three, with nothing to tell them apart. Measured on the alert ring:
+# 60 governed requests against a raising rule report published
+# ``evaluation_failures: 60`` beside ``retained_failures: 50``, so ten rows were
+# dropped with no flag, no withheld count and no published cap.
+#
+# A dict rather than three ints so the module-state enumeration in tests can hold
+# it, and one lock rather than three because the counting is the same operation
+# three times - the shape this repository already needed when three hand-written
+# copies of one tally disagreed with each other.
+_RING_WITHHELD: dict[str, int] = {
+    "request_observations": 0,
+    "export_errors": 0,
+    "alert_errors": 0,
+}
+_RING_WITHHELD_LOCK = threading.Lock()
+
+
+def _append_bounded(
+    ring: deque[dict[str, Any]], ring_name: str, row: dict[str, Any]
+) -> None:
+    """Append one row to a bounded ring, counting the row it evicts.
+
+    The occupancy check, the append and the increment are one critical section.
+    Splitting them is how a count stops being exact: measured on this module's
+    own alert ring, a generation check in one critical section and a ring append
+    in none let a row from a reset episode land in the next episode's ring. The
+    same split here would let two appends at capacity be counted once.
+
+    The increment happens only when the ring was already full, so it counts rows
+    that were actually dropped rather than appends that were made - an earlier
+    repair on a sibling counter in this branch incremented before the append and
+    over-reported by the in-flight count.
+    """
+    with _RING_WITHHELD_LOCK:
+        evicted = ring.maxlen is not None and len(ring) >= ring.maxlen
+        ring.append(row)
+        if evicted:
+            _RING_WITHHELD[ring_name] += 1
+
+
+def ring_withheld_count(ring_name: str) -> int:
+    """How many rows this process dropped at the named ring's cap."""
+    with _RING_WITHHELD_LOCK:
+        return _RING_WITHHELD[ring_name]
+
+
+def _reset_ring_withheld(ring_name: str) -> None:
+    """Zero one ring's drop count, for a reset that empties that ring."""
+    with _RING_WITHHELD_LOCK:
+        _RING_WITHHELD[ring_name] = 0
+
+
+def _counted_ring(ring: deque[dict[str, Any]], ring_name: str) -> EvidenceCount:
+    """One sample of a bounded ring: what is visible, what was dropped, and the flag.
+
+    ``is_lower_bound`` is derived from the drop count, **not** from
+    ``len(ring) == ring.maxlen``. That predicate was measured publishing
+    ``is_lower_bound: true`` beside ``withheld: 0`` at exactly ``maxlen``
+    appends - a ring that is exactly full has lost nothing - and it reproduced
+    an artefact a draft in this branch had already withdrawn once.
+
+    Both halves come from one critical section so the pair cannot be sampled at
+    different instants from each other.
+    """
+    with _RING_WITHHELD_LOCK:
+        withheld = _RING_WITHHELD[ring_name]
+        visible = len(ring)
+    return EvidenceCount(
+        visible_count=visible,
+        withheld_count=withheld,
+        is_lower_bound=withheld > 0,
+    )
 
 # The two surfaces that PUBLISH this ring are not recorded into it. Measured
 # before this exclusion: a fresh ring held 1 row after one
@@ -708,13 +793,15 @@ def record_alert_routing_error(rule_id: str, stage: str, error_type: str) -> Non
     suppressed increment from a webhook that never accepted the POST, which is
     the distinction this ring exists to preserve.
     """
-    _ALERT_ERRORS.append(
+    _append_bounded(
+        _ALERT_ERRORS,
+        "alert_errors",
         {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "rule_id": rule_id,
             "stage": stage,
             "error_type": error_type,
-        }
+        },
     )
 
 
@@ -893,6 +980,7 @@ def alert_routing_state() -> dict[str, Any]:
             for kind in ("transitions", "suppressed", "attempted", "succeeded", "failed")
         }
         evaluation_failures = _ALERT_ROUTING["evaluation_failures"]
+    retained_counted = _counted_ring(_ALERT_ERRORS, "alert_errors")
     return {
         "webhook_configured": bool(os.getenv("SDP_ALERT_WEBHOOK_URL", "").strip()),
         "routable_rules": len(ROUTABLE_ALERT_RULE_IDS),
@@ -913,7 +1001,10 @@ def alert_routing_state() -> dict[str, Any]:
         # Rows, not outcomes: this ring is bounded at 50 and holds both the
         # delivery failures and the evaluation failures above, so it is the
         # smaller of their sum and its own cap.
-        "retained_failures": len(_ALERT_ERRORS),
+        "retained_failures": retained_counted.visible_count,
+        "retained_failures_cap": MAX_RETAINED_ALERT_ERRORS,
+        "retained_failures_withheld_total": retained_counted.withheld_count,
+        "retained_failures_is_lower_bound": retained_counted.is_lower_bound,
     }
 
 
@@ -953,6 +1044,7 @@ def reset_alert_routing() -> None:
             _ALERT_ROUTING[kind] = {}
         _ALERT_ROUTING["evaluation_failures"] = 0
     _ALERT_ERRORS.clear()
+    _reset_ring_withheld("alert_errors")
     _CONNECTOR_PROBE_FAILURES.clear()
     _CONNECTOR_PROBE_VERIFICATIONS.clear()
 
@@ -1153,7 +1245,7 @@ def record_observability_export_error(error: dict[str, Any] | str) -> None:
     else:
         payload = dict(error)
         payload.setdefault("timestamp", datetime.now(timezone.utc).isoformat())
-    _EXPORT_ERRORS.append(payload)
+    _append_bounded(_EXPORT_ERRORS, "export_errors", payload)
 
 
 def record_request_observation(observation: dict[str, Any], *, export: bool = True) -> None:
@@ -1164,7 +1256,7 @@ def record_request_observation(observation: dict[str, Any], *, export: bool = Tr
     does a blocking socket write or file append, which would otherwise run on
     the loop thread and serialize every concurrent request behind it.
     """
-    _REQUEST_OBSERVATIONS.append(dict(observation))
+    _append_bounded(_REQUEST_OBSERVATIONS, "request_observations", dict(observation))
     if not export:
         return
     _export_buffered_observation(observation)
@@ -1332,7 +1424,7 @@ async def record_request_observation_async(
     ``SDP_LOG_SINK_TIMEOUT_MS``; what this removes is the serialization of
     *other* requests behind it.
     """
-    _REQUEST_OBSERVATIONS.append(dict(observation))
+    _append_bounded(_REQUEST_OBSERVATIONS, "request_observations", dict(observation))
     if not export:
         return
     await to_thread.run_sync(_export_buffered_observation, observation)
@@ -1372,9 +1464,16 @@ def count_observability_export_errors() -> int:
     return len(_EXPORT_ERRORS)
 
 
+def export_errors_buffer_capacity() -> int:
+    """How many export errors the ring retains, read from the deque itself."""
+    return _EXPORT_ERRORS.maxlen or 0
+
+
 def reset_request_observability() -> None:
     _REQUEST_OBSERVATIONS.clear()
     _EXPORT_ERRORS.clear()
+    _reset_ring_withheld("request_observations")
+    _reset_ring_withheld("export_errors")
     _GOVERNED_EVIDENCE_GAPS.clear()
     reset_sink_breaker()
     # The alert latch follows the counters the rules read. Clearing the gap
@@ -1404,6 +1503,8 @@ def build_observability_manifest() -> dict[str, Any]:
     policy_decisions = list_policy_decisions(limit=500)
     audit_counted = count_audit_events()
     policy_counted = count_policy_decisions()
+    observations_counted = _counted_ring(_REQUEST_OBSERVATIONS, "request_observations")
+    export_errors_counted = _counted_ring(_EXPORT_ERRORS, "export_errors")
     controls = enterprise_controls_manifest()
     request_observations = list_request_observations(limit=25)
     export_errors = list_observability_export_errors()
@@ -1506,7 +1607,15 @@ def build_observability_manifest() -> dict[str, Any]:
             "enterprise_controls_planned": controls.planned_controls,
             "enterprise_controls_external": controls.external_controls,
             # Real buffer occupancy, not the size of the page rendered below.
-            "request_observations_total": count_request_observations(),
+            "request_observations_total": observations_counted.visible_count,
+            # The cap, the rows this process dropped at it, and whether the
+            # count above is therefore a floor. Bound to ONE sample each: an
+            # earlier repair in this branch read a bounded page and its loss
+            # counter at different instants and published two names that
+            # disagreed by 13,850 rows in one payload.
+            "request_observations_cap": observation_buffer_capacity(),
+            "request_observations_withheld_total": observations_counted.withheld_count,
+            "request_observations_total_is_lower_bound": observations_counted.is_lower_bound,
             # What the window holds BY CONSTRUCTION. Excluding the two
             # publishing surfaces narrows this count from "requests served" to
             # "product requests served", and silently narrowing a published
@@ -1516,7 +1625,12 @@ def build_observability_manifest() -> dict[str, Any]:
             "request_observations_excluded_routes": sorted(
                 f"{method} {route}" for method, route in MONITORING_ROUTES
             ),
-            "observability_export_errors_total": count_observability_export_errors(),
+            "observability_export_errors_total": export_errors_counted.visible_count,
+            "observability_export_errors_cap": export_errors_buffer_capacity(),
+            "observability_export_errors_withheld_total": export_errors_counted.withheld_count,
+            "observability_export_errors_total_is_lower_bound": (
+                export_errors_counted.is_lower_bound
+            ),
             # The ``policy_audit_gap`` condition as a number, so an operator's
             # own monitoring can alert on it without parsing the manifest.
             "governed_requests_without_evidence_total": governed_evidence_gap_report()[
@@ -1741,6 +1855,35 @@ def prometheus_metrics_text() -> str:
             "sdp_policy_decisions_observed_total_is_lower_bound",
             "1 when more policy decisions exist than the observed gauge can show.",
             metrics["policy_decisions_observed_total_is_lower_bound"],
+        ),
+        # The two bounded rings whose counts this block also publishes. Added
+        # because ``test_the_scrape_surface_exposes_every_withheld_number_it_has``
+        # derives its expectation FROM the metrics payload: publishing a
+        # ``*_withheld_total`` on the JSON surface without its scrape series
+        # turned that pre-existing guard red, which is how this half of the
+        # repair was found rather than by review. An operator alerting on a
+        # series that cannot move is the defect it exists to refuse.
+        *_withheld_series(
+            "sdp_request_observations_withheld_total",
+            "Request observations this process dropped at the ring's cap. Scope: this process"
+            " only - a row an earlier process dropped is not counted here.",
+            metrics["request_observations_withheld_total"],
+        ),
+        *_withheld_series(
+            "sdp_observability_export_errors_withheld_total",
+            "Export errors this process dropped at the ring's cap. Scope: this process only -"
+            " a row an earlier process dropped is not counted here.",
+            metrics["observability_export_errors_withheld_total"],
+        ),
+        *_bound_series(
+            "sdp_request_observations_total_is_lower_bound",
+            "1 when this process dropped request observations at the ring's cap.",
+            metrics["request_observations_total_is_lower_bound"],
+        ),
+        *_bound_series(
+            "sdp_observability_export_errors_total_is_lower_bound",
+            "1 when this process dropped export errors at the ring's cap.",
+            metrics["observability_export_errors_total_is_lower_bound"],
         ),
         "# HELP sdp_enterprise_controls_implemented Number of implemented enterprise controls.",
         "# TYPE sdp_enterprise_controls_implemented gauge",

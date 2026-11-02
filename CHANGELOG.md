@@ -2,9 +2,9 @@
 
 이 문서는 `claude/semantic-portal-pr-merge-e5a48k` 브랜치(PR
 [#102](https://github.com/ContextualWisdomLab/semantic-data-portal/pull/102))가
-베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **332개** 커밋 중 181개가
+베이스 대비 더하는 변경을 사람이 읽을 수 있게 묶은 것입니다. **333개** 커밋 중 182개가
 gap-baseline 문서를 건드렸고, 나머지 151개는 건드리지 않았습니다. 이 숫자는 **이 줄을 담은
-커밋을 포함한** 값입니다 — 측정 시점의 331에 이 커밋을 더한 것(이 커밋은 gap 문서를
+커밋을 포함한** 값입니다 — 측정 시점의 332에 이 커밋을 더한 것(이 커밋은 gap 문서를
 건드립니다).
 
 **이 세 수는 커밋마다 낡습니다. 그래서 측정의 출처를 같이 적습니다** — 베이스는
@@ -20,10 +20,14 @@ gap-baseline 문서를 건드렸고, 나머지 151개는 건드리지 않았습�
 커밋이 그 값을 하나만큼 낡게 만들어 `332/181/151`·`187/145`가 됩니다(이 커밋은 코드와 gap
 문서를 함께 건드립니다).
 
+**라운드 26에서 다시 맞았습니다** — `49c2b37`에서 재면 정확히 `332/181/151`·`187/145`이고,
+이 커밋이 그것을 `333/182/151`·`188/145`로 만듭니다. 두 라운드 연속으로 규약이 들어맞았으므로
+고칠 앞 판본이 없습니다.
+
 **그 180/151 분할은 "제품 변경 151건"을 뜻하지 않습니다.** 측정 명령이 세는 것은 "그 문서를
 건드렸는가"뿐이고, 이 브랜치의 수리 커밋은 거의 전부 같은 커밋에서 코드와 기록을 같이
-바꿉니다. 코드가 바뀐 커밋은 **187개**, 문서만 바꾼 커밋은 **145개**입니다(이 커밋 포함 — 측정값
-186/145에 이 커밋을 더한 것이고, 이 커밋은 `src/`·`tests/`를 바꾸므로 코드 쪽입니다).
+바꿉니다. 코드가 바뀐 커밋은 **188개**, 문서만 바꾼 커밋은 **145개**입니다(이 커밋 포함 — 측정값
+187/145에 이 커밋을 더한 것이고, 이 커밋은 `src/`·`tests/`를 바꾸므로 코드 쪽입니다).
 
 **그 두 숫자는 이제 세어서 얻은 값입니다. 앞서는 계산해서 얻었고, 틀렸습니다.** 이 자리에
 있던 `152/119`는 `(gap 문서를 건드리지 않은 커밋) + (gap 문서와 코드를 함께 바꾼 커밋)`으로
@@ -68,9 +72,18 @@ gap-baseline 문서를 건드렸고, 나머지 151개는 건드리지 않았습�
 
 아래 모든 항목의 유일한 실행 증거는 로컬 CI 동형 실행입니다:
 
-    pytest (3.11)                2086 passed, 31 skipped
-    pytest (3.12, tests.yml의 핀) 2086 passed, 31 skipped — CI가 쓰는 인터프리터
-    pytest (파일 순서 정/역/난수)  열 번 모두 2086 passed, 31 skipped (실패 0, 오류 0)
+    pytest (3.11)                2101 passed, 31 skipped
+    pytest (3.12, tests.yml의 핀) 2101 passed, 31 skipped — CI가 쓰는 인터프리터
+    pytest (파일 순서 정/역/난수)  열 번 모두 2101 passed, 31 skipped (실패 0, 오류 0)
+                                 (**이 줄만은 게이트보다 뒤에 쓰입니다** — 열 번의
+                                  결과를 적는 줄이 그 열 번이 측정하는 트리 안에 있을
+                                  수는 없습니다. 라운드 25는 여기에 산문 셋을 적었고
+                                  이 라운드는 **하나**입니다: 게이트가 돌기 시작한 뒤
+                                  고칠 것이 나오지 않았으므로 줄 하나뿐입니다. 나머지
+                                  기록은 게이트가 도는 트리에 들어 있고, 이 한 줄에
+                                  대한 검증은 이 세 문서를 읽는 테스트 파일 전부를
+                                  편집 뒤에 다시 돌린 것입니다 — 수는 커밋 메시지에
+                                  적습니다)
                                  (**게이트보다 뒤에 쓰인 것은 산문 셋이고, 세 번째는
                                   이 괄호 자신입니다** — 게이트 뒤 편집을 선언하는 글이
                                   게이트 안에 있을 수는 없습니다. 처음 "둘"로 적었고,
@@ -118,8 +131,8 @@ gap-baseline 문서를 건드렸고, 나머지 151개는 건드리지 않았습�
                                   않았습니다 — 이 문서가 자기 수치를 측정해서 적는다고
                                   선언한 바로 그 종류의 드리프트입니다. 세어서 고칩니다 —
                                   1976 head 이후 여섯 커밋이 +6 +5 +6 +8 +8 +7을 더하고
-                                  그 뒤 +9, +10, +30, +5, +5와 이번 +11이므로
-                                  1976 + 110 = 2086입니다. 커밋별 수는
+                                  그 뒤 +9, +10, +30, +5, +5, +11과 이번 +15이므로
+                                  1976 + 125 = 2101입니다. 커밋별 수는
                                   파생하지 말고 이렇게 셉니다:
 
                                       for c in $(git log --format=%H --reverse <1976-head>..HEAD); do \
@@ -129,6 +142,8 @@ gap-baseline 문서를 건드렸고, 나머지 151개는 건드리지 않았습�
                                   **그 레시피는 정의를 세고 공표된 수는 수집된 테스트입니다.**
                                   이번 라운드가 그 둘을 벌려 놓습니다 — 더한 파일은 `def test_`
                                   **여섯 개**인데 parametrize로 수집되는 것은 **11건**입니다.
+                                  라운드 26이 같은 모양을 되풀이합니다 — `def test_` **일곱**에
+                                  수집 **15건**(링 셋 x parametrize 넷 + 단일 셋)입니다.
                                   그래서 `1976 + …` 사슬의 각 항은 그 라운드가 parametrize를
                                   쓰지 않았을 때만 레시피와 일치합니다. 이번 항(11)은
                                   레시피가 아니라 **두 측정의 차**(앞 head 2075 -> 이 head 2086)이고,
@@ -234,6 +249,134 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 **이 문장이 결함을 가려 줬습니다**: 미러가 돈다는 것은 참이지만, 그 하네스는 아래 항목이
 고치기 전까지 ClusterFuzzLite 이미지에서 **import에서 죽고 있었고** 입력을 하나도 퍼징하지
 않았습니다. "미러가 있으니 됐다"는 커버리지 주장이 아닙니다.
+
+### Fixed — 한 블록이 두 수량은 정확한 카운트로, 세 수량은 **포화한 `len()`**으로 공표했고 구별할 표식이 없었습니다 (공표 결함 medium x3 + 낡은 포인터 다섯, 구매자 체감 + 실사 경로. **새 발견이 아니라 이미 "닫지 않는다"고 선언해 둔 갭을 닫는 라운드**입니다. 그리고 라운드 25가 더한 규칙이 **한 라운드 뒤에 저를 잡았습니다**)
+
+`/enterprise/observability`의 `metrics` 블록은 다섯 수량을 나란히 공표합니다. 둘은 이 브랜치가
+만든 정직한-카운트 처리를 이미 갖고 있었습니다 — `audit_events_observed_total` 옆에
+`audit_events_observed_total_is_lower_bound`·`audit_events_withheld_total`·
+`withheld_count_scope`. 나머지 셋은 **경계가 있는 `deque`의 `len()`**이고 아무 표식도 없었습니다:
+
+    _REQUEST_OBSERVATIONS   maxlen=500  -> metrics.request_observations_total
+    _EXPORT_ERRORS          maxlen=50   -> metrics.observability_export_errors_total
+    _ALERT_ERRORS           maxlen=50   -> alert_delivery.retained_failures
+
+한 블록을 읽는 사람이 두 수량에는 정확한 값을, 세 수량에는 포화한 길이를 받으면서 **그 둘을
+가를 근거가 payload 안에 없었습니다.** 수리 전 측정:
+
+    60 governed requests(raise하는 rule)
+      -> evaluation_failures 60, retained_failures 50
+      -> 열 행이 버려졌고 블록에는 플래그도 withheld도 공표된 cap도 없음
+    payload 전체에서 공표되는 cap은 단 하나
+      -> latency_budgets.observation_window.buffer_capacity
+
+**이것은 새 발견이 아닙니다.** `README.md`와 `docs/product-technical-gap-baseline.md`가 셋을
+전부 이름으로 부르며, 그것을 찾은 라운드가 **닫지 않는다**고 적어 두었습니다. 그래서 이 항목을
+"발견"으로 보고하면 재보고가 되고, **닫는 것**이 이 라운드의 일입니다.
+
+수리는 append 자리 넷을 **하나의 seam**(`_append_bounded`)으로 모읍니다. 링마다 카운터를 손으로
+하나씩 두지 않는 이유는 이 저장소가 이미 겪었습니다 — 같은 집계를 손으로 세 벌 쓰면 세 벌이
+서로 어긋납니다. 그 seam 안에서 **점유 검사·append·증가가 한 critical section**입니다.
+
+#### 그 한 critical section이 이 라운드의 다른 측정에서 왔습니다
+
+같은 모듈의 alert ring에서 generation 검사와 ring append가 **서로 다른** critical section에
+있고 append는 어디에도 없다는 것을 쟀습니다(아래). 그 모양을 새 카운터에 되풀이하면 cap에서
+동시에 일어난 append 둘이 하나로 세어집니다. 그래서 수리가 그 교훈을 **닿는 곳에** 적용합니다.
+
+증가는 **링이 이미 꽉 찬 경우에만** 일어납니다 — 실제로 버려진 행을 세고, 시도된 append를 세지
+않습니다. 이 브랜치의 형제 카운터 수리가 한 번 append **전에** 증가해서 in-flight 수만큼
+과대보고한 적이 있습니다.
+
+측정(수리 후):
+
+    fresh process            셋 다 cap 공표, withheld 0, is_lower_bound false
+    alert ring cap+7         retained_failures 50, cap 50, withheld 7, flag true
+    정확히 cap만큼           withheld 0, flag false   <- 가득 찬 링은 잃은 것이 없습니다
+    observations cap+5       visible 500, withheld 5, flag true
+    export errors cap+3      visible 50, withheld 3, flag true
+    같은 카운터 5회 읽기      [3, 3, 3, 3, 3]          <- 읽어도 움직이지 않습니다
+    reset                    셋 다 0으로
+
+`is_lower_bound`를 `len == maxlen`에서 파생시키지 않는 이유는 라운드 23이 이미 쟀습니다 —
+그 술어는 정확히 `maxlen` append 시점에 `withheld 0` 옆에 `is_lower_bound true`를 공표하고,
+그것은 이미 한 번 철회된 초안의 산물입니다.
+
+#### 이 라운드의 자기 결함 — 라운드 25의 규칙이 한 라운드 뒤에 저를 잡았습니다
+
+라운드 25가 "가드를 공표할 때 결함 변이 옆에 **정당한-수리 변이**를 하나 둬라"를 규칙으로
+적었습니다. 이 라운드에서 그 규칙을 적용했고, **제 가드가 red가 됐습니다.**
+
+M7(`MAX_RETAINED_ALERT_ERRORS` 50 -> 80)과 M8(observation ring 500 -> 900)은 둘 다
+**정당한 용량 변경**인데 `test_a_reset_that_empties_a_ring_also_zeroes_its_drop_count`가
+빨개졌습니다. 제가 그 테스트에 오버플로 크기를 `range(60)`·`range(505)`·`range(53)`로
+**오늘의 cap에 맞춰 손으로 박아 넣었기** 때문입니다 — cap이 올라가면 60 append는 아무것도
+버리지 않으므로 `withheld > 0` 단언이 거짓이 됩니다. 라운드 22가 기록하고 라운드 25가 규칙으로
+만든 **고정된 크기 함정**을, 그 규칙을 쓴 바로 다음 라운드에 제가 되풀이했습니다. 크기를 각
+링의 `maxlen`에서 파생시켜 고쳤고, 고친 뒤 M7·M8은 green입니다.
+
+규칙이 리뷰보다 먼저 잡았다는 것이 요점입니다. 결함 변이만 돌렸다면 여섯 개 전부 red였으므로
+**가드가 건강하다고 결론 내렸을 것입니다.**
+
+#### 측정해서 다시 쓴 항목 하나 — 동시성 결함은 공표하지 않고 기록합니다
+
+작업 항목 `#71`이 "가드가 카운터 쓰기에만 붙고 ring append에는 붙지 않았다"고 적혀 있었습니다.
+**그 문장은 틀렸고**, 틀린 것을 기록에 옮기기 전에 쓸기가 잡았습니다 — CHANGELOG가 그 가드의
+추가와 그 변이(M2)의 red를 이미 적어 두었습니다. 가드는 **있고 consult됩니다.** 살아남는 주장은
+더 좁습니다: consult와 append가 reset에 대해 **원자적이지 않다**는 것.
+
+그 좁은 주장을 네 방향으로 쟀고(각각 독립 반박 패스를 붙였습니다), 결론은 **고치지 않고
+기록한다**입니다:
+
+    delivery 경로의 교차-episode 누출   재현됨: reset 뒤 retained_failures 1 옆에
+                                       delivery 카운터 넷이 전부 0
+    주입된 pause 없이도                 switchinterval(0.0)에서 3000회 중 2회,
+                                       기본 5ms에서 7000회 중 0회
+    clear()가 lock 밖이라는 반쪽        반대 방향으로 재현됨: 새 episode의 정당한 행이
+                                       앞 reset의 늦은 clear()에 파괴되어
+                                       deliveries_failed 1 옆에 retained_failures 0
+    evaluation 경로                     generation이 **아예 도달하지 않습니다**
+                                       (`_count_alert_evaluation_failure`는 무조건 증가),
+                                       교차-episode 누출이 11920 episode 중 1549에서
+                                       **계측 없이** 발생
+    #71이 제안한 수리                   **두 경로 모두에서 불충분**합니다. clear()를 lock
+                                       안으로 옮겨도 delivery 누출은 그대로이고(누출을
+                                       끌고 가는 것은 lock 없는 **append**입니다),
+                                       evaluation 경로에서는 완전히 원자적인 reset이
+                                       배제할 대상 자체가 없습니다
+    그런데 **배포 형상에서는 창이 열리지 않습니다**
+                                       `reset_alert_routing()`의 `src/` 안 유일한 호출자는
+                                       `reset_request_observability`이고, 그 함수의 `src/`
+                                       안 호출자는 **0개**입니다. 라우트도, 시작 훅도
+                                       없습니다 — 모든 호출자가 `tests/` 아래입니다.
+                                       `uvicorn sdp.api:app`에서는 generation을 올리는
+                                       코드 경로가 없으므로, 창이 필요로 하는 reset을
+                                       제품이 수행하지 않습니다
+
+그래서 이것은 **라이브러리가 자기 테스트 픽스처 아래에서 갖는 성질**이고, 구매자가 보는 결함이
+아닙니다. 그 구분을 적지 않고 "동시성 결함 high"로 공표하는 것이 이 브랜치가 되풀이해 수리하는
+과장입니다. 작업 항목 `#71`에 측정값과 함께 남깁니다.
+
+#### 낡은 포인터 다섯 — 그리고 그 중 하나는 자기 정정이 다시 낡은 것
+
+바꾼 성질의 어휘로 쓸었습니다(세고, 자르지 않고). `retained_failures`를 줄 번호로 지목하는
+자리가 넷이고, 전부 현재 head가 반박합니다:
+
+| 자리 | 주장 | 측정 |
+|---|---|---|
+| gap-baseline:4127 | `observability.py:890` | 그 줄은 `with _ALERT_ROUTING_LOCK:` |
+| gap-baseline:4375 | `observability.py:890` | 같음 |
+| gap-baseline:6014-6015 | "886은 evaluation_failures이고 890이 맞다" | 886은 **빈 줄**, 실제는 916 |
+| CHANGELOG:482-484 | 같은 정정 | 같음 |
+
+**뒤의 둘은 바로 이 포인터의 네 줄 드리프트를 고치려고 쓴 정정인데, 그 정정이 26줄 더 움직여서
+두 절이 모두 거짓이 되었습니다.** 줄 번호를 고치면 다음 커밋에서 또 낡으므로 **함수 이름**
+(`alert_routing_state()`)으로 바꿨습니다 — 함수가 사라지면 참조가 찾을 수 있게 깨지고, 줄이
+움직이는 것만으로는 깨지지 않습니다.
+
+다섯 번째는 CHANGELOG:4680의 `observability.py:907`입니다. 그 자리가 인용하는 주석
+문구(`"Nothing posts to it, ..."`)는 **지금 트리의 어디에도 없고**(그 라운드가 지웠습니다)
+907행은 무관한 코드입니다. 인용은 남기고 줄 번호를 버렸습니다.
 
 ### Fixed — 게이트가 걸린 정의가 **여덟 필드**를 부르고 숫자는 **열**을 세며, 겹치는 것은 **넷**입니다 (공표 결함 medium x1 + 거짓 산문 다섯, 구매자 체감 + 실사 경로. 수리 초안이 **두 번** 틀렸고 — 안 세는 넷을 한 묶음으로 본 것, 그리고 고정된 측정을 함정이라 판정한 뒤 쓴 수리가 **같은 함정**이었던 것 — 둘 다 측정이 공표 전에 잡았습니다)
 
@@ -480,7 +623,7 @@ green discharge 여섯으로 바뀌면서 공표값은 거짓이 됩니다 — *
 정직한 술어는 "상한에 닿았는가"가 아니라 **"공표된 수가 정보를 잃는가"**입니다.
 
 **8. 제가 쓴 포인터 둘과 이 문서의 자기 수치를 고쳤습니다.** `retained_failures`를
-`observability.py:886`으로 지목한 두 자리는 실제로 **890**행입니다(886은
+`observability.py:886`으로 지목한 두 자리는 그 시점에 **890**행이었습니다(886은
 `evaluation_failures`). 그리고 이 문서 머리의 커밋 수 셋이 `9a08e36` 하나만큼 낡아
 있었으므로 다시 세고, **측정의 베이스와 명령을 같이 적었습니다** — 커밋마다 낡는 수를
 적는 유일한 정직한 방법은 독자가 낡음을 스스로 판정할 수 있게 하는 것입니다.
@@ -4677,8 +4820,10 @@ parametrization 1건 red. M2(파서가 `types`를 base 필터로 보고하게 �
 ### Fixed — 대문자 하나로 빠져나간 낡은 주장, 그리고 전달 표면의 절반만 보던 disclosure 스캔 (high / 뒤 두 건은 low)
 
 **이 주기 다섯 번째 "자기 목록에 걸린 가드"의 다음 형태: 대소문자.**
-`observability.py:907`의 주석이 `"Nothing posts to it, so the capability is stated next to
-the configuration fact."`라고 적고 있었고, 두 줄 아래가
+`alert_routing_state()` 근처의 주석이 `"Nothing posts to it, so the capability is stated next to
+the configuration fact."`라고 적고 있었고(그 문구는 이 라운드가 지웠으므로 지금 트리에는
+없습니다 — 원래 적어 둔 `observability.py:907`은 라운드 26 시점에 무관한 코드를 가리키므로
+줄 번호를 버렸습니다), 두 줄 아래가
 `"alert_webhook_routing": ALERT_ROUTING_STATUS`(= `implemented`)입니다. 바로 그 문구를
 금지하려고 추가한 가드의 fragment는 `("nothing posts ", "to it")`이고, 공백 정규화한
 파일 전체에 **대소문자 구분** substring으로 물었으므로 대문자 `N` 하나로 통과했습니다.

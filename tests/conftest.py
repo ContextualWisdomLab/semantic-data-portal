@@ -193,6 +193,10 @@ def restore_in_memory_app_state():
         if key != "generation"
     }
     alert_errors = list(observability._ALERT_ERRORS)
+    # The three bounded rings' drop counts. Snapshotted beside the rings
+    # themselves because a count restored without its ring, or a ring
+    # restored without its count, publishes a pair that disagrees.
+    ring_withheld = dict(observability._RING_WITHHELD)
     graph = _graph_snapshot()
     request_observations = observability.list_request_observations()
     export_errors = observability.list_observability_export_errors()
@@ -256,5 +260,7 @@ def restore_in_memory_app_state():
         observability._ALERT_ROUTING.update(deepcopy(alert_routing))
         observability._ALERT_ERRORS.clear()
         observability._ALERT_ERRORS.extend(alert_errors)
+        observability._RING_WITHHELD.clear()
+        observability._RING_WITHHELD.update(ring_withheld)
         _graph_restore(graph)
 
