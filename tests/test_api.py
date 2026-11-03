@@ -156,7 +156,12 @@ def test_enterprise_kpis_expose_saleability_measurement_plan():
     assert kpis["metadata_completeness"]["target"] == (
         ">=90 percent mean metadata_completeness across datasets"
     )
-    assert kpis["policy_audit_coverage"]["target"] == "100 percent"
+    # Was ``"100 percent"`` - a share's unit against a figure that is a count of
+    # the complement. Round 32 corrected the unit with the definition; this pin
+    # follows the deliberate change rather than guarding the old string.
+    assert kpis["policy_audit_coverage"]["target"] == (
+        "0 governed requests without evidence"
+    )
     assert kpis["nl_catalog_search_success"]["target"] == ">=80 percent"
     assert kpis["ontology_mapping_coverage"]["target"] == ">=70 percent"
     assert kpis["validation_pass_rate"]["target"] == ">=95 percent"

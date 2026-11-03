@@ -124,6 +124,57 @@ def metadata_completeness_definition() -> str:
     )
 
 
+# ``policy_audit_coverage``'s definition said "Share of preview, query, and
+# catalog mutation requests **with** policy decision or audit evidence", target
+# "100 percent", ``measured=True``, and pointed at
+# ``governed_requests_without_evidence_total``. Measured, the sentence and the
+# figure diverged on three axes at once::
+#
+#     the sentence says   the figure is
+#     ------------------  ----------------------------------------------
+#     a share             an absolute count
+#     requests WITH       the complement - requests WITHOUT
+#     3 request classes   the whole set the refusal contract declares;
+#     (7 routes strictly) 40 pairs, so 33 outside the named classes,
+#                         including 23 GET reads in none of them
+#
+# ``metadata_completeness`` was one axis (a field list); this was three, and the
+# KPI published ``measurement_gap=''`` beside it, so a buyer reading
+# ``GET /enterprise/kpis`` saw all three with no disclosure attached. Partial
+# disclosure existed only in the Korean gap document, and the third axis nowhere.
+#
+# Filling ``measurement_gap`` is not available as a repair:
+# ``tests/test_kpi_measurement_disclosure.py`` forbids a gap when ``measured``
+# is true, and rightly - a measured figure should not need an excuse. So the
+# sentence is corrected to say what the figure is.
+#
+# **The population is named by its authority, not by a count.** Embedding
+# ``len(policy_gated_route_methods())`` is not possible here and would be worse
+# if it were: that function lives in ``sdp.api_error_contract`` and ``sdp_core``
+# imports nothing from ``sdp`` (measured: zero such imports), so inlining the
+# number would invert the layering. A literal would also drift the moment a
+# route is added, which is the defect class this whole block exists to close.
+# Naming the authority cannot drift; the correspondence is enforced instead by
+# ``tests/test_the_definition_names_what_the_number_counts.py``.
+def policy_audit_coverage_definition() -> str:
+    """The definition sentence, saying what the published figure actually is.
+
+    A count of the complement over the refusal contract's declared surface -
+    not a share, not the with-evidence side, and not the three request classes
+    the previous sentence named. The population is named rather than counted,
+    so this string cannot go stale when a route is added; the guard in
+    ``tests/test_the_definition_names_what_the_number_counts.py`` pins it to the
+    live set.
+    """
+    return (
+        "Count of policy-gated 2xx responses that recorded neither a policy "
+        "decision nor an audit event, over every (method, path) pair the "
+        "refusal contract declares as policy-gated - which is broader than "
+        "preview, query, and catalog mutation alone and includes governed "
+        "reads. Lower is better; the with-evidence share is not published."
+    )
+
+
 def enterprise_kpi_framework() -> KPIFramework:
     return KPIFramework(
         product="Semantic Data Portal",
@@ -177,8 +228,11 @@ def enterprise_kpi_framework() -> KPIFramework:
                 id="policy_audit_coverage",
                 label="Policy and audit coverage",
                 decision_question="Can every governed data action be explained and audited?",
-                definition="Share of preview, query, and catalog mutation requests with policy decision or audit evidence.",
-                target="100 percent",
+                definition=policy_audit_coverage_definition(),
+                # "100 percent" was a share's unit against a figure that is a
+                # count, so the target could not be compared with the number it
+                # targeted. A count's target is a count.
+                target="0 governed requests without evidence",
                 cadence="release gate and buyer demo",
                 source_endpoints=["/browse/{dataset_id}/preview", "/browse/query", "/audit/events", "/policy/decision"],
                 owner="security",

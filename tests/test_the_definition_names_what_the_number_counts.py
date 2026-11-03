@@ -45,7 +45,36 @@ from sdp_core.kpis import (  # noqa: E402
     RECOMMENDATION_SCORED_FIELDS,
     UNSCORED_DISPLAY_FIELDS,
     metadata_completeness_definition,
+    policy_audit_coverage_definition,
 )
+
+# This guard existed for exactly the ``policy_audit_coverage`` defect and could
+# not see it, because every assertion below was reached through
+# ``if item.id == "metadata_completeness"``. A curated list wearing a
+# derivation's clothes - the same shape as the oracle sweep that derived its
+# surfaces from path templates and so could not see a body-named one.
+#
+# The registry replaces the pin. An id in it must publish its derived sentence.
+DERIVED_DEFINITIONS = {
+    "metadata_completeness": metadata_completeness_definition,
+    "policy_audit_coverage": policy_audit_coverage_definition,
+}
+
+# A ``measured=True`` KPI whose sentence is a hand-written literal is where this
+# defect class lives, so none may sit outside both sets silently. These two are
+# exempt on MEASUREMENT, not on judgement: the round-32 sweep ran each one's
+# definition against its published figure and both reproduced it, so deriving
+# them would add churn without adding honesty. If that stops being true the
+# exemption is wrong and the entry has to move into DERIVED_DEFINITIONS.
+MEASURED_WITH_A_LITERAL_DEFINITION = {
+    "ontology_mapping_coverage": (
+        "swept and verified MATCHES with the measurement run, not read: the "
+        "sentence's excluded-mapping clause is the one the figure applies."
+    ),
+    "validation_pass_rate": (
+        "swept and verified MATCHES with the measurement run, not read."
+    ),
+}
 
 # A complete dataset, so a probe can drop exactly one field at a time.
 COMPLETE_DATASET: dict[str, object] = {
@@ -87,15 +116,103 @@ def _counted_clause() -> list[str]:
     return clause[0].split(", ")
 
 
-def test_the_published_definition_is_the_derived_one() -> None:
-    """The framework must publish this sentence, not a second copy of it."""
+def _published_kpis() -> list:
+    """Every published KPI, primary and guardrail together."""
     framework = enterprise_kpi_framework()
-    kpi = next(
-        item
-        for item in framework.primary_kpis + framework.guardrail_kpis
-        if item.id == "metadata_completeness"
+    return list(framework.primary_kpis) + list(framework.guardrail_kpis)
+
+
+@pytest.mark.parametrize("kpi_id", sorted(DERIVED_DEFINITIONS))
+def test_the_published_definition_is_the_derived_one(kpi_id: str) -> None:
+    """The framework must publish the derived sentence, not a copy of it."""
+    kpi = next(item for item in _published_kpis() if item.id == kpi_id)
+    assert kpi.definition == DERIVED_DEFINITIONS[kpi_id]()
+
+
+def test_no_measured_kpi_sits_outside_both_sets() -> None:
+    """A new measured KPI cannot arrive with an unexamined literal sentence.
+
+    This is the half that was missing. The guard above only ever looked at ids
+    it was told about, so ``policy_audit_coverage`` published a three-axis
+    mismatch for as long as nobody added it by hand. Deriving the population
+    from the framework itself means the omission fails instead of hiding.
+    """
+    measured = {item.id for item in _published_kpis() if item.measured}
+    accounted = set(DERIVED_DEFINITIONS) | set(MEASURED_WITH_A_LITERAL_DEFINITION)
+    unaccounted = measured - accounted
+    assert not unaccounted, (
+        f"measured KPIs with an unexamined definition: {sorted(unaccounted)}. "
+        "Either derive the sentence and register it in DERIVED_DEFINITIONS, or "
+        "measure the literal against the published figure and record that "
+        "measurement in MEASURED_WITH_A_LITERAL_DEFINITION."
     )
-    assert kpi.definition == metadata_completeness_definition()
+    assert not (accounted - measured) - set(DERIVED_DEFINITIONS), (
+        "an exemption names a KPI that is not measured: "
+        f"{sorted((accounted - measured) - set(DERIVED_DEFINITIONS))}"
+    )
+
+
+def test_the_coverage_sentence_names_its_population_authority() -> None:
+    """The sentence must name the refusal contract, not a snapshot count.
+
+    A literal ``N (method, path) pairs`` would drift the moment a route is
+    added, and cannot be computed here anyway: the live set lives in
+    ``sdp.api_error_contract`` and ``sdp_core`` imports nothing from ``sdp``.
+    So the sentence names the authority and this test pins the correspondence.
+    """
+    sentence = policy_audit_coverage_definition()
+    assert "refusal contract declares" in sentence, sentence
+    # The three axes the old sentence got wrong, each now stated correctly.
+    assert sentence.startswith("Count of"), "the figure is a count, not a share"
+    assert "neither a policy decision nor an audit event" in sentence, (
+        "the figure counts the complement, not the with-evidence side"
+    )
+    assert "broader than" in sentence and "includes governed reads" in sentence, (
+        "the population is wider than the three request classes"
+    )
+    assert "share is not published" in sentence, (
+        "a reader must not be left expecting a share"
+    )
+
+
+def test_the_published_target_is_a_count_not_a_share() -> None:
+    """The unit has to match the figure, or the target cannot be compared.
+
+    ``100 percent`` was a share's unit against a counter. Measured: the
+    pointed-at metric resolves to an ``int``.
+    """
+    kpi = next(item for item in _published_kpis() if item.id == "policy_audit_coverage")
+    assert "percent" not in kpi.target, kpi.target
+    assert kpi.target.startswith("0 "), kpi.target
+    assert "without evidence" in kpi.target, kpi.target
+
+
+def test_the_named_population_is_the_live_policy_gated_set() -> None:
+    """The correspondence a named authority buys, actually checked.
+
+    Imported here rather than in ``sdp_core`` on purpose - tests may cross the
+    layer the product code may not.
+    """
+    from sdp.api_error_contract import policy_gated_route_methods
+
+    live = policy_gated_route_methods()
+    assert live, "the refusal contract declares no policy-gated route"
+    # The sentence claims the set is broader than the three request classes it
+    # used to name. Measure that rather than asserting it in prose alone.
+    named_classes = tuple(
+        pair
+        for pair in live
+        if pair[1].endswith("/preview")
+        or pair[1].endswith("/browse/query")
+        or (pair[0] in {"POST", "PATCH"} and "/catalog/datasets" in pair[1])
+    )
+    assert len(named_classes) < len(live), (
+        "the old sentence's three classes would cover the whole set, so "
+        "'broader than' would be false"
+    )
+    assert any(method == "GET" for method, _ in live), (
+        "the sentence says the population includes governed reads"
+    )
 
 
 def test_the_counted_clause_is_the_tally() -> None:
