@@ -355,8 +355,48 @@ skip합니다 — 앞서 적혀 있던 `11 skipped`는 `pyld`가 어쩌다 깔�
 
 `#28`이 "KPI 정의 둘이 숫자가 계산하지 않는 양을 이름한다"고 적어 두었습니다. **그 수를 받아들이지
 않고 공표되는 숫자 32개 전부를 쓸었습니다** — KPI 8개 + readiness/production manifest의 수치들.
-23건이 혐의로 올라왔고 각각을 독립 재측정으로 반증 시도했습니다. 결과는 **발견 14건**, 깨끗한 것
-16건, 미결 2건입니다. `#28`의 "둘"은 KPI 수준에서 넷이었고 전체로는 14였습니다.
+23건이 혐의로 올라왔고 각각을 독립 재측정으로 반증 시도했습니다.
+
+> **정정(라운드 33). 이 문단이 처음 공표한 "발견 14건"이 틀렸고, 제가 같은 분할을 두 번
+> 틀렸습니다.** 첫 번째는 공표 전에 잡았습니다 — 워크플로가 `refuted === false`로 분할해
+> "confirmed 6"을 돌려줬는데 refuted 17건 중 8건이 정정 분류로 `MISMATCH`/`NO_COMPUTATION`을
+> 들고 있었으므로, `refuted`를 "결함 없음"으로 읽으면 재고가 축소됩니다. **두 번째는
+> 공표됐습니다**(`a39e671`): 그래서 "정정된 분류로 분할한다"로 바꿨는데, 검증자의 **산문**을
+> 읽으면 정정된 라벨도 판정이 아닙니다. 그 8건 중 **6건은 결함이 죽는다고 명시**합니다 —
+> "the FINDING does not stand"(`nl_catalog_search_success`: 정직한 `measurement_gap`이 이미
+> 있고 테스트로 고정되어 있습니다), "carries no defect here"(`audit_events` scale_gate:
+> `scale_gate`는 공표 숫자의 정의가 아닙니다), "the mismatch narrative attached to it
+> dies"(`demo_blockers`: pydantic 필드 주석이고 정의가 아닙니다), "not the assigned defect
+> class"(`catalog_metadata` p95), "compared the figure against a sentence that is not the
+> figure's definition"(`ontology_registry`), "paired the right computation with the wrong
+> published statement"(`policy_decisions`). 검증자들은 `NO_COMPUTATION`을 **사실 라벨로
+> 유지하면서 그 위에 세운 발견을 반증**했습니다.
+>
+> | 항목 | 검증자의 결론 | 발견인가 |
+> |---|---|---|
+> | `discovery_time_reduction` | "사냥하는 유형의 결함인지 자체가" 반증 | 아니오 |
+> | `nl_catalog_search_success` | "the FINDING does not stand" | 아니오 |
+> | `catalog_metadata` p95 | "not the assigned defect class" — 다만 readiness 500 ms 대 예산표 2000 ms | **다른 발견** |
+> | `catalog_metadata` 3절 | "clause 3 … computes a different quantity — the class I was sent to find" | **예** |
+> | `audit_events` 365일 | "carries no defect here" | 아니오 |
+> | `ontology_registry` 70% | 비교 대상이 그 숫자의 정의가 아님 | 아니오 |
+> | `policy_decisions` 100% | 옳은 계산을 **틀린 공표 문장**에 짝지음 | 아니오 |
+> | `demo_blockers` | "the mismatch narrative … dies" | 아니오 |
+>
+> **잰 값: 사냥한 유형 7건**(확정 6 + `catalog_metadata` 3절), 그리고 유형 밖의 인접 발견
+> 1건(500 ms 대 2000 ms). 14가 아닙니다. 깨끗한 것과 미결 수는 그대로입니다.
+>
+> **같은 교훈이 세 번째입니다 — 파생된 필드는 결론이 아닙니다.** `refuted`는 "라벨이
+> 틀렸는가"에, `corrected_classification`은 "어떤 라벨이 맞는가"에 답합니다. **둘 다 "이것이
+> 결함인가"에는 답하지 않습니다.** 그 답은 검증자의 추론 안에 있고, 결론 필드가 없는 스키마가
+> 바로 이 실수를 부릅니다. 다음 쓸이의 스키마에는 분류와 **분리된**
+> `is_a_defect_of_the_hunted_class` 를 검증자가 직접 채우게 합니다.
+>
+> 공표된 세 자리 중 둘(이 문단과 gap baseline)은 여기서 고칩니다. 세 번째는 `a39e671`의 커밋
+> 메시지이고, 이미 push되었으므로 **고치지 않습니다** — 공표된 이력을 산문 정정으로 다시 쓰는
+> 것이 더 나쁩니다. 그 메시지의 "14건"은 이 정정이 가리키는 대로 읽으십시오.
+
+`#28`의 "둘"은 KPI 수준에서 넷이었습니다.
 
 **가장 먼저 적을 것은 제 하네스의 결함입니다.** 워크플로가 "confirmed 6 / refuted 17"을 돌려줬고
 저는 그것을 그대로 옮길 참이었습니다. refuted 17건을 읽어 보니 **8건이 `corrected_classification`을
