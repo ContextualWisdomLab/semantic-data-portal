@@ -109,7 +109,10 @@ PROBE_RANGE: dict[str, tuple[object, object]] = {
 def _counted_clause() -> list[str]:
     """The field names the published definition presents as counted."""
     definition = metadata_completeness_definition()
-    head = definition.split("required fields: ", 1)
+    # The delimiter moved with the sentence: the aggregation repair made it
+    # "...required fields each carries: ...". Splitting on "each carries: "
+    # keeps this a parse of the live string rather than a second copy of it.
+    head = definition.split("each carries: ", 1)
     assert len(head) == 2, definition
     clause = head[1].split(". Not counted here: ", 1)
     assert len(clause) == 2, definition
@@ -120,6 +123,188 @@ def _published_kpis() -> list:
     """Every published KPI, primary and guardrail together."""
     framework = enterprise_kpi_framework()
     return list(framework.primary_kpis) + list(framework.guardrail_kpis)
+
+
+def test_a_kpi_whose_named_surfaces_are_mounted_is_not_called_planned() -> None:
+    """``status`` is about the surfaces, so a stale ``planned`` is measurable.
+
+    Mutation-found, against this round's own repair. Reverting
+    ``demo_setup_minutes`` to ``status="planned"`` turned NOTHING red: the
+    disclosure guard in ``tests/test_kpi_measurement_disclosure.py`` skips
+    unless status is ``implemented``, so ``planned`` silently removes the
+    requirement to disclose a measurement gap. That is exactly how this KPI
+    carried a numeric target and an empty gap unnoticed - the repair fixed the
+    instance and left the mechanism open.
+
+    **And the first version of this guard was the wrong predicate, which is why
+    it found only one of the two instances.** It drove each literal
+    ``source_endpoints`` path with a bare ``GET`` and required a 200. Measured,
+    that is wrong twice over: ``/enterprise/connectors/{connector_id}/probe``
+    takes a required ``dataset_id`` query parameter, so a bare ``GET`` is 422
+    from a route that is plainly shipped (an unmounted path answers 404), and
+    the first version skipped that path entirely for carrying a ``{``. So the
+    200 predicate both mis-reads a live route and cannot see a templated one,
+    and ``discovery_time_reduction`` - also ``planned``, also with all three of
+    its surfaces mounted - passed unnoticed.
+
+    The field's own comment states the predicate: "``status`` is about the
+    **feature**: are the surfaces this KPI names shipped. It is not about
+    whether anyone computes the number." *Shipped* is mounted-ness, which is
+    measurable for every path including templated ones and needs no guess at
+    any route's parameters.
+
+    Written as an implication over EVERY KPI rather than a loop over the
+    ``planned`` ones, because repairing both instances empties that list and a
+    loop over an empty list is a test that passes by having nothing to do. The
+    non-vacuity assertion below is the part that keeps it honest.
+    """
+    from sdp.api import app
+
+    mounted = {getattr(route, "path", None) for route in app.routes}
+    exercised = 0
+    for kpi in _published_kpis():
+        named = [path for path in kpi.source_endpoints if path.startswith("/")]
+        if not named or any(path not in mounted for path in named):
+            continue
+        exercised += 1
+        assert kpi.status != "planned", (
+            f"{kpi.id} is published as 'planned' while every HTTP surface it "
+            f"names is mounted: {named}. status is about the surfaces, so this "
+            "value is stale - and 'planned' is what exempts a KPI from the "
+            "measurement-gap requirement."
+        )
+    assert exercised >= 2, (
+        "no KPI reached the assertion, so this test proved nothing: it needs at "
+        f"least two KPIs whose named HTTP surfaces are all mounted, saw {exercised}"
+    )
+
+
+def test_the_mounted_predicate_separates_shipped_from_absent() -> None:
+    """The predicate above is only honest if mounted-ness discriminates.
+
+    A guard built on ``path in app.routes`` is worthless if every string would
+    be in there, so this pins both directions on the exact route the 200
+    predicate got wrong: the templated probe path is mounted, a sibling path
+    that was never shipped is not, and a bare ``GET`` of the mounted one is 422
+    rather than 404 - which is the measurement that says 422 means *shipped
+    with a required parameter*, not *absent*.
+    """
+    from fastapi.testclient import TestClient
+
+    from sdp.api import app
+
+    mounted = {getattr(route, "path", None) for route in app.routes}
+    assert "/enterprise/connectors/{connector_id}/probe" in mounted
+    assert "/enterprise/connectors/{connector_id}/never-shipped" not in mounted
+
+    client = TestClient(app)
+    bare = client.get("/enterprise/connectors/sql_connector/probe")
+    absent = client.get("/enterprise/connectors/sql_connector/never-shipped")
+    with_param = client.get(
+        "/enterprise/connectors/sql_connector/probe",
+        params={"dataset_id": "crm-customer-master", "user": "data-admin"},
+    )
+    assert (bare.status_code, absent.status_code, with_param.status_code) == (
+        422,
+        404,
+        200,
+    ), (bare.status_code, absent.status_code, with_param.status_code)
+
+
+def test_the_blocking_definition_does_not_distribute_one_negation() -> None:
+    """Mutation-found: nothing pinned this wording, so it could silently revert.
+
+    ``clean_pr_queue``'s sentence read "Open pull requests **without**
+    current-head required workflow completion, unresolved review threads, or
+    merge conflicts" - one negation distributing over three clauses, so it named
+    PRs *lacking* unresolved threads and *lacking* conflicts, the opposite of
+    the two conditions whose presence blocks. Reverting it turned nothing red.
+
+    This pins the property rather than the string: each blocking condition has
+    to carry its own polarity word.
+    """
+    kpi = next(item for item in _published_kpis() if item.id == "clean_pr_queue")
+    sentence = kpi.definition
+    assert "without" not in sentence.lower(), (
+        "a single negation ahead of the clause list distributes over all three: "
+        f"{sentence}"
+    )
+    for condition, polarity in (
+        ("required workflow completion", "missing"),
+        ("unresolved review threads", "present"),
+        ("merge conflicts", "present"),
+    ):
+        assert condition in sentence, (condition, sentence)
+        head = sentence.split(condition, 1)[1]
+        assert head.lstrip().startswith(polarity), (
+            f"'{condition}' must carry its own polarity word '{polarity}': {sentence}"
+        )
+
+
+def test_the_sentence_names_the_aggregation_the_figure_performs() -> None:
+    """The half the field-list repair left open, on a catalog where it shows.
+
+    ``test_a_reader_following_the_definition_reproduces_the_published_number``
+    asserts against ONE ``Dataset``'s own ``metadata_completeness``, so it
+    verifies the per-dataset share and never reads the published aggregate its
+    name claims to reproduce. The published figure is
+    ``enterprise_evidence._mean_metadata_completeness`` - a mean ACROSS
+    datasets - and the old sentence said "Share of priority datasets carrying
+    all N required fields", which is the share of datasets at 100 percent.
+
+    Those are different measures, and they agree on the seeded catalog only
+    because every seeded dataset is complete. So this probe plants two partial
+    datasets, where they diverge, and pins the published figure to the
+    aggregation the sentence now names rather than to the stricter one it used
+    to name.
+
+    Imported here rather than in ``sdp_core`` because the figure lives in
+    ``sdp.enterprise_evidence`` and ``sdp_core`` imports nothing from ``sdp``;
+    tests may cross the layer the product code may not.
+    """
+    from sdp import catalog
+    from sdp.enterprise_evidence import _mean_metadata_completeness
+
+    base = catalog._DATA["crm-customer-master"]
+    catalog._DATA["aggregation-probe-one"] = base.model_copy(
+        update={"id": "aggregation-probe-one", "domain": ""}
+    )
+    catalog._DATA["aggregation-probe-two"] = base.model_copy(
+        update={"id": "aggregation-probe-two", "domain": "", "steward": ""}
+    )
+    rows = list(catalog._DATA.values())
+
+    def carries_every_required_field(dataset: object) -> bool:
+        """True when none of the required fields is blank on this dataset."""
+        return all(
+            getattr(dataset, field, None) not in (None, "", [], {})
+            for field in REQUIRED_METADATA_FIELDS
+        )
+
+    mean_of_shares = _mean_metadata_completeness()
+    share_of_complete = round(
+        sum(1 for row in rows if carries_every_required_field(row)) / len(rows), 3
+    )
+
+    # The probe has to actually separate the two, or this test proves nothing.
+    assert mean_of_shares != share_of_complete, (
+        "the probe catalog does not distinguish the two aggregations, so this "
+        f"test is vacuous: both are {mean_of_shares}"
+    )
+
+    sentence = metadata_completeness_definition()
+    assert sentence.startswith("Mean across priority datasets of the share of"), sentence
+    assert "carrying all" not in sentence, (
+        "the sentence names the share of datasets at 100 percent, which is "
+        f"{share_of_complete} here while the published figure is {mean_of_shares}"
+    )
+
+    # And the measured consequence that makes it matter rather than pedantry:
+    # the two aggregations land on opposite sides of the published 0.90 gate.
+    assert mean_of_shares >= 0.90 > share_of_complete, (
+        "the probe no longer demonstrates the gate disagreement: "
+        f"mean={mean_of_shares} share={share_of_complete}"
+    )
 
 
 @pytest.mark.parametrize("kpi_id", sorted(DERIVED_DEFINITIONS))
@@ -222,8 +407,15 @@ def test_the_counted_clause_is_the_tally() -> None:
         f"named but not counted: {[f for f in named if f not in REQUIRED_METADATA_FIELDS]}; "
         f"counted but not named: {[f for f in REQUIRED_METADATA_FIELDS if f not in named]}"
     )
-    assert f"all {len(REQUIRED_METADATA_FIELDS)} required fields" in (
+    # Was ``f"all {n} required fields"``. That phrasing WAS the defect the
+    # aggregation repair removed - "all N" names the datasets at 100 percent,
+    # which is not the mean the figure computes. The count stays derived; only
+    # the quantifier moves.
+    assert f"the {len(REQUIRED_METADATA_FIELDS)} required fields each carries" in (
         metadata_completeness_definition()
+    )
+    assert "all " not in metadata_completeness_definition().split("each carries")[0], (
+        "the aggregation clause must not reintroduce an all-or-nothing quantifier"
     )
 
 
