@@ -184,14 +184,28 @@ def connector_registry_manifest() -> list[ConnectorCapability]:
             source_type="governed_api",
             protocol="HTTP API with signed service account and schema inspection adapter",
             required_controls=["credential_vault", "purpose_binding", "audit_event"],
-            proof="planned connector contract in sdp_core.SourceConnector",
+            # Was "planned connector contract in sdp_core.SourceConnector", and
+            # the app layer refuted it in the same payload: the probe response
+            # carries this string beside its own ``adapter_status: implemented``,
+            # and ``sdp.connectors`` holds a real ``DemoRESTConnector``.
+            # ``sdp.demo_smoke`` gates the release on exactly that
+            # (``rest_probe["adapter_status"] == "implemented"``). The probe
+            # route is named because it is the only route that invokes an
+            # adapter; ``tests/test_published_proof_names_a_live_mechanism.py``
+            # derives the claim from the adapter registry so this cannot drift
+            # back.
+            proof="/enterprise/connectors/{connector_id}/probe",
         ),
         ConnectorCapability(
             id="file_lake_connector",
             source_type="object_storage_or_lakehouse",
             protocol="Manifest-based file scan with partition and profile sampling",
             required_controls=["sample_budget", "pii_profile", "lineage_capture", "audit_event"],
-            proof="planned connector contract in sdp_core.SourceConnector",
+            # Same correction, and this row was the sharper one: measured, its
+            # probe answered ``status: ready_for_demo`` and
+            # ``adapter_status: implemented`` while this field called the thing a
+            # planned contract - one payload disagreeing with itself.
+            proof="/enterprise/connectors/{connector_id}/probe",
         ),
     ]
 
@@ -355,8 +369,16 @@ def enterprise_readiness_manifest() -> EnterpriseReadinessManifest:
             EnterpriseGate(
                 id="ontology_mapping_coverage",
                 label="Semantic coverage",
-                target="70 percent or higher mapping coverage for critical business glossary terms before paid pilot conversion.",
-                evidence=["/ontology/search", "/ontology/resolve", "/ontology/patches"],
+                target="70 percent or higher of registered glossary concepts carrying at least one approved business mapping, before paid pilot conversion.",
+                # Same correction as the KPI of this id: name the surfaces the
+                # measurement consults. ``/ontology/patches`` is real evidence
+                # for the steward-review surface, which does read the queue -
+                # it is not evidence for this number.
+                evidence=[
+                    "/ontology/concepts",
+                    "/catalog/datasets/{dataset_id}",
+                    "/enterprise/evidence-pack",
+                ],
                 status="implemented",
             ),
             EnterpriseGate(

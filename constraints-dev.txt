@@ -1,0 +1,17 @@
+# Hold the developer lock to the versions CI actually tests against.
+#
+# CI installs requirements-test.txt. A free resolution of pyproject.toml's dev
+# extra picks newer minors (hypothesis 6.169.1, SQLAlchemy 2.1.4) than CI pins,
+# and SQLAlchemy is what src/sdp/graph_store.py and src/sdp/config.py build on -
+# so a green local run could hide a red CI. Constraining only these four keeps
+# every other pin where it is, which is why the Docker lock
+# (requirements-graph.txt, pip-compile + constraints-graph.txt) stays in
+# agreement with requirements.txt.
+#
+# tests/test_dependency_locks.py asserts the agreement this file exists to
+# produce, so a drift here fails the suite rather than surfacing as a CI-only
+# failure later.
+hypothesis==6.156.6
+sortedcontainers==2.4.0
+sqlalchemy==2.0.51
+greenlet==3.5.3

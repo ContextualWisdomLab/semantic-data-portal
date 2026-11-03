@@ -120,3 +120,73 @@ def test_bad_relationship_label_is_rejected(seeded_store):
 
     with _pytest.raises(ValueError):
         seeded_store.upsert_edge("foo]->(x) DETACH DELETE x //", "고객", "이탈")
+
+
+# --------------------------------------------------------------------------- #
+# Removal against a real AGE + pgvector instance.
+#
+# ``PostgresGraphStore.edges_for``/``delete_edge``/``delete_node`` were written
+# to the same pattern as the upserts beside them - the AGE graph and the
+# relational mirrors (``graph_edges``/``graph_nodes``/``embedding_vectors``)
+# changed in one transaction - but the environment they were written in has no
+# Postgres+AGE+pgvector, so they went in **unverified against a live database**.
+# The in-memory equivalents are covered by ``tests/test_graph_mirroring.py``.
+# These are the assertions that need a real instance; they are written here
+# rather than left implicit so that whoever runs this file closes the gap.
+# --------------------------------------------------------------------------- #
+
+
+def test_postgres_edges_for_reads_both_directions(seeded_store):
+    outgoing = seeded_store.edges_for("고객", "narrower", direction="out")
+    assert outgoing, "the seeded concept has narrower edges"
+    assert all(edge.source_id == "고객" for edge in outgoing)
+
+    incoming = seeded_store.edges_for("활성 고객", "narrower", direction="in")
+    assert incoming, "the same edge must be readable from the other end"
+    assert all(edge.target_id == "활성 고객" for edge in incoming)
+
+    with pytest.raises(ValueError):
+        seeded_store.edges_for("고객", "narrower", direction="sideways")
+
+
+def test_postgres_delete_edge_removes_it_from_graph_and_mirror(seeded_store):
+    seeded_store.upsert_node("integration-dataset", "dataset", label="integration")
+    seeded_store.upsert_node("integration-dataset:col_one", "column", label="col_one")
+    seeded_store.upsert_edge("has_column", "integration-dataset", "integration-dataset:col_one")
+    assert seeded_store.edges_for("integration-dataset", "has_column")
+
+    assert seeded_store.delete_edge(
+        "has_column", "integration-dataset", "integration-dataset:col_one"
+    ) is True
+    assert not seeded_store.edges_for("integration-dataset", "has_column")
+    # The AGE graph must agree with the relational mirror, not just the mirror.
+    traversed = seeded_store.traverse(
+        "integration-dataset", edge_types=["has_column"], direction="out", max_depth=1
+    )
+    assert not traversed["edges"], traversed
+
+    # Idempotent: deleting again removes nothing and does not raise.
+    assert seeded_store.delete_edge(
+        "has_column", "integration-dataset", "integration-dataset:col_one"
+    ) is False
+
+
+def test_postgres_delete_node_removes_node_embedding_and_edges(seeded_store):
+    seeded_store.upsert_node("integration-orphan", "dataset", label="orphan")
+    seeded_store.upsert_node("integration-orphan:col_two", "column", label="col_two", text="col_two string")
+    seeded_store.upsert_edge("has_column", "integration-orphan", "integration-orphan:col_two")
+
+    before = seeded_store.stats()
+    assert seeded_store.delete_node("integration-orphan:col_two") is True
+    after = seeded_store.stats()
+
+    assert seeded_store.get_node("integration-orphan:col_two") is None
+    assert after["nodes"] == before["nodes"] - 1
+    assert after["embeddings"] == before["embeddings"] - 1
+    assert after["edges"] == before["edges"] - 1
+    assert not seeded_store.edges_for("integration-orphan", "has_column")
+    # The deleted column must not come back through pgvector either.
+    hits = {row["node_id"] for row in seeded_store.semantic_search("col_two string", kind="column", limit=5)}
+    assert "integration-orphan:col_two" not in hits
+
+    assert seeded_store.delete_node("integration-orphan:col_two") is False

@@ -21,18 +21,21 @@ RUN python -m pip install --require-hashes -r requirements.txt \
   && chmod +x /usr/local/bin/entrypoint.sh
 
 # Run as a non-root user to avoid container-escape risk (Trivy DS-0002 / CIS Docker 4.1).
-# Create an unprivileged user and give it ownership of the app and writable data dir.
+# Only /data is owned by the runtime user. /app is the serving process's
+# PYTHONPATH, so giving that uid ownership of it would let the uid handling
+# requests rewrite the code it executes; the code only needs to be readable.
 RUN groupadd --system --gid 10001 sdp \
   && useradd --system --uid 10001 --gid sdp --home-dir /app --no-create-home sdp \
   && mkdir -p /data \
-  && chown -R sdp:sdp /app /data
+  && chown -R sdp:sdp /data \
+  && chmod -R a+rX /app
 
 EXPOSE 8000
 
 USER 10001:10001
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).read()"
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2).read()"
 
 # Applies graph migrations + seed when SDP_DATABASE_DSN is set, then execs CMD.
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

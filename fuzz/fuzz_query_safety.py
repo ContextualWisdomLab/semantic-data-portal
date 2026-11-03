@@ -2,11 +2,41 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
+
+# ``.clusterfuzzlite/Dockerfile`` declares this file as its entrypoint -
+# ``python fuzz/fuzz_query_safety.py`` from ``/src`` with
+# ``PYTHONPATH=/src/src`` - so ``sys.path[0]`` is **this file's directory**, not
+# the repository root. That is the environment the path repair below is written
+# for, and it is hypothetical:
+# **no workflow in this repository builds or runs that image**, and the only
+# central workflow that runs ClusterFuzzLite is a
+# reusable one with no caller here, so this harness has never been executed by
+# any pipeline. Two
+# separate things were wrong about importing the shared oracle below, and the
+# image is the only place either one shows: the root was on the path nowhere,
+# *and* the image did not contain ``tests`` at all. The oracle stays in
+# ``tests/fuzz/invariants.py`` so both engines check one invariant; the image now
+# copies ``tests/fuzz`` and the repository root goes on the path here. Moving the
+# oracle into ``fuzz/`` instead does not work: ``tests/fuzz`` is itself imported
+# as top-level ``fuzz`` under pytest, so it would shadow the new module.
+# This file is the one harness ``tests/fuzz/run_atheris.sh`` never runs, so only
+# ``tests/test_fuzz_harness_imports.py`` stands between it and silence - and
+# because nothing runs the image either, that guard is not merely the first line
+# of defence but the whole of it. The invariant is still checked where something
+# does run: ``tests/fuzz/test_fuzz_properties.py`` calls the same oracle under
+# ``fuzz.yml``'s Hypothesis job.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import atheris
 
 with atheris.instrument_imports():
     from sdp.orchestrator import _source_table_name, validate_sql_query
+    from tests.fuzz.invariants import (
+        COLLIDING_SEPARATORS,
+        check_validate_sql_query,
+        near_miss_reference,
+    )
 
 
 def _text(provider: atheris.FuzzedDataProvider, max_length: int = 96) -> str:
@@ -21,9 +51,35 @@ def TestOneInput(data: bytes) -> None:
     prefix = provider.PickValueInList(["SELECT", "select", "DELETE", "UPDATE", ""])
     projection = provider.PickValueInList(["*", "count(*)", "customer_id", _text(provider, 32) or "*"])
     suffix = _text(provider)
-    query = f"{prefix} {projection} FROM {table_name} {suffix}"
 
-    warnings = validate_sql_query(query, source_system=source_system)
+    # ``declared_relation`` became a live input when the allow-list stopped
+    # guessing the relation from the connection locator; ``None`` keeps the
+    # locator fallback - which this harness is the only caller of - covered.
+    declared_relation = provider.PickValueInList([None, _text(provider, 48), table_name])
+
+    # Drawing the FROM target and the declared relation independently never
+    # lands on a reference that differs from the authorised name *only* by a
+    # character that normalises back onto it - the region where the allow-list
+    # certified nine different relations as the declared one. So one mode builds
+    # that coincidence instead of waiting for the engine to find it. One
+    # separator per input: two "$" would trip the dollar-quote guard first and
+    # the refusal would not be the one under test.
+    authorised = declared_relation if declared_relation else table_name
+    from_target = table_name
+    if provider.PickValueInList([True, False]):
+        from_target = (
+            near_miss_reference(
+                authorised,
+                provider.PickValueInList(list(COLLIDING_SEPARATORS)),
+                provider.ConsumeIntInRange(0, 8),
+            )
+            or table_name
+        )
+    query = f"{prefix} {projection} FROM {from_target} {suffix}"
+
+    warnings = validate_sql_query(
+        query, source_system=source_system, declared_relation=declared_relation
+    )
     assert len(warnings) == len(set(warnings))
     if not query.strip().lower().startswith("select "):
         assert "only_select_allowed" in warnings
@@ -31,6 +87,10 @@ def TestOneInput(data: bytes) -> None:
         assert "single_statement_required" in warnings
     if " drop " in f" {query.lower()} ":
         assert "forbidden_keyword_detected" in warnings
+
+    # The shared oracle, so this harness and the Hypothesis mirror in
+    # ``tests/fuzz`` cannot drift apart on what counts as a violation.
+    check_validate_sql_query(query, source_system, declared_relation)
 
 
 def main() -> None:

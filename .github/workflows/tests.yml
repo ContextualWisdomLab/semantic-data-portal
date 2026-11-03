@@ -3,8 +3,13 @@ name: Tests
 on:
   push:
     branches: [main]
+  # Deliberately unfiltered. A `branches:` filter here matches the pull
+  # request's *base*, and this repository stacks PRs on each other, so
+  # `branches: [main]` produced no check run at all on every stacked PR -
+  # measured on #102 (base: the #79 branch), which carried 2 check runs, both
+  # from fuzz.yml, and no API integration suite result. fuzz.yml was already
+  # unfiltered, which is why one lane appeared and the other did not.
   pull_request:
-    branches: [main]
 
 permissions:
   contents: read

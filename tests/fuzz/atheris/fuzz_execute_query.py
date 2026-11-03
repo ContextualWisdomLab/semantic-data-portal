@@ -28,6 +28,13 @@ _DATASETS = ["crm-customer-master", "crm-event", "marketing-campaign", "missing"
 def TestOneInput(data: bytes) -> None:
     fdp = atheris.FuzzedDataProvider(data)
     ds = [
+        # Range starts at 1 because `dataset_ids` is required with min_length=1,
+        # so an empty list is refused by the constructor below and this harness
+        # would only discard the iteration. The empty list used to reach
+        # execute_query through an omitted field (the contract defaulted to `[]`
+        # while declaring that minimum) and crashed it; that path is closed at the
+        # boundary and covered directly by
+        # tests/test_request_contract_defaults.py.
         fdp.PickValueInList(_DATASETS) for _ in range(fdp.ConsumeIntInRange(1, 3))
     ]
     language = fdp.PickValueInList(_LANGS)

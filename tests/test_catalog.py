@@ -30,6 +30,7 @@ def _isolate_state():
     audit = list(catalog._AUDIT_LOG)
     history = {k: list(v) for k, v in catalog._SCHEMA_HISTORY.items()}
     decisions = list(evidence._POLICY_DECISION_LOG)
+    audit_events = list(evidence._AUDIT_EVENT_LOG)
     try:
         yield
     finally:
@@ -41,6 +42,8 @@ def _isolate_state():
         catalog._SCHEMA_HISTORY.update(history)
         evidence._POLICY_DECISION_LOG.clear()
         evidence._POLICY_DECISION_LOG.extend(decisions)
+        evidence._AUDIT_EVENT_LOG.clear()
+        evidence._AUDIT_EVENT_LOG.extend(audit_events)
 
 
 # --- version-bump helper (line 154) --------------------------------------
@@ -56,10 +59,18 @@ def test_bump_version_normal_and_malformed() -> None:
 
 
 def test_term_score_skips_empty_token() -> None:
-    """An empty token in the token list is skipped without contributing to the score."""
+    """An empty token contributes nothing to the score.
+
+    The skip moved into ``_compiled_query_tokens`` when the regex compile was
+    hoisted out of the per-dataset loop, so the contract is pinned at both the
+    new seam and the scorer.
+    """
     dataset = catalog._DATA[_CRM]
-    with_empty = catalog._term_score(dataset, ["", "customer"], "customer")  # line 167 continue
-    without_empty = catalog._term_score(dataset, ["customer"], "customer")
+    assert catalog._compiled_query_tokens(["", "customer"]) and len(
+        catalog._compiled_query_tokens(["", "customer"])
+    ) == 1
+    with_empty = catalog._term_score(dataset, catalog._compiled_query_tokens(["", "customer"]), "customer")
+    without_empty = catalog._term_score(dataset, catalog._compiled_query_tokens(["customer"]), "customer")
     assert with_empty == without_empty
 
 
@@ -115,9 +126,23 @@ def test_search_min_freshness_excludes_all() -> None:
 def test_search_include_inactive_completeness_gate() -> None:
     """A low-metadata-completeness dataset is hidden unless include_inactive is set (line 236)."""
     base = catalog._DATA[_CRM]
-    # Two blank required fields drop metadata_completeness to 5/7 (< 0.8).
+    # Three blank required fields drop metadata_completeness to 7/10 (< 0.8).
+    #
+    # It used to be two blanks for 5/7. The denominator changed because
+    # ``metadata_completeness`` scored seven fields while
+    # ``validate_metadata`` required ten, so a dataset the validator called
+    # critically invalid still published 1.0 - the KPI's own guardrail is
+    # "Completeness must not hide failed validation." Both now read
+    # ``sdp_core.contracts.REQUIRED_METADATA_FIELDS``. What this test is about
+    # is the gate, so the fixture is adjusted to sit below it.
     catalog._DATA["inactive-ds"] = base.model_copy(
-        update={"id": "inactive-ds", "owner": "", "steward": "", "title": "customer inactive dataset"}
+        update={
+            "id": "inactive-ds",
+            "owner": "",
+            "steward": "",
+            "update_frequency": "",
+            "title": "customer inactive dataset",
+        }
     )
     assert catalog._DATA["inactive-ds"].metadata_completeness < 0.8
 
@@ -288,3 +313,137 @@ def test_get_related_datasets_returns_unique_list() -> None:
     related = catalog.get_related_datasets(_CRM)
     assert isinstance(related, list)
     assert set(related) == set(catalog._DATA[_CRM].related_datasets)
+
+
+def test_mutation_audit_events_carry_the_dataset_tenant():
+    """A catalog mutation builds its audit event straight from the ``Dataset``,
+    so the owning tenant is in hand; it must reach ``details['tenant_id']``,
+    which is where the Postgres evidence store scopes the row from."""
+    base = catalog._DATA["crm-customer-master"]
+    catalog._DATA["external-customer-master"] = base.model_copy(
+        update={"id": "external-customer-master", "tenant_id": "external", "status": "draft"}
+    )
+
+    before = len(catalog._AUDIT_LOG)
+    catalog.publish_dataset("external-customer-master", actor="admin")
+    recorded = catalog._AUDIT_LOG[before:]
+    assert recorded
+    for event in recorded:
+        assert event.details["tenant_id"] == "external", event.action
+
+
+# --- schema history / diff must honour the discovery boundary -------------
+
+
+def _publish_snapshot(dataset_id: str, **overrides) -> None:
+    """Seed a dataset and publish it so a schema-history snapshot exists."""
+    base = catalog._DATA["crm-customer-master"]
+    catalog._DATA[dataset_id] = base.model_copy(
+        update={"id": dataset_id, "status": "draft", **overrides}
+    )
+    catalog.publish_dataset(dataset_id, actor="admin")
+
+
+def test_schema_history_does_not_publish_per_column_pii_flags() -> None:
+    """``catalog.discovery_view()`` withholds the column schema from the ungated
+    catalog detail route, but the schema-history snapshot carried the same
+    columns — ``pii`` flags included — out of the same unauthenticated surface.
+    """
+    _publish_snapshot("hist-probe")
+    history = catalog.get_dataset_schema_history("hist-probe")
+    for entry in history["history"]:
+        for column in entry["schema"]:
+            assert "pii" not in column, column
+            assert "quality_issues" not in column, column
+            # The shape a consumer actually needs is still there.
+            assert {"name", "datatype"} <= set(column)
+
+
+def test_schema_history_projection_leaves_the_stored_snapshot_intact() -> None:
+    """Drift detection runs on the stored snapshot, so the public projection must
+    copy rather than strip in place."""
+    _publish_snapshot("hist-probe")
+    catalog.get_dataset_schema_history("hist-probe")
+    stored = catalog._SCHEMA_HISTORY["hist-probe"]
+    assert any("pii" in column for entry in stored for column in entry["schema"])
+
+
+def test_schema_diff_withholds_governed_column_fields_but_keeps_the_signal() -> None:
+    """A ``pii`` reclassification is real schema drift. The diff must still report
+    the column as changed — and say which withheld field changed — without
+    publishing the classification itself."""
+    _publish_snapshot("diff-probe")
+    first = catalog.list_dataset_schema_versions("diff-probe")[0]
+
+    # Flip one column's PII classification, then snapshot again.
+    dataset = catalog._DATA["diff-probe"]
+    flipped = [
+        column.model_copy(update={"pii": not column.pii}) if column.name == "customer_email" else column
+        for column in dataset.schema
+    ]
+    catalog._DATA["diff-probe"] = dataset.model_copy(
+        update={"schema": flipped, "schema_version": "2.0.0"}
+    )
+    catalog._record_schema_snapshot(catalog._DATA["diff-probe"])
+
+    diff = catalog.get_dataset_schema_diff("diff-probe", first, "2.0.0")
+    changed = {entry["name"]: entry for entry in diff["changed_columns"]}
+    assert "customer_email" in changed, diff
+    entry = changed["customer_email"]
+    assert "pii" not in entry["before"] and "pii" not in entry["after"]
+    assert entry["changed_withheld_fields"] == ["pii"]
+
+
+def test_patch_audit_details_do_not_republish_governed_values() -> None:
+    """``patch_dataset`` stored the raw ``before``/``after`` of every patched
+    field, so patching ``source_system`` put the DSN in the audit record and
+    patching ``schema`` put the per-column ``pii`` flags there — three copies
+    each, in ``changes``/``before``/``after``. The audit feed then republished
+    exactly what ``discovery_view`` and ``discovery_column_view`` withhold.
+    """
+    import json
+
+    from sdp.domain import DatasetPatchRequest
+
+    before_count = len(catalog._AUDIT_LOG)
+    catalog.patch_dataset(
+        "crm-customer-master",
+        DatasetPatchRequest(
+            source_system="postgresql://svc_catalog:S3cr3t@analytics.dw:5432/customer",
+            schema=[
+                {
+                    "name": "customer_email",
+                    "datatype": "string",
+                    "nullable_ratio": 0.0,
+                    "distinct_ratio": 1.0,
+                    "pii": True,
+                    "quality_issues": ["null_spike"],
+                }
+            ],
+        ),
+        actor="admin",
+    )
+    recorded = catalog._AUDIT_LOG[before_count:]
+    assert recorded
+    body = json.dumps([event.model_dump(mode="json") for event in recorded], ensure_ascii=False)
+    assert "S3cr3t" not in body
+    assert "svc_catalog" not in body
+    assert '"pii"' not in body
+    assert "null_spike" not in body
+    # The change is still auditable: the locator and the column names survive.
+    assert "analytics.dw" in body
+    assert "customer_email" in body
+
+
+def test_patch_audit_still_names_which_withheld_field_changed() -> None:
+    """Withholding the value must not erase the signal that it changed."""
+    from sdp.domain import DatasetPatchRequest
+
+    before_count = len(catalog._AUDIT_LOG)
+    catalog.patch_dataset(
+        "crm-customer-master",
+        DatasetPatchRequest(source_system="postgresql://analytics.dw:5432/other"),
+        actor="admin",
+    )
+    details = catalog._AUDIT_LOG[before_count].details
+    assert "source_system" in details["changes"]
