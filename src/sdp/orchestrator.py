@@ -10,7 +10,7 @@ from sdp_core.demo_seed import classify_source_type
 from .authz import can_access_tenant
 from .catalog import get_dataset, ingest_event, redacted_source_system
 from .domain import QueryDraftRequest
-from .policy import ROW_FILTER_ENFORCEMENT_NOTE, evaluate
+from .policy import ROW_FILTER_ENFORCEMENT_NOTE, evaluate, evaluate_dataset_scope_refusal
 from .domain import QueryExecutionRequest
 from .domain import QueryExecutionResponse
 
@@ -653,16 +653,22 @@ def draft_sql(req: QueryDraftRequest) -> dict:
     # by reading the error code - the same oracle the browse and catalog families
     # were repaired to close.
     if dataset is None or not can_access_tenant(req.user, dataset.tenant_id):
-        if dataset is not None:
-            # Record the real reason before answering with the indistinguishable
-            # one, so the refusal is still evidence.
-            denial = evaluate(
-                subject=req.user,
-                resource=req.dataset_id,
-                action="query",
-                purpose=req.purpose,
-            )
-            _audit_draft(req, decision_id=denial.decision_id, result="denied", reason=denial.reason)
+        # Record the real reason before answering with the indistinguishable
+        # one, so the refusal is still evidence - and record it for *both*
+        # cases. Until round 30 the ``dataset is not None`` guard meant an
+        # absent id was answered without filing anything, which was the weakest
+        # posture of the three body-named surfaces: measured as the anonymous
+        # prober off the credential-free ``GET /metrics`` gauges,
+        #
+        #     foreign id -> +1 audit / +1 policy
+        #     absent  id -> +0 audit / +0 policy
+        #
+        # so the counter channel answered what the identical 404 refused, and a
+        # refusal that records nothing is also not evidence of anything. The
+        # helper files the deny away from the prober (see its docstring), so
+        # closing the oracle does not hand the prober a ledger row either.
+        denial = evaluate_dataset_scope_refusal(subject=req.user, resource=req.dataset_id)
+        _audit_draft(req, decision_id=denial.decision_id, result="denied", reason=denial.reason)
         return {"error": "dataset_not_found"}
     if dataset.status != "published":
         return {"error": "policy_denied", "reason": "dataset is not published"}
@@ -1246,10 +1252,30 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
     # "dataset_not_found" for one that does not exist, so the error code still
     # told an outsider which ids exist. One answer for both, with the real reason
     # recorded first.
-    if dataset is not None and not can_access_tenant(req.user, dataset.tenant_id):
-        denial = evaluate(
-            subject=req.user, resource=dataset_id, action="query", purpose=req.purpose
-        )
+    if dataset is None or not can_access_tenant(req.user, dataset.tenant_id):
+        # One answer for both, and - since round 30 - one *evidence shape* for
+        # both. The HTTP reply was already byte-identical here; the counters
+        # were not. Measured as the anonymous prober, before this change, with
+        # the deltas read off the credential-free ``GET /metrics`` gauges
+        # ``sdp_audit_events_observed_total`` / ``sdp_policy_decisions_observed_total``:
+        #
+        #     foreign id -> +1 audit / +1 policy   (``evaluate`` filed a row)
+        #     absent  id -> +1 audit / +0 policy   (``audit`` only)
+        #
+        # so subtracting two scrapes around one call answered the question the
+        # identical 400 exists to refuse. The path-shaped families were repaired
+        # for exactly this and the sweep that found them could not reach here,
+        # because it derived its surfaces from the path template while this
+        # route names its dataset in the request *body*.
+        #
+        # ``evaluate_dataset_scope_refusal`` rather than ``evaluate``: its own
+        # docstring records that ``evaluate`` is the wrong call for this job
+        # because it files an *allow* row into the prober's own scope when the
+        # id is free, which is the same oracle one layer down. The helper files
+        # a deny away from the prober - to the owning tenant when there is one,
+        # to the reserved ``unresolved`` scope when there is not - so the
+        # prober's ledger view and both counters read the same either way.
+        denial = evaluate_dataset_scope_refusal(subject=req.user, resource=dataset_id)
         audit(
             dataset_id=dataset_id,
             result="denied",
@@ -1257,13 +1283,6 @@ def execute_query(req: QueryExecutionRequest) -> QueryExecutionResponse:
             decision_id=denial.decision_id,
             details={"policy_decision_id": denial.decision_id},
         )
-        return response(
-            dataset_id=dataset_id,
-            status="REJECTED",
-            warnings=["dataset_not_found"],
-        )
-    if not dataset:
-        audit(dataset_id=dataset_id, result="rejected", reason="dataset_not_found")
         return response(
             dataset_id=dataset_id,
             status="REJECTED",

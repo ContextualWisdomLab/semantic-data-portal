@@ -56,6 +56,12 @@ DIGIT_TAIL_DATASET = "audit-probe-digit"
 # route to ``draft_rejected_by_validator`` - the digit-tail dataset used to reach
 # it and now refuses earlier, with the true cause, so both codes are covered.
 KEYWORD_COLUMN_DATASET = "audit-probe-keyword"
+# Exists, but in another tenant, so the ``analyst`` caller cannot read it. The
+# point of the pair is that this and a free id must leave the same trace: the
+# difference between them is readable with no credential by subtracting two
+# ``GET /metrics`` scrapes around one call.
+FOREIGN_DATASET = "audit-probe-foreign"
+FOREIGN_TENANT = "other-tenant"
 
 
 def _onboard(dataset_id: str, source_system: str, *, first_column: str = "customer_id") -> None:
@@ -97,12 +103,27 @@ def _onboard(dataset_id: str, source_system: str, *, first_column: str = "custom
     assert published.status_code == 200, published.text
 
 
+def _plant_foreign() -> None:
+    """Copy a published probe into another tenant, directly in the store.
+
+    Not through ``POST /catalog/datasets``: that refuses a cross-tenant create
+    with 403, which is correct behaviour and not what this file is measuring.
+    ``tests/test_oracle_sweep_by_naming_mechanism.py`` plants its foreign
+    dataset the same way for the same reason.
+    """
+    base = catalog._DATA[CLEAN_DATASET]
+    catalog._DATA[FOREIGN_DATASET] = base.model_copy(
+        update={"id": FOREIGN_DATASET, "tenant_id": FOREIGN_TENANT}
+    )
+
+
 @pytest.fixture(autouse=True)
 def _probe_datasets() -> None:
     """Both probe datasets, registered fresh for each test."""
     _onboard(CLEAN_DATASET, "s3://analytics/events/orders")
     _onboard(DIGIT_TAIL_DATASET, "s3://analytics/events/2024")
     _onboard(KEYWORD_COLUMN_DATASET, "s3://analytics/events/touches", first_column="union")
+    _plant_foreign()
 
 
 def _draft(**overrides: Any) -> tuple[int, str, int, int]:
@@ -158,23 +179,52 @@ def test_a_successful_draft_still_records_both_halves() -> None:
 
 @pytest.mark.parametrize(
     "expected_error,overrides",
-    (
-        ("dataset_not_found", {"dataset_id": "no-such-dataset-at-all"}),
-        ("invalid_date_window", {"date_window_days": 0}),
-    ),
+    (("invalid_date_window", {"date_window_days": 0}),),
 )
-def test_a_refusal_before_the_decision_records_neither_half(
+def test_a_refusal_before_any_dataset_question_records_neither_half(
     expected_error: str, overrides: dict[str, Any]
 ) -> None:
     """Symmetry, not volume.
 
-    These refuse before a decision exists, so an audit event here would be a
-    record of an evaluation that never happened. A guard that only demanded "more
-    auditing" would pass a fix that logged these too.
+    This refuses before the caller has asked anything *about a dataset*, so an
+    audit event here would be a record of an evaluation that never happened. A
+    guard that only demanded "more auditing" would pass a fix that logged it too.
+
+    Round 30 narrowed this case and renamed the test, because the old classifier
+    - "refuses before the decision exists" - was the wrong question and put
+    ``dataset_not_found`` in here with it. An absent dataset id *is* a question
+    about a dataset, and the read was in fact refused, so the refusal is
+    evidence; and recording nothing for an absent id while recording a row for a
+    foreign one is an existence oracle on the credential-free ``/metrics``
+    gauges. ``evaluate_dataset_scope_refusal``'s own docstring already carried
+    the governing sentence: "an ``allow`` row behind a 404 describes something
+    that did not happen" - and so does a *missing* row behind one.
+    ``test_the_two_dataset_refusals_are_recorded_identically`` owns that case now.
     """
     _status, error, decisions, audits = _draft(**overrides)
     assert error == expected_error, (expected_error, error)
     assert (decisions, audits) == (0, 0), (expected_error, decisions, audits)
+
+
+def test_the_two_dataset_refusals_are_recorded_identically() -> None:
+    """The absent id and the foreign id must leave the same trace, whatever it is.
+
+    This asserts a *symmetry*, not a magnitude: it does not say "one decision
+    and one audit event", it says the two cases agree. A future change that
+    files two rows for both, or none for both, keeps this green; one that files
+    for only one of them turns it red, because that difference is the oracle.
+    Pinning the number instead would be the pinned-magnitude trap this
+    repository has shipped more than once.
+    """
+    absent = _draft(dataset_id="no-such-dataset-at-all")
+    foreign = _draft(dataset_id=FOREIGN_DATASET)
+    assert absent[1] == foreign[1] == "dataset_not_found", (absent[1], foreign[1])
+    assert absent[2:] == foreign[2:], (
+        "an absent dataset id and a foreign one must record the same number of "
+        f"decisions and audit events; absent={absent[2:]} foreign={foreign[2:]}. "
+        "The difference is readable without a credential by subtracting two "
+        "GET /metrics scrapes around one call."
+    )
 
 
 def test_every_post_decision_exit_goes_through_the_auditing_helper() -> None:

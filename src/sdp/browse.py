@@ -397,10 +397,9 @@ def schema(dataset_id: str, user: str, purpose: str = "analysis") -> Dict[str, A
     dataset = get_dataset(dataset_id)
     if not dataset:
         # The absent-id refusal is filed, like every sibling route's. Raising
-        # ``KeyError`` here without filing left this route the only
-        # dataset-scoped surface whose evidence differs between "not yours" and
-        # "does not exist", and the difference is published **without a
-        # credential**: ``GET /metrics`` carries the global
+        # ``KeyError`` here without filing left this route's evidence differing
+        # between "not yours" and "does not exist", and the difference is
+        # published **without a credential**: ``GET /metrics`` carries the global
         # ``sdp_audit_events_observed_total`` and
         # ``sdp_policy_decisions_observed_total`` gauges, so reading them,
         # calling this route with a candidate id and reading them again answered
@@ -408,6 +407,23 @@ def schema(dataset_id: str, user: str, purpose: str = "analysis") -> Dict[str, A
         # answering 404::
         #
         #     GET /browse/{id}/schema    foreign +1/+1    absent +0/+0
+        #
+        # Round 30 struck "the only dataset-scoped surface" from the sentence
+        # above, because it was false when written and the repository's own
+        # rules said so. Three more surfaces had the same asymmetry on the same
+        # gauges - ``POST /browse/query``, its ``/api/v1`` twin and
+        # ``POST /llm/draft-query`` - and they were not reached because they name
+        # their dataset in the request *body*. "Dataset-scoped" was doing the
+        # work of "path-shaped" in that sentence, which is exactly the conflation
+        # ``tests/test_oracle_sweep_by_naming_mechanism.py`` opens by refusing:
+        # "an existence oracle is a property of the *question*, not of the URL
+        # shape". Measured then, as the anonymous prober:
+        #
+        #     POST /browse/query         foreign +1/+1    absent +1/+0
+        #     POST /llm/draft-query      foreign +1/+1    absent +0/+0
+        #
+        # All three now file through ``evaluate_dataset_scope_refusal`` as this
+        # route does.
         #     POST /browse/{id}/preview  foreign +1/+1    absent +1/+1
         #
         # ``evaluate_dataset_scope_refusal`` is what keeps filing from becoming
