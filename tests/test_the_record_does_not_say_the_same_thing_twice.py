@@ -39,9 +39,26 @@ Scope, and why it is this scope:
   turned ``test_the_detector_ignores_a_duplicate_inside_a_fence`` red and
   falsified a legitimate-repair mutation this round declares green. A
   measurement belongs in the record; only a property belongs in an assertion.
-* The window is three contiguous non-blank lines. It is the smallest window that
-  catches the shipped defect; a two-line window would flag plausible repeated
-  fragments such as a two-line table head.
+* The window is three contiguous non-blank lines, and it is bounded on **both**
+  sides by measurement rather than chosen. An earlier draft of this docstring
+  gave only the upper half.
+  - Below: at a two-line window the tree has **38** repeats across five
+    documents, every one legitimate - repeated table header rows
+    (``| 변이 | red |``, ``| 확인 | 결과 |``, ``| 영역 | 설명 |``), repeated
+    bullet prefixes, repeated command fragments. Narrowing to two therefore
+    makes ``test_no_tracked_markdown_document_repeats_a_run_of_prose`` red on
+    correct content, which is the right failure and explains itself.
+  - Above: the defect this guard exists for is a **nine**-line parenthetical
+    duplicated byte-for-byte, so a window wider than nine cannot see it.
+    ``test_the_configured_window_still_catches_the_defect_this_guard_exists_for``
+    is what holds that end, and it is anchored on the defect's shape rather than
+    on a number, because the protection used to be incidental: setting the window
+    to ten reddened only two tests, both via their own three-line fixtures, and
+    widening those fixtures to match - the natural move for someone fixing the
+    test they just broke - left the suite green with a nine-line duplicate
+    undetected.
+  - At three and at four the tree has zero prose repeats, so three is not the
+    only green choice; it is the narrowest green one.
 
 What this guard does **not** cover, said plainly rather than left for someone to
 discover: prose that repeats itself in different words, a duplicated run of one
@@ -210,6 +227,58 @@ def test_a_blank_line_does_not_bridge_two_passages() -> None:
     """Runs must be contiguous, or unrelated neighbours would match as one."""
     document = "alpha\n\nbeta\n\ngamma\n\nalpha\n\nbeta\n\ngamma\n"
     assert repeated_prose_runs(document) == []
+
+
+# The defect this guard exists for, in its actual shipped shape: round 26 wrote a
+# nine-line indented parenthetical into CHANGELOG.md's verification block and round
+# 27 appended a byte-identical second copy. Reconstructed here rather than quoted,
+# so that editing the record cannot quietly change what this test measures.
+ROUND_27_DEFECT_LINE_COUNT = 9
+
+
+def _the_shipped_defect_shape() -> str:
+    """A document carrying the round-27 defect: one parenthetical, written twice."""
+    parenthetical = "\n".join(
+        f"{' ' * 34}parenthetical line {index}"
+        for index in range(ROUND_27_DEFECT_LINE_COUNT)
+    )
+    return f"prose above\n\n{parenthetical}\n\nprose between\n\n{parenthetical}\n"
+
+
+def test_the_configured_window_still_catches_the_defect_this_guard_exists_for() -> None:
+    """Anchor the window on the defect, not on a magnitude anyone chose.
+
+    ``WINDOW_LINES`` decides whether this guard can see its own motivating case,
+    and nothing else in this file reads it: the two detector controls pass their
+    own fixtures, and ``test_the_window_is_the_smallest_...`` passes ``window=``
+    explicitly. Measured before this test existed: setting ``WINDOW_LINES`` to 10
+    reddened exactly two tests, and both reddened because their three-line
+    synthetic fixtures no longer produced a match - not because anything checked
+    the real defect. Widening those fixtures to match the new constant, which is
+    the natural move for someone fixing the test they just broke, left the suite
+    green while a nine-line duplicate went undetected.
+
+    So this test does not assert a number. It rebuilds what round 27 actually
+    shipped and requires the guard, at whatever ``WINDOW_LINES`` is configured to,
+    to still find it. Widening the window reddens this, and there is no fixture to
+    widen in response - the fixture is the defect.
+    """
+    found = repeated_prose_runs(_the_shipped_defect_shape())
+    assert found, (
+        f"WINDOW_LINES={WINDOW_LINES} no longer detects a "
+        f"{ROUND_27_DEFECT_LINE_COUNT}-line parenthetical duplicated byte-for-byte, "
+        "which is exactly what round 27 shipped and what this guard was added to "
+        "catch. Do not widen a fixture to make this pass; the window is too wide."
+    )
+    first_line, repeat_line, text = found[0]
+    assert first_line < repeat_line
+    assert text == "parenthetical line 0"
+    # ... and the window must be strictly narrower than the defect, or a duplicate
+    # one line shorter than round 27's would slip through unnoticed.
+    assert WINDOW_LINES <= ROUND_27_DEFECT_LINE_COUNT, (
+        f"WINDOW_LINES={WINDOW_LINES} exceeds the "
+        f"{ROUND_27_DEFECT_LINE_COUNT}-line defect it must catch"
+    )
 
 
 def test_the_window_is_the_smallest_that_catches_the_shipped_defect() -> None:
